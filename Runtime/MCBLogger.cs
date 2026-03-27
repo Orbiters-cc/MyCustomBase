@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-// Centralized logger for UltiPaw. Allows toggling console output from AdvancedModeModule.
-public static class UltiPawLogger
+// Centralized logger for MCB. Allows toggling console output from AdvancedModeModule.
+public static class MCBLogger
 {
-    private const string EditorPrefKey = "UltiPaw_LogInConsole";
+    private const string EditorPrefKey = "MCB_LogInConsole";
     private static bool _initialized;
     private static bool _enabled; // runtime fallback when EditorPrefs not available
 

@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -19,7 +19,7 @@ public class CreatorModeModule
     private static double animationClipsByNameCacheTimestamp;
     private static bool animationClipProjectChangedHooked;
 
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly NetworkService networkService;
     private readonly FileManagerService fileManagerService;
     private ReorderableList blendshapeList;
@@ -39,34 +39,34 @@ public class CreatorModeModule
     private Scope newVersionScope = Scope.BETA;
     private string newChangelog = "";
 
-    private List<UltiPawVersion> compatibleParentVersions;
+    private List<CustomBaseVersion> compatibleParentVersions;
     private List<string> parentVersionDisplayOptions;
     private string[] parentVersionDisplayOptionsArray = Array.Empty<string>();
     private int defaultParentIndex;
     private int selectedParentVersionIndex = -1;
-    private UltiPawVersion selectedParentVersionObject = null;
-    private UltiPawVersion previouslySelectedVersion = null;
-    private List<UltiPawVersion> lastServerVersionsRef;
+    private CustomBaseVersion selectedParentVersionObject = null;
+    private CustomBaseVersion previouslySelectedVersion = null;
+    private List<CustomBaseVersion> lastServerVersionsRef;
     private int lastServerVersionsCount = -1;
     private string lastAppliedParentVersionKey;
     private const string CustomVeinsKey = "customVeins";
     private const string DynamicNormalBodyKey = "dynamicNormalBody";
     private const string DynamicNormalFlexingKey = "dynamicNormalFlexing";
     private string autoAssignedVeinsTexturePath;
-    private UltiPawVersion lastParentVersionForVeins;
+    private CustomBaseVersion lastParentVersionForVeins;
     private bool isRestoringFromVersionState;
     private const float BlendshapeNameColumn = 0.35f;
     private const float BlendshapeValueColumn = 0.16f;
     private const float BlendshapeSliderColumn = 0.10f;
     private const float BlendshapeDefaultColumn = 0.10f;
     
-    public CreatorModeModule(UltiPawEditor editor)
+    public CreatorModeModule(MCBEditor editor)
     {
         this.editor = editor;
         this.networkService = new NetworkService();
         this.fileManagerService = new FileManagerService();
         EnsureAnimationClipProjectChangedHook();
-        creatorBlendshapeEditorFoldout = EditorPrefs.GetBool("UltiPaw_CreatorMode_BlendshapeEditorFoldout", false);
+        creatorBlendshapeEditorFoldout = EditorPrefs.GetBool("MCB_CreatorMode_BlendshapeEditorFoldout", false);
     }
 
     public void Initialize()
@@ -160,7 +160,7 @@ public class CreatorModeModule
             DrawParentBlendshapeImportControls();
             
             EditorGUILayout.PropertyField(editor.customFbxForCreatorProp, new GUIContent("Custom FBX (Transformed)"));
-            EditorGUILayout.PropertyField(editor.ultipawAvatarForCreatorProp, new GUIContent("UltiPaw Avatar (Transformed)"));
+            EditorGUILayout.PropertyField(editor.customBaseAvatarForCreatorProp, new GUIContent("Custom Base Avatar (Transformed)"));
             EditorGUILayout.PropertyField(editor.avatarLogicPrefabProp, new GUIContent("Avatar Logic Prefab"));
             DrawCustomVeinsSection();
             DrawDynamicNormalsSection();
@@ -173,7 +173,7 @@ public class CreatorModeModule
                 creatorBlendshapeEditorFoldout,
                 "Blendshape And Correctives Editor",
                 true);
-            EditorPrefs.SetBool("UltiPaw_CreatorMode_BlendshapeEditorFoldout", creatorBlendshapeEditorFoldout);
+            EditorPrefs.SetBool("MCB_CreatorMode_BlendshapeEditorFoldout", creatorBlendshapeEditorFoldout);
 
             if (creatorBlendshapeEditorFoldout)
             {
@@ -209,7 +209,7 @@ public class CreatorModeModule
             EditorGUILayout.Space();
             bool canSubmit = editor.customFbxForCreatorProp.objectReferenceValue != null &&
                              editor.avatarLogicPrefabProp.objectReferenceValue != null &&
-                             editor.ultipawAvatarForCreatorProp.objectReferenceValue != null &&
+                             editor.customBaseAvatarForCreatorProp.objectReferenceValue != null &&
                              selectedParentVersionObject != null &&
                              isVersionValid;
             if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
@@ -262,7 +262,7 @@ public class CreatorModeModule
             return;
         
         var allBlendshapes = GetAllBlendshapeNamesFromCustomFbx();
-        var existingBlendshapeNames = editor.ultiPawTarget.customBlendshapesForCreator.Select(e => e.name);
+        var existingBlendshapeNames = editor.customBaseTarget.customBlendshapesForCreator.Select(e => e.name);
         var availableBlendshapes = allBlendshapes.Except(existingBlendshapeNames).OrderBy(s => s);
 
         // Filter blendshapes that contain the search string (case-insensitive)
@@ -921,7 +921,7 @@ public class CreatorModeModule
     {
         if (!TryGetCustomVeinsTextureImporter(assetPath, out var importer))
         {
-            EditorUtility.DisplayDialog("UltiPaw", "Could not find a texture importer for the selected file.", "OK");
+            EditorUtility.DisplayDialog("MCB", "Could not find a texture importer for the selected file.", "OK");
             return;
         }
 
@@ -941,20 +941,20 @@ public class CreatorModeModule
         importer.SaveAndReimport();
     }
 
-    private static string GetVeinsTexturePathForVersion(UltiPawVersion version)
+    private static string GetVeinsTexturePathForVersion(CustomBaseVersion version)
     {
         if (version == null) return null;
-        string folder = UltiPawUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string folder = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
         if (string.IsNullOrEmpty(folder)) return null;
         return Path.Combine(folder, "veins normal.png").Replace("\\", "/");
     }
 
-    private bool ParentSupportsCustomVeins(UltiPawVersion version)
+    private bool ParentSupportsCustomVeins(CustomBaseVersion version)
     {
         return version?.extraCustomization != null && version.extraCustomization.Contains(CustomVeinsKey);
     }
 
-    private void HandleParentVersionChanged(UltiPawVersion newParent)
+    private void HandleParentVersionChanged(CustomBaseVersion newParent)
     {
         if (ReferenceEquals(lastParentVersionForVeins, newParent) && !isRestoringFromVersionState)
         {
@@ -1018,7 +1018,7 @@ public class CreatorModeModule
         // Blendshape/corrective import is now explicit via UI button to avoid long UI stalls on toggle.
     }
 
-    private void ImportBlendshapesFromParent(UltiPawVersion newParent)
+    private void ImportBlendshapesFromParent(CustomBaseVersion newParent)
     {
         if (newParent == null || newParent.customBlendshapes == null) return;
 
@@ -1054,9 +1054,9 @@ public class CreatorModeModule
             imported.Add(dst);
         }
 
-        Undo.RecordObject(editor.ultiPawTarget, "Import Parent Blendshapes");
-        editor.ultiPawTarget.customBlendshapesForCreator = imported;
-        EditorUtility.SetDirty(editor.ultiPawTarget);
+        Undo.RecordObject(editor.customBaseTarget, "Import Parent Blendshapes");
+        editor.customBaseTarget.customBlendshapesForCreator = imported;
+        EditorUtility.SetDirty(editor.customBaseTarget);
         editor.serializedObject.Update();
         ClearAllCorrectiveSearchFields();
     }
@@ -1089,7 +1089,7 @@ public class CreatorModeModule
         EditorGUILayout.EndHorizontal();
     }
     
-    private void SetDefaultVersionNumbers(UltiPawVersion baseVersionObject)
+    private void SetDefaultVersionNumbers(CustomBaseVersion baseVersionObject)
     {
         string currentVersionStr = baseVersionObject?.version;
         
@@ -1108,7 +1108,7 @@ public class CreatorModeModule
     
     private void PopulateParentVersionDropdown()
     {
-        var applied = editor.ultiPawTarget.appliedUltiPawVersion;
+        var applied = editor.customBaseTarget.appliedCustomBaseVersion;
         string appliedKey = applied != null ? (applied.version + "|" + applied.defaultAviVersion) : string.Empty;
         if (ReferenceEquals(lastServerVersionsRef, editor.serverVersions) &&
             lastServerVersionsCount == editor.serverVersions.Count &&
@@ -1147,11 +1147,11 @@ public class CreatorModeModule
         return editor.CompareVersions(newVersionString, baseVersionString) > 0;
     }
 
-    private (UltiPawVersion metadata, string zipPath) BuildNewVersion()
+    private (CustomBaseVersion metadata, string zipPath) BuildNewVersion()
     {
         var customFbxGO = editor.customFbxForCreatorProp.objectReferenceValue as GameObject;
         var customFbxPath = AssetDatabase.GetAssetPath(customFbxGO);
-        var ultipawAvatar = editor.ultipawAvatarForCreatorProp.objectReferenceValue as Avatar;
+        var customBaseAvatar = editor.customBaseAvatarForCreatorProp.objectReferenceValue as Avatar;
         var logicPrefab = editor.avatarLogicPrefabProp.objectReferenceValue as GameObject;
         bool shouldIncludeCustomVeins = editor.includeCustomVeinsForCreatorProp.boolValue;
         var customVeinsTexture = editor.customVeinsNormalMapProp.objectReferenceValue as Texture2D;
@@ -1179,7 +1179,7 @@ public class CreatorModeModule
             throw new Exception("A Parent Version must be selected.");
 
         // Convert CreatorBlendshapeEntry list to CustomBlendshapeEntry array.
-        var customBlendshapeEntries = editor.ultiPawTarget.customBlendshapesForCreator
+        var customBlendshapeEntries = editor.customBaseTarget.customBlendshapesForCreator
             .Select(entry =>
             {
                 var corrective = (entry.correctiveBlendshapes ?? new List<CreatorCorrectiveBlendshapeEntry>())
@@ -1216,7 +1216,7 @@ public class CreatorModeModule
             selectedParentVersionObject.defaultAviVersion,
             originalFbxPath,
             customFbxGO,
-            ultipawAvatar,
+            customBaseAvatar,
             logicPrefab,
             selectedParentVersionObject,
             shouldIncludeCustomVeins,
@@ -1225,7 +1225,7 @@ public class CreatorModeModule
         );
 
         EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
-        string binPath = UltiPawUtils.CombineUnityPath(UltiPawUtils.GetVersionDataPath(newVersionString, selectedParentVersionObject.defaultAviVersion), "ultipaw.bin");
+        string binPath = MCBUtils.CombineUnityPath(MCBUtils.GetVersionDataPath(newVersionString, selectedParentVersionObject.defaultAviVersion), "mcb.bin");
 
         var extraCustomization = new List<string>();
         if (selectedParentVersionObject.extraCustomization != null)
@@ -1273,7 +1273,7 @@ public class CreatorModeModule
 
         string customVeinsAssetPath = shouldIncludeCustomVeins ? AssetDatabase.GetAssetPath(customVeinsTexture) : null;
 
-        var metadata = new UltiPawVersion {
+        var metadata = new CustomBaseVersion {
             version = newVersionString,
             scope = newVersionScope,
             changelog = newChangelog,
@@ -1289,7 +1289,7 @@ public class CreatorModeModule
             // Local-only data for repopulating fields
             baseFbxHash = fileManagerService.CalculateFileHash(originalFbxPath),
             customFbxPath = customFbxPath,
-            ultipawAvatarPath = AssetDatabase.GetAssetPath(ultipawAvatar),
+            customBaseAvatarPath = AssetDatabase.GetAssetPath(customBaseAvatar),
             logicPrefabPath = AssetDatabase.GetAssetPath(logicPrefab),
             // Hashes of created files
             customAviHash = fileManagerService.CalculateFileHash(binPath),
@@ -1299,32 +1299,32 @@ public class CreatorModeModule
         return (metadata, tempZipPath);
     }
 
-    private void SaveUnsubmittedVersion(UltiPawVersion versionToSave)
+    private void SaveUnsubmittedVersion(CustomBaseVersion versionToSave)
     {
-        string path = UltiPawUtils.UNSUBMITTED_VERSIONS_FILE;
-        List<UltiPawVersion> unsubmitted = new List<UltiPawVersion>();
+        string path = MCBUtils.UNSUBMITTED_VERSIONS_FILE;
+        List<CustomBaseVersion> unsubmitted = new List<CustomBaseVersion>();
         if (File.Exists(path))
         {
-            unsubmitted = JsonConvert.DeserializeObject<List<UltiPawVersion>>(File.ReadAllText(path)) ?? new List<UltiPawVersion>();
+            unsubmitted = JsonConvert.DeserializeObject<List<CustomBaseVersion>>(File.ReadAllText(path)) ?? new List<CustomBaseVersion>();
         }
 
         int existingIndex = unsubmitted.FindIndex(v => v.Equals(versionToSave));
         if (existingIndex != -1) unsubmitted[existingIndex] = versionToSave;
         else unsubmitted.Add(versionToSave);
 
-        UltiPawUtils.EnsureDirectoryExists(path);
+        MCBUtils.EnsureDirectoryExists(path);
         File.WriteAllText(path, JsonConvert.SerializeObject(unsubmitted, Formatting.Indented, new StringEnumConverter()));
         
         editor.LoadUnsubmittedVersions();
         editor.Repaint();
     }
 
-    public void RemoveUnsubmittedVersion(UltiPawVersion versionToRemove)
+    public void RemoveUnsubmittedVersion(CustomBaseVersion versionToRemove)
     {
-        string path = UltiPawUtils.UNSUBMITTED_VERSIONS_FILE;
+        string path = MCBUtils.UNSUBMITTED_VERSIONS_FILE;
         if (!File.Exists(path)) return;
         
-        List<UltiPawVersion> unsubmitted = JsonConvert.DeserializeObject<List<UltiPawVersion>>(File.ReadAllText(path)) ?? new List<UltiPawVersion>();
+        List<CustomBaseVersion> unsubmitted = JsonConvert.DeserializeObject<List<CustomBaseVersion>>(File.ReadAllText(path)) ?? new List<CustomBaseVersion>();
 
         unsubmitted.RemoveAll(v => v.Equals(versionToRemove));
 
@@ -1334,7 +1334,7 @@ public class CreatorModeModule
         editor.Repaint();
     }
 
-    private void PopulateFieldsFromVersion(UltiPawVersion ver)
+    private void PopulateFieldsFromVersion(CustomBaseVersion ver)
     {
         isRestoringFromVersionState = true;
         try
@@ -1370,7 +1370,7 @@ public class CreatorModeModule
             }
 
             editor.customFbxForCreatorProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(ver.customFbxPath);
-            editor.ultipawAvatarForCreatorProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<Avatar>(ver.ultipawAvatarPath);
+            editor.customBaseAvatarForCreatorProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<Avatar>(ver.customBaseAvatarPath);
             editor.avatarLogicPrefabProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(ver.logicPrefabPath);
 
             editor.customBlendshapesForCreatorProp.ClearArray();
@@ -1421,7 +1421,7 @@ public class CreatorModeModule
         editor.warningsModule.Clear();
         editor.Repaint();
 
-        (UltiPawVersion metadata, string zipPath) buildResult = default;
+        (CustomBaseVersion metadata, string zipPath) buildResult = default;
         Exception buildError = null;
 
         try
@@ -1433,7 +1433,7 @@ public class CreatorModeModule
             {
                 editor.submitError = buildError.Message;
                 editor.warningsModule.AddWarning(buildError.Message, MessageType.Error, "Test Build Failed");
-                UltiPawLogger.LogError($"[CreatorMode] Test Build failed: {buildError}");
+                MCBLogger.LogError($"[CreatorMode] Test Build failed: {buildError}");
             }
             else
             {
@@ -1465,7 +1465,7 @@ public class CreatorModeModule
         }
     }
     
-    public IEnumerator UploadUnsubmittedVersionCoroutine(UltiPawVersion unsubmittedVersion)
+    public IEnumerator UploadUnsubmittedVersionCoroutine(CustomBaseVersion unsubmittedVersion)
     {
         editor.isSubmitting = true;
         editor.submitError = "";
@@ -1481,7 +1481,7 @@ public class CreatorModeModule
         {
             // Load the assets from the stored paths
             var customFbxGO = AssetDatabase.LoadAssetAtPath<GameObject>(unsubmittedVersion.customFbxPath);
-            var ultipawAvatar = AssetDatabase.LoadAssetAtPath<Avatar>(unsubmittedVersion.ultipawAvatarPath);
+            var customBaseAvatar = AssetDatabase.LoadAssetAtPath<Avatar>(unsubmittedVersion.customBaseAvatarPath);
             var logicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(unsubmittedVersion.logicPrefabPath);
             var customVeinsTexture = !string.IsNullOrEmpty(unsubmittedVersion.customVeinsTexturePath) 
                 ? AssetDatabase.LoadAssetAtPath<Texture2D>(unsubmittedVersion.customVeinsTexturePath) 
@@ -1511,7 +1511,7 @@ public class CreatorModeModule
                 unsubmittedVersion.defaultAviVersion,
                 originalFbxPath,
                 customFbxGO,
-                ultipawAvatar,
+                customBaseAvatar,
                 logicPrefab,
                 parentVersion,
                 unsubmittedVersion.includeCustomVeins ?? false,
@@ -1521,7 +1521,7 @@ public class CreatorModeModule
 
             EditorUtility.DisplayProgressBar("Uploading", "Sending package to server...", 0.7f);
             string metadataJson = JsonConvert.SerializeObject(unsubmittedVersion, new StringEnumConverter());
-            uploadUrl = $"{UltiPawUtils.getApiUrl()}{UltiPawUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
+            uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
             uploadTask = networkService.SubmitNewVersionAsync(uploadUrl, editor.authToken, zipPath, metadataJson);
         }
         catch (Exception ex)
@@ -1553,7 +1553,7 @@ public class CreatorModeModule
         {
             editor.submitError = ex.Message;
             editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Upload Failed");
-            UltiPawLogger.LogError($"[CreatorMode] Upload failed: {ex}, url: {uploadUrl}");
+            MCBLogger.LogError($"[CreatorMode] Upload failed: {ex}, url: {uploadUrl}");
         }
         finally
         {
@@ -1567,7 +1567,7 @@ public class CreatorModeModule
 
         if (uploadSucceeded)
         {
-            EditorUtility.DisplayDialog("Upload Successful", $"UltiPaw version {unsubmittedVersion.version} has been uploaded.", "OK");
+            EditorUtility.DisplayDialog("Upload Successful", $"custom base version {unsubmittedVersion.version} has been uploaded.", "OK");
         }
     }
 
@@ -1578,7 +1578,7 @@ public class CreatorModeModule
         editor.warningsModule.Clear();
         editor.Repaint();
 
-        (UltiPawVersion metadata, string zipPath) buildResult = default;
+        (CustomBaseVersion metadata, string zipPath) buildResult = default;
         Exception error = null;
         System.Threading.Tasks.Task<(bool success, string response, string error)> uploadTask = null;
         string uploadUrl = null;
@@ -1588,7 +1588,7 @@ public class CreatorModeModule
             buildResult = BuildNewVersion();
             EditorUtility.DisplayProgressBar("Uploading", "Sending package to server...", 0.8f);
             string metadataJson = JsonConvert.SerializeObject(buildResult.metadata, new StringEnumConverter());
-            uploadUrl = $"{UltiPawUtils.getApiUrl()}{UltiPawUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
+            uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
             uploadTask = networkService.SubmitNewVersionAsync(uploadUrl, editor.authToken, buildResult.zipPath, metadataJson);
         }
         catch (Exception ex)
@@ -1620,7 +1620,7 @@ public class CreatorModeModule
         {
             editor.submitError = ex.Message;
             editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Submission Failed");
-            UltiPawLogger.LogError($"[CreatorMode] Submission failed: {ex}, url: {uploadUrl}");
+            MCBLogger.LogError($"[CreatorMode] Submission failed: {ex}, url: {uploadUrl}");
         }
         finally
         {
@@ -1634,7 +1634,7 @@ public class CreatorModeModule
 
         if (submissionSucceeded)
         {
-            EditorUtility.DisplayDialog("Upload Successful", $"New UltiPaw version {buildResult.metadata.version} has been uploaded.", "OK");
+            EditorUtility.DisplayDialog("Upload Successful", $"New custom base version {buildResult.metadata.version} has been uploaded.", "OK");
         }
     }
 }

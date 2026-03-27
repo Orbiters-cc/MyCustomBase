@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -67,7 +67,7 @@ public class AsyncTaskManager
     {
         if (activeTasks.ContainsKey(taskId))
         {
-            UltiPawLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' already exists. Returning existing task.");
+            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' already exists. Returning existing task.");
             return activeTasks[taskId];
         }
 
@@ -81,7 +81,7 @@ public class AsyncTaskManager
         }
 
         OnTaskStarted?.Invoke(taskProgress);
-        UltiPawLogger.Log($"[AsyncTaskManager] Started task: {taskId} - {description} (hidden: {hideInUi})");
+        MCBLogger.Log($"[AsyncTaskManager] Started task: {taskId} - {description} (hidden: {hideInUi})");
         
         return taskProgress;
     }
@@ -90,7 +90,7 @@ public class AsyncTaskManager
     {
         if (!activeTasks.TryGetValue(taskId, out var taskProgress))
         {
-            UltiPawLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for progress update.");
+            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for progress update.");
             return;
         }
 
@@ -105,7 +105,7 @@ public class AsyncTaskManager
     {
         if (!activeTasks.TryGetValue(taskId, out var taskProgress))
         {
-            UltiPawLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for completion.");
+            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for completion.");
             return;
         }
 
@@ -127,7 +127,7 @@ public class AsyncTaskManager
         ExecuteOnMainThread(() => 
         {
             OnTaskCompleted?.Invoke(taskProgress);
-            UltiPawLogger.Log($"[AsyncTaskManager] Completed task: {taskId} - Success: {!hasError}");
+            MCBLogger.Log($"[AsyncTaskManager] Completed task: {taskId} - Success: {!hasError}");
         });
     }
 
@@ -135,7 +135,7 @@ public class AsyncTaskManager
     {
         if (!activeTasks.TryGetValue(taskId, out var taskProgress))
         {
-            UltiPawLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for cancellation.");
+            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for cancellation.");
             return;
         }
 
@@ -155,7 +155,7 @@ public class AsyncTaskManager
         ExecuteOnMainThread(() => 
         {
             OnTaskCompleted?.Invoke(taskProgress);
-            UltiPawLogger.Log($"[AsyncTaskManager] Cancelled task: {taskId}");
+            MCBLogger.Log($"[AsyncTaskManager] Cancelled task: {taskId}");
         });
     }
 
@@ -194,7 +194,7 @@ public class AsyncTaskManager
     {
         if (runningTasks.ContainsKey(taskId))
         {
-            UltiPawLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' is already running.");
+            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' is already running.");
             return runningTasks[taskId];
         }
 
@@ -217,7 +217,7 @@ public class AsyncTaskManager
             catch (Exception ex)
             {
                 CompleteTask(taskId, true, ex.Message);
-                UltiPawLogger.LogError($"[AsyncTaskManager] Task '{taskId}' failed: {ex.Message}");
+                MCBLogger.LogError($"[AsyncTaskManager] Task '{taskId}' failed: {ex.Message}");
                 throw;
             }
         });
@@ -385,7 +385,7 @@ public class AsyncTaskManager
             }
             catch (Exception ex)
             {
-                UltiPawLogger.LogError($"[AsyncTaskManager] Main thread callback failed: {ex.Message}");
+                MCBLogger.LogError($"[AsyncTaskManager] Main thread callback failed: {ex.Message}");
             }
         }
     }
@@ -404,7 +404,7 @@ public class AsyncTaskManager
         foreach (var key in keysToRemove)
         {
             activeTasks.Remove(key);
-            UltiPawLogger.Log($"[AsyncTaskManager] Cleaned up completed task: {key}");
+            MCBLogger.Log($"[AsyncTaskManager] Cleaned up completed task: {key}");
         }
     }
 }

@@ -97,7 +97,7 @@ MonoBehaviour:
             version: 1
             fileID: 0
             guid: 
-            id: b035dd25dea54144bbb1c0c9672216ed|Packages/ultipaw/debug/debugController.controller
+            id: b035dd25dea54144bbb1c0c9672216ed|Packages/orbiters.mcb/debug/debugController.controller
             objRef: {fileID: 9100000, guid: b035dd25dea54144bbb1c0c9672216ed, type: 2}
           type: 5
         menus:
@@ -105,7 +105,7 @@ MonoBehaviour:
             version: 1
             fileID: 0
             guid: 
-            id: e098ac5c8b6e26d4f8e504068bde2d5c|Packages/ultipaw/debug/debugMenu.asset
+            id: e098ac5c8b6e26d4f8e504068bde2d5c|Packages/orbiters.mcb/debug/debugMenu.asset
             objRef: {fileID: 11400000, guid: e098ac5c8b6e26d4f8e504068bde2d5c, type: 2}
           prefix: debug
         prms:
@@ -113,7 +113,7 @@ MonoBehaviour:
             version: 1
             fileID: 0
             guid: 
-            id: ad115fce514deec438129e1cf7bfbc9a|Packages/ultipaw/debug/debugParameters.asset
+            id: ad115fce514deec438129e1cf7bfbc9a|Packages/orbiters.mcb/debug/debugParameters.asset
             objRef: {fileID: 11400000, guid: ad115fce514deec438129e1cf7bfbc9a, type: 2}
         smoothedPrms: []
         globalParams: []
@@ -183,5 +183,5 @@ MonoBehaviour:
           version: 1
           fileID: 0
           guid: 
-          id: 1287b7fa7282964469b3e04dced5e46c|Packages/ultipaw/debug/debugMenuIcon.png
+          id: 1287b7fa7282964469b3e04dced5e46c|Packages/orbiters.mcb/debug/debugMenuIcon.png
           objRef: {fileID: 2800000, guid: 1287b7fa7282964469b3e04dced5e46c, type: 3}

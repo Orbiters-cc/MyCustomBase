@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -36,15 +36,15 @@ public class HashCacheEntry
 public class VersionCacheEntry
 {
     public string baseFbxHash;
-    public List<UltiPawVersion> serverVersions;
-    public UltiPawVersion recommendedVersion;
+    public List<CustomBaseVersion> serverVersions;
+    public CustomBaseVersion recommendedVersion;
     public DateTime cacheTime;
     public string authToken; // To invalidate cache when user changes
     
-    public VersionCacheEntry(string baseFbxHash, List<UltiPawVersion> serverVersions, UltiPawVersion recommendedVersion, string authToken)
+    public VersionCacheEntry(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken)
     {
         this.baseFbxHash = baseFbxHash;
-        this.serverVersions = serverVersions ?? new List<UltiPawVersion>();
+        this.serverVersions = serverVersions ?? new List<CustomBaseVersion>();
         this.recommendedVersion = recommendedVersion;
         this.cacheTime = DateTime.Now;
         this.authToken = authToken;
@@ -79,7 +79,7 @@ public class PersistentCache
         }
     }
 
-    private const string CACHE_FILE_NAME = "ultipaw_cache.json";
+    private const string CACHE_FILE_NAME = "mcb_cache.json";
     private static readonly TimeSpan VERSION_CACHE_MAX_AGE = TimeSpan.FromHours(1); // Cache versions for 1 hour
     private static readonly TimeSpan HASH_CACHE_MAX_AGE = TimeSpan.FromDays(7); // Cache hashes for 7 days
     private static readonly TimeSpan CLEANUP_INTERVAL = TimeSpan.FromDays(1); // Cleanup old entries daily
@@ -98,8 +98,8 @@ public class PersistentCache
 
     private string GetCacheDirectory()
     {
-        string cacheDir = Path.Combine(UltiPawUtils.GetUltiPawDataFolder(), "cache");
-        UltiPawUtils.EnsureDirectoryExists(cacheDir, false);
+        string cacheDir = Path.Combine(MCBUtils.GetMCBDataFolder(), "cache");
+        MCBUtils.EnsureDirectoryExists(cacheDir, false);
         return cacheDir;
     }
 
@@ -111,17 +111,17 @@ public class PersistentCache
             {
                 string json = File.ReadAllText(cacheFilePath);
                 cacheData = JsonConvert.DeserializeObject<PersistentCacheData>(json);
-                UltiPawLogger.Log($"[PersistentCache] Loaded cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
+                MCBLogger.Log($"[PersistentCache] Loaded cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
             }
             else
             {
                 cacheData = new PersistentCacheData();
-                UltiPawLogger.Log("[PersistentCache] Created new cache data.");
+                MCBLogger.Log("[PersistentCache] Created new cache data.");
             }
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[PersistentCache] Failed to load cache: {ex.Message}");
+            MCBLogger.LogError($"[PersistentCache] Failed to load cache: {ex.Message}");
             cacheData = new PersistentCacheData();
         }
     }
@@ -132,11 +132,11 @@ public class PersistentCache
         {
             string json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
             File.WriteAllText(cacheFilePath, json);
-            UltiPawLogger.Log($"[PersistentCache] Saved cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
+            MCBLogger.Log($"[PersistentCache] Saved cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[PersistentCache] Failed to save cache: {ex.Message}");
+            MCBLogger.LogError($"[PersistentCache] Failed to save cache: {ex.Message}");
         }
     }
 
@@ -152,14 +152,14 @@ public class PersistentCache
         {
             if (cacheEntry.IsValid() && DateTime.Now - cacheEntry.cacheTime < HASH_CACHE_MAX_AGE)
             {
-                UltiPawLogger.Log($"[PersistentCache] Hash cache hit for: {normalizedPath}");
+                MCBLogger.Log($"[PersistentCache] Hash cache hit for: {normalizedPath}");
                 return cacheEntry.hash;
             }
             else
             {
                 // Remove invalid entry
                 cacheData.hashCache.Remove(normalizedPath);
-                UltiPawLogger.Log($"[PersistentCache] Hash cache invalidated for: {normalizedPath}");
+                MCBLogger.Log($"[PersistentCache] Hash cache invalidated for: {normalizedPath}");
             }
         }
 
@@ -173,7 +173,7 @@ public class PersistentCache
         if (cacheData.hashCache.Remove(normalizedPath))
         {
             SaveCache();
-            UltiPawLogger.Log($"[PersistentCache] Manually invalidated hash for: {normalizedPath}");
+            MCBLogger.Log($"[PersistentCache] Manually invalidated hash for: {normalizedPath}");
         }
     }
 
@@ -186,7 +186,7 @@ public class PersistentCache
         long lastWriteTime = File.GetLastWriteTime(normalizedPath).ToBinary();
         
         cacheData.hashCache[normalizedPath] = new HashCacheEntry(normalizedPath, hash, lastWriteTime);
-        UltiPawLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
+        MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         
         SaveCache();
     }
@@ -205,13 +205,13 @@ public class PersistentCache
             {
                 if (cacheEntry.IsValid(baseFbxHash, authToken, VERSION_CACHE_MAX_AGE))
                 {
-                    UltiPawLogger.Log($"[PersistentCache] Version cache hit for hash: {baseFbxHash}");
+                    MCBLogger.Log($"[PersistentCache] Version cache hit for hash: {baseFbxHash}");
                     return cacheEntry;
                 }
                 else
                 {
                     cacheData.versionCache.Remove(cacheKey);
-                    UltiPawLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash}");
+                    MCBLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash}");
                 }
             }
 
@@ -241,21 +241,21 @@ public class PersistentCache
             {
                 if (legacyEntry.IsValid(baseFbxHash, authToken, VERSION_CACHE_MAX_AGE))
                 {
-                    UltiPawLogger.Log($"[PersistentCache] Version cache fallback hit for hash: {baseFbxHash}");
+                    MCBLogger.Log($"[PersistentCache] Version cache fallback hit for hash: {baseFbxHash}");
 
                     if (!string.Equals(legacyKey, cacheKey, StringComparison.Ordinal))
                     {
                         cacheData.versionCache[cacheKey] = legacyEntry;
                         cacheData.versionCache.Remove(legacyKey);
                         SaveCache();
-                        UltiPawLogger.Log($"[PersistentCache] Migrated version cache key for hash: {baseFbxHash}");
+                        MCBLogger.Log($"[PersistentCache] Migrated version cache key for hash: {baseFbxHash}");
                     }
 
                     return legacyEntry;
                 }
 
                 cacheData.versionCache.Remove(legacyKey);
-                UltiPawLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash} (fallback)");
+                MCBLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash} (fallback)");
             }
         }
         else
@@ -286,19 +286,19 @@ public class PersistentCache
             {
                 if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.authToken, VERSION_CACHE_MAX_AGE))
                 {
-                    UltiPawLogger.Log($"[PersistentCache] Version cache fallback hit without auth token for hash: {baseFbxHash}");
+                    MCBLogger.Log($"[PersistentCache] Version cache fallback hit without auth token for hash: {baseFbxHash}");
                     return fallbackEntry;
                 }
 
                 cacheData.versionCache.Remove(fallbackKey);
-                UltiPawLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash} (no auth token)");
+                MCBLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash} (no auth token)");
             }
         }
 
         return null;
     }
 
-    public void CacheVersions(string baseFbxHash, List<UltiPawVersion> serverVersions, UltiPawVersion recommendedVersion, string authToken)
+    public void CacheVersions(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken)
     {
         if (string.IsNullOrEmpty(baseFbxHash) || string.IsNullOrEmpty(authToken))
             return;
@@ -307,7 +307,7 @@ public class PersistentCache
         var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, authToken);
         
         cacheData.versionCache[cacheKey] = cacheEntry;
-        UltiPawLogger.Log($"[PersistentCache] Cached {serverVersions?.Count ?? 0} versions for hash: {baseFbxHash}");
+        MCBLogger.Log($"[PersistentCache] Cached {serverVersions?.Count ?? 0} versions for hash: {baseFbxHash}");
         
         SaveCache();
     }
@@ -362,7 +362,7 @@ public class PersistentCache
 
         if (removedHashEntries > 0 || removedVersionEntries > 0)
         {
-            UltiPawLogger.Log($"[PersistentCache] Cleaned up {removedHashEntries} hash entries and {removedVersionEntries} version entries.");
+            MCBLogger.Log($"[PersistentCache] Cleaned up {removedHashEntries} hash entries and {removedVersionEntries} version entries.");
         }
     }
 
@@ -371,21 +371,21 @@ public class PersistentCache
         cacheData.hashCache.Clear();
         cacheData.versionCache.Clear();
         SaveCache();
-        UltiPawLogger.Log("[PersistentCache] Cleared all cache data.");
+        MCBLogger.Log("[PersistentCache] Cleared all cache data.");
     }
 
     public void ClearHashCache()
     {
         cacheData.hashCache.Clear();
         SaveCache();
-        UltiPawLogger.Log("[PersistentCache] Cleared hash cache.");
+        MCBLogger.Log("[PersistentCache] Cleared hash cache.");
     }
 
     public void ClearVersionCache()
     {
         cacheData.versionCache.Clear();
         SaveCache();
-        UltiPawLogger.Log("[PersistentCache] Cleared version cache.");
+        MCBLogger.Log("[PersistentCache] Cleared version cache.");
     }
 
     // Statistics

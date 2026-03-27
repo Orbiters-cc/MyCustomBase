@@ -14,7 +14,7 @@ public class BlendShapeLinkTestDrawer
     private static double animationClipByNameCacheTimestamp;
     private static bool projectChangedHooked;
 
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
 
     private SkinnedMeshRenderer targetRenderer;
     private CorrectiveActivationType toFixType = CorrectiveActivationType.Blendshape;
@@ -31,18 +31,18 @@ public class BlendShapeLinkTestDrawer
     private int cachedDebugAvatarRootId;
     private double nextDebugRefreshAt;
 
-    private const string FoldoutPrefKey = "UltiPaw_BlendShapeLinkTest_Foldout";
-    private const string EnabledPrefKey = "UltiPaw_BlendShapeLinkTest_Enabled";
-    private const string ToFixTypePrefKey = "UltiPaw_BlendShapeLinkTest_ToFixType";
-    private const string ToFixPrefKey = "UltiPaw_BlendShapeLinkTest_ToFix";
-    private const string FixedByTypePrefKey = "UltiPaw_BlendShapeLinkTest_FixedByType";
-    private const string FixedByPrefKey = "UltiPaw_BlendShapeLinkTest_FixedBy";
-    private const string SourceLegacyPrefKey = "UltiPaw_BlendShapeLinkTest_Source";
-    private const string DestinationLegacyPrefKey = "UltiPaw_BlendShapeLinkTest_Destination";
-    private const string ParamPrefKey = "UltiPaw_BlendShapeLinkTest_Param";
-    private const string ActiveVersionLinksFoldoutPrefKey = "UltiPaw_BlendShapeLinkTest_ActiveVersionLinksFoldout";
+    private const string FoldoutPrefKey = "MCB_BlendShapeLinkTest_Foldout";
+    private const string EnabledPrefKey = "MCB_BlendShapeLinkTest_Enabled";
+    private const string ToFixTypePrefKey = "MCB_BlendShapeLinkTest_ToFixType";
+    private const string ToFixPrefKey = "MCB_BlendShapeLinkTest_ToFix";
+    private const string FixedByTypePrefKey = "MCB_BlendShapeLinkTest_FixedByType";
+    private const string FixedByPrefKey = "MCB_BlendShapeLinkTest_FixedBy";
+    private const string SourceLegacyPrefKey = "MCB_BlendShapeLinkTest_Source";
+    private const string DestinationLegacyPrefKey = "MCB_BlendShapeLinkTest_Destination";
+    private const string ParamPrefKey = "MCB_BlendShapeLinkTest_Param";
+    private const string ActiveVersionLinksFoldoutPrefKey = "MCB_BlendShapeLinkTest_ActiveVersionLinksFoldout";
 
-    public BlendShapeLinkTestDrawer(UltiPawEditor editor)
+    public BlendShapeLinkTestDrawer(MCBEditor editor)
     {
         this.editor = editor;
         foldout = EditorPrefs.GetBool(FoldoutPrefKey, false);
@@ -68,7 +68,7 @@ public class BlendShapeLinkTestDrawer
             MessageType.Info
         );
 
-        GameObject avatarRoot = editor?.ultiPawTarget != null ? editor.ultiPawTarget.transform.root.gameObject : null;
+        GameObject avatarRoot = editor?.customBaseTarget != null ? editor.customBaseTarget.transform.root.gameObject : null;
         if (avatarRoot == null)
         {
             EditorGUILayout.HelpBox("Avatar root not found.", MessageType.Warning);
@@ -239,8 +239,8 @@ public class BlendShapeLinkTestDrawer
             return;
         }
 
-        EditorUtility.SetDirty(editor?.ultiPawTarget);
-        UltiPawLogger.Log("[UltiPaw] BlendShape factor link config saved.");
+        EditorUtility.SetDirty(editor?.customBaseTarget);
+        MCBLogger.Log("[MCB] BlendShape factor link config saved.");
         EditorUtility.DisplayDialog("BlendShape Factor Link", result.message, "Ok");
     }
 

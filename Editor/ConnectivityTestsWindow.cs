@@ -23,7 +23,7 @@ public class ConnectivityTestsWindow : EditorWindow
     private bool powerShellRunning;
 #endif
 
-    [MenuItem("Tools/UltiPaw/Connectivity Tests")]
+    [MenuItem("Tools/My Custom Base (MCB)/Connectivity Tests")]
     public static void ShowWindow()
     {
         var window = GetWindow<ConnectivityTestsWindow>("Connectivity Tests");
@@ -61,9 +61,9 @@ public class ConnectivityTestsWindow : EditorWindow
         GUILayout.Space(10);
         EditorGUILayout.LabelField("Connectivity Tests", EditorStyles.boldLabel);
         EditorGUILayout.HelpBox("Any HTTP response counts as reachable. Only transport failures trigger the diagnostics report.", MessageType.Info);
-        if (UltiPawUtils.apiSimulationMode != ApiSimulationMode.Off)
+        if (MCBUtils.apiSimulationMode != ApiSimulationMode.Off)
         {
-            EditorGUILayout.HelpBox("API simulation is active: " + UltiPawUtils.apiSimulationMode, MessageType.Warning);
+            EditorGUILayout.HelpBox("API simulation is active: " + MCBUtils.apiSimulationMode, MessageType.Warning);
         }
 
         using (new EditorGUILayout.HorizontalScope())

@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -13,7 +13,7 @@ public static class ArmatureMeshGenerator
     {
         if (avatarRoot == null)
         {
-            UltiPawLogger.LogError("Avatar root is null.");
+            MCBLogger.LogError("Avatar root is null.");
             return;
         }
 
@@ -21,7 +21,7 @@ public static class ArmatureMeshGenerator
         Transform armatureTransform = avatarRoot.transform.Find("Armature");
         if (armatureTransform == null)
         {
-            UltiPawLogger.LogError("Could not find 'Armature' child in avatar root.", avatarRoot);
+            MCBLogger.LogError("Could not find 'Armature' child in avatar root.", avatarRoot);
             return;
         }
 
@@ -40,14 +40,14 @@ public static class ArmatureMeshGenerator
 
         if (targetSkinnedMeshRenderer == null || targetSkinnedMeshRenderer.bones.Length == 0)
         {
-            UltiPawLogger.LogError("Could not find a SkinnedMeshRenderer that uses the main 'Armature'.", avatarRoot);
+            MCBLogger.LogError("Could not find a SkinnedMeshRenderer that uses the main 'Armature'.", avatarRoot);
             return;
         }
 
         Transform rootBone = targetSkinnedMeshRenderer.rootBone;
         if (rootBone == null)
         {
-            UltiPawLogger.LogError("SkinnedMeshRenderer is missing its root bone.", targetSkinnedMeshRenderer);
+            MCBLogger.LogError("SkinnedMeshRenderer is missing its root bone.", targetSkinnedMeshRenderer);
             return;
         }
         
@@ -118,18 +118,18 @@ public static class ArmatureMeshGenerator
         smr.rootBone = rootBone;
 
         // Load the custom material
-        string materialPath = Path.Combine(UltiPawUtils.PACKAGE_BASE_FOLDER, "ArmatureDebugMaterial.mat");
+        string materialPath = Path.Combine(MCBUtils.PACKAGE_BASE_FOLDER, "ArmatureDebugMaterial.mat");
         Material debugMaterial = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
         
         if (debugMaterial == null)
         {
-            UltiPawLogger.LogWarning($"Could not find ArmatureDebugMaterial at {materialPath}. Creating fallback material.");
+            MCBLogger.LogWarning($"Could not find ArmatureDebugMaterial at {materialPath}. Creating fallback material.");
             debugMaterial = CreateFallbackMaterial();
         }
         
         smr.sharedMaterial = debugMaterial;
         
-        UltiPawLogger.Log($"Generated armature mesh '{meshType}' successfully using main Armature.", meshGo);
+        MCBLogger.Log($"Generated armature mesh '{meshType}' successfully using main Armature.", meshGo);
     }
 
     private static Material CreateFallbackMaterial()
@@ -228,7 +228,7 @@ public static class ArmatureMeshGenerator
         }
         else
         {
-            UltiPawLogger.LogWarning($"Bone '{boneHead.name}' not in map.", boneHead);
+            MCBLogger.LogWarning($"Bone '{boneHead.name}' not in map.", boneHead);
             for(int i = 0; i < 8; i++) boneWeights.Add(new BoneWeight());
         }
     }

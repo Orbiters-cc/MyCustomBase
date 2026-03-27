@@ -18,7 +18,7 @@
 
 1. Manual link (Advanced Mode test drawer)
 - UI: `Editor/Features/BlendShapeLinkTestDrawer.cs`
-- Saved as persistent config in `UltiPaw.blendShapeFactorLinks`.
+- Saved as persistent config in `MyCustomBase.blendShapeFactorLinks`.
 - Fields:
   - target renderer path
   - `toFixType`, `toFix`
@@ -28,7 +28,7 @@
 
 2. Current-version links (version JSON corrective definitions)
 - Source data: `customBlendshapes[].correctives` (mapped internally to `correctiveBlendshapes`).
-- Runtime/build fallback cache: `UltiPaw.appliedVersionBlendshapeLinksCache`.
+- Runtime/build fallback cache: `MyCustomBase.appliedVersionBlendshapeLinksCache`.
 - Links are generated per renderer when either side uses `Blendshape` (all skinned meshes, not only Body).
 - Links with `Animation -> Animation` are generated once (no renderer path dependency).
 - Factor selection:
@@ -91,8 +91,8 @@
 
 ### Clone / Upload Robustness
 - Preprocess may run on cloned avatar objects with editor-only components missing.
-- `BlendShapeLinkService.FindUltiPaw` includes fallback lookup by root name against scene `UltiPaw` instances.
-- Version links additionally fall back to serialized cache (`appliedVersionBlendshapeLinksCache`) when `appliedUltiPawVersion` is unavailable.
+- `BlendShapeLinkService.FindCustomBase` includes fallback lookup by root name against scene `My Custom Base` instances.
+- Version links additionally fall back to serialized cache (`appliedVersionBlendshapeLinksCache`) when `appliedCustomBaseVersion` is unavailable.
 
 ### Version Cache Synchronization
 - `Editor/Features/VersionManagement/VersionActions.cs` synchronizes version blendshape cache:

@@ -4,6 +4,7 @@ using VRC.SDKBase;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Scripting.APIUpdating;
 using UnityEngine.Serialization;
 
 // Represents a blendshape with a default value in creator mode.
@@ -43,8 +44,9 @@ public class BlendShapeFactorLinkEntry
 }
 
 // This component is a pure data container for an avatar that has been modified
-// by UltiPaw. It holds only the state that needs to be saved with the scene/prefab.
-public class UltiPaw : MonoBehaviour
+// by the custom base workflow. It holds only the state that needs to be saved with the scene/prefab.
+[AddComponentMenu("Orbiters/My Custom Base (MCB)")]
+public class MyCustomBase : MonoBehaviour
 #if UNITY_EDITOR
     , IEditorOnly
 #endif
@@ -53,12 +55,12 @@ public class UltiPaw : MonoBehaviour
     [Tooltip("If checked, you must manually assign the FBX file below. If unchecked, the tool will try to find it automatically.")]
     public bool specifyCustomBaseFbx = false;
 
-    [Tooltip("The base FBX file for this avatar. Used to find compatible UltiPaw versions.")]
+    [Tooltip("The base FBX file for this avatar. Used to find compatible custom base versions.")]
     public List<GameObject> baseFbxFiles = new List<GameObject>();
 
     // --- APPLIED STATE ---
-    [Tooltip("The version information of the UltiPaw modification that is currently applied to this avatar's FBX.")]
-    [HideInInspector] public UltiPawVersion appliedUltiPawVersion = null;
+    [Tooltip("The version information of the custom base modification that is currently applied to this avatar's FBX.")]
+    [HideInInspector] [FormerlySerializedAs("appliedUltiPawVersion")] public CustomBaseVersion appliedCustomBaseVersion = null;
 
     [Tooltip("Stores the current values of the custom blendshape sliders.")]
     [HideInInspector] public List<float> blendShapeValues = new List<float>();
@@ -81,7 +83,7 @@ public class UltiPaw : MonoBehaviour
     [HideInInspector] public bool useAPoseForDynamicNormals = true;
 
     [Tooltip("The name of the sliders sub-menu in the VRChat expressions menu.")]
-    [HideInInspector] public string slidersMenuName = "UltiPaw sliders";
+    [HideInInspector] public string slidersMenuName = "MCB sliders";
 
     [Tooltip("Whether the sliders GameObject is active or inactive (overriding version defaults).")]
     [HideInInspector] [SerializeField] public bool useCustomSlidersState = false;
@@ -104,7 +106,7 @@ public class UltiPaw : MonoBehaviour
     // --- CREATOR MODE PERSISTENT DATA ---
     [HideInInspector] public bool isCreatorMode = false;
     [HideInInspector] public GameObject customFbxForCreator;
-    [HideInInspector] public Avatar ultipawAvatarForCreatorProp;
+    [HideInInspector] [FormerlySerializedAs("ultipawAvatarForCreatorProp")] public Avatar customBaseAvatarForCreatorProp;
     [HideInInspector] public GameObject avatarLogicPrefab;
     [HideInInspector] public bool includeCustomVeinsForCreator = false;
     [HideInInspector] public Texture2D customVeinsNormalMap;

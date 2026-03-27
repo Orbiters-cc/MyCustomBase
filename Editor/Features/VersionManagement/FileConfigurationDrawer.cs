@@ -1,16 +1,16 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UltiPawEditorUtils;
+using MCBEditorUtils;
 
 public class FileConfigurationDrawer
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly VersionActions actions;
 
-    public FileConfigurationDrawer(UltiPawEditor editor, VersionActions actions)
+    public FileConfigurationDrawer(MCBEditor editor, VersionActions actions)
     {
         this.editor = editor;
         this.actions = actions;
@@ -79,7 +79,7 @@ public class FileConfigurationDrawer
 
     private void AutoDetectBaseFbxViaHierarchy()
     {
-        var root = editor.ultiPawTarget.transform.root;
+        var root = editor.customBaseTarget.transform.root;
         var bodySmr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
         
         if (bodySmr?.sharedMesh == null) return;

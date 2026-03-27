@@ -117,20 +117,20 @@ public class LiveAvatarControllerService
         var selected = Selection.activeGameObject;
         if (selected == null)
         {
-            var allUltiPaws = Resources.FindObjectsOfTypeAll<UltiPaw>();
-            var anyUltiPaw = allUltiPaws.FirstOrDefault(x =>
+            var allCustomBases = Resources.FindObjectsOfTypeAll<MyCustomBase>();
+            var anyCustomBase = allCustomBases.FirstOrDefault(x =>
                 x != null &&
                 x.gameObject != null &&
                 x.gameObject.scene.IsValid());
-            if (anyUltiPaw != null) return anyUltiPaw.transform.root.gameObject;
+            if (anyCustomBase != null) return anyCustomBase.transform.root.gameObject;
             return null;
         }
 
-        var ultiPaw = selected.GetComponentInParent<UltiPaw>();
-        if (ultiPaw != null) return ultiPaw.transform.root.gameObject;
+        var customBase = selected.GetComponentInParent<MyCustomBase>();
+        if (customBase != null) return customBase.transform.root.gameObject;
 
-        ultiPaw = selected.GetComponentInChildren<UltiPaw>(true);
-        if (ultiPaw != null) return ultiPaw.transform.root.gameObject;
+        customBase = selected.GetComponentInChildren<MyCustomBase>(true);
+        if (customBase != null) return customBase.transform.root.gameObject;
 
         var descriptor = selected.GetComponentInParent<VRCAvatarDescriptor>();
         if (descriptor != null) return descriptor.transform.root.gameObject;

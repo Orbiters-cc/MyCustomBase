@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.IO;
 using System.Security.Cryptography;
@@ -39,7 +39,7 @@ public class AsyncHashService
     {
         if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
         {
-            UltiPawLogger.LogError($"[AsyncHashService] File not found: {filePath}");
+            MCBLogger.LogError($"[AsyncHashService] File not found: {filePath}");
             return null;
         }
 
@@ -50,7 +50,7 @@ public class AsyncHashService
         string cachedHash = PersistentCache.Instance.GetCachedHash(normalizedPath);
         if (!string.IsNullOrEmpty(cachedHash))
         {
-            UltiPawLogger.Log($"[AsyncHashService] Using cached hash for: {Path.GetFileName(normalizedPath)}");
+            MCBLogger.Log($"[AsyncHashService] Using cached hash for: {Path.GetFileName(normalizedPath)}");
             return cachedHash;
         }
 
@@ -102,7 +102,7 @@ public class AsyncHashService
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[AsyncHashService] Hash calculation failed for {fileName}: {ex.Message}");
+            MCBLogger.LogError($"[AsyncHashService] Hash calculation failed for {fileName}: {ex.Message}");
             taskManager.CompleteTask(taskId, true, ex.Message);
             return null;
         }
@@ -214,7 +214,7 @@ public class AsyncHashService
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[AsyncHashService] FBX hash calculation failed: {ex.Message}");
+            MCBLogger.LogError($"[AsyncHashService] FBX hash calculation failed: {ex.Message}");
             taskManager.CompleteTask(taskId, true, ex.Message);
             return (null, null);
         }
@@ -232,11 +232,11 @@ public class AsyncHashService
         {
             string normalized = Path.GetFullPath(filePath);
             PersistentCache.Instance.InvalidateHash(normalized);
-            UltiPawLogger.Log($"[AsyncHashService] Hash cache invalidated for: {Path.GetFileName(normalized)}");
+            MCBLogger.Log($"[AsyncHashService] Hash cache invalidated for: {Path.GetFileName(normalized)}");
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[AsyncHashService] Failed to invalidate hash cache: {ex.Message}");
+            MCBLogger.LogError($"[AsyncHashService] Failed to invalidate hash cache: {ex.Message}");
         }
     }
 
@@ -297,7 +297,7 @@ public class AsyncHashService
     public void ClearHashCache()
     {
         PersistentCache.Instance.ClearHashCache();
-        UltiPawLogger.Log("[AsyncHashService] Hash cache cleared.");
+        MCBLogger.Log("[AsyncHashService] Hash cache cleared.");
     }
 }
 #endif

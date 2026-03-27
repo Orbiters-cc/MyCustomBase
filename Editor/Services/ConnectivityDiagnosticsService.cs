@@ -50,12 +50,12 @@ public sealed class ConnectivityProbeResult
 }
 
 [InitializeOnLoad]
-public static class UltiPawConnectivityMonitor
+public static class MCBConnectivityMonitor
 {
-    private const string SessionKey = "UltiPaw.PackageConnectivity.Started";
-    private const string ReachabilityKey = "UltiPaw.PackageConnectivity.Reachable";
-    private const string FailureReportKey = "UltiPaw.PackageConnectivity.Report";
-    private const string LastUrlKey = "UltiPaw.PackageConnectivity.Url";
+    private const string SessionKey = "MCB.PackageConnectivity.Started";
+    private const string ReachabilityKey = "MCB.PackageConnectivity.Reachable";
+    private const string FailureReportKey = "MCB.PackageConnectivity.Report";
+    private const string LastUrlKey = "MCB.PackageConnectivity.Url";
 
     public static bool HasCompleted { get; private set; }
     public static bool IsRunning { get; private set; }
@@ -65,7 +65,7 @@ public static class UltiPawConnectivityMonitor
 
     public static event Action StatusChanged;
 
-    static UltiPawConnectivityMonitor()
+    static MCBConnectivityMonitor()
     {
         HasCompleted = SessionState.GetBool(SessionKey, false);
         CanReachServer = SessionState.GetBool(ReachabilityKey, false);
@@ -157,7 +157,7 @@ public static class ConnectivityDiagnosticsService
 {
     public static string BuildConnectivityCheckUrl(string authToken = null)
     {
-        string url = UltiPawUtils.getApiUrl() + UltiPawUtils.CHECK_CONNECTION_ENDPOINT;
+        string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT;
         return string.IsNullOrEmpty(authToken)
             ? url
             : url + "?t=" + Uri.EscapeDataString(authToken);

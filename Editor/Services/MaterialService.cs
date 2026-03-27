@@ -1,11 +1,11 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UltiPawEditorUtils;
+using MCBEditorUtils;
 
 public class MaterialService
 {
@@ -202,13 +202,13 @@ public class MaterialService
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
             return false;
         }
 
         if (!IsShaderSupported(material.shader.name))
         {
-            UltiPawLogger.LogError($"[MaterialService] Shader '{material.shader.name}' is not supported");
+            MCBLogger.LogError($"[MaterialService] Shader '{material.shader.name}' is not supported");
             return false;
         }
 
@@ -216,15 +216,15 @@ public class MaterialService
         Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(filePath);
         if (texture == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] Could not load texture from path: {filePath}");
+            MCBLogger.LogError($"[MaterialService] Could not load texture from path: {filePath}");
             return false;
         }
 
         // Set the detail normal map property
-        PrepareMaterialEdit(smr, material, "UltiPaw Apply Detail Normal Map");
+        PrepareMaterialEdit(smr, material, "MCB Apply Detail Normal Map");
         if (!TrySetDetailNormalTexture(material, texture))
         {
-            UltiPawLogger.LogError("[MaterialService] Unable to find detail normal texture property on material");
+            MCBLogger.LogError("[MaterialService] Unable to find detail normal texture property on material");
             return false;
         }
         EnableDetailNormalFeatures(material);
@@ -232,7 +232,7 @@ public class MaterialService
         AssetDatabase.SaveAssets(); // Force save to disk
         AssetDatabase.Refresh(); // Force asset refresh
         
-        UltiPawLogger.Log($"[MaterialService] Set detail normal map on {materialSlot} material to: {filePath}");
+        MCBLogger.Log($"[MaterialService] Set detail normal map on {materialSlot} material to: {filePath}");
         return true;
     }
 
@@ -247,25 +247,25 @@ public class MaterialService
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
             return false;
         }
 
         if (!IsShaderSupported(material.shader.name))
         {
-            UltiPawLogger.LogError($"[MaterialService] Shader '{material.shader.name}' is not supported");
+            MCBLogger.LogError($"[MaterialService] Shader '{material.shader.name}' is not supported");
             return false;
         }
 
         // Set the detail normal map scale property
-        PrepareMaterialEdit(smr, material, "UltiPaw Update Detail Normal Opacity");
+        PrepareMaterialEdit(smr, material, "MCB Update Detail Normal Opacity");
         EnableDetailNormalFeatures(material);
         ApplyDetailNormalOpacity(material, opacity);
         FinalizeMaterialEdit(smr, material);
         AssetDatabase.SaveAssets(); // Force save to disk
         AssetDatabase.Refresh(); // Force asset refresh
         
-        UltiPawLogger.Log($"[MaterialService] Set detail normal map opacity on {materialSlot} material to: {opacity}");
+        MCBLogger.Log($"[MaterialService] Set detail normal map opacity on {materialSlot} material to: {opacity}");
         return true;
     }
 
@@ -280,21 +280,21 @@ public class MaterialService
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
             return false;
         }
 
         if (!IsShaderSupported(material.shader.name))
         {
-            UltiPawLogger.LogError($"[MaterialService] Shader '{material.shader.name}' is not supported");
+            MCBLogger.LogError($"[MaterialService] Shader '{material.shader.name}' is not supported");
             return false;
         }
 
         // Remove the detail normal map by setting it to null
-        PrepareMaterialEdit(smr, material, "UltiPaw Remove Detail Normal Map");
+        PrepareMaterialEdit(smr, material, "MCB Remove Detail Normal Map");
         if (!TrySetDetailNormalTexture(material, null))
         {
-            UltiPawLogger.LogError("[MaterialService] Unable to clear detail normal texture on material");
+            MCBLogger.LogError("[MaterialService] Unable to clear detail normal texture on material");
             return false;
         }
         ApplyDetailNormalOpacity(material, 0f);
@@ -303,7 +303,7 @@ public class MaterialService
         AssetDatabase.SaveAssets(); // Force save to disk
         AssetDatabase.Refresh(); // Force asset refresh
         
-        UltiPawLogger.Log($"[MaterialService] Removed detail normal map from {materialSlot} material");
+        MCBLogger.Log($"[MaterialService] Removed detail normal map from {materialSlot} material");
         return true;
     }
 
@@ -355,19 +355,19 @@ public class MaterialService
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
             return false;
         }
 
         if (!material.HasProperty(LightingModeProperty))
         {
-            UltiPawLogger.LogError($"[MaterialService] Material on '{materialSlot}' does not expose property {LightingModeProperty}");
+            MCBLogger.LogError($"[MaterialService] Material on '{materialSlot}' does not expose property {LightingModeProperty}");
             return false;
         }
 
         lightingModeIndex = Mathf.Clamp(lightingModeIndex, 0, LightingModeKeywords.Length - 1);
 
-        PrepareMaterialEdit(smr, material, "UltiPaw Set Lighting Mode");
+        PrepareMaterialEdit(smr, material, "MCB Set Lighting Mode");
 
         material.SetFloat(LightingModeProperty, lightingModeIndex);
         ApplyLightingModeKeywords(material, lightingModeIndex);
@@ -383,7 +383,7 @@ public class MaterialService
     {
         if (avatarRoot == null)
         {
-            UltiPawLogger.LogError("[MaterialService] Avatar root is null");
+            MCBLogger.LogError("[MaterialService] Avatar root is null");
             return null;
         }
 
@@ -392,7 +392,7 @@ public class MaterialService
 
         if (smr == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] Could not find SkinnedMeshRenderer with name: {materialSlot}");
+            MCBLogger.LogError($"[MaterialService] Could not find SkinnedMeshRenderer with name: {materialSlot}");
             return null;
         }
 
@@ -410,7 +410,7 @@ public class MaterialService
         // Get the shared material (the actual material asset, not an instance)
         if (smr.sharedMaterial == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
             return null;
         }
 
@@ -587,7 +587,7 @@ public class MaterialService
         else if (enable)
         {
             // Only log error when trying to enable and no valid keyword was found
-            UltiPawLogger.LogError($"[MaterialService] No valid detail normal keyword found in shader '{shader.name}'. Please report this shader for support.");
+            MCBLogger.LogError($"[MaterialService] No valid detail normal keyword found in shader '{shader.name}'. Please report this shader for support.");
         }
 
 #pragma warning disable CS0618
@@ -709,7 +709,7 @@ public class MaterialService
     {
         if (material == null)
         {
-            UltiPawLogger.LogError("[MaterialService] Material is null");
+            MCBLogger.LogError("[MaterialService] Material is null");
             return false;
         }
 
@@ -717,14 +717,14 @@ public class MaterialService
 
         if (!lockedShader.name.StartsWith("Hidden/", StringComparison.Ordinal))
         {
-            UltiPawLogger.LogWarning($"[MaterialService] Shader {lockedShader.name} is not locked");
+            MCBLogger.LogWarning($"[MaterialService] Shader {lockedShader.name} is not locked");
             return true;
         }
 
         string originalShaderName = material.GetTag("OriginalShader", false, string.Empty);
         if (string.IsNullOrEmpty(originalShaderName))
         {
-            UltiPawLogger.LogError("[MaterialService] Original shader name not saved to material, could not unlock");
+            MCBLogger.LogError("[MaterialService] Original shader name not saved to material, could not unlock");
             return false;
         }
 
@@ -732,18 +732,18 @@ public class MaterialService
 
         if (originalShader == null)
         {
-            UltiPawLogger.LogWarning($"[MaterialService] Original shader '{originalShaderName}' could not be found by exact match, trying fallback strategies...");
+            MCBLogger.LogWarning($"[MaterialService] Original shader '{originalShaderName}' could not be found by exact match, trying fallback strategies...");
             originalShader = FindShaderByBaseName(originalShaderName);
 
             if (originalShader != null)
             {
-                UltiPawLogger.Log($"[MaterialService] Found similar shader '{originalShader.name}' by base name matching");
+                MCBLogger.Log($"[MaterialService] Found similar shader '{originalShader.name}' by base name matching");
             }
         }
 
         if (originalShader == null)
         {
-            UltiPawLogger.LogError($"[MaterialService] Could not find any matching shader for '{originalShaderName}'");
+            MCBLogger.LogError($"[MaterialService] Could not find any matching shader for '{originalShaderName}'");
             return false;
         }
 
@@ -764,7 +764,7 @@ public class MaterialService
 
         EditorUtility.SetDirty(material);
 
-        UltiPawLogger.Log($"[MaterialService] Successfully unlocked material shader from '{lockedShader.name}' to '{originalShader.name}'");
+        MCBLogger.Log($"[MaterialService] Successfully unlocked material shader from '{lockedShader.name}' to '{originalShader.name}'");
         return true;
     }
 

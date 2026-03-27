@@ -1,4 +1,4 @@
-﻿
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -9,7 +9,7 @@ using UnityEngine;
 
 public class VersionListDrawer
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly VersionActions actions;
     
     // UI State
@@ -18,18 +18,18 @@ public class VersionListDrawer
     private static bool isListCollapsed = true;
     
     // Special reset version identifier
-    public static readonly UltiPawVersion RESET_VERSION = new UltiPawVersion
+    public static readonly CustomBaseVersion RESET_VERSION = new CustomBaseVersion
     {
         version = "Base Default Winterpaw",
         scope = Scope.PUBLIC,
-        changelog = "Reset to the original avatar configuration without any UltiPaw modifications."
+        changelog = "Reset to the original avatar configuration without any custom base modifications."
     };
     
     // Cached textures for collapse/expand icons
     private static Texture2D collapseIcon;
     private static Texture2D expandIcon;
 
-    public VersionListDrawer(UltiPawEditor editor, VersionActions actions)
+    public VersionListDrawer(MCBEditor editor, VersionActions actions)
     {
         this.editor = editor;
         this.actions = actions;
@@ -39,9 +39,9 @@ public class VersionListDrawer
     private void LoadIcons()
     {
         if (collapseIcon == null)
-            collapseIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/collapse.png");
+            collapseIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/collapse.png");
         if (expandIcon == null)
-            expandIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/expand.png");
+            expandIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/expand.png");
     }
 
     public void Draw()
@@ -53,7 +53,7 @@ public class VersionListDrawer
         {
             if (editor.currentIsCustom && !editor.customWarningShown)
             {
-                EditorGUILayout.HelpBox("The current custom version of your Winterpaw is not supported. If you update it to one of the UltiPaw versions, you may lose some custom features or blendshapes of your custom Winterpaw base.", MessageType.Warning);
+                EditorGUILayout.HelpBox("The current custom version of your Winterpaw is not supported. If you update it to one of the custom base versions, you may lose some custom features or blendshapes of your custom Winterpaw base.", MessageType.Warning);
                 editor.customWarningShown = true;
             }
         }
@@ -117,7 +117,7 @@ public class VersionListDrawer
     {
         EditorGUILayout.BeginHorizontal();
         
-        EditorGUILayout.LabelField("UltiPaw Versions", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Custom Base Versions", EditorStyles.boldLabel);
         GUILayout.FlexibleSpace();
         
         EditorGUI.BeginChangeCheck();
@@ -452,12 +452,12 @@ public class VersionListDrawer
         }
     }
 
-    private void DrawVersionListItem(UltiPawVersion ver, bool isFirst, bool isLast)
+    private void DrawVersionListItem(CustomBaseVersion ver, bool isFirst, bool isLast)
     {
-        string versionFolderPath = UltiPawUtils.GetVersionDataPath(ver.version, ver.defaultAviVersion);
+        string versionFolderPath = MCBUtils.GetVersionDataPath(ver.version, ver.defaultAviVersion);
         bool hasLocalContent = !string.IsNullOrEmpty(versionFolderPath) && Directory.Exists(Path.GetFullPath(versionFolderPath));
         bool isSelected = ver.Equals(editor.selectedVersionForAction);
-        bool isApplied = ver.Equals(editor.ultiPawTarget.appliedUltiPawVersion);
+        bool isApplied = ver.Equals(editor.customBaseTarget.appliedCustomBaseVersion);
 
         DrawVersionItemInternal(ver, isFirst, isLast, isSelected, isApplied, () => {
             // Vertically center the version label and user info with the helpbox
@@ -465,7 +465,7 @@ public class VersionListDrawer
             GUILayout.FlexibleSpace();
             
             EditorGUILayout.BeginHorizontal();
-            GUILayout.Label($"UltiPaw {ver.version}", GUILayout.Width(100));
+            GUILayout.Label($"Custom Base {ver.version}", GUILayout.Width(100));
             
             // Draw user info if available and not unsubmitted
             if (ver.uploaderId > 0)
@@ -577,7 +577,7 @@ public class VersionListDrawer
         return (a + b).ToUpperInvariant();
     }
 
-    private void DrawActionIcons(UltiPawVersion ver, bool hasLocalContent)
+    private void DrawActionIcons(CustomBaseVersion ver, bool hasLocalContent)
     {
         EditorGUILayout.BeginVertical();
         GUILayout.FlexibleSpace();
@@ -633,7 +633,7 @@ public class VersionListDrawer
             }
         }
         
-        if (hasLocalContent && editor.ultiPawTarget != null && editor.ultiPawTarget.isCreatorMode)
+        if (hasLocalContent && editor.customBaseTarget != null && editor.customBaseTarget.isCreatorMode)
         {
             var exportIcon = EditorGUIUtility.IconContent("SaveAs");
             Rect exportRect = GUILayoutUtility.GetRect(22, 22, GUILayout.Width(22), GUILayout.Height(22));
@@ -692,8 +692,8 @@ public class VersionListDrawer
     {
         bool isSelected = RESET_VERSION.Equals(editor.selectedVersionForAction);
         var fileManagerService = new FileManagerService();
-        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isUltiPaw;
-        bool isApplied = !editor.isUltiPaw && !editor.currentIsCustom; // Reset is "applied" when we're not in UltiPaw state and not in custom state
+        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isCustomBase;
+        bool isApplied = !editor.isCustomBase && !editor.currentIsCustom; // Reset is "applied" when we're not in custom base state and not in custom state
 
         DrawVersionItemInternal(RESET_VERSION, isFirst, true, isSelected, isApplied, () => {
             // Vertically center the reset label with the helpbox
@@ -750,7 +750,7 @@ public class VersionListDrawer
         }, canReset ? null : "No backup available");
     }
     
-    private void DrawVersionItemInternal(UltiPawVersion ver, bool isFirst, bool isLast, bool isSelected, bool isApplied, System.Action drawContent, string disabledReason = null, System.Action onSelected = null, string changelogKeyOverride = null, string changelogTextOverride = null)
+    private void DrawVersionItemInternal(CustomBaseVersion ver, bool isFirst, bool isLast, bool isSelected, bool isApplied, System.Action drawContent, string disabledReason = null, System.Action onSelected = null, string changelogKeyOverride = null, string changelogTextOverride = null)
     {
         bool isDisabled = !string.IsNullOrEmpty(disabledReason);
         
@@ -922,7 +922,7 @@ public class VersionListDrawer
     public void DrawUpdateNotification()
     {
         var recommended = editor.recommendedVersion;
-        var applied = editor.ultiPawTarget.appliedUltiPawVersion;
+        var applied = editor.customBaseTarget.appliedCustomBaseVersion;
 
         if (recommended != null && applied != null && editor.CompareVersions(recommended.version, applied.version) > 0)
         {

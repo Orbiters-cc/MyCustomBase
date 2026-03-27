@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -55,7 +55,7 @@ public class FileManagerService
     public void ForceRestoreBackupAtPath(string unityFbxPath)
     {
         if (string.IsNullOrEmpty(unityFbxPath)) throw new ArgumentNullException(nameof(unityFbxPath));
-        string unityPath = UltiPawUtils.ToUnityPath(unityFbxPath);
+        string unityPath = MCBUtils.ToUnityPath(unityFbxPath);
         string fullFbxPath = Path.GetFullPath(unityPath);
         string fullBackupPath = fullFbxPath + OriginalSuffix;
 
@@ -128,9 +128,9 @@ public class FileManagerService
     public void RemoveExistingLogic(Transform root)
     {
         if (root == null) return;
-        // Remove any instances named "ultipaw logic" or "debug" anywhere under the avatar root (case-insensitive)
+        // Remove any instances named "mcb logic" or "debug" anywhere under the avatar root (case-insensitive)
         var targets = root.GetComponentsInChildren<Transform>(true)
-            .Where(t => t != null && (string.Equals(t.name, "ultipaw logic", StringComparison.OrdinalIgnoreCase)
+            .Where(t => t != null && (string.Equals(t.name, "mcb logic", StringComparison.OrdinalIgnoreCase)
                                       || string.Equals(t.name, "debug", StringComparison.OrdinalIgnoreCase)))
             .Select(t => t.gameObject)
             .Distinct()
@@ -145,12 +145,12 @@ public class FileManagerService
     {
         if (fbx == null || string.IsNullOrEmpty(avatarPath)) return;
 
-        string unityAvatarPath = UltiPawUtils.ToUnityPath(avatarPath);
+        string unityAvatarPath = MCBUtils.ToUnityPath(avatarPath);
         string absoluteAvatarPath = Path.GetFullPath(unityAvatarPath);
         if (!File.Exists(absoluteAvatarPath)) return;
 
         // FIX: Re-enabled the actual avatar application logic. This call re-imports the model with the new avatar.
-        UltiPawAvatarUtility.ApplyExternalAvatar(fbx, unityAvatarPath);
+        CustomBaseAvatarUtility.ApplyExternalAvatar(fbx, unityAvatarPath);
 
         SetRootAnimatorAvatar(root, unityAvatarPath);
     }
@@ -159,46 +159,46 @@ public class FileManagerService
     {
         if (string.IsNullOrEmpty(packagePath) || parent == null) return;
 
-        string unityPackagePath = UltiPawUtils.ToUnityPath(packagePath);
+        string unityPackagePath = MCBUtils.ToUnityPath(packagePath);
         string absolutePackagePath = Path.GetFullPath(unityPackagePath);
         
         // Import the unitypackage if it exists
         if (File.Exists(absolutePackagePath))
         {
-            UltiPawLogger.Log($"[FileManager] Importing unity package at {unityPackagePath}");
+            MCBLogger.Log($"[FileManager] Importing unity package at {unityPackagePath}");
             AssetDatabase.ImportPackage(unityPackagePath, false);
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-            UltiPawLogger.Log("[FileManager] Unity package import completed.");
+            MCBLogger.Log("[FileManager] Unity package import completed.");
         }
         else
         {
-            UltiPawLogger.LogWarning($"[FileManager] Unity package not found at '{absolutePackagePath}'.");
+            MCBLogger.LogWarning($"[FileManager] Unity package not found at '{absolutePackagePath}'.");
         }
         
-        string versionDataFolderUnity = UltiPawUtils.ToUnityPath(Path.GetDirectoryName(unityPackagePath));
-        string prefabPath = UltiPawUtils.CombineUnityPath(versionDataFolderUnity, "ultipaw logic.prefab");
+        string versionDataFolderUnity = MCBUtils.ToUnityPath(Path.GetDirectoryName(unityPackagePath));
+        string prefabPath = MCBUtils.CombineUnityPath(versionDataFolderUnity, "mcb logic.prefab");
         string absolutePrefabPath = Path.GetFullPath(prefabPath);
 
         if (!File.Exists(absolutePrefabPath))
         {
-            UltiPawLogger.LogWarning($"[FileManager] Expected prefab not found at '{absolutePrefabPath}'.");
+            MCBLogger.LogWarning($"[FileManager] Expected prefab not found at '{absolutePrefabPath}'.");
             return;
         }
 
-        UltiPawLogger.Log($"[FileManager] Importing logic prefab at {prefabPath}");
+        MCBLogger.Log($"[FileManager] Importing logic prefab at {prefabPath}");
         AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-        UltiPawLogger.Log("[FileManager] Logic prefab import completed.");
+        MCBLogger.Log("[FileManager] Logic prefab import completed.");
 
         GameObject logicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
         if (logicPrefab != null)
         {
             var instance = (GameObject)PrefabUtility.InstantiatePrefab(logicPrefab, parent);
-            instance.name = "ultipaw logic";
-            Undo.RegisterCreatedObjectUndo(instance, "Install UltiPaw Logic");
+            instance.name = "mcb logic";
+            Undo.RegisterCreatedObjectUndo(instance, "Install MCB Logic");
         }
         else
         {
-            UltiPawLogger.LogWarning($"[FileManager] Could not load prefab at '{prefabPath}'.");
+            MCBLogger.LogWarning($"[FileManager] Could not load prefab at '{prefabPath}'.");
         }
     }
 
@@ -261,7 +261,7 @@ public class FileManagerService
                 }
                 catch (Exception ex)
                 {
-                    UltiPawLogger.LogWarning($"Failed to parse {packageJsonPath}: {ex.Message}");
+                    MCBLogger.LogWarning($"Failed to parse {packageJsonPath}: {ex.Message}");
                 }
             }
         }
@@ -271,12 +271,12 @@ public class FileManagerService
     [Serializable]
     private class PackageJson { public string name; public string version; }
 
-    public void ExportOfflineVersionPackage(UltiPawVersion version, string outputUnityPackagePath)
+    public void ExportOfflineVersionPackage(CustomBaseVersion version, string outputUnityPackagePath)
     {
         if (version == null) throw new ArgumentNullException(nameof(version));
         if (string.IsNullOrWhiteSpace(outputUnityPackagePath)) throw new ArgumentNullException(nameof(outputUnityPackagePath));
 
-        string versionFolderUnityPath = UltiPawUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string versionFolderUnityPath = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
         if (string.IsNullOrWhiteSpace(versionFolderUnityPath))
             throw new InvalidOperationException("Version folder path could not be resolved.");
 
@@ -284,14 +284,14 @@ public class FileManagerService
         if (!Directory.Exists(versionFolderFullPath))
             throw new DirectoryNotFoundException($"Version folder not found: {versionFolderFullPath}");
 
-        string versionJsonUnityPath = UltiPawUtils.CombineUnityPath(versionFolderUnityPath, "version.json");
+        string versionJsonUnityPath = MCBUtils.CombineUnityPath(versionFolderUnityPath, "version.json");
         string versionJsonFullPath = Path.GetFullPath(versionJsonUnityPath);
         bool versionJsonExisted = File.Exists(versionJsonFullPath);
         string metadataJson = JsonConvert.SerializeObject(version, Formatting.Indented, new StringEnumConverter());
 
         try
         {
-            UltiPawUtils.EnsureDirectoryExists(versionJsonUnityPath);
+            MCBUtils.EnsureDirectoryExists(versionJsonUnityPath);
             File.WriteAllText(versionJsonFullPath, metadataJson);
             AssetDatabase.ImportAsset(versionJsonUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 
@@ -318,30 +318,30 @@ public class FileManagerService
         string baseFbxVersion,
         string originalFbxPath,
         GameObject customFbx,
-        Avatar ultipawAvatar,
+        Avatar customBaseAvatar,
         GameObject logicPrefab,
-        UltiPawVersion parentVersion,
+        CustomBaseVersion parentVersion,
         bool includeCustomVeins,
         Texture2D customVeinsTexture,
         IEnumerable<string> additionalAnimationAssetPaths = null)
     {
-        string newVersionDataPath = UltiPawUtils.GetVersionDataPath(newVersionString, baseFbxVersion);
+        string newVersionDataPath = MCBUtils.GetVersionDataPath(newVersionString, baseFbxVersion);
         string newVersionDataFullPath = Path.GetFullPath(newVersionDataPath);
-        string tempZipPath = Path.Combine(Path.GetTempPath(), $"ultipaw_upload_{Guid.NewGuid()}.zip");
+        string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_{Guid.NewGuid()}.zip");
 
         try
         {
-            UltiPawUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
+            MCBUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
             
             // 1. Copy Avatars
-            string ultipawAvatarSourcePath = AssetDatabase.GetAssetPath(ultipawAvatar);
-            AssetDatabase.CopyAsset(ultipawAvatarSourcePath, UltiPawUtils.CombineUnityPath(newVersionDataPath, UltiPawUtils.ULTIPAW_AVATAR_NAME));
+            string customBaseAvatarSourcePath = AssetDatabase.GetAssetPath(customBaseAvatar);
+            AssetDatabase.CopyAsset(customBaseAvatarSourcePath, MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.CUSTOM_BASE_AVATAR_NAME));
             
-            string defaultAvatarSourcePath = "Packages/ultipaw/creator assets/default avatar.asset";
+            string defaultAvatarSourcePath = "Packages/orbiters.mcb/creator assets/default avatar.asset";
             var defaultAvatarAsset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(defaultAvatarSourcePath);
             if (defaultAvatarAsset == null)
-                throw new FileNotFoundException("Could not find the required 'default avatar.asset' in 'Packages/ultipaw/creator assets'.");
-            AssetDatabase.CopyAsset(defaultAvatarSourcePath, UltiPawUtils.CombineUnityPath(newVersionDataPath, UltiPawUtils.DEFAULT_AVATAR_NAME));
+                throw new FileNotFoundException("Could not find the required 'default avatar.asset' in 'Packages/orbiters.mcb/creator assets'.");
+            AssetDatabase.CopyAsset(defaultAvatarSourcePath, MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.DEFAULT_AVATAR_NAME));
 
             // 2. Create .bin file (Encrypt custom FBX against original base FBX)
             string customFbxPath = AssetDatabase.GetAssetPath(customFbx);
@@ -349,15 +349,15 @@ public class FileManagerService
             byte[] targetData = File.ReadAllBytes(customFbxPath);
             // In this case, we are creating the "key" (the .bin file). The operation is the same.
             byte[] encryptedData = XorTransform(baseData, targetData); 
-            string binFilePath = Path.Combine(newVersionDataFullPath, "ultipaw.bin");
+            string binFilePath = Path.Combine(newVersionDataFullPath, "mcb.bin");
             File.WriteAllBytes(binFilePath, encryptedData);
 
             // 3. Create logic package
             string prefabSourcePath = AssetDatabase.GetAssetPath(logicPrefab);
-            string prefabDestPath = UltiPawUtils.CombineUnityPath(newVersionDataPath, "ultipaw logic.prefab");
+            string prefabDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.prefab");
             AssetDatabase.CopyAsset(prefabSourcePath, prefabDestPath);
             
-            string packageUnityPath = UltiPawUtils.CombineUnityPath(newVersionDataPath, "ultipaw logic.unitypackage");
+            string packageUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.unitypackage");
             string packagePath = Path.GetFullPath(packageUnityPath);
 
             var exportAssets = new HashSet<string>(AssetDatabase.GetDependencies(prefabSourcePath, true), StringComparer.Ordinal);
@@ -390,7 +390,7 @@ public class FileManagerService
                 if (!sourceTexturePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Custom veins normal map must be provided as a PNG texture.");
 
-                string veinsDestPath = UltiPawUtils.CombineUnityPath(newVersionDataPath, "veins normal.png");
+                string veinsDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "veins normal.png");
                 if (AssetDatabase.LoadAssetAtPath<Texture2D>(veinsDestPath) != null)
                 {
                     AssetDatabase.DeleteAsset(veinsDestPath);

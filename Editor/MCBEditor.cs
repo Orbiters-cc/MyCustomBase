@@ -1,24 +1,24 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UltiPawEditorUtils;
+using MCBEditorUtils;
 using Newtonsoft.Json;
 
-[CustomEditor(typeof(UltiPaw))]
-public class UltiPawEditor : UnityEditor.Editor
+[CustomEditor(typeof(MyCustomBase))]
+public class MCBEditor : UnityEditor.Editor
 {
     // --- Target & Serialized Object ---
-    public UltiPaw ultiPawTarget;
+    public MyCustomBase customBaseTarget;
     public new SerializedObject serializedObject;
     private Texture2D bannerTexture;
 
     // --- Serialized Properties ---
     public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
-                              customFbxForCreatorProp, ultipawAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
+                              customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
                               includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
                               includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp;
 
@@ -46,11 +46,11 @@ public class UltiPawEditor : UnityEditor.Editor
     public string fetchError, downloadError, deleteError, submitError;
     public string accessDeniedAssetId;
     public string currentBaseFbxHash;
-    public bool isUltiPaw;
-    public List<UltiPawVersion> serverVersions = new List<UltiPawVersion>();
-    public List<UltiPawVersion> importedVersions = new List<UltiPawVersion>();
-    public List<UltiPawVersion> unsubmittedVersions = new List<UltiPawVersion>();
-    public UltiPawVersion recommendedVersion, selectedVersionForAction;
+    public bool isCustomBase;
+    public List<CustomBaseVersion> serverVersions = new List<CustomBaseVersion>();
+    public List<CustomBaseVersion> importedVersions = new List<CustomBaseVersion>();
+    public List<CustomBaseVersion> unsubmittedVersions = new List<CustomBaseVersion>();
+    public CustomBaseVersion recommendedVersion, selectedVersionForAction;
     
     // User custom base tracking
     public List<UserCustomVersionEntry> userCustomVersions = new List<UserCustomVersionEntry>();
@@ -67,9 +67,9 @@ public class UltiPawEditor : UnityEditor.Editor
     
     private void OnEnable()
     {
-        ultiPawTarget = (UltiPaw)target;
+        customBaseTarget = (MyCustomBase)target;
         EnsureSerializedDefaults();
-        serializedObject = new SerializedObject(ultiPawTarget);
+        serializedObject = new SerializedObject(customBaseTarget);
         fetchAttempted = false;
         
         // Initialize async services first
@@ -84,7 +84,7 @@ public class UltiPawEditor : UnityEditor.Editor
         versionService.OnVersionsUpdated += OnVersionsUpdated;
         versionService.OnVersionFetchError += OnVersionFetchError;
         
-        bannerTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(Path.Combine(UltiPawUtils.PACKAGE_BASE_FOLDER, "Editor/banner.png")); 
+        bannerTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(Path.Combine(MCBUtils.PACKAGE_BASE_FOLDER, "Editor/banner.png")); 
         FindSerializedProperties();
         
         networkService = new NetworkService();
@@ -109,8 +109,8 @@ public class UltiPawEditor : UnityEditor.Editor
         // Initialize modules
         creatorModule.Initialize();
         CheckAuthentication();
-        UltiPawConnectivityMonitor.StatusChanged += RepaintFromConnectivityMonitor;
-        UltiPawConnectivityMonitor.EnsureCheckStarted(authToken);
+        MCBConnectivityMonitor.StatusChanged += RepaintFromConnectivityMonitor;
+        MCBConnectivityMonitor.EnsureCheckStarted(authToken);
         
         // Ensure modules are enabled
         versionModule.OnEnable();
@@ -135,7 +135,7 @@ public class UltiPawEditor : UnityEditor.Editor
             versionService.OnVersionFetchError -= OnVersionFetchError;
         }
 
-        UltiPawConnectivityMonitor.StatusChanged -= RepaintFromConnectivityMonitor;
+        MCBConnectivityMonitor.StatusChanged -= RepaintFromConnectivityMonitor;
         EditorApplication.projectChanged -= OnProjectChanged;
     }
     
@@ -169,7 +169,7 @@ public class UltiPawEditor : UnityEditor.Editor
         }
     }
 
-    private void OnVersionsUpdated(System.Collections.Generic.List<UltiPawVersion> versions, UltiPawVersion recommended)
+    private void OnVersionsUpdated(System.Collections.Generic.List<CustomBaseVersion> versions, CustomBaseVersion recommended)
     {
         serverVersions = versions;
         recommendedVersion = recommended;
@@ -183,7 +183,7 @@ public class UltiPawEditor : UnityEditor.Editor
         }
         
         Repaint();
-        UltiPawLogger.Log($"[UltiPawEditor] Updated with {versions.Count} server versions");
+        MCBLogger.Log($"[MCBEditor] Updated with {versions.Count} server versions");
     }
 
     private void TryLoadCachedVersionsAndRefetch()
@@ -204,7 +204,7 @@ public class UltiPawEditor : UnityEditor.Editor
                 versionModule.actions.UpdateAppliedVersionAndState();
             }
             Repaint();
-            UltiPawLogger.Log($"[UltiPawEditor] Loaded {cached.versions.Count} cached versions");
+            MCBLogger.Log($"[MCBEditor] Loaded {cached.versions.Count} cached versions");
         }
 
         // Start background version fetch (will update UI when complete)
@@ -230,13 +230,13 @@ public class UltiPawEditor : UnityEditor.Editor
     {
         fetchError = error;
         Repaint();
-        UltiPawLogger.LogError($"[UltiPawEditor] Version fetch error: {error}");
+        MCBLogger.LogError($"[MCBEditor] Version fetch error: {error}");
     }
 
     private void AutoDetectBaseFbxViaHierarchy()
     {
-        if (ultiPawTarget == null) return;
-        var root = ultiPawTarget.transform.root;
+        if (customBaseTarget == null) return;
+        var root = customBaseTarget.transform.root;
         var bodySmr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
         
         if (bodySmr?.sharedMesh == null) return;
@@ -252,7 +252,7 @@ public class UltiPawEditor : UnityEditor.Editor
             baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue = fbxAsset;
             serializedObject.ApplyModifiedProperties();
             
-            UltiPawLogger.Log($"[UltiPawEditor] Auto-detected FBX: {System.IO.Path.GetFileName(meshPath)}");
+            MCBLogger.Log($"[MCBEditor] Auto-detected FBX: {System.IO.Path.GetFileName(meshPath)}");
             Repaint();
 
             // After detection, immediately try to load cached versions and start a background refresh
@@ -402,7 +402,7 @@ public class UltiPawEditor : UnityEditor.Editor
     {
         if (ex == null) return;
 
-        string baseMessage = "UltiPaw encountered a problem while drawing the editor UI. Check the Console for details.";
+        string baseMessage = "MCB encountered a problem while drawing the editor UI. Check the Console for details.";
         string reason = $"Reason: {ex.Message}";
 
         if (string.IsNullOrEmpty(uiRenderingError))
@@ -417,7 +417,7 @@ public class UltiPawEditor : UnityEditor.Editor
         string signature = ex.ToString();
         if (!string.Equals(lastUiRenderingExceptionSignature, signature, StringComparison.Ordinal))
         {
-            UltiPawLogger.LogException(ex);
+            MCBLogger.LogException(ex);
             lastUiRenderingExceptionSignature = signature;
         }
     }
@@ -434,7 +434,7 @@ public class UltiPawEditor : UnityEditor.Editor
 
     private void DrawConnectivityDiagnosticsPanel()
     {
-        if (string.IsNullOrEmpty(UltiPawConnectivityMonitor.FailureReport))
+        if (string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport))
         {
             return;
         }
@@ -446,12 +446,12 @@ public class UltiPawEditor : UnityEditor.Editor
 
             connectivityReportScroll = EditorGUILayout.BeginScrollView(connectivityReportScroll, GUILayout.MinHeight(140f));
             var style = new GUIStyle(EditorStyles.textArea) { wordWrap = false };
-            EditorGUILayout.TextArea(UltiPawConnectivityMonitor.FailureReport, style, GUILayout.ExpandHeight(true));
+            EditorGUILayout.TextArea(MCBConnectivityMonitor.FailureReport, style, GUILayout.ExpandHeight(true));
             EditorGUILayout.EndScrollView();
 
             if (GUILayout.Button("copy in the clipboard", GUILayout.Height(24f)))
             {
-                EditorGUIUtility.systemCopyBuffer = UltiPawConnectivityMonitor.FailureReport;
+                EditorGUIUtility.systemCopyBuffer = MCBConnectivityMonitor.FailureReport;
             }
         }
     }
@@ -501,7 +501,7 @@ public class UltiPawEditor : UnityEditor.Editor
         blendShapeValuesProp = serializedObject.FindProperty("blendShapeValues");
         isCreatorModeProp = serializedObject.FindProperty("isCreatorMode");
         customFbxForCreatorProp = serializedObject.FindProperty("customFbxForCreator");
-        ultipawAvatarForCreatorProp = serializedObject.FindProperty("ultipawAvatarForCreatorProp");
+        customBaseAvatarForCreatorProp = serializedObject.FindProperty("customBaseAvatarForCreatorProp");
         avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
         customBlendshapesForCreatorProp = serializedObject.FindProperty("customBlendshapesForCreator");
         includeCustomVeinsForCreatorProp = serializedObject.FindProperty("includeCustomVeinsForCreator");
@@ -512,26 +512,26 @@ public class UltiPawEditor : UnityEditor.Editor
 
     private void EnsureSerializedDefaults()
     {
-        if (ultiPawTarget == null) return;
+        if (customBaseTarget == null) return;
 
-        if (!ultiPawTarget.preserveBlendshapeValuesOnVersionSwitchInitialized)
+        if (!customBaseTarget.preserveBlendshapeValuesOnVersionSwitchInitialized)
         {
-            ultiPawTarget.preserveBlendshapeValuesOnVersionSwitch = true;
-            ultiPawTarget.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
-            EditorUtility.SetDirty(ultiPawTarget);
+            customBaseTarget.preserveBlendshapeValuesOnVersionSwitch = true;
+            customBaseTarget.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
+            EditorUtility.SetDirty(customBaseTarget);
         }
     }
 
     public void LoadUnsubmittedVersions()
     {
         unsubmittedVersions.Clear();
-        string path = UltiPawUtils.UNSUBMITTED_VERSIONS_FILE;
+        string path = MCBUtils.UNSUBMITTED_VERSIONS_FILE;
         if (File.Exists(path))
         {
             try
             {
                 string json = File.ReadAllText(path);
-                var loaded = JsonConvert.DeserializeObject<List<UltiPawVersion>>(json);
+                var loaded = JsonConvert.DeserializeObject<List<CustomBaseVersion>>(json);
                 if (loaded != null)
                 {
                     foreach (var v in loaded)
@@ -543,7 +543,7 @@ public class UltiPawEditor : UnityEditor.Editor
             }
             catch (Exception ex)
             {
-                UltiPawLogger.LogError($"[UltiPaw] Failed to load unsubmitted versions from {path}: {ex.Message}");
+                MCBLogger.LogError($"[MCB] Failed to load unsubmitted versions from {path}: {ex.Message}");
             }
         }
     }
@@ -552,7 +552,7 @@ public class UltiPawEditor : UnityEditor.Editor
     {
         importedVersions.Clear();
 
-        string versionsRoot = Path.Combine(Application.dataPath, "UltiPaw", "versions");
+        string versionsRoot = Path.Combine(Application.dataPath, "MCB", "versions");
         if (!Directory.Exists(versionsRoot))
         {
             return;
@@ -565,10 +565,10 @@ public class UltiPawEditor : UnityEditor.Editor
                 try
                 {
                     string json = File.ReadAllText(versionJsonPath);
-                    var version = JsonConvert.DeserializeObject<UltiPawVersion>(json);
+                    var version = JsonConvert.DeserializeObject<CustomBaseVersion>(json);
                     if (version == null || string.IsNullOrWhiteSpace(version.version) || string.IsNullOrWhiteSpace(version.defaultAviVersion))
                     {
-                        UltiPawLogger.LogWarning($"[UltiPaw] Ignoring invalid imported version metadata at {versionJsonPath}");
+                        MCBLogger.LogWarning($"[MCB] Ignoring invalid imported version metadata at {versionJsonPath}");
                         continue;
                     }
 
@@ -577,17 +577,17 @@ public class UltiPawEditor : UnityEditor.Editor
                 }
                 catch (Exception ex)
                 {
-                    UltiPawLogger.LogWarning($"[UltiPaw] Failed to parse imported version metadata at {versionJsonPath}: {ex.Message}");
+                    MCBLogger.LogWarning($"[MCB] Failed to parse imported version metadata at {versionJsonPath}: {ex.Message}");
                 }
             }
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to scan imported versions: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to scan imported versions: {ex.Message}");
         }
     }
 
-    public List<UltiPawVersion> GetAllVersions()
+    public List<CustomBaseVersion> GetAllVersions()
     {
         if (!isAuthenticated)
         {
@@ -598,7 +598,7 @@ public class UltiPawEditor : UnityEditor.Editor
         }
 
         // Merge sources while letting local variants override matching server entries.
-        var merged = new Dictionary<string, UltiPawVersion>(StringComparer.Ordinal);
+        var merged = new Dictionary<string, CustomBaseVersion>(StringComparer.Ordinal);
 
         foreach (var version in serverVersions)
         {
@@ -621,7 +621,7 @@ public class UltiPawEditor : UnityEditor.Editor
         return merged.Values.OrderByDescending(v => ParseVersion(v.version)).ToList();
     }
 
-    private static string GetVersionKey(UltiPawVersion version)
+    private static string GetVersionKey(CustomBaseVersion version)
     {
         return $"{version.version}|{version.defaultAviVersion}";
     }

@@ -54,7 +54,7 @@ public static class EditorCoroutineUtility
             }
             catch (Exception ex)
             {
-                UltiPawLogger.LogError("Exception in editor coroutine: " + ex);
+                MCBLogger.LogError("Exception in editor coroutine: " + ex);
                 // Optionally log the stack trace of the coroutine itself
                 // LogCoroutineStackTrace(currentCoroutine);
                 Stop(); // Stop processing on error to prevent spam
@@ -112,7 +112,7 @@ public static class EditorCoroutineUtility
             {
                 // For editor, we could implement a simple time-based wait
                 // But it's generally better to use yield return null in editor
-                UltiPawLogger.LogWarning("WaitForSeconds is not reliably supported in editor coroutines. Consider using yield return null instead.");
+                MCBLogger.LogWarning("WaitForSeconds is not reliably supported in editor coroutines. Consider using yield return null instead.");
                 return coroutine.MoveNext();
             }
 
@@ -125,7 +125,7 @@ public static class EditorCoroutineUtility
             }
 
             if (yielded is not Coroutine) return coroutine.MoveNext();
-            UltiPawLogger.LogWarning(
+            MCBLogger.LogWarning(
                 "EditorCoroutineUtility: Yielding on 'UnityEngine.Coroutine' is not supported in the editor. Use 'yield return null' or another IEnumerator.");
             // Treat it like yield return null for basic cases
             return coroutine.MoveNext();
@@ -136,7 +136,7 @@ public static class EditorCoroutineUtility
     {
         if (coroutine == null)
         {
-            UltiPawLogger.LogError("Coroutine cannot be null.");
+            MCBLogger.LogError("Coroutine cannot be null.");
             return;
         }
 

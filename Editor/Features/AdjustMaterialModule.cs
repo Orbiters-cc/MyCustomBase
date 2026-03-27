@@ -16,13 +16,13 @@ public class AdjustMaterialModule
     private const int LightingModeTextureRampIndex = 0;
     private const int LightingModeRealisticIndex = 6;
 
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
 
     private MaterialService materialService;
     private Transform cachedRoot;
     private bool foldout = true;
 
-    public AdjustMaterialModule(UltiPawEditor editor)
+    public AdjustMaterialModule(MCBEditor editor)
     {
         this.editor = editor;
     }
@@ -34,7 +34,7 @@ public class AdjustMaterialModule
             return;
         }
 
-        if (editor?.ultiPawTarget?.appliedUltiPawVersion == null)
+        if (editor?.customBaseTarget?.appliedCustomBaseVersion == null)
         {
             return;
         }
@@ -99,7 +99,7 @@ public class AdjustMaterialModule
 
     private bool EnsureMaterialService()
     {
-        var target = editor?.ultiPawTarget;
+        var target = editor?.customBaseTarget;
         if (target == null)
         {
             return false;
@@ -191,7 +191,7 @@ public class AdjustMaterialModule
     private void DrawNormalMapWarning(Material material, SkinnedMeshRenderer smr, Texture normalTexture, string normalTexturePath)
     {
         EditorGUILayout.HelpBox(
-            "Your body material is using a normal map with fake muscles, it will conflict with the ultipaw muscles look.",
+            "Your body material is using a normal map with fake muscles, it will conflict with the custom base muscles look.",
             MessageType.Warning);
 
         if (normalTexture != null)
@@ -264,14 +264,14 @@ public class AdjustMaterialModule
                 continue;
             }
 
-            UltiPawLogger.Log($"[AdjustMaterial] Set {slotName} lighting mode to Realistic");
+            MCBLogger.Log($"[AdjustMaterial] Set {slotName} lighting mode to Realistic");
         }
 
         if (anyFailures)
         {
             EditorUtility.DisplayDialog(
                 "Lighting Mode Update Failed",
-                "UltiPaw could not switch one or more materials to Realistic lighting. Please try updating the property manually.",
+                "MCB could not switch one or more materials to Realistic lighting. Please try updating the property manually.",
                 "Ok");
         }
     }
@@ -331,7 +331,7 @@ public class AdjustMaterialModule
         EditorUtility.SetDirty(material);
         EditorUtility.SetDirty(smr);
 
-        UltiPawLogger.Log("[AdjustMaterial] Removed body normal map");
+        MCBLogger.Log("[AdjustMaterial] Removed body normal map");
     }
 
     private static bool TryGetMuscleNormal(Material material, out Texture texture, out string texturePath)

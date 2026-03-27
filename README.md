@@ -1,10 +1,10 @@
-# ultipaw by Enzo
+# My Custom Base (MCB) by Enzo
 
 ## Testing SSL failures on Windows
 
-The easiest way to test UltiPaw's connectivity failure UI is now built into the package.
+The easiest way to test MCB's connectivity failure UI is now built into the package.
 
-1. Open an avatar with the `UltiPaw` component.
+1. Open an avatar with the `My Custom Base` component.
 2. Enable `Advanced Mode`.
 3. In `Connectivity Simulation`, set `API simulation` to:
    - `SSL Failure` to force requests to `https://wrong.host.badssl.com`
@@ -24,4 +24,4 @@ If you still want to force a real local hostname mismatch on Windows outside the
 2. Run a local HTTPS listener on port `443`.
 3. Present a certificate for a different hostname, such as `localhost`.
 
-That will produce a genuine TLS hostname/certificate error for the real UltiPaw host names.
+That will produce a genuine TLS hostname/certificate error for the real MCB host names.

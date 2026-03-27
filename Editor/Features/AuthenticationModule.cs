@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditorInternal;
@@ -7,9 +7,9 @@ using UnityEngine;
 // Handles the UI and logic for user authentication.
 public class AuthenticationModule
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
 
-    public AuthenticationModule(UltiPawEditor editor)
+    public AuthenticationModule(MCBEditor editor)
     {
         this.editor = editor;
     }

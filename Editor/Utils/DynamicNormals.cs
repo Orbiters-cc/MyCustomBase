@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using Object = UnityEngine.Object;
 
-namespace UltiPawEditorUtils
+namespace MCBEditorUtils
 {
     /// <summary>
     /// Recalculates normals/tangents for the requested blendshapes by baking them and rebuilding the mesh.

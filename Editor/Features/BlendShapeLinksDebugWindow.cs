@@ -1,4 +1,4 @@
-Ôªø#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,7 +22,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
     private string _searchText = string.Empty;
 
     private LiveAvatarControllerService.AvatarControllerSnapshot _snapshot;
-    // Accumulated search hits ‚Äî grows over time as new states are observed, never shrinks until query changes.
+    // Accumulated search hits ó grows over time as new states are observed, never shrinks until query changes.
     private List<LiveAvatarControllerService.BindingSearchHit> _searchResults =
         new List<LiveAvatarControllerService.BindingSearchHit>();
     private HashSet<string> _searchResultKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -39,7 +39,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
     private string[] _boneNames = System.Array.Empty<string>();
     private int _boneDropdownIndex = -1;
 
-    [MenuItem("Tools/UltiPaw/blendshape links debug")]
+    [MenuItem("Tools/My Custom Base (MCB)/blendshape links debug")]
     public static void OpenWindow()
     {
         var window = GetWindow<BlendShapeLinksDebugWindow>("Blendshape Links Debug");
@@ -89,14 +89,14 @@ public class BlendShapeLinksDebugWindow : EditorWindow
 
         EditorGUILayout.BeginHorizontal();
 
-        // Left column ‚Äî Edited States (no inner scroll; word-wrap handles overflow)
+        // Left column ó Edited States (no inner scroll; word-wrap handles overflow)
         EditorGUILayout.BeginVertical(GUILayout.Width(colWidth));
         DrawEditedStatesSection();
         EditorGUILayout.EndVertical();
 
         GUILayout.Space(6f);
 
-        // Right column ‚Äî Live Binding Search
+        // Right column ó Live Binding Search
         EditorGUILayout.BeginVertical(GUILayout.Width(colWidth));
         DrawSearchSection();
         EditorGUILayout.EndVertical();
@@ -247,7 +247,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
                 var rec = appliedRecords[i];
                 EditorGUILayout.BeginVertical("box");
                 EditorGUILayout.LabelField(string.Format("[{0}]", rec.sourceLabel), EditorStyles.miniBoldLabel);
-                EditorGUILayout.LabelField(string.Format("'{0}' ‚Üí '{1}'", rec.toFixName, rec.fixedByName), EditorStyles.miniLabel);
+                EditorGUILayout.LabelField(string.Format("'{0}' ? '{1}'", rec.toFixName, rec.fixedByName), EditorStyles.miniLabel);
                 EditorGUILayout.LabelField(string.Format("Param: {0}", rec.factorParameterName), EditorStyles.miniLabel);
                 EditorGUILayout.LabelField(string.Format("Controller: {0}", rec.controllerName), EditorStyles.miniLabel);
                 if (!string.IsNullOrWhiteSpace(rec.controllerAssetPath))
@@ -342,7 +342,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
                 EditorGUILayout.LabelField("Parameters: none", stateWrapStyle);
             }
 
-            // Clips ‚Äî only show BSLink variant clips to avoid blend tree clutter
+            // Clips ó only show BSLink variant clips to avoid blend tree clutter
             if (state.clips != null && state.clips.Count > 0)
             {
                 var variantClips = new List<LiveAvatarControllerService.LiveClipActivation>();
@@ -427,7 +427,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
             RunSearch();
         }
         // Record / Stop button
-        var recordLabel = _isRecording ? "‚èπ Stop" : "‚è∫ Record";
+        var recordLabel = _isRecording ? "? Stop" : "? Record";
         var recordColor = _isRecording ? new Color(0.9f, 0.2f, 0.2f) : new Color(0.2f, 0.75f, 0.2f);
         var prevBg = GUI.backgroundColor;
         GUI.backgroundColor = recordColor;
@@ -456,10 +456,10 @@ public class BlendShapeLinksDebugWindow : EditorWindow
         {
             var recStyle = new GUIStyle(EditorStyles.miniLabel);
             recStyle.normal.textColor = new Color(0.9f, 0.2f, 0.2f);
-            EditorGUILayout.LabelField("‚óè Recording ‚Äî accumulating hits across animation states...", recStyle);
+            EditorGUILayout.LabelField("? Recording ó accumulating hits across animation states...", recStyle);
         }
 
-        // Bone dropdown ‚Äî only in BonePath mode
+        // Bone dropdown ó only in BonePath mode
         if (_searchType == SearchType.BonePath)
         {
             if (_boneNames.Length == 0 && _avatarRoot != null)
@@ -478,7 +478,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
             }
         }
 
-        // Bone found / not found indicator ‚Äî only in BonePath mode
+        // Bone found / not found indicator ó only in BonePath mode
         if (_searchType == SearchType.BonePath && !string.IsNullOrWhiteSpace(_lastSearchQuery))
         {
             // Check if the bone transform actually exists in the hierarchy (independent of animation)
@@ -520,7 +520,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
             if (_boneFound)
             {
                 indicatorStyle.normal.textColor = new Color(0.2f, 0.8f, 0.2f);
-                string displayPath = string.IsNullOrWhiteSpace(_boneFoundPath) ? "(empty path ‚Äî humanoid muscle)" : _boneFoundPath;
+                string displayPath = string.IsNullOrWhiteSpace(_boneFoundPath) ? "(empty path ó humanoid muscle)" : _boneFoundPath;
                 EditorGUILayout.LabelField("Bone found & animated: " + displayPath, indicatorStyle);
                 if (resolvedBoneTransform != null)
                 {

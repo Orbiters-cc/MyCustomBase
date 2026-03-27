@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -24,7 +24,7 @@ public class UserService
     private static HashSet<int> pendingRequests = new HashSet<int>();
     private static HashSet<int> failedRequests = new HashSet<int>();
     
-    private const string AVATARS_FOLDER = "Packages/ultipaw/data/avatars";
+    private const string AVATARS_FOLDER = "Packages/orbiters.mcb/data/avatars";
     
     static UserService()
     {
@@ -105,7 +105,7 @@ public class UserService
             yield break;
         }
         
-        string url = $"{UltiPawUtils.getApiUrl()}/user?u={userId}&t={tokenToUse}";
+        string url = $"{MCBUtils.getApiUrl()}/user?u={userId}&t={tokenToUse}";
         
         using (UnityWebRequest request = UnityWebRequest.Get(url))
         {
@@ -126,13 +126,13 @@ public class UserService
                 }
                 catch (Exception ex)
                 {
-                    UltiPawLogger.LogError($"[UltiPaw] Failed to parse user info for ID {userId}: {ex.Message}");
+                    MCBLogger.LogError($"[MCB] Failed to parse user info for ID {userId}: {ex.Message}");
                 }
             }
             else
             {
                 failedRequests.Add(userId);
-                UltiPawLogger.LogWarning($"[UltiPaw] Failed to fetch user info for ID {userId}: {request.error}, url: {url}");
+                MCBLogger.LogWarning($"[MCB] Failed to fetch user info for ID {userId}: {request.error}, url: {url}");
             }
             
             onComplete?.Invoke();
@@ -167,7 +167,7 @@ public class UserService
                         File.WriteAllBytes(localPath, pngData);
 
                         avatarCache[uploaderId] = processed;
-                        UltiPawLogger.Log($"[UltiPaw] Downloaded and cached avatar for user {uploaderId}");
+                        MCBLogger.Log($"[MCB] Downloaded and cached avatar for user {uploaderId}");
 
                         if (!ReferenceEquals(processed, texture))
                         {
@@ -177,12 +177,12 @@ public class UserService
                 }
                 catch (Exception ex)
                 {
-                    UltiPawLogger.LogError($"[UltiPaw] Failed to process avatar for user {uploaderId}: {ex.Message}");
+                    MCBLogger.LogError($"[MCB] Failed to process avatar for user {uploaderId}: {ex.Message}");
                 }
             }
             else
             {
-                UltiPawLogger.LogWarning($"[UltiPaw] Failed to download avatar for user {uploaderId}: {request.error} (url: {avatarUrl})");
+                MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {request.error} (url: {avatarUrl})");
             }
         }
     }
@@ -205,12 +205,12 @@ public class UserService
                     Object.DestroyImmediate(texture);
                 }
 
-                UltiPawLogger.Log($"[UltiPaw] Loaded cached avatar for user {uploaderId}");
+                MCBLogger.Log($"[MCB] Loaded cached avatar for user {uploaderId}");
             }
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to load cached avatar for user {uploaderId}: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to load cached avatar for user {uploaderId}: {ex.Message}");
         }
     }
 
@@ -259,7 +259,7 @@ public class UserService
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to update user info for ID {userId}: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to update user info for ID {userId}: {ex.Message}");
         }
     }
 
@@ -310,7 +310,7 @@ public class UserService
         }
         catch (UnityException ex)
         {
-            UltiPawLogger.LogWarning($"[UltiPaw] Avatar texture for circular mask was not readable: {ex.Message}");
+            MCBLogger.LogWarning($"[MCB] Avatar texture for circular mask was not readable: {ex.Message}");
             return texture;
         }
     }
@@ -348,11 +348,11 @@ public class UserService
                 try { InternalEditorUtility.RepaintAllViews(); } catch { }
             };
 
-            UltiPawLogger.Log("[UltiPaw] Flushed user cache (user info, avatars, pending/failed requests)");
+            MCBLogger.Log("[MCB] Flushed user cache (user info, avatars, pending/failed requests)");
         }
         catch (System.Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to flush user cache: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to flush user cache: {ex.Message}");
         }
     }
 
@@ -370,16 +370,16 @@ public class UserService
             if (File.Exists(localPath))
             {
                 File.Delete(localPath);
-                UltiPawLogger.Log($"[UltiPaw] Deleted cached avatar file for user {userId}");
+                MCBLogger.Log($"[MCB] Deleted cached avatar file for user {userId}");
             }
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to clear cache for user {userId}: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to clear cache for user {userId}: {ex.Message}");
         }
     }
     
-    public static void PreloadUserInfo(List<UltiPawVersion> versions)
+    public static void PreloadUserInfo(List<CustomBaseVersion> versions)
     {
         HashSet<int> uploaderIds = new HashSet<int>();
         

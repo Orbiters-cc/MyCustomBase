@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -7,7 +7,7 @@ using Newtonsoft.Json;
 using UnityEditorInternal;
 
 /// <summary>
-/// Centralized authentication logic for UltiPaw editor tooling.
+/// Centralized authentication logic for MCB editor tooling.
 /// Handles Magic Sync, encrypted token storage and retrieval for
 /// both production (auth.dat) and development (auth_dev.dat) environments.
 /// </summary>
@@ -26,7 +26,7 @@ public static class AuthenticationService
     }
 
     /// <summary>
-    /// Run Magic Sync for the currently active environment (based on UltiPawUtils.isDevEnvironment).
+    /// Run Magic Sync for the currently active environment (based on MCBUtils.isDevEnvironment).
     /// </summary>
     public static Task<bool> RegisterAuth()
     {
@@ -53,20 +53,20 @@ public static class AuthenticationService
             if (!string.IsNullOrEmpty(clipboardContent) && tokenPattern.IsMatch(clipboardContent))
             {
                 tokenToUse = clipboardContent;
-                UltiPawLogger.Log("[UltiPawUtils] Found valid token pattern in clipboard");
+                MCBLogger.Log("[MCBUtils] Found valid token pattern in clipboard");
             }
 
             AuthData authData = null;
             bool isValid = false;
             int retryCount = 0;
             const int maxRetries = 10;
-            string req = UltiPawUtils.getApiUrl() + UltiPawUtils.TOKEN_ENDPOINT + "?token=" + tokenToUse;
+            string req = MCBUtils.getApiUrl() + MCBUtils.TOKEN_ENDPOINT + "?token=" + tokenToUse;
 
             while (retryCount < maxRetries && !isValid)
             {
                 try
                 {
-                    var response = await UltiPawUtils.client.GetAsync(req);
+                    var response = await MCBUtils.client.GetAsync(req);
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -78,18 +78,18 @@ public static class AuthenticationService
                     else if ((int)response.StatusCode == 425)
                     {
                         retryCount++;
-                        UltiPawLogger.Log($"[UltiPawUtils] Server is processing request (Status 425). Retry {retryCount}/{maxRetries} (url: {req})");
+                        MCBLogger.Log($"[MCBUtils] Server is processing request (Status 425). Retry {retryCount}/{maxRetries} (url: {req})");
                         await Task.Delay(1000);
                     }
                     else
                     {
-                        UltiPawLogger.LogWarning($"[UltiPawUtils] Authentication failed with status code {response.StatusCode} (url: {req})");
+                        MCBLogger.LogWarning($"[MCBUtils] Authentication failed with status code {response.StatusCode} (url: {req})");
                         return false;
                     }
                 }
                 catch (System.Exception e)
                 {
-                    UltiPawLogger.LogError($"[UltiPawUtils] Error during authentication attempt {retryCount + 1}: {e.Message} (url: {req})");
+                    MCBLogger.LogError($"[MCBUtils] Error during authentication attempt {retryCount + 1}: {e.Message} (url: {req})");
                     retryCount++;
                     await Task.Delay(1000);
                 }
@@ -98,11 +98,11 @@ public static class AuthenticationService
             if (isValid && authData != null)
             {
                 string authPath = GetAuthFilePath(forceIsDev);
-                UltiPawUtils.EnsureDirectoryExists(authPath);
+                MCBUtils.EnsureDirectoryExists(authPath);
                 string authJson = JsonConvert.SerializeObject(authData);
                 byte[] authBytes = Encoding.UTF8.GetBytes(authJson);
                 byte[] encryptedBytes = new byte[authBytes.Length];
-                byte[] key = Encoding.UTF8.GetBytes("UltiPawMagicSync");
+                byte[] key = Encoding.UTF8.GetBytes("MCBMagicSync");
 
                 for (int i = 0; i < authBytes.Length; i++)
                 {
@@ -110,7 +110,7 @@ public static class AuthenticationService
                 }
 
                 File.WriteAllBytes(authPath, encryptedBytes);
-                UltiPawLogger.Log("[UltiPawUtils] Authentication data stored successfully");
+                MCBLogger.Log("[MCBUtils] Authentication data stored successfully");
 
                 // Update user cache with info from token response (username, avatar)
                 try
@@ -122,20 +122,20 @@ public static class AuthenticationService
                 }
                 catch (System.Exception ex)
                 {
-                    UltiPawLogger.LogWarning($"[UltiPaw] Could not update user info from auth response: {ex.Message}");
+                    MCBLogger.LogWarning($"[MCB] Could not update user info from auth response: {ex.Message}");
                 }
 
                 return true;
             }
             else
             {
-                UltiPawLogger.LogWarning("[UltiPawUtils] Authentication failed after maximum retries");
+                MCBLogger.LogWarning("[MCBUtils] Authentication failed after maximum retries");
                 return false;
             }
         }
         catch (System.Exception e)
         {
-            UltiPawLogger.LogError($"[UltiPawUtils] Error registering authentication: {e.Message}");
+            MCBLogger.LogError($"[MCBUtils] Error registering authentication: {e.Message}");
             return false;
         }
     }
@@ -158,7 +158,7 @@ public static class AuthenticationService
             if (!File.Exists(authPath)) return null;
 
             byte[] encryptedBytes = File.ReadAllBytes(authPath);
-            byte[] key = Encoding.UTF8.GetBytes("UltiPawMagicSync");
+            byte[] key = Encoding.UTF8.GetBytes("MCBMagicSync");
             byte[] authBytes = new byte[encryptedBytes.Length];
 
             for (int i = 0; i < encryptedBytes.Length; i++)
@@ -171,7 +171,7 @@ public static class AuthenticationService
         }
         catch (System.Exception e)
         {
-            UltiPawLogger.LogError($"[UltiPawUtils] Error retrieving authentication: {e.Message}");
+            MCBLogger.LogError($"[MCBUtils] Error retrieving authentication: {e.Message}");
             return null;
         }
     }
@@ -206,18 +206,18 @@ public static class AuthenticationService
             if (File.Exists(authPath))
             {
                 File.Delete(authPath);
-                UltiPawLogger.Log("[UltiPawUtils] Authentication data removed successfully");
+                MCBLogger.Log("[MCBUtils] Authentication data removed successfully");
                 return true;
             }
             else
             {
-                UltiPawLogger.Log("[UltiPawUtils] No authentication data found to remove");
+                MCBLogger.Log("[MCBUtils] No authentication data found to remove");
                 return false;
             }
         }
         catch (System.Exception e)
         {
-            UltiPawLogger.LogError($"[UltiPawUtils] Error removing authentication data: {e.Message}");
+            MCBLogger.LogError($"[MCBUtils] Error removing authentication data: {e.Message}");
             return false;
         }
     }
@@ -226,12 +226,12 @@ public static class AuthenticationService
     /// Compute the auth file path for the given environment.
     /// </summary>
     /// <param name="forceIsDev">
-    /// True = dev auth_dev.dat, False = prod auth.dat, null = choose based on UltiPawUtils.isDevEnvironment.
+    /// True = dev auth_dev.dat, False = prod auth.dat, null = choose based on MCBUtils.isDevEnvironment.
     /// </param>
     public static string GetAuthFilePath(bool? forceIsDev = null)
     {
-        bool useDev = forceIsDev ?? UltiPawUtils.isDevEnvironment;
-        string authFolder = Path.Combine(InternalEditorUtility.unityPreferencesFolder, "UltiPaw");
+        bool useDev = forceIsDev ?? MCBUtils.isDevEnvironment;
+        string authFolder = Path.Combine(InternalEditorUtility.unityPreferencesFolder, "MCB");
         string fileName = useDev ? AUTH_FILENAME_DEV : AUTH_FILENAME_PROD;
         return Path.Combine(authFolder, fileName);
     }

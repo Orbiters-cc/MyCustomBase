@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -15,8 +15,8 @@ using UnityEngine.Networking;
 public static class EditorIssueReporter
 {
     // EditorPrefs keys
-    private const string SharePrefKey = "UltiPaw_ShareIssueLogs";
-    private const string MinSeverityPrefKey = "UltiPaw_MinIssueSeverity"; // 1..4
+    private const string SharePrefKey = "MCB_ShareIssueLogs";
+    private const string MinSeverityPrefKey = "MCB_MinIssueSeverity"; // 1..4
 
     // Defaults
     private const bool DefaultShare = true;
@@ -85,7 +85,7 @@ public static class EditorIssueReporter
         if (trimmedStack.Length > 50000) trimmedStack = trimmedStack.Substring(0, 50000);
 
         string errorType = ExtractErrorType(condition, type);
-        string tool = "UltiPaw";
+        string tool = "MCB";
         string url = EditorSceneManager.GetActiveScene().path;
         string userAgent = SystemInfo.operatingSystem + " | Unity " + Application.unityVersion + " | " + SystemInfo.deviceModel;
 
@@ -137,7 +137,7 @@ public static class EditorIssueReporter
     {
         if (type == LogType.Exception && !string.IsNullOrEmpty(condition))
         {
-            // Usually formatted as "ExceptionType: message" – extract the type left of colon
+            // Usually formatted as "ExceptionType: message" � extract the type left of colon
             int idx = condition.IndexOf(':');
             if (idx > 0)
             {
@@ -173,7 +173,7 @@ public static class EditorIssueReporter
             sb.Append('}');
             byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
 
-            string endpoint = UltiPawUtils.getApiUrl(scope: "bugs");
+            string endpoint = MCBUtils.getApiUrl(scope: "bugs");
             using (var req = new UnityWebRequest(endpoint, UnityWebRequest.kHttpVerbPOST))
             {
                 req.uploadHandler = new UploadHandlerRaw(bodyRaw);
@@ -192,13 +192,13 @@ public static class EditorIssueReporter
                 if (req.result != UnityWebRequest.Result.Success)
                 {
                     // Optionally, log locally but do not recurse into reporter (disabled by signature throttling)
-                    Debug.Log($"[UltiPaw IssueReporter] Failed to send issue: {req.responseCode} {req.error}");
+                    Debug.Log($"[MCB IssueReporter] Failed to send issue: {req.responseCode} {req.error}");
                 }
             }
         }
         catch (Exception ex)
         {
-            Debug.Log($"[UltiPaw IssueReporter] Exception while sending issue: {ex.Message}");
+            Debug.Log($"[MCB IssueReporter] Exception while sending issue: {ex.Message}");
         }
     }
 

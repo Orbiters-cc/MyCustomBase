@@ -3,14 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UltiPawEditorUtils;
+using MCBEditorUtils;
 
 public class VRCFuryService
 {
     private static VRCFuryService _instance;
     public static VRCFuryService Instance => _instance ??= new VRCFuryService();
 
-    public const string SLIDERS_GAMEOBJECT_NAME = "ultipaw sliders";
+    public const string SLIDERS_GAMEOBJECT_NAME = "mcb sliders";
 
     // Type Cache
     private System.Type _vrcFuryType;
@@ -56,24 +56,24 @@ public class VRCFuryService
     {
         if (avatarRoot == null)
         {
-            Debug.LogError("[UltiPaw] Avatar root is null. Cannot apply sliders.");
+            Debug.LogError("[MCB] Avatar root is null. Cannot apply sliders.");
             return;
         }
 
-        // 1. Find or create the "ultipaw sliders" GameObject
+        // 1. Find or create the "mcb sliders" GameObject
         Transform slidersTransform = avatarRoot.transform.Find(SLIDERS_GAMEOBJECT_NAME);
         GameObject slidersObj;
         if (slidersTransform == null)
         {
             slidersObj = new GameObject(SLIDERS_GAMEOBJECT_NAME);
             slidersObj.transform.SetParent(avatarRoot.transform, false);
-            Undo.RegisterCreatedObjectUndo(slidersObj, "Create UltiPaw Sliders GameObject");
+            Undo.RegisterCreatedObjectUndo(slidersObj, "Create MCB Sliders GameObject");
             
-            // Set initial state from UltiPaw component
-            var ultiPaw = avatarRoot.GetComponentInChildren<UltiPaw>(true);
-            if (ultiPaw != null)
+            // Set initial state from My Custom Base component
+            var customBase = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
+            if (customBase != null)
             {
-                bool desiredState = ultiPaw.useCustomSlidersState ? ultiPaw.customSlidersState : true;
+                bool desiredState = customBase.useCustomSlidersState ? customBase.customSlidersState : true;
                 slidersObj.SetActive(desiredState);
             }
         }
@@ -89,12 +89,12 @@ public class VRCFuryService
         if (_stateType == null) _stateType = FindType("VF.Model.State");
         if (_blendShapeActionType == null) _blendShapeActionType = FindType("VF.Model.StateAction.BlendShapeAction");
         if (_vrcFuryType == null) {
-            Debug.LogError("[UltiPaw] VRCFury not found. Cannot sync sliders.");
+            Debug.LogError("[MCB] VRCFury not found. Cannot sync sliders.");
             return;
         }
         if (_toggleType == null || _applyDuringUploadType == null || _stateType == null || _blendShapeActionType == null)
         {
-            Debug.LogError("[UltiPaw] Could not resolve required VRCFury types for sliders.");
+            Debug.LogError("[MCB] Could not resolve required VRCFury types for sliders.");
             return;
         }
 
@@ -108,7 +108,7 @@ public class VRCFuryService
 
             string contentTypeName = content.GetType().FullName;
             
-            // Recreate UltiPaw-generated slider features every sync to guarantee consistent settings.
+            // Recreate MCB-generated slider features every sync to guarantee consistent settings.
             if (contentTypeName == "VF.Model.Feature.Toggle")
             {
                 componentsToRemove.Add(comp as Component);
@@ -150,7 +150,7 @@ public class VRCFuryService
 
             if (!hasIcon)
             {
-                Texture2D icon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/vrcSliderIcon.png");
+                Texture2D icon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/vrcSliderIcon.png");
                 if (icon != null) AddOverrideMenuIcon(slidersObj, menuPath, icon);
             }
         }
@@ -273,9 +273,9 @@ public class VRCFuryService
         _vrcFuryType.GetField("content").SetValue(vrcf, feature);
     }
 
-    public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot, int selectedUltiPawSlidersCount)
+    public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot, int selectedCustomBaseSlidersCount)
     {
-        var usage = AvatarParametersService.Instance.GetAvatarParameterUsage(avatarRoot, selectedUltiPawSlidersCount);
+        var usage = AvatarParametersService.Instance.GetAvatarParameterUsage(avatarRoot, selectedCustomBaseSlidersCount);
         return new ParameterUsage
         {
             currentSyncedBits = usage.currentSyncedBits,
@@ -303,11 +303,11 @@ public class VRCFuryService
 
         if (_vrcFuryType == null || _unlimitedType == null)
         {
-            Debug.LogError("[UltiPaw] VRCFury types not found. Cannot toggle compression.");
+            Debug.LogError("[MCB] VRCFury types not found. Cannot toggle compression.");
             return;
         }
 
-        // 2. Find or create the "ultipaw sliders" GameObject
+        // 2. Find or create the "mcb sliders" GameObject
         Transform slidersTransform = avatarRoot.transform.Find(SLIDERS_GAMEOBJECT_NAME);
         GameObject slidersObj;
         if (slidersTransform == null)
@@ -315,13 +315,13 @@ public class VRCFuryService
             if (!enabled) return;
             slidersObj = new GameObject(SLIDERS_GAMEOBJECT_NAME);
             slidersObj.transform.SetParent(avatarRoot.transform, false);
-            Undo.RegisterCreatedObjectUndo(slidersObj, "Create UltiPaw Sliders GameObject");
+            Undo.RegisterCreatedObjectUndo(slidersObj, "Create MCB Sliders GameObject");
 
-            // Set initial state from UltiPaw component
-            var ultiPaw = avatarRoot.GetComponentInChildren<UltiPaw>(true);
-            if (ultiPaw != null)
+            // Set initial state from My Custom Base component
+            var customBase = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
+            if (customBase != null)
             {
-                bool desiredState = ultiPaw.useCustomSlidersState ? ultiPaw.customSlidersState : true;
+                bool desiredState = customBase.useCustomSlidersState ? customBase.customSlidersState : true;
                 slidersObj.SetActive(desiredState);
             }
         }
@@ -343,7 +343,7 @@ public class VRCFuryService
                 var vrcf = Undo.AddComponent(slidersObj, _vrcFuryType);
                 var feature = System.Activator.CreateInstance(_unlimitedType);
                 _vrcFuryType.GetField("content").SetValue(vrcf, feature);
-                Debug.Log("[UltiPaw] VRCFury Parameter Compression enabled.");
+                Debug.Log("[MCB] VRCFury Parameter Compression enabled.");
             }
         }
         else
@@ -351,7 +351,7 @@ public class VRCFuryService
             if (compressionComp != null && compressionComp is Component comp)
             {
                 Undo.DestroyObjectImmediate(comp);
-                Debug.Log("[UltiPaw] VRCFury Parameter Compression disabled.");
+                Debug.Log("[MCB] VRCFury Parameter Compression disabled.");
             }
         }
     }

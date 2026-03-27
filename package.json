@@ -1,11 +1,11 @@
 {
-  "name": "ultipaw",
-  "displayName": "UltiPaw",
+  "name": "orbiters.mcb",
+  "displayName": "My Custom Base (MCB)",
   "version": "1.5.1",
   "unity" : "2022.3",
-  "description": "Wizard to install the UltiPaw on a winterpaw",
+  "description": "Wizard to apply a custom base with the MCB tool",
   "type": "tool",
-  "url":  "https://github.com/blackorbit1/orbiters-vpm/raw/refs/heads/main/ultipaw.0.0.1.zip",
+  "url":  "https://github.com/blackorbit1/orbiters-vpm/raw/refs/heads/main/mcb.0.0.1.zip",
   "dependencies": {},
   "gitDependencies": {},
   "vpmDependencies": {

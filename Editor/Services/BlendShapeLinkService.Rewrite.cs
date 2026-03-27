@@ -64,13 +64,13 @@ public partial class BlendShapeLinkService
         foreach (var planned in plannedLinks)
         {
             bool thisLinkChangedAnyController = false;
-            UltiPawLogger.Log($"[UltiPaw] Processing link: toFix='{planned.toFixName}' fixedBy='{planned.fixedByName}' across {controllers.Count} controllers");
+            MCBLogger.Log($"[MCB] Processing link: toFix='{planned.toFixName}' fixedBy='{planned.fixedByName}' across {controllers.Count} controllers");
             foreach (var controller in controllers)
             {
-                UltiPawLogger.Log($"[UltiPaw] Checking controller '{controller.name}' for link toFix='{planned.toFixName}'");
+                MCBLogger.Log($"[MCB] Checking controller '{controller.name}' for link toFix='{planned.toFixName}'");
                 if (!EnsureFloatParameter(controller, planned.factorParameterName, planned.setFactorDefaultValue, planned.factorDefaultValue, out var paramError))
                 {
-                    Debug.LogWarning("[UltiPaw] " + paramError);
+                    Debug.LogWarning("[MCB] " + paramError);
                     continue;
                 }
 
@@ -101,19 +101,19 @@ public partial class BlendShapeLinkService
                             string layerKey = $"{controller.name}:{i}:{layer.name}";
                             if (!layersToCopyToFx.ContainsKey(layerKey) && !_layersCopiedToFxThisSession.Contains(layerKey))
                             {
-                                UltiPawLogger.Log($"[UltiPaw] Layer '{layer.name}' in '{controller.name}' contains blendshape animations - will copy to FX controller.");
+                                MCBLogger.Log($"[MCB] Layer '{layer.name}' in '{controller.name}' contains blendshape animations - will copy to FX controller.");
                                 layersToCopyToFx[layerKey] = (controller, i, layer);
                             }
                         }
                         else if (!hasFxController)
                         {
-                            UltiPawLogger.LogWarning($"[UltiPaw] No FX controller found! Cannot copy layer '{layer.name}' for blendshape animations.");
+                            MCBLogger.LogWarning($"[MCB] No FX controller found! Cannot copy layer '{layer.name}' for blendshape animations.");
                         }
                         
                         // Clear mask regardless (for FX layers with restrictive masks)
                         if (layer.avatarMask != null)
                         {
-                            UltiPawLogger.Log($"[UltiPaw] Clearing mask '{layer.avatarMask.name}' from layer '{layer.name}'.");
+                            MCBLogger.Log($"[MCB] Clearing mask '{layer.avatarMask.name}' from layer '{layer.name}'.");
                             layer.avatarMask = null;
                             layers[i] = layer;
                             layersArrayChanged = true;
@@ -175,7 +175,7 @@ public partial class BlendShapeLinkService
                             changedControllersForDescriptor.Contains(ac) &&
                             layers[i].mask != null)
                         {
-                            UltiPawLogger.Log($"[UltiPaw] Clearing mask from VRCAvatarDescriptor layer type '{layers[i].type}' because its controller '{ac.name}' was modified by a corrective link.");
+                            MCBLogger.Log($"[MCB] Clearing mask from VRCAvatarDescriptor layer type '{layers[i].type}' because its controller '{ac.name}' was modified by a corrective link.");
                             layers[i].mask = null;
                             descriptorChanged = true;
                         }
@@ -306,11 +306,11 @@ public partial class BlendShapeLinkService
             string newLayerName = "[UP_FX] " + layer.name;
             if (currentFxLayerNames.Contains(newLayerName))
             {
-                UltiPawLogger.Log($"[UltiPaw] Layer '{newLayerName}' already exists in FX controller. Skipping copy (state machine is shared and already updated).");
+                MCBLogger.Log($"[MCB] Layer '{newLayerName}' already exists in FX controller. Skipping copy (state machine is shared and already updated).");
                 continue;
             }
             
-            UltiPawLogger.Log($"[UltiPaw] Copying layer '{layer.name}' from '{sourceController.name}' to FX controller for blendshape animations.");
+            MCBLogger.Log($"[MCB] Copying layer '{layer.name}' from '{sourceController.name}' to FX controller for blendshape animations.");
             
             // Copy parameters from source controller to FX controller
             foreach (var param in sourceController.parameters)

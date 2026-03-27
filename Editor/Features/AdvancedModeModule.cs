@@ -1,11 +1,11 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
 using System.IO;
 
 public class AdvancedModeModule
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private bool isAdvancedMode = false;
     private bool advancedModeFoldout = true; // Opened by default when advanced mode is on
     private bool addArmatureToggle = false;
@@ -20,7 +20,7 @@ public class AdvancedModeModule
     private string fbxHashError;
     private bool fbxHashBusy = false;
     
-    public AdvancedModeModule(UltiPawEditor editor)
+    public AdvancedModeModule(MCBEditor editor)
     {
         this.editor = editor;
         dynamicNormalsService = new DynamicNormalsService(editor);
@@ -49,12 +49,12 @@ public class AdvancedModeModule
                 EditorGUI.indentLevel++;
                 
                 // Dev Environment checkbox + Magic Sync per environment
-                bool currentDevEnvironment = UltiPawUtils.isDevEnvironment;
+                bool currentDevEnvironment = MCBUtils.isDevEnvironment;
                 bool newDevEnvironment = EditorGUILayout.Toggle("Dev Environment", currentDevEnvironment);
                 
                 if (newDevEnvironment != currentDevEnvironment)
                 {
-                    UltiPawUtils.isDevEnvironment = newDevEnvironment;
+                    MCBUtils.isDevEnvironment = newDevEnvironment;
                     editor.CheckAuthentication(); // Refresh auth token for the selected environment
                 }
 
@@ -67,7 +67,7 @@ public class AdvancedModeModule
                     {
                         UnityEditor.EditorApplication.delayCall += () =>
                         {
-                            if (!UltiPawUtils.isDevEnvironment)
+                            if (!MCBUtils.isDevEnvironment)
                             {
                                 editor.CheckAuthentication();
                             }
@@ -81,7 +81,7 @@ public class AdvancedModeModule
                     {
                         UnityEditor.EditorApplication.delayCall += () =>
                         {
-                            if (UltiPawUtils.isDevEnvironment)
+                            if (MCBUtils.isDevEnvironment)
                             {
                                 editor.CheckAuthentication();
                             }
@@ -101,14 +101,14 @@ public class AdvancedModeModule
 
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Connectivity Simulation", EditorStyles.boldLabel);
-                ApiSimulationMode currentSimulationMode = UltiPawUtils.apiSimulationMode;
+                ApiSimulationMode currentSimulationMode = MCBUtils.apiSimulationMode;
                 ApiSimulationMode newSimulationMode = (ApiSimulationMode)EditorGUILayout.EnumPopup(
                     new GUIContent("API simulation", "Overrides package API requests for quick failure testing."),
                     currentSimulationMode);
                 if (newSimulationMode != currentSimulationMode)
                 {
-                    UltiPawUtils.apiSimulationMode = newSimulationMode;
-                    UltiPawConnectivityMonitor.Retry(editor.authToken);
+                    MCBUtils.apiSimulationMode = newSimulationMode;
+                    MCBConnectivityMonitor.Retry(editor.authToken);
                     editor.RefreshAccountAndVersions();
                 }
 
@@ -131,7 +131,7 @@ public class AdvancedModeModule
                 GUILayout.Space(EditorGUI.indentLevel * 15);
                 if (GUILayout.Button("Retry connectivity check", GUILayout.Width(180)))
                 {
-                    UltiPawConnectivityMonitor.Retry(editor.authToken);
+                    MCBConnectivityMonitor.Retry(editor.authToken);
                 }
                 EditorGUILayout.EndHorizontal();
 
@@ -142,21 +142,21 @@ public class AdvancedModeModule
                 if (GUILayout.Button("Flush user cache", GUILayout.Width(180)))
                 {
                     UserService.FlushUserCache();
-                    UltiPawLogger.Log("[UltiPaw] User cache flush requested from Advanced Settings");
+                    MCBLogger.Log("[MCB] User cache flush requested from Advanced Settings");
                 }
                 EditorGUILayout.EndHorizontal();
 
                 // Logging checkbox (false by default via EditorPrefs)
-                bool currentLogging = UltiPawLogger.IsEnabled();
+                bool currentLogging = MCBLogger.IsEnabled();
                 bool newLogging = EditorGUILayout.Toggle("Log in Console", currentLogging);
                 if (newLogging != currentLogging)
                 {
-                    UltiPawLogger.SetEnabled(newLogging);
+                    MCBLogger.SetEnabled(newLogging);
                 }
 
                 // Share issue logs (true by default) + minimum severity slider
                 bool currentShare = EditorIssueReporter.ShareIssueLogs;
-                bool newShare = EditorGUILayout.Toggle(new GUIContent("Share issue logs", "Send warnings/errors/exceptions to the UltiPaw server to help us improve."), currentShare);
+                bool newShare = EditorGUILayout.Toggle(new GUIContent("Share issue logs", "Send warnings/errors/exceptions to the MCB server to help us improve."), currentShare);
                 if (newShare != currentShare)
                 {
                     EditorIssueReporter.ShareIssueLogs = newShare;
@@ -173,7 +173,7 @@ public class AdvancedModeModule
                 GUILayout.Space(EditorGUI.indentLevel * 15);
                 if (GUILayout.Button(new GUIContent("Test INFO log", "Emits an INFO level log to test the logging & reporting pipeline"), GUILayout.Width(120)))
                 {
-                    UltiPawLogger.Log("[UltiPaw] Test INFO log from AdvancedModeModule");
+                    MCBLogger.Log("[MCB] Test INFO log from AdvancedModeModule");
                 }
                 EditorGUILayout.EndHorizontal();
 
@@ -186,18 +186,18 @@ public class AdvancedModeModule
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Blenshape processing", EditorStyles.boldLabel);
 
-                if (editor.ultiPawTarget != null) {
+                if (editor.customBaseTarget != null) {
                     EditorGUI.BeginChangeCheck();
                     bool preserveBlendshapeValues = EditorGUILayout.Toggle(
                         new GUIContent(
                             "Preserve Blendshapes On Version Switch",
                             "Saves current blendshape weights by name before switching version, then restores matching names afterward. New blendshapes use version defaults when available."),
-                        editor.ultiPawTarget.preserveBlendshapeValuesOnVersionSwitch);
+                        editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch);
                     if (EditorGUI.EndChangeCheck())
                     {
-                        editor.ultiPawTarget.preserveBlendshapeValuesOnVersionSwitch = preserveBlendshapeValues;
-                        editor.ultiPawTarget.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
-                        EditorUtility.SetDirty(editor.ultiPawTarget);
+                        editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch = preserveBlendshapeValues;
+                        editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
+                        EditorUtility.SetDirty(editor.customBaseTarget);
                     }
 
                     EditorGUILayout.Space();
@@ -207,14 +207,14 @@ public class AdvancedModeModule
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Dynamic Normals", EditorStyles.boldLabel);
                 
-                if (editor.ultiPawTarget != null)
+                if (editor.customBaseTarget != null)
                 {
                     EditorGUI.BeginChangeCheck();
-                    bool useDynamicNormals = EditorGUILayout.Toggle(new GUIContent("Enable Dynamic Normals", "Applies dynamic normals to blendshapes containing 'muscle' or 'flex' on the Body mesh"), editor.ultiPawTarget.useDynamicNormals);
+                    bool useDynamicNormals = EditorGUILayout.Toggle(new GUIContent("Enable Dynamic Normals", "Applies dynamic normals to blendshapes containing 'muscle' or 'flex' on the Body mesh"), editor.customBaseTarget.useDynamicNormals);
                     if (EditorGUI.EndChangeCheck())
                     {
-                        editor.ultiPawTarget.useDynamicNormals = useDynamicNormals;
-                        EditorUtility.SetDirty(editor.ultiPawTarget);
+                        editor.customBaseTarget.useDynamicNormals = useDynamicNormals;
+                        EditorUtility.SetDirty(editor.customBaseTarget);
                         
                         if (useDynamicNormals)
                         {
@@ -226,15 +226,15 @@ public class AdvancedModeModule
                         }
                     }
 
-                    if (editor.ultiPawTarget.useDynamicNormals)
+                    if (editor.customBaseTarget.useDynamicNormals)
                     {
                         EditorGUI.indentLevel++;
                         EditorGUI.BeginChangeCheck();
-                        bool useAPose = EditorGUILayout.Toggle(new GUIContent("Use Leg Separation", "Separates the legs during calculation to prevent clipping artifacts on the inner thighs. Uses pure translation to avoid deforming the knees."), editor.ultiPawTarget.useAPoseForDynamicNormals);
+                        bool useAPose = EditorGUILayout.Toggle(new GUIContent("Use Leg Separation", "Separates the legs during calculation to prevent clipping artifacts on the inner thighs. Uses pure translation to avoid deforming the knees."), editor.customBaseTarget.useAPoseForDynamicNormals);
                         if (EditorGUI.EndChangeCheck())
                         {
-                            editor.ultiPawTarget.useAPoseForDynamicNormals = useAPose;
-                            EditorUtility.SetDirty(editor.ultiPawTarget);
+                            editor.customBaseTarget.useAPoseForDynamicNormals = useAPose;
+                            EditorUtility.SetDirty(editor.customBaseTarget);
                             
                             // Re-apply to take the new pose into account
                             dynamicNormalsService.Remove();
@@ -262,7 +262,7 @@ public class AdvancedModeModule
                             EditorGUI.indentLevel++;
                             foreach (var blendshape in activeBlendshapes)
                             {
-                                EditorGUILayout.LabelField("• " + blendshape);
+                                EditorGUILayout.LabelField("� " + blendshape);
                             }
                             EditorGUI.indentLevel--;
                         }
@@ -270,7 +270,7 @@ public class AdvancedModeModule
                 }
                 else
                 {
-                    EditorGUILayout.HelpBox("No UltiPaw target found.", MessageType.Info);
+                    EditorGUILayout.HelpBox("No My Custom Base target found.", MessageType.Info);
                 }
 
                 // Version cache controls
@@ -289,7 +289,7 @@ public class AdvancedModeModule
                     editor.fetchAttempted = false;
                     editor.versionModule?.actions?.UpdateAppliedVersionAndState();
                     editor.Repaint();
-                    UltiPawLogger.Log("[AdvancedMode] Cleared version caches from Advanced Mode module.");
+                    MCBLogger.Log("[AdvancedMode] Cleared version caches from Advanced Mode module.");
                 }
                 EditorGUILayout.EndHorizontal();
 
@@ -352,7 +352,7 @@ public class AdvancedModeModule
                                 }
                                 else
                                 {
-                                    fbxHash = UltiPawUtils.CalculateFileHash(absolutePath);
+                                    fbxHash = MCBUtils.CalculateFileHash(absolutePath);
                                     if (string.IsNullOrEmpty(fbxHash))
                                     {
                                         fbxHashError = "Failed to compute hash.";
@@ -494,24 +494,24 @@ public class AdvancedModeModule
     
     private void PlaceDebugPrefab()
     {
-        if (editor.ultiPawTarget == null) return;
+        if (editor.customBaseTarget == null) return;
         
         // Remove existing debug prefab if it exists
         RemoveDebugPrefab();
         
-        string prefabPath = "Packages/ultipaw/debug/debug.prefab";
+        string prefabPath = "Packages/orbiters.mcb/debug/debug.prefab";
         GameObject debugPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
         
         if (debugPrefab == null)
         {
-            UltiPawLogger.LogError($"Could not find debug prefab at {prefabPath}");
+            MCBLogger.LogError($"Could not find debug prefab at {prefabPath}");
             return;
         }
         
-        debugPrefabInstance = (GameObject)PrefabUtility.InstantiatePrefab(debugPrefab, editor.ultiPawTarget.transform);
+        debugPrefabInstance = (GameObject)PrefabUtility.InstantiatePrefab(debugPrefab, editor.customBaseTarget.transform);
         debugPrefabInstance.name = "debug";
         
-        UltiPawLogger.Log("Debug prefab placed in avatar root");
+        MCBLogger.Log("Debug prefab placed in avatar root");
     }
     
     private void RemoveDebugPrefab()
@@ -520,18 +520,18 @@ public class AdvancedModeModule
         {
             Object.DestroyImmediate(debugPrefabInstance);
             debugPrefabInstance = null;
-            UltiPawLogger.Log("Debug prefab removed from avatar root");
+            MCBLogger.Log("Debug prefab removed from avatar root");
         }
         else
         {
             // Try to find existing debug object by name
-            if (editor.ultiPawTarget != null)
+            if (editor.customBaseTarget != null)
             {
-                Transform existingDebug = editor.ultiPawTarget.transform.Find("debug");
+                Transform existingDebug = editor.customBaseTarget.transform.Find("debug");
                 if (existingDebug != null)
                 {
                     Object.DestroyImmediate(existingDebug.gameObject);
-                    UltiPawLogger.Log("Existing debug object removed from avatar root");
+                    MCBLogger.Log("Existing debug object removed from avatar root");
                 }
             }
         }
@@ -539,7 +539,7 @@ public class AdvancedModeModule
     
     private void CreateArmatureNow()
     {
-        if (editor.ultiPawTarget == null || debugPrefabInstance == null) return;
+        if (editor.customBaseTarget == null || debugPrefabInstance == null) return;
         
         GenerateArmatureMesh(true); // Enable the mesh
     }
@@ -575,16 +575,16 @@ public class AdvancedModeModule
         }
         
         // Generate new mesh using ArmatureMeshGenerator
-        ArmatureMeshGenerator.Generate(editor.ultiPawTarget.gameObject, ArmatureMeshGenerator.MeshType.Pyramid);
+        ArmatureMeshGenerator.Generate(editor.customBaseTarget.gameObject, ArmatureMeshGenerator.MeshType.Pyramid);
         
         // Find the generated mesh and move it to the debug prefab
-        Transform generatedMesh = editor.ultiPawTarget.transform.Find("ArmatureDebugMesh");
+        Transform generatedMesh = editor.customBaseTarget.transform.Find("ArmatureDebugMesh");
         if (generatedMesh != null)
         {
             generatedMesh.SetParent(debugPrefabInstance.transform, true);
             
             // Apply the debug material
-            string materialPath = "Packages/ultipaw/debug/ArmatureDebugMaterial.mat";
+            string materialPath = "Packages/orbiters.mcb/debug/ArmatureDebugMaterial.mat";
             Material debugMaterial = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
             
             if (debugMaterial != null)
@@ -597,17 +597,17 @@ public class AdvancedModeModule
             }
             else
             {
-                UltiPawLogger.LogWarning($"Could not find ArmatureDebugMaterial at {materialPath}");
+                MCBLogger.LogWarning($"Could not find ArmatureDebugMaterial at {materialPath}");
             }
             
             // Set the enabled state
             generatedMesh.gameObject.SetActive(enableMesh);
             
-            UltiPawLogger.Log($"ArmatureDebugMesh generated and placed in debug prefab (enabled: {enableMesh})");
+            MCBLogger.Log($"ArmatureDebugMesh generated and placed in debug prefab (enabled: {enableMesh})");
         }
         else
         {
-            UltiPawLogger.LogError("Failed to generate ArmatureDebugMesh");
+            MCBLogger.LogError("Failed to generate ArmatureDebugMesh");
         }
     }
     

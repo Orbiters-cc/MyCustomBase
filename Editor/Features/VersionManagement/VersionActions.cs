@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -6,17 +6,17 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UltiPawEditorUtils;
+using MCBEditorUtils;
 
 public class VersionActions
 {
     private const float BlendshapeWeightEpsilon = 0.001f;
 
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly NetworkService networkService;
     private readonly FileManagerService fileManagerService;
 
-    public VersionActions(UltiPawEditor editor, NetworkService network, FileManagerService files)
+    public VersionActions(MCBEditor editor, NetworkService network, FileManagerService files)
     {
         this.editor = editor;
         this.networkService = network;
@@ -25,17 +25,17 @@ public class VersionActions
     
     // Coroutine Starters
     public void StartVersionFetch() => EditorCoroutineUtility.StartCoroutineOwnerless(FetchVersionsCoroutine());
-    public void StartVersionDownload(UltiPawVersion ver, bool apply) => EditorCoroutineUtility.StartCoroutineOwnerless(DownloadVersionCoroutine(ver, apply));
-    public void StartVersionDelete(UltiPawVersion ver) => EditorCoroutineUtility.StartCoroutineOwnerless(DeleteVersionCoroutine(ver));
+    public void StartVersionDownload(CustomBaseVersion ver, bool apply) => EditorCoroutineUtility.StartCoroutineOwnerless(DownloadVersionCoroutine(ver, apply));
+    public void StartVersionDelete(CustomBaseVersion ver) => EditorCoroutineUtility.StartCoroutineOwnerless(DeleteVersionCoroutine(ver));
     public void StartApplyVersion() => EditorCoroutineUtility.StartCoroutineOwnerless(ApplyOrResetCoroutine(editor.selectedVersionForAction, false));
     public void StartReset() => EditorCoroutineUtility.StartCoroutineOwnerless(ApplyOrResetCoroutine(null, true));
     public void StartRecalculateCurrentFbxHash() => EditorCoroutineUtility.StartCoroutineOwnerless(RecalculateCurrentFbxHashCoroutine());
     public void StartApplyCustomVersion() => EditorCoroutineUtility.StartCoroutineOwnerless(ApplyCustomVersionCoroutine(editor.selectedCustomVersionForAction));
-    public void ExportOfflineVersion(UltiPawVersion version)
+    public void ExportOfflineVersion(CustomBaseVersion version)
     {
         if (version == null) return;
 
-        string versionFolderPath = UltiPawUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string versionFolderPath = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
         if (string.IsNullOrWhiteSpace(versionFolderPath) || !Directory.Exists(Path.GetFullPath(versionFolderPath)))
         {
             editor.warningsModule.AddWarning("The selected version is not available locally, so it cannot be exported.", MessageType.Error, "Export failed");
@@ -43,7 +43,7 @@ public class VersionActions
             return;
         }
 
-        string suggestedFileName = $"UltiPaw_saved_version_{version.version.Replace('.', '_')}.unitypackage";
+        string suggestedFileName = $"MCB_saved_version_{version.version.Replace('.', '_')}.unitypackage";
         string savePath = EditorUtility.SaveFilePanel(
             "Export Saved Version",
             "",
@@ -64,7 +64,7 @@ public class VersionActions
         catch (Exception ex)
         {
             editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Export failed");
-            UltiPawLogger.LogError($"[VersionActions] Offline export failed: {ex}");
+            MCBLogger.LogError($"[VersionActions] Offline export failed: {ex}");
         }
         finally
         {
@@ -84,7 +84,7 @@ public class VersionActions
         editor.Repaint();
 
         UpdateCurrentBaseFbxHash();
-        UltiPawLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash.");
+        MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash.");
 
         if (string.IsNullOrEmpty(editor.currentBaseFbxHash))
         {
@@ -95,7 +95,7 @@ public class VersionActions
             yield break;
         }
 
-        string url = $"{UltiPawUtils.getApiUrl()}{UltiPawUtils.VERSION_ENDPOINT}?d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.VERSION_ENDPOINT}?d={editor.currentBaseFbxHash}&t={editor.authToken}";
         var fetchTask = networkService.FetchVersionsAsync(url);
         
         while (!fetchTask.IsCompleted)
@@ -106,7 +106,7 @@ public class VersionActions
         var (success, response, error) = fetchTask.Result;
         if (success)
         {
-            editor.serverVersions = response?.versions ?? new System.Collections.Generic.List<UltiPawVersion>();
+            editor.serverVersions = response?.versions ?? new System.Collections.Generic.List<CustomBaseVersion>();
             editor.recommendedVersion = editor.serverVersions.FirstOrDefault(v => v.version == response.recommendedVersion);
             UpdateAppliedVersionAndState();
             SmartSelectVersion();
@@ -136,15 +136,15 @@ public class VersionActions
         editor.Repaint();
     }
     
-    private IEnumerator DownloadVersionCoroutine(UltiPawVersion version, bool applyAfter)
+    private IEnumerator DownloadVersionCoroutine(CustomBaseVersion version, bool applyAfter)
     {
         if (editor.isDownloading) yield break;
         editor.isDownloading = true;
         editor.warningsModule.Clear();
         editor.Repaint();
         
-        string tempZipPath = Path.Combine(Path.GetTempPath(), $"ultipaw_dl_{Guid.NewGuid()}.zip");
-        string url = $"{UltiPawUtils.getApiUrl()}{UltiPawUtils.MODEL_ENDPOINT}?version={version.version}&d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.MODEL_ENDPOINT}?version={version.version}&d={editor.currentBaseFbxHash}&t={editor.authToken}";
         
         // --- Setup phase (no yield returns) ---
         var downloadTask = networkService.DownloadFileAsync(url, tempZipPath);
@@ -179,8 +179,8 @@ public class VersionActions
             else
             {
                 downloadSucceeded = true;
-                string finalDest = UltiPawUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
-                tempExtractPath = Path.Combine(Path.GetTempPath(), $"ultipaw_extract_{Guid.NewGuid()}");
+                string finalDest = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+                tempExtractPath = Path.Combine(Path.GetTempPath(), $"mcb_extract_{Guid.NewGuid()}");
                 
                 fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest);
                 extractionSucceeded = true;
@@ -210,7 +210,7 @@ public class VersionActions
             {
                 yield return null;
             }
-            UltiPawLogger.Log("[VersionActions] Editor finished pending compilation/import work.");            
+            MCBLogger.Log("[VersionActions] Editor finished pending compilation/import work.");            
             if (applyAfter) 
             {
                 editor.selectedVersionForAction = version;
@@ -220,14 +220,14 @@ public class VersionActions
         }
     }
 
-    private IEnumerator DeleteVersionCoroutine(UltiPawVersion version)
+    private IEnumerator DeleteVersionCoroutine(CustomBaseVersion version)
     {
         if (editor.isDeleting) yield break;
         editor.isDeleting = true;
         editor.warningsModule.Clear();
         editor.Repaint();
 
-        string path = UltiPawUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string path = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
         bool deleted = false;
         try
         {
@@ -250,14 +250,14 @@ public class VersionActions
         editor.Repaint();
     }
 
-    internal IEnumerator ApplyOrResetCoroutine(UltiPawVersion version, bool isReset)
+    internal IEnumerator ApplyOrResetCoroutine(CustomBaseVersion version, bool isReset)
     {
-        var root = editor.ultiPawTarget.transform.root;
-        bool preserveBlendshapeValues = editor.ultiPawTarget != null && editor.ultiPawTarget.preserveBlendshapeValuesOnVersionSwitch;
+        var root = editor.customBaseTarget.transform.root;
+        bool preserveBlendshapeValues = editor.customBaseTarget != null && editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch;
         var blendshapeSnapshot = preserveBlendshapeValues ? CaptureBlendshapeState(root) : null;
         fileManagerService.RemoveExistingLogic(root);
 
-        UltiPawLogger.Log($"[VersionActions] ApplyOrReset start (reset={isReset}, version={(version != null ? version.version : "null")})");
+        MCBLogger.Log($"[VersionActions] ApplyOrReset start (reset={isReset}, version={(version != null ? version.version : "null")})");
 
         string fbxPath = GetCurrentFBXPath();
         if (string.IsNullOrEmpty(fbxPath)) yield break;
@@ -277,7 +277,7 @@ public class VersionActions
             {
                 if (version == null) throw new ArgumentNullException(nameof(version), "A version must be provided to apply.");
                 
-                string binPath = UltiPawUtils.GetVersionBinPath(version.version, version.defaultAviVersion);
+                string binPath = MCBUtils.GetVersionBinPath(version.version, version.defaultAviVersion);
                 if (!File.Exists(binPath)) throw new FileNotFoundException("Apply failed: .bin file not found. Please download or build it first.");
 
                 string originalFbxPath = fbxPath.EndsWith(FileManagerService.OriginalSuffix) ? fbxPath : fbxPath + FileManagerService.OriginalSuffix;
@@ -297,7 +297,7 @@ public class VersionActions
         }
         catch(Exception e)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Operation failed: {e.Message}");
+            MCBLogger.LogError($"[MCB] Operation failed: {e.Message}");
             if(!isReset && fileManagerService.BackupExists(fbxPath)) fileManagerService.RestoreBackup(fbxPath);
         }
         
@@ -306,9 +306,9 @@ public class VersionActions
             // --- CRITICAL FIX FOR RE-IMPORT ---
             // Force Unity to re-import the specific FBX we just changed synchronously.
             // ForceSynchronousImport blocks until the import completes, preventing race conditions.
-            UltiPawLogger.Log($"[VersionActions] Importing modified FBX at {fbxPath}");
+            MCBLogger.Log($"[VersionActions] Importing modified FBX at {fbxPath}");
             AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-            UltiPawLogger.Log("[VersionActions] FBX import completed.");
+            MCBLogger.Log("[VersionActions] FBX import completed.");
             
             // Wait until Unity has finished compiling (if any compilation was triggered).
             // This is essential to prevent race conditions.
@@ -316,33 +316,33 @@ public class VersionActions
             {
                 yield return null;
             }
-            UltiPawLogger.Log("[VersionActions] Editor finished pending compilation/import work.");
+            MCBLogger.Log("[VersionActions] Editor finished pending compilation/import work.");
             //  --- END CRITICAL FIX ---
             
-            var versionForAssets = isReset ? (editor.ultiPawTarget.appliedUltiPawVersion ?? editor.selectedVersionForAction) : version;
+            var versionForAssets = isReset ? (editor.customBaseTarget.appliedCustomBaseVersion ?? editor.selectedVersionForAction) : version;
             if (versionForAssets != null)
             {
-                string dataPath = UltiPawUtils.GetVersionDataPath(versionForAssets.version, versionForAssets.defaultAviVersion);
-                string avatarName = isReset ? UltiPawUtils.DEFAULT_AVATAR_NAME : UltiPawUtils.ULTIPAW_AVATAR_NAME;
-                string avatarPath = UltiPawUtils.CombineUnityPath(dataPath, avatarName);
+                string dataPath = MCBUtils.GetVersionDataPath(versionForAssets.version, versionForAssets.defaultAviVersion);
+                string avatarName = isReset ? MCBUtils.DEFAULT_AVATAR_NAME : MCBUtils.CUSTOM_BASE_AVATAR_NAME;
+                string avatarPath = MCBUtils.CombineUnityPath(dataPath, avatarName);
                 
                 var fbxGameObject = editor.baseFbxFilesProp.arraySize > 0 ? editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject : null;
-                UltiPawLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath}");
+                MCBLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath}");
                 fileManagerService.ApplyAvatarToModel(root, fbxGameObject, avatarPath);
                 while (EditorApplication.isCompiling || EditorApplication.isUpdating)
                 {
                     yield return null;
                 }
-                UltiPawLogger.Log("[VersionActions] Avatar import completed.");
+                MCBLogger.Log("[VersionActions] Avatar import completed.");
 
                 if (!isReset)
                 {
-                    string packagePath = UltiPawUtils.CombineUnityPath(dataPath, "ultipaw logic.unitypackage");
+                    string packagePath = MCBUtils.CombineUnityPath(dataPath, "mcb logic.unitypackage");
                     fileManagerService.InstantiateLogicPrefab(packagePath, root);
                 }
             }
             
-            string customLogicPath = UltiPawUtils.CombineUnityPath(UltiPawUtils.GetVersionDataPath(versionForAssets.version, versionForAssets.defaultAviVersion), UltiPawUtils.CUSTOM_LOGIC_NAME);
+            string customLogicPath = MCBUtils.CombineUnityPath(MCBUtils.GetVersionDataPath(versionForAssets.version, versionForAssets.defaultAviVersion), MCBUtils.CUSTOM_LOGIC_NAME);
             string customLogicAbsolutePath = Path.GetFullPath(customLogicPath);
             if (File.Exists(customLogicAbsolutePath))
             {
@@ -355,18 +355,18 @@ public class VersionActions
                 }
                 else
                 {
-                    UltiPawLogger.LogWarning($"[UltiPaw] Custom logic prefab not found at: {customLogicPath}");
+                    MCBLogger.LogWarning($"[MCB] Custom logic prefab not found at: {customLogicPath}");
                 }
             }
             
-            editor.ultiPawTarget.appliedUltiPawVersion = version;
+            editor.customBaseTarget.appliedCustomBaseVersion = version;
             SyncAppliedVersionBlendshapeLinkCache(version);
             
             // Check feature flags
             bool hasCustomVeins = !isReset && version != null && (version.extraCustomization?.Contains("customVeins") ?? false);
             bool hasDynamicNormalBody = !isReset && version != null && (version.extraCustomization?.Contains("dynamicNormalBody") ?? false);
             bool hasDynamicNormalFlexing = !isReset && version != null && (version.extraCustomization?.Contains("dynamicNormalFlexing") ?? false);
-            bool shouldApplyDynamicNormals = (hasDynamicNormalBody || hasDynamicNormalFlexing) && editor.ultiPawTarget.useDynamicNormals;
+            bool shouldApplyDynamicNormals = (hasDynamicNormalBody || hasDynamicNormalFlexing) && editor.customBaseTarget.useDynamicNormals;
             
             // Apply or remove dynamic normals based on version feature flags
             // CRITICAL FIX: Execute INSIDE the coroutine (not via delayCall) with proper yield statements
@@ -374,7 +374,7 @@ public class VersionActions
 
             if (!shouldApplyDynamicNormals)
             {
-                UltiPawLogger.Log("[VersionActions] Removing dynamic normals.");
+                MCBLogger.Log("[VersionActions] Removing dynamic normals.");
                 dynamicNormalsService.Remove();
                 
                 // Wait for any asset processing triggered by removal
@@ -383,7 +383,7 @@ public class VersionActions
                 {
                     yield return null;
                 }
-                UltiPawLogger.Log("[VersionActions] Dynamic normals removal completed.");
+                MCBLogger.Log("[VersionActions] Dynamic normals removal completed.");
             }
 
             // Always detach the current Body mesh before reassigning from the newly imported FBX.
@@ -394,7 +394,7 @@ public class VersionActions
             {
                 bool applyBody = hasDynamicNormalBody;
                 bool applyFlex = hasDynamicNormalFlexing;
-                UltiPawLogger.Log("[VersionActions] Applying dynamic normals.");
+                MCBLogger.Log("[VersionActions] Applying dynamic normals.");
                 dynamicNormalsService.Apply(applyBody, applyFlex);
                 
                 // Wait for any asset processing triggered by dynamic normals
@@ -403,7 +403,7 @@ public class VersionActions
                 {
                     yield return null;
                 }
-                UltiPawLogger.Log("[VersionActions] Dynamic normals application completed.");
+                MCBLogger.Log("[VersionActions] Dynamic normals application completed.");
             }
             
             // Apply or remove custom veins based on version feature flag
@@ -412,8 +412,8 @@ public class VersionActions
             if (hasCustomVeins)
             {
                 // Apply custom veins
-                string versionFolder = UltiPawUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
-                string veinsNormalPath = UltiPawUtils.CombineUnityPath(versionFolder, "veins normal.png");
+                string versionFolder = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+                string veinsNormalPath = MCBUtils.CombineUnityPath(versionFolder, "veins normal.png");
                 string veinsNormalAbsolutePath = Path.GetFullPath(veinsNormalPath);
 
                 if (File.Exists(veinsNormalAbsolutePath))
@@ -424,12 +424,12 @@ public class VersionActions
                         materialService.SetDetailNormalOpacity("Body", 1.0f);
                         // Sync the toggle state with the applied state
                         EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, true);
-                        UltiPawLogger.Log($"[VersionActions] Custom veins applied from version {version.version}");
+                        MCBLogger.Log($"[VersionActions] Custom veins applied from version {version.version}");
                     }
                 }
                 else
                 {
-                    UltiPawLogger.LogWarning($"[VersionActions] Custom veins file not found at: {veinsNormalPath}");
+                    MCBLogger.LogWarning($"[VersionActions] Custom veins file not found at: {veinsNormalPath}");
                 }
             }
             else
@@ -438,7 +438,7 @@ public class VersionActions
                 materialService.RemoveDetailNormalMap("Body");
                 // Sync the toggle state - set to false when removing veins
                 EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, false);
-                UltiPawLogger.Log("[VersionActions] Custom veins removed");
+                MCBLogger.Log("[VersionActions] Custom veins removed");
             }
             
             // Restore blendshape values by name after all mesh swaps are complete.
@@ -448,15 +448,15 @@ public class VersionActions
                 {
                     RestoreBlendshapeState(root, blendshapeSnapshot, BuildBlendshapeDefaultLookup(version));
                     SyncBlendshapeOverridesFromCurrentWeights(root, version);
-                    UltiPawLogger.Log($"[VersionActions] Restored blendshape values by name (saved renderers: {blendshapeSnapshot.Count}, overrides: {editor.ultiPawTarget.customBlendshapeOverrideNames.Count})");
+                    MCBLogger.Log($"[VersionActions] Restored blendshape values by name (saved renderers: {blendshapeSnapshot.Count}, overrides: {editor.customBaseTarget.customBlendshapeOverrideNames.Count})");
                 }
                 else
                 {
                     ApplyVersionBlendshapeValues(root, version);
-                    UltiPawLogger.Log("[VersionActions] Blendshape preservation on version switch is disabled. Applied version defaults/overrides using legacy behavior.");
+                    MCBLogger.Log("[VersionActions] Blendshape preservation on version switch is disabled. Applied version defaults/overrides using legacy behavior.");
                 }
 
-                // Handle "ultipaw sliders" GameObject state and deletion
+                // Handle "mcb sliders" GameObject state and deletion
                 var slidersTransform = root.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);
                 var hasSliders = version.customBlendshapes != null && version.customBlendshapes.Any(e => e.isSlider);
 
@@ -464,7 +464,7 @@ public class VersionActions
                 {
                     if (slidersTransform != null)
                     {
-                        UltiPawLogger.Log("[VersionActions] Version has no sliders. Deleting sliders GameObject.");
+                        MCBLogger.Log("[VersionActions] Version has no sliders. Deleting sliders GameObject.");
                         Undo.DestroyObjectImmediate(slidersTransform.gameObject);
                     }
                 }
@@ -474,9 +474,9 @@ public class VersionActions
                     var allSliderEntries = version.customBlendshapes.Where(e => e.isSlider).ToList();
                     List<CustomBlendshapeEntry> selectedSliders;
 
-                    if (editor.ultiPawTarget.useCustomSliderSelection)
+                    if (editor.customBaseTarget.useCustomSliderSelection)
                     {
-                        var savedNames = new HashSet<string>(editor.ultiPawTarget.customSliderSelectionNames ?? new List<string>());
+                        var savedNames = new HashSet<string>(editor.customBaseTarget.customSliderSelectionNames ?? new List<string>());
                         selectedSliders = allSliderEntries.Where(e => savedNames.Contains(e.name)).ToList();
                     }
                     else
@@ -484,17 +484,17 @@ public class VersionActions
                         selectedSliders = allSliderEntries.Where(e => e.isSliderDefault).ToList();
                     }
 
-                    UltiPawLogger.Log($"[VersionActions] Applying sliders for version {version.version}. Count: {selectedSliders.Count}");
-                    VRCFuryService.Instance.ApplySliders(root.gameObject, editor.ultiPawTarget.slidersMenuName, selectedSliders);
+                    MCBLogger.Log($"[VersionActions] Applying sliders for version {version.version}. Count: {selectedSliders.Count}");
+                    VRCFuryService.Instance.ApplySliders(root.gameObject, editor.customBaseTarget.slidersMenuName, selectedSliders);
 
                     // Ensure the active state is correct (ApplySliders handles creation state, but we enforce it here for existing ones too)
                     slidersTransform = root.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);
                     if (slidersTransform != null)
                     {
-                        bool desiredState = editor.ultiPawTarget.useCustomSlidersState ? editor.ultiPawTarget.customSlidersState : true;
+                        bool desiredState = editor.customBaseTarget.useCustomSlidersState ? editor.customBaseTarget.customSlidersState : true;
                         if (slidersTransform.gameObject.activeSelf != desiredState)
                         {
-                            UltiPawLogger.Log($"[VersionActions] Setting sliders GameObject active state to: {desiredState}");
+                            MCBLogger.Log($"[VersionActions] Setting sliders GameObject active state to: {desiredState}");
                             Undo.RecordObject(slidersTransform.gameObject, "Set Sliders Active State");
                             slidersTransform.gameObject.SetActive(desiredState);
                         }
@@ -504,29 +504,29 @@ public class VersionActions
             else if (isReset)
             {
                 // Clear custom overrides when resetting
-                editor.ultiPawTarget.customBlendshapeOverrideNames.Clear();
-                editor.ultiPawTarget.customBlendshapeOverrideValues.Clear();
-                editor.ultiPawTarget.useCustomSliderSelection = false;
-                editor.ultiPawTarget.customSliderSelectionNames.Clear();
-                editor.ultiPawTarget.useCustomSlidersState = false;
-                editor.ultiPawTarget.customSlidersState = true;
+                editor.customBaseTarget.customBlendshapeOverrideNames.Clear();
+                editor.customBaseTarget.customBlendshapeOverrideValues.Clear();
+                editor.customBaseTarget.useCustomSliderSelection = false;
+                editor.customBaseTarget.customSliderSelectionNames.Clear();
+                editor.customBaseTarget.useCustomSlidersState = false;
+                editor.customBaseTarget.customSlidersState = true;
                 SyncAppliedVersionBlendshapeLinkCache(null);
 
                 // Delete sliders GameObject on reset
                 var slidersTransform = root.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);
                 if (slidersTransform != null)
                 {
-                    UltiPawLogger.Log("[VersionActions] Reset requested. Deleting sliders GameObject.");
+                    MCBLogger.Log("[VersionActions] Reset requested. Deleting sliders GameObject.");
                     Undo.DestroyObjectImmediate(slidersTransform.gameObject);
                 }
             }
         }
         
-        UltiPawLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash.");
+        MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash.");
         // Force a recalculation of the current FBX hash and applied state
         EditorCoroutineUtility.StartCoroutineOwnerless(RecalculateCurrentFbxHashCoroutine());
 
-        EditorUtility.SetDirty(editor.ultiPawTarget);
+        EditorUtility.SetDirty(editor.customBaseTarget);
         editor.Repaint();
     }
     
@@ -541,7 +541,7 @@ public class VersionActions
         Undo.RecordObject(bodyMesh, "Clear Body Mesh");
         bodyMesh.sharedMesh = null;
         EditorUtility.SetDirty(bodyMesh);
-        UltiPawLogger.Log("[VersionActions] Cleared Body mesh assignment prior to refresh.");
+        MCBLogger.Log("[VersionActions] Cleared Body mesh assignment prior to refresh.");
     }
 
     private Dictionary<string, Dictionary<string, float>> CaptureBlendshapeState(Transform root)
@@ -603,7 +603,7 @@ public class VersionActions
         }
     }
 
-    private Dictionary<string, float> BuildBlendshapeDefaultLookup(UltiPawVersion version)
+    private Dictionary<string, float> BuildBlendshapeDefaultLookup(CustomBaseVersion version)
     {
         var defaults = new Dictionary<string, float>(StringComparer.Ordinal);
         if (version?.customBlendshapes == null) return defaults;
@@ -617,11 +617,11 @@ public class VersionActions
         return defaults;
     }
 
-    private void SyncBlendshapeOverridesFromCurrentWeights(Transform root, UltiPawVersion version)
+    private void SyncBlendshapeOverridesFromCurrentWeights(Transform root, CustomBaseVersion version)
     {
-        editor.ultiPawTarget.customBlendshapeOverrideNames.Clear();
-        editor.ultiPawTarget.customBlendshapeOverrideValues.Clear();
-        editor.ultiPawTarget.blendShapeValues.Clear();
+        editor.customBaseTarget.customBlendshapeOverrideNames.Clear();
+        editor.customBaseTarget.customBlendshapeOverrideValues.Clear();
+        editor.customBaseTarget.blendShapeValues.Clear();
 
         if (root == null || version?.customBlendshapes == null) return;
 
@@ -632,7 +632,7 @@ public class VersionActions
         {
             if (entry == null)
             {
-                editor.ultiPawTarget.blendShapeValues.Add(0f);
+                editor.customBaseTarget.blendShapeValues.Add(0f);
                 continue;
             }
 
@@ -644,19 +644,19 @@ public class VersionActions
                 currentValue = bodyMesh.GetBlendShapeWeight(bodyIndex);
             }
 
-            editor.ultiPawTarget.blendShapeValues.Add(currentValue);
+            editor.customBaseTarget.blendShapeValues.Add(currentValue);
 
             if (Mathf.Abs(currentValue - defaultValue) > BlendshapeWeightEpsilon)
             {
-                editor.ultiPawTarget.customBlendshapeOverrideNames.Add(entry.name);
-                editor.ultiPawTarget.customBlendshapeOverrideValues.Add(currentValue);
+                editor.customBaseTarget.customBlendshapeOverrideNames.Add(entry.name);
+                editor.customBaseTarget.customBlendshapeOverrideValues.Add(currentValue);
             }
         }
     }
 
-    private void ApplyVersionBlendshapeValues(Transform root, UltiPawVersion version)
+    private void ApplyVersionBlendshapeValues(Transform root, CustomBaseVersion version)
     {
-        editor.ultiPawTarget.blendShapeValues.Clear();
+        editor.customBaseTarget.blendShapeValues.Clear();
 
         if (root == null || version?.customBlendshapes == null || version.customBlendshapes.Length == 0) return;
 
@@ -670,16 +670,16 @@ public class VersionActions
         {
             if (entry == null)
             {
-                editor.ultiPawTarget.blendShapeValues.Add(0f);
+                editor.customBaseTarget.blendShapeValues.Add(0f);
                 continue;
             }
 
             float defaultValue = ParseBlendshapeDefaultValue(entry.defaultValue);
             float valueToApply = defaultValue;
-            int overrideIdx = editor.ultiPawTarget.customBlendshapeOverrideNames.IndexOf(entry.name);
-            if (overrideIdx >= 0 && overrideIdx < editor.ultiPawTarget.customBlendshapeOverrideValues.Count)
+            int overrideIdx = editor.customBaseTarget.customBlendshapeOverrideNames.IndexOf(entry.name);
+            if (overrideIdx >= 0 && overrideIdx < editor.customBaseTarget.customBlendshapeOverrideValues.Count)
             {
-                valueToApply = editor.ultiPawTarget.customBlendshapeOverrideValues[overrideIdx];
+                valueToApply = editor.customBaseTarget.customBlendshapeOverrideValues[overrideIdx];
             }
 
             int bodyIndex = bodyMesh.sharedMesh.GetBlendShapeIndex(entry.name);
@@ -700,7 +700,7 @@ public class VersionActions
                 if (maIndex >= 0) maneMesh.SetBlendShapeWeight(maIndex, valueToApply);
             }
 
-            editor.ultiPawTarget.blendShapeValues.Add(valueToApply);
+            editor.customBaseTarget.blendShapeValues.Add(valueToApply);
         }
 
         EditorUtility.SetDirty(bodyMesh);
@@ -739,7 +739,7 @@ public class VersionActions
         
         if (bodyMesh == null)
         {
-            UltiPawLogger.LogWarning("[VersionActions] Body SkinnedMeshRenderer not found in hierarchy.");
+            MCBLogger.LogWarning("[VersionActions] Body SkinnedMeshRenderer not found in hierarchy.");
             return;
         }
         
@@ -747,7 +747,7 @@ public class VersionActions
         GameObject fbxObject = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
         if (fbxObject == null)
         {
-            UltiPawLogger.LogWarning($"[VersionActions] Could not load FBX at path: {fbxPath}");
+            MCBLogger.LogWarning($"[VersionActions] Could not load FBX at path: {fbxPath}");
             return;
         }
         
@@ -756,7 +756,7 @@ public class VersionActions
         
         if (fbxBodyMesh?.sharedMesh == null)
         {
-            UltiPawLogger.LogWarning("[VersionActions] Body mesh not found in FBX.");
+            MCBLogger.LogWarning("[VersionActions] Body mesh not found in FBX.");
             return;
         }
         
@@ -765,7 +765,7 @@ public class VersionActions
         bodyMesh.sharedMesh = fbxBodyMesh.sharedMesh;
         EditorUtility.SetDirty(bodyMesh);
         
-        UltiPawLogger.Log($"[VersionActions] Refreshed Body mesh to: {fbxBodyMesh.sharedMesh.name}");
+        MCBLogger.Log($"[VersionActions] Refreshed Body mesh to: {fbxBodyMesh.sharedMesh.name}");
     }
     
     public void DisplayErrors()
@@ -835,7 +835,7 @@ public class VersionActions
                 }
                 catch (System.Exception ex)
                 {
-                    UltiPawLogger.LogError($"[VersionActions] Async hash calculation failed: {ex.Message}");
+                    MCBLogger.LogError($"[VersionActions] Async hash calculation failed: {ex.Message}");
                 }
             });
         }
@@ -891,7 +891,7 @@ public class VersionActions
 
             if (string.IsNullOrEmpty(currentFileHash))
             {
-                UltiPawLogger.Log("[VersionActions] UpdateAppliedVersionAndState deferred (hash not cached yet).");
+                MCBLogger.Log("[VersionActions] UpdateAppliedVersionAndState deferred (hash not cached yet).");
                 return;
             }
         }
@@ -899,13 +899,13 @@ public class VersionActions
         // Track applied hash consistently
         editor.currentAppliedFbxHash = currentFileHash;
 
-        var candidateVersions = editor.GetAllVersions() ?? new System.Collections.Generic.List<UltiPawVersion>();
-        UltiPawLogger.Log($"[VersionActions] UpdateAppliedVersionAndState hash={currentFileHash} candidates={candidateVersions.Count}");
+        var candidateVersions = editor.GetAllVersions() ?? new System.Collections.Generic.List<CustomBaseVersion>();
+        MCBLogger.Log($"[VersionActions] UpdateAppliedVersionAndState hash={currentFileHash} candidates={candidateVersions.Count}");
 
         // If we have no candidates yet, don't decide custom state prematurely
         if (string.IsNullOrEmpty(currentFileHash) || (!editor.fetchAttempted && candidateVersions.Count == 0))
         {
-            UltiPawLogger.Log("[VersionActions] Deferring state detection (waiting for versions).\n" +
+            MCBLogger.Log("[VersionActions] Deferring state detection (waiting for versions).\n" +
                               $"fetchAttempted={editor.fetchAttempted}, candidates={candidateVersions.Count}");
             return;
         }
@@ -914,21 +914,21 @@ public class VersionActions
             !string.IsNullOrEmpty(v.appliedCustomAviHash) &&
             v.appliedCustomAviHash.Equals(currentFileHash, StringComparison.OrdinalIgnoreCase));
 
-        if (editor?.ultiPawTarget == null) return;
-        Undo.RecordObject(editor.ultiPawTarget, "Update UltiPaw State");
+        if (editor?.customBaseTarget == null) return;
+        Undo.RecordObject(editor.customBaseTarget, "Update MCB State");
 
         if (matchingVersion != null)
         {
-            UltiPawLogger.Log($"[VersionActions] Matched applied version: {matchingVersion.version}");
-            editor.isUltiPaw = true;
+            MCBLogger.Log($"[VersionActions] Matched applied version: {matchingVersion.version}");
+            editor.isCustomBase = true;
             editor.currentIsCustom = false;
-            editor.ultiPawTarget.appliedUltiPawVersion = matchingVersion;
+            editor.customBaseTarget.appliedCustomBaseVersion = matchingVersion;
             SyncAppliedVersionBlendshapeLinkCache(matchingVersion);
         }
         else
         {
-            editor.isUltiPaw = false;
-            editor.ultiPawTarget.appliedUltiPawVersion = null;
+            editor.isCustomBase = false;
+            editor.customBaseTarget.appliedCustomBaseVersion = null;
             
             // Detect user-custom base only when feature is enabled and we have attempted fetching versions
             string fbxPath = GetCurrentFBXPath();
@@ -942,7 +942,7 @@ public class VersionActions
                 {
                     if (!UserCustomVersionService.Instance.ExistsByAppliedHash(currentFileHash))
                     {
-                        var entry = UserCustomVersionService.Instance.CreateFromCurrent(fbxPath, currentFileHash, editor.ultiPawTarget.transform.root);
+                        var entry = UserCustomVersionService.Instance.CreateFromCurrent(fbxPath, currentFileHash, editor.customBaseTarget.transform.root);
                         if (entry != null)
                         {
                             editor.userCustomVersions = UserCustomVersionService.Instance.GetAll();
@@ -951,7 +951,7 @@ public class VersionActions
                 }
                 catch (System.Exception ex)
                 {
-                    UltiPawLogger.LogWarning($"[UltiPaw] Failed to persist custom base info: {ex.Message}");
+                    MCBLogger.LogWarning($"[MCB] Failed to persist custom base info: {ex.Message}");
                 }
             }
             else
@@ -959,21 +959,21 @@ public class VersionActions
                 editor.currentIsCustom = false;
             }
             
-            UltiPawLogger.Log("[VersionActions] No matching version hash found. Marking state as non-UltiPaw.");
+            MCBLogger.Log("[VersionActions] No matching version hash found. Marking state as non-custom-base.");
         }
 
-        EditorUtility.SetDirty(editor.ultiPawTarget);
+        EditorUtility.SetDirty(editor.customBaseTarget);
     }
 
-    private void SyncAppliedVersionBlendshapeLinkCache(UltiPawVersion version)
+    private void SyncAppliedVersionBlendshapeLinkCache(CustomBaseVersion version)
     {
-        if (editor?.ultiPawTarget == null) return;
+        if (editor?.customBaseTarget == null) return;
 
-        var cache = editor.ultiPawTarget.appliedVersionBlendshapeLinksCache;
+        var cache = editor.customBaseTarget.appliedVersionBlendshapeLinksCache;
         if (cache == null)
         {
             cache = new List<CreatorBlendshapeEntry>();
-            editor.ultiPawTarget.appliedVersionBlendshapeLinksCache = cache;
+            editor.customBaseTarget.appliedVersionBlendshapeLinksCache = cache;
         }
 
         cache.Clear();
@@ -1012,22 +1012,22 @@ public class VersionActions
 
     private void SmartSelectVersion()
     {
-        var allVersions = editor.GetAllVersions() ?? new System.Collections.Generic.List<UltiPawVersion>();
-        UltiPawVersion versionToSelect = null;
+        var allVersions = editor.GetAllVersions() ?? new System.Collections.Generic.List<CustomBaseVersion>();
+        CustomBaseVersion versionToSelect = null;
 
         if (editor.selectedVersionForAction != null && allVersions.Contains(editor.selectedVersionForAction))
         {
             versionToSelect = editor.selectedVersionForAction;
         }
-        else if (editor.ultiPawTarget.appliedUltiPawVersion != null && allVersions.Contains(editor.ultiPawTarget.appliedUltiPawVersion))
+        else if (editor.customBaseTarget.appliedCustomBaseVersion != null && allVersions.Contains(editor.customBaseTarget.appliedCustomBaseVersion))
         {
-            versionToSelect = editor.ultiPawTarget.appliedUltiPawVersion;
+            versionToSelect = editor.customBaseTarget.appliedCustomBaseVersion;
         }
         else if (editor.recommendedVersion != null)
         {
-            bool isNewer = editor.ultiPawTarget.appliedUltiPawVersion == null ||
-                           editor.CompareVersions(editor.recommendedVersion.version, editor.ultiPawTarget.appliedUltiPawVersion.version) > 0;
-            string binPath = UltiPawUtils.GetVersionBinPath(editor.recommendedVersion.version, editor.recommendedVersion.defaultAviVersion);
+            bool isNewer = editor.customBaseTarget.appliedCustomBaseVersion == null ||
+                           editor.CompareVersions(editor.recommendedVersion.version, editor.customBaseTarget.appliedCustomBaseVersion.version) > 0;
+            string binPath = MCBUtils.GetVersionBinPath(editor.recommendedVersion.version, editor.recommendedVersion.defaultAviVersion);
             bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
 
             if (isNewer && isDownloaded)
@@ -1056,7 +1056,7 @@ public class VersionActions
     {
         if (entry == null) yield break;
         if (!FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION)) yield break;
-        var root = editor.ultiPawTarget.transform.root;
+        var root = editor.customBaseTarget.transform.root;
         fileManagerService.RemoveExistingLogic(root);
 
         string fbxPath = GetCurrentFBXPath();
@@ -1072,9 +1072,9 @@ public class VersionActions
             }
 
             // Copy saved custom FBX over the current FBX
-            string srcUnity = UltiPawUtils.ToUnityPath(entry.backupFbxPath);
+            string srcUnity = MCBUtils.ToUnityPath(entry.backupFbxPath);
             string srcAbs = System.IO.Path.GetFullPath(srcUnity);
-            string dstUnity = UltiPawUtils.ToUnityPath(fbxPath);
+            string dstUnity = MCBUtils.ToUnityPath(fbxPath);
             string dstAbs = System.IO.Path.GetFullPath(dstUnity);
             if (!System.IO.File.Exists(srcAbs)) throw new System.IO.FileNotFoundException("Saved custom FBX not found", srcAbs);
 
@@ -1083,7 +1083,7 @@ public class VersionActions
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to apply custom version: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to apply custom version: {ex.Message}");
         }
 
         if (success)
@@ -1101,8 +1101,8 @@ public class VersionActions
             }
 
             // Update state flags
-            editor.isUltiPaw = false;
-            editor.ultiPawTarget.appliedUltiPawVersion = null;
+            editor.isCustomBase = false;
+            editor.customBaseTarget.appliedCustomBaseVersion = null;
             SyncAppliedVersionBlendshapeLinkCache(null);
             editor.currentIsCustom = true;
 

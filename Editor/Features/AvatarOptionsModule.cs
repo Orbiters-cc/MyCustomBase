@@ -1,16 +1,16 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
 using System.Collections.Generic;
 
 public class AvatarOptionsModule
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly CustomVeinsDrawer customVeinsDrawer;
     private readonly SlidersDrawer slidersDrawer;
     private readonly BlendshapeDrawer blendshapeDrawer;
 
-    public AvatarOptionsModule(UltiPawEditor editor)
+    public AvatarOptionsModule(MCBEditor editor)
     {
         this.editor = editor;
         customVeinsDrawer = new CustomVeinsDrawer(editor);

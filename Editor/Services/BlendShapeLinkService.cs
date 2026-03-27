@@ -106,12 +106,12 @@ public partial class BlendShapeLinkService
 
     private struct VersionState
     {
-        public UltiPawVersion version;
+        public CustomBaseVersion version;
         public bool useCustomSliderSelection;
         public List<string> customSliderSelectionNames;
     }
 
-    public void ApplyVersionLinks(GameObject avatarRoot, UltiPawVersion version, bool useCustomSliderSelection,
+    public void ApplyVersionLinks(GameObject avatarRoot, CustomBaseVersion version, bool useCustomSliderSelection,
         List<string> customSliderSelectionNames)
     {
         if (avatarRoot == null || version == null) return;
@@ -136,22 +136,22 @@ public partial class BlendShapeLinkService
             return FailConfig(error);
         }
 
-        var ultiPaw = FindUltiPaw(avatarRoot);
-        if (ultiPaw == null)
+        var customBase = FindCustomBase(avatarRoot);
+        if (customBase == null)
         {
-            return FailConfig("UltiPaw component not found on avatar root.");
+            return FailConfig("My Custom Base component not found on avatar root.");
         }
 
-        if (ultiPaw.blendShapeFactorLinks == null)
+        if (customBase.blendShapeFactorLinks == null)
         {
-            ultiPaw.blendShapeFactorLinks = new List<BlendShapeFactorLinkEntry>();
+            customBase.blendShapeFactorLinks = new List<BlendShapeFactorLinkEntry>();
         }
 
-        int index = ultiPaw.blendShapeFactorLinks.FindIndex(x => IsSameManualLink(x, entry));
-        Undo.RecordObject(ultiPaw, "Save BlendShape Factor Link");
-        if (index >= 0) ultiPaw.blendShapeFactorLinks[index] = entry;
-        else ultiPaw.blendShapeFactorLinks.Add(entry);
-        EditorUtility.SetDirty(ultiPaw);
+        int index = customBase.blendShapeFactorLinks.FindIndex(x => IsSameManualLink(x, entry));
+        Undo.RecordObject(customBase, "Save BlendShape Factor Link");
+        if (index >= 0) customBase.blendShapeFactorLinks[index] = entry;
+        else customBase.blendShapeFactorLinks.Add(entry);
+        EditorUtility.SetDirty(customBase);
 
         return new ConfigResult
         {
@@ -166,14 +166,14 @@ public partial class BlendShapeLinkService
     {
         if (avatarRoot == null) return FailApply("Avatar root is null.");
 
-        var ultiPaw = FindUltiPaw(avatarRoot);
-        if (ultiPaw == null || ultiPaw.blendShapeFactorLinks == null || ultiPaw.blendShapeFactorLinks.Count == 0)
+        var customBase = FindCustomBase(avatarRoot);
+        if (customBase == null || customBase.blendShapeFactorLinks == null || customBase.blendShapeFactorLinks.Count == 0)
         {
             return FailApply("No BlendShape factor link configuration was found.");
         }
 
         var planned = new List<PlannedLink>();
-        foreach (var rawLink in ultiPaw.blendShapeFactorLinks)
+        foreach (var rawLink in customBase.blendShapeFactorLinks)
         {
             if (rawLink == null || !rawLink.enabled) continue;
             if (!TryResolveManualLink(avatarRoot, rawLink, out var resolved, out _)) continue;
@@ -223,17 +223,17 @@ public partial class BlendShapeLinkService
     private static bool TryResolveVersionState(GameObject avatarRoot, out VersionState state)
     {
         state = default;
-        var ultiPaw = FindUltiPaw(avatarRoot);
+        var customBase = FindCustomBase(avatarRoot);
 
-        if (ultiPaw == null) return false;
+        if (customBase == null) return false;
 
-        UltiPawVersion versionSource = ultiPaw.appliedUltiPawVersion;
+        CustomBaseVersion versionSource = customBase.appliedCustomBaseVersion;
         if ((versionSource == null || versionSource.customBlendshapes == null ||
              versionSource.customBlendshapes.Length == 0) &&
-            ultiPaw.appliedVersionBlendshapeLinksCache != null &&
-            ultiPaw.appliedVersionBlendshapeLinksCache.Count > 0)
+            customBase.appliedVersionBlendshapeLinksCache != null &&
+            customBase.appliedVersionBlendshapeLinksCache.Count > 0)
         {
-            versionSource = BuildVersionFromCache(ultiPaw.appliedVersionBlendshapeLinksCache);
+            versionSource = BuildVersionFromCache(customBase.appliedVersionBlendshapeLinksCache);
         }
 
         if (versionSource == null || versionSource.customBlendshapes == null ||
@@ -242,19 +242,19 @@ public partial class BlendShapeLinkService
         state = new VersionState
         {
             version = versionSource,
-            useCustomSliderSelection = ultiPaw.useCustomSliderSelection,
-            customSliderSelectionNames = ultiPaw.customSliderSelectionNames != null
-                ? new List<string>(ultiPaw.customSliderSelectionNames)
+            useCustomSliderSelection = customBase.useCustomSliderSelection,
+            customSliderSelectionNames = customBase.customSliderSelectionNames != null
+                ? new List<string>((IEnumerable<string>)customBase.customSliderSelectionNames)
                 : new List<string>()
         };
         return true;
     }
 
-    private static UltiPawVersion BuildVersionFromCache(List<CreatorBlendshapeEntry> cachedEntries)
+    private static CustomBaseVersion BuildVersionFromCache(List<CreatorBlendshapeEntry> cachedEntries)
     {
         if (cachedEntries == null || cachedEntries.Count == 0) return null;
 
-        var version = new UltiPawVersion
+        var version = new CustomBaseVersion
         {
             version = "cached",
             defaultAviVersion = "cached",

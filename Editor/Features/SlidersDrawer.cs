@@ -6,7 +6,7 @@ using UnityEngine;
 
 public class SlidersDrawer
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly SelectableChipGroup selectableChipGroup;
     private readonly RepartitionGraph repartitionGraph;
     private readonly Texture2D sideImage;
@@ -25,12 +25,12 @@ public class SlidersDrawer
 
     private bool lastKnownGameObjectState = true;
 
-    public SlidersDrawer(UltiPawEditor editor)
+    public SlidersDrawer(MCBEditor editor)
     {
         this.editor = editor;
         
         // Load the image
-        sideImage = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/slidersFactoryImageHalf.png");
+        sideImage = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/slidersFactoryImageHalf.png");
 
         repartitionGraph = new RepartitionGraph();
         
@@ -91,10 +91,10 @@ public class SlidersDrawer
 
     private List<CustomBlendshapeEntry> GetSliderEntries()
     {
-        if (editor.ultiPawTarget.appliedUltiPawVersion?.customBlendshapes == null)
+        if (editor.customBaseTarget.appliedCustomBaseVersion?.customBlendshapes == null)
             return new List<CustomBlendshapeEntry>();
 
-        return editor.ultiPawTarget.appliedUltiPawVersion.customBlendshapes
+        return editor.customBaseTarget.appliedCustomBaseVersion.customBlendshapes
             .Where(e => e.isSlider)
             .ToList();
     }
@@ -107,9 +107,9 @@ public class SlidersDrawer
 
     private HashSet<int> GetInitialSelection(List<CustomBlendshapeEntry> entries)
     {
-        if (editor.ultiPawTarget.useCustomSliderSelection)
+        if (editor.customBaseTarget.useCustomSliderSelection)
         {
-            var savedNames = new HashSet<string>(editor.ultiPawTarget.customSliderSelectionNames ?? new List<string>());
+            var savedNames = new HashSet<string>(editor.customBaseTarget.customSliderSelectionNames ?? new List<string>());
             var restored = new HashSet<int>();
             for (int i = 0; i < entries.Count; i++)
             {
@@ -153,27 +153,27 @@ public class SlidersDrawer
         var defaultSelection = GetDefaultSelection(entries);
         bool matchesDefault = defaultSelection.SetEquals(selectedIndices);
 
-        Undo.RecordObject(editor.ultiPawTarget, "Change Slider Selection");
+        Undo.RecordObject(editor.customBaseTarget, "Change Slider Selection");
         if (matchesDefault)
         {
-            editor.ultiPawTarget.useCustomSliderSelection = false;
-            editor.ultiPawTarget.customSliderSelectionNames.Clear();
+            editor.customBaseTarget.useCustomSliderSelection = false;
+            editor.customBaseTarget.customSliderSelectionNames.Clear();
         }
         else
         {
-            editor.ultiPawTarget.useCustomSliderSelection = true;
-            editor.ultiPawTarget.customSliderSelectionNames = selectedIndices
+            editor.customBaseTarget.useCustomSliderSelection = true;
+            editor.customBaseTarget.customSliderSelectionNames = selectedIndices
                 .Where(index => index >= 0 && index < entries.Count)
                 .Select(index => entries[index].name)
                 .ToList();
         }
 
-        EditorUtility.SetDirty(editor.ultiPawTarget);
+        EditorUtility.SetDirty(editor.customBaseTarget);
     }
 
     private void UpdateGraph(int selectedCount)
     {
-        GameObject avatarRoot = editor.ultiPawTarget.transform.root?.gameObject;
+        GameObject avatarRoot = editor.customBaseTarget.transform.root?.gameObject;
         if (avatarRoot == null) return;
 
         var usage = VRCFuryService.Instance.GetAvatarParameterUsage(avatarRoot, selectedCount);
@@ -194,7 +194,7 @@ public class SlidersDrawer
         var entries = GetSliderEntries();
         if (entries.Count == 0) return;
 
-        GameObject avatarRoot = editor.ultiPawTarget.transform.root.gameObject;
+        GameObject avatarRoot = editor.customBaseTarget.transform.root.gameObject;
         Transform slidersTransform = avatarRoot.transform.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);
         bool gameObjectActive = slidersTransform != null && slidersTransform.gameObject.activeSelf;
 
@@ -202,10 +202,10 @@ public class SlidersDrawer
         if (slidersTransform != null && gameObjectActive != lastKnownGameObjectState)
         {
             lastKnownGameObjectState = gameObjectActive;
-            Undo.RecordObject(editor.ultiPawTarget, "Sync Sliders State from GameObject");
-            editor.ultiPawTarget.useCustomSlidersState = true;
-            editor.ultiPawTarget.customSlidersState = gameObjectActive;
-            EditorUtility.SetDirty(editor.ultiPawTarget);
+            Undo.RecordObject(editor.customBaseTarget, "Sync Sliders State from GameObject");
+            editor.customBaseTarget.useCustomSlidersState = true;
+            editor.customBaseTarget.customSlidersState = gameObjectActive;
+            EditorUtility.SetDirty(editor.customBaseTarget);
         }
 
         // If entries changed, refresh names and selection
@@ -253,15 +253,15 @@ public class SlidersDrawer
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField("Sliders", EditorStyles.boldLabel);
                 
-                bool currentSlidersActive = editor.ultiPawTarget.useCustomSlidersState ? editor.ultiPawTarget.customSlidersState : true;
+                bool currentSlidersActive = editor.customBaseTarget.useCustomSlidersState ? editor.customBaseTarget.customSlidersState : true;
                 EditorGUI.BeginChangeCheck();
                 bool nextSlidersActive = EditorGUILayout.Toggle(currentSlidersActive, GUILayout.Width(32));
                 if (EditorGUI.EndChangeCheck())
                 {
-                    Undo.RecordObject(editor.ultiPawTarget, "Toggle Sliders State");
-                    editor.ultiPawTarget.useCustomSlidersState = true;
-                    editor.ultiPawTarget.customSlidersState = nextSlidersActive;
-                    EditorUtility.SetDirty(editor.ultiPawTarget);
+                    Undo.RecordObject(editor.customBaseTarget, "Toggle Sliders State");
+                    editor.customBaseTarget.useCustomSlidersState = true;
+                    editor.customBaseTarget.customSlidersState = nextSlidersActive;
+                    EditorUtility.SetDirty(editor.customBaseTarget);
                     
                     if (slidersTransform != null)
                     {
@@ -280,7 +280,7 @@ public class SlidersDrawer
                 selectableChipGroup.Draw();
                 EditorGUILayout.Space(5);
 
-                GameObject rootObj = editor.ultiPawTarget.transform.root.gameObject;
+                GameObject rootObj = editor.customBaseTarget.transform.root.gameObject;
                 var usage = VRCFuryService.Instance.GetAvatarParameterUsage(rootObj, selectedIndices.Count);
                 
                 EditorGUI.BeginDisabledGroup(usage.compressionIsExternal);
@@ -344,7 +344,7 @@ public class SlidersDrawer
                     GUI.DrawTexture(imageRect, sideImage, ScaleMode.StretchToFill);
                 }
 
-                Texture2D icon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/vrcSliderIcon.png");
+                Texture2D icon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/vrcSliderIcon.png");
                 if (icon != null)
                 {
                     float iconSize = 50f;
@@ -352,7 +352,7 @@ public class SlidersDrawer
                     float spacing = 2f;
                     float textWidth = 70f;
                     
-                    string currentName = editor.ultiPawTarget.slidersMenuName;
+                    string currentName = editor.customBaseTarget.slidersMenuName;
                     
                     // Calculate dynamic height based on content
                     float textHeight = transparentTextFieldStyle.CalcHeight(new GUIContent(currentName), textWidth);
@@ -378,8 +378,8 @@ public class SlidersDrawer
                     string newName = EditorGUI.TextField(textRect, currentName, transparentTextFieldStyle);
                     if (EditorGUI.EndChangeCheck())
                     {
-                        Undo.RecordObject(editor.ultiPawTarget, "Change Slider Menu Name");
-                        editor.ultiPawTarget.slidersMenuName = newName;
+                        Undo.RecordObject(editor.customBaseTarget, "Change Slider Menu Name");
+                        editor.customBaseTarget.slidersMenuName = newName;
                         
                         // Start debounce timer
                         lastMenuNameChangeTime = EditorApplication.timeSinceStartup;
@@ -408,8 +408,8 @@ public class SlidersDrawer
         var allEntries = GetSliderEntries();
         var selectedEntries = selectedIndices.Select(index => allEntries[index]).ToList();
         
-        GameObject avatarRoot = editor.ultiPawTarget.transform.root.gameObject;
-        string menuName = editor.ultiPawTarget.slidersMenuName;
+        GameObject avatarRoot = editor.customBaseTarget.transform.root.gameObject;
+        string menuName = editor.customBaseTarget.slidersMenuName;
 
         System.Action applyAction = () => {
             VRCFuryService.Instance.ApplySliders(avatarRoot, menuName, selectedEntries);
@@ -418,7 +418,7 @@ public class SlidersDrawer
             var slidersTransform = avatarRoot.transform.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);
             if (slidersTransform != null)
             {
-                bool desiredState = editor.ultiPawTarget.useCustomSlidersState ? editor.ultiPawTarget.customSlidersState : true;
+                bool desiredState = editor.customBaseTarget.useCustomSlidersState ? editor.customBaseTarget.customSlidersState : true;
                 slidersTransform.gameObject.SetActive(desiredState);
                 lastKnownGameObjectState = desiredState;
             }

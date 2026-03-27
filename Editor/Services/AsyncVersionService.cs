@@ -28,7 +28,7 @@ public class AsyncVersionService
     private readonly System.Collections.Generic.Dictionary<string, Task> inflightFetches = new System.Collections.Generic.Dictionary<string, Task>();
 
     // Events for UI updates
-    public event Action<List<UltiPawVersion>, UltiPawVersion> OnVersionsUpdated;
+    public event Action<List<CustomBaseVersion>, CustomBaseVersion> OnVersionsUpdated;
     public event Action<string> OnVersionFetchError; 
 
     private AsyncVersionService()
@@ -39,7 +39,7 @@ public class AsyncVersionService
         taskManager = AsyncTaskManager.Instance;
     }
 
-    public async Task<(List<UltiPawVersion> versions, UltiPawVersion recommended, string error)> FetchVersionsAsync(
+    public async Task<(List<CustomBaseVersion> versions, CustomBaseVersion recommended, string error)> FetchVersionsAsync(
         string fbxPath, string authToken, bool useCache = true)
     {
         // Fast path: if we can resolve the base hash from cache and versions are cached, avoid creating any task
@@ -51,7 +51,7 @@ public class AsyncVersionService
                 var cachedEntryFast = cache.GetCachedVersions(cachedBaseHash, authToken);
                 if (cachedEntryFast != null)
                 {
-                    UltiPawLogger.Log($"[AsyncVersionService] Fast cache hit, returning versions without UI task for hash: {cachedBaseHash}");
+                    MCBLogger.Log($"[AsyncVersionService] Fast cache hit, returning versions without UI task for hash: {cachedBaseHash}");
                     taskManager.ExecuteOnMainThread(() =>
                         OnVersionsUpdated?.Invoke(cachedEntryFast.serverVersions, cachedEntryFast.recommendedVersion));
                     return (cachedEntryFast.serverVersions, cachedEntryFast.recommendedVersion, null);
@@ -75,7 +75,7 @@ public class AsyncVersionService
                 var error = "Could not calculate FBX hash";
                 taskManager.CompleteTask(taskId, true, error);
                 OnVersionFetchError?.Invoke(error);
-                return (new List<UltiPawVersion>(), null, error);
+                return (new List<CustomBaseVersion>(), null, error);
             }
 
             // Step 2: Check cache if requested
@@ -86,7 +86,7 @@ public class AsyncVersionService
                 var cachedEntry = cache.GetCachedVersions(baseFbxHash, authToken);
                 if (cachedEntry != null)
                 {
-                    UltiPawLogger.Log($"[AsyncVersionService] Using cached versions for hash: {baseFbxHash}");
+                    MCBLogger.Log($"[AsyncVersionService] Using cached versions for hash: {baseFbxHash}");
                     taskManager.CompleteTask(taskId);
                     
                     // Fire event on main thread
@@ -100,7 +100,7 @@ public class AsyncVersionService
             // Step 3: Fetch from server
             taskManager.UpdateTaskProgress(taskId, 0.5f, "Fetching from server...");
             
-            string url = $"{UltiPawUtils.getApiUrl()}{UltiPawUtils.VERSION_ENDPOINT}?d={baseFbxHash}&t={authToken}";
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.VERSION_ENDPOINT}?d={baseFbxHash}&t={authToken}";
             var fetchTask = taskManager.ExecuteOnMainThreadAsync(() => networkService.FetchVersionsAsync(url));
 
             // Wait for network request with progress updates
@@ -118,7 +118,7 @@ public class AsyncVersionService
             {
                 taskManager.UpdateTaskProgress(taskId, 0.9f, "Processing server response...");
                 
-                var versions = response.versions ?? new List<UltiPawVersion>();
+                var versions = response.versions ?? new List<CustomBaseVersion>();
                 var recommendedVersion = versions.FirstOrDefault(v => v.version == response.recommendedVersion);
 
                 // Cache the results
@@ -137,16 +137,16 @@ public class AsyncVersionService
                 var errorMsg = fetchError ?? "Unknown server error";
                 taskManager.CompleteTask(taskId, true, errorMsg);
                 taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(errorMsg));
-                return (new List<UltiPawVersion>(), null, errorMsg);
+                return (new List<CustomBaseVersion>(), null, errorMsg);
             }
         }
         catch (Exception ex)
         {
             var errorMsg = $"Version fetch failed: {ex.Message}";
-            UltiPawLogger.LogError($"[AsyncVersionService] {errorMsg}");
+            MCBLogger.LogError($"[AsyncVersionService] {errorMsg}");
             taskManager.CompleteTask(taskId, true, errorMsg);
             taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(errorMsg));
-            return (new List<UltiPawVersion>(), null, errorMsg);
+            return (new List<CustomBaseVersion>(), null, errorMsg);
         }
     }
 
@@ -221,7 +221,7 @@ public class AsyncVersionService
         return cachedVersions != null;
     }
 
-    public (List<UltiPawVersion> versions, UltiPawVersion recommended) GetCachedVersions(string fbxPath, string authToken)
+    public (List<CustomBaseVersion> versions, CustomBaseVersion recommended) GetCachedVersions(string fbxPath, string authToken)
     {
         // Try to get cached hash first
         string cachedHash = hashService.GetHashIfCached(fbxPath);
@@ -236,7 +236,7 @@ public class AsyncVersionService
         }
 
         if (string.IsNullOrEmpty(cachedHash))
-            return (new List<UltiPawVersion>(), null);
+            return (new List<CustomBaseVersion>(), null);
 
         var cachedVersions = cache.GetCachedVersions(cachedHash, authToken);
         if (cachedVersions != null)
@@ -244,10 +244,10 @@ public class AsyncVersionService
             return (cachedVersions.serverVersions, cachedVersions.recommendedVersion);
         }
 
-        return (new List<UltiPawVersion>(), null);
+        return (new List<CustomBaseVersion>(), null);
     }
 
-    public async Task<(bool success, string error)> DownloadVersionAsync(UltiPawVersion version, string baseFbxHash, string authToken)
+    public async Task<(bool success, string error)> DownloadVersionAsync(CustomBaseVersion version, string baseFbxHash, string authToken)
     {
         var taskId = $"download_{version.version}_{Guid.NewGuid().ToString().Substring(0, 8)}";
         
@@ -255,8 +255,8 @@ public class AsyncVersionService
 
         try
         {
-            string tempZipPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"ultipaw_dl_{Guid.NewGuid()}.zip");
-            string url = $"{UltiPawUtils.getApiUrl()}{UltiPawUtils.MODEL_ENDPOINT}?version={version.version}&d={baseFbxHash}&t={authToken}";
+            string tempZipPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.MODEL_ENDPOINT}?version={version.version}&d={baseFbxHash}&t={authToken}";
 
             taskManager.UpdateTaskProgress(taskId, 0.1f, "Starting download...");
 
@@ -279,10 +279,10 @@ public class AsyncVersionService
                 taskManager.UpdateTaskProgress(taskId, 0.8f, "Extracting files...");
                 
                 // Extract and move files (this should also be made async in the future)
-                string dataPath = UltiPawUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+                string dataPath = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
                 if (!string.IsNullOrEmpty(dataPath))
                 {
-                    UltiPawUtils.EnsureDirectoryExists(dataPath, false);
+                    MCBUtils.EnsureDirectoryExists(dataPath, false);
                     
                     // Extract ZIP (this is still synchronous for now, but wrapped in task)
                     await Task.Run(() =>
@@ -304,7 +304,7 @@ public class AsyncVersionService
         catch (Exception ex)
         {
             var errorMsg = $"Download failed: {ex.Message}";
-            UltiPawLogger.LogError($"[AsyncVersionService] {errorMsg}");
+            MCBLogger.LogError($"[AsyncVersionService] {errorMsg}");
             taskManager.CompleteTask(taskId, true, errorMsg);
             return (false, errorMsg);
         }
@@ -313,13 +313,13 @@ public class AsyncVersionService
     public void ClearVersionCache()
     {
         cache.ClearVersionCache();
-        UltiPawLogger.Log("[AsyncVersionService] Version cache cleared.");
+        MCBLogger.Log("[AsyncVersionService] Version cache cleared.");
     }
 
     public void ClearAllCache()
     {
         cache.ClearAllCache();
-        UltiPawLogger.Log("[AsyncVersionService] All cache cleared.");
+        MCBLogger.Log("[AsyncVersionService] All cache cleared.");
     }
 
     // Get statistics about cache usage
@@ -329,7 +329,7 @@ public class AsyncVersionService
     }
 
     // Force refresh versions (bypass cache)
-    public async Task<(List<UltiPawVersion> versions, UltiPawVersion recommended, string error)> RefreshVersionsAsync(
+    public async Task<(List<CustomBaseVersion> versions, CustomBaseVersion recommended, string error)> RefreshVersionsAsync(
         string fbxPath, string authToken)
     {
         return await FetchVersionsAsync(fbxPath, authToken, useCache: false);

@@ -29,7 +29,7 @@ public class AvatarParametersService
         public string compressionPath;
     }
 
-    public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot, int selectedUltiPawSlidersCount)
+    public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot, int selectedCustomBaseSlidersCount)
     {
         var usage = new ParameterUsage();
         if (avatarRoot == null) return usage;
@@ -77,29 +77,29 @@ public class AvatarParametersService
 
         var toggleStats = GetToggleStats(vrcfComponents, usage.compressionEnabled, unlimitedInfo.includeBools);
 
-        int safeSelected = Mathf.Max(0, selectedUltiPawSlidersCount);
-        int rawBitsWithoutUltiPaw = (toggleStats.rawBitsTotal - toggleStats.ultiPawSliderRawBits) + fullControllerStats.addedSyncedBits;
-        int numbersWithoutUltiPaw =
-            (toggleStats.compressibleNumbersTotal - toggleStats.ultiPawSliderCount)
+        int safeSelected = Mathf.Max(0, selectedCustomBaseSlidersCount);
+        int rawBitsWithoutMCB = (toggleStats.rawBitsTotal - toggleStats.mcbSliderRawBits) + fullControllerStats.addedSyncedBits;
+        int numbersWithoutMCB =
+            (toggleStats.compressibleNumbersTotal - toggleStats.mcbSliderCount)
             + fullControllerStats.compressibleNumbers
             + avatarMenuCompressionStats.compressibleNumbers;
-        int boolsWithoutUltiPaw =
+        int boolsWithoutMCB =
             toggleStats.compressibleBoolsTotal
             + fullControllerStats.compressibleBools
             + avatarMenuCompressionStats.compressibleBools;
 
-        int rawBitsWithSelection = rawBitsWithoutUltiPaw + (safeSelected * 8);
-        int numbersWithSelection = numbersWithoutUltiPaw + safeSelected;
-        int boolsWithSelection = boolsWithoutUltiPaw;
+        int rawBitsWithSelection = rawBitsWithoutMCB + (safeSelected * 8);
+        int numbersWithSelection = numbersWithoutMCB + safeSelected;
+        int boolsWithSelection = boolsWithoutMCB;
 
         int savingsWithoutSliders = usage.compressionEnabled
-            ? CalculateCompressionSavings(numbersWithoutUltiPaw, boolsWithoutUltiPaw)
+            ? CalculateCompressionSavings(numbersWithoutMCB, boolsWithoutMCB)
             : 0;
         int savingsWithSliders = usage.compressionEnabled
             ? CalculateCompressionSavings(numbersWithSelection, boolsWithSelection)
             : 0;
 
-        int totalWithoutSliders = usage.currentSyncedBits + rawBitsWithoutUltiPaw - savingsWithoutSliders;
+        int totalWithoutSliders = usage.currentSyncedBits + rawBitsWithoutMCB - savingsWithoutSliders;
         int totalWithSliders = usage.currentSyncedBits + rawBitsWithSelection - savingsWithSliders;
 
         usage.usedByAvatar = Mathf.Max(0, totalWithoutSliders);
@@ -377,7 +377,7 @@ public class AvatarParametersService
         return (false, false, false, string.Empty, false);
     }
 
-    private (int rawBitsTotal, int compressibleNumbersTotal, int compressibleBoolsTotal, int ultiPawSliderRawBits, int ultiPawSliderCount)
+    private (int rawBitsTotal, int compressibleNumbersTotal, int compressibleBoolsTotal, int mcbSliderRawBits, int mcbSliderCount)
         GetToggleStats(Component[] vrcfComponents, bool compressionEnabled, bool includeBools)
     {
         if (_vrcFuryType == null || _toggleType == null)
@@ -388,8 +388,8 @@ public class AvatarParametersService
         int rawBitsTotal = 0;
         int compressibleNumbersTotal = 0;
         int compressibleBoolsTotal = 0;
-        int ultiPawSliderRawBits = 0;
-        int ultiPawSliderCount = 0;
+        int mcbSliderRawBits = 0;
+        int mcbSliderCount = 0;
 
         foreach (var component in vrcfComponents)
         {
@@ -413,12 +413,12 @@ public class AvatarParametersService
             var go = component.gameObject;
             if (go != null && go.name == VRCFuryService.SLIDERS_GAMEOBJECT_NAME && isSlider)
             {
-                ultiPawSliderCount++;
-                ultiPawSliderRawBits += 8;
+                mcbSliderCount++;
+                mcbSliderRawBits += 8;
             }
         }
 
-        return (rawBitsTotal, compressibleNumbersTotal, compressibleBoolsTotal, ultiPawSliderRawBits, ultiPawSliderCount);
+        return (rawBitsTotal, compressibleNumbersTotal, compressibleBoolsTotal, mcbSliderRawBits, mcbSliderCount);
     }
 
     private int CalculateCompressionSavings(int compressibleNumbersCount, int compressibleBoolsCount)

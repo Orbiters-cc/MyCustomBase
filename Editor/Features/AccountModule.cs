@@ -7,7 +7,7 @@ using UnityEngine;
 // Displays account info area under the banner: avatar + username (left), logout (right), and connection state.
 public class AccountModule
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly NetworkService networkService;
 
     private Texture2D avatarTexture;
@@ -20,7 +20,7 @@ public class AccountModule
     private string authToken;
     private bool userInfoRequested;
 
-    public AccountModule(UltiPawEditor editor, NetworkService networkService)
+    public AccountModule(MCBEditor editor, NetworkService networkService)
     {
         this.editor = editor;
         this.networkService = networkService;
@@ -117,7 +117,7 @@ public class AccountModule
         GUILayout.Label(string.IsNullOrEmpty(userName) ? "(unknown)" : userName, EditorStyles.boldLabel);
 
         // Environment chip
-        if (UltiPawUtils.isDevEnvironment)
+        if (MCBUtils.isDevEnvironment)
         {
             GUILayout.Space(6);
             EditorUIUtils.DrawChipLabel("dev", EditorUIUtils.OrangeColor, Color.white, Color.black, 40, 16, 6f, 1f);
@@ -193,20 +193,20 @@ public class AccountModule
         {
             if (string.IsNullOrEmpty(authToken))
             {
-                UltiPawLogger.LogWarning("[UltiPaw] No authentication token found. Account state set to 'disconnected'.");
+                MCBLogger.LogWarning("[MCB] No authentication token found. Account state set to 'disconnected'.");
                 connectionState = "disconnected";
                 return;
             }
 
-            string url = UltiPawUtils.getApiUrl() + UltiPawUtils.CHECK_CONNECTION_ENDPOINT + $"?t={authToken}";
-            UltiPawLogger.Log("[UltiPaw] Refreshing account state...");
+            string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT + $"?t={authToken}";
+            MCBLogger.Log("[MCB] Refreshing account state...");
             string newState = await networkService.CheckConnectionAsync(url, authToken);
             if (string.IsNullOrEmpty(newState)) newState = "disconnected";
             connectionState = newState;
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogWarning($"[UltiPaw] Failed to refresh account state: {ex.Message}");
+            MCBLogger.LogWarning($"[MCB] Failed to refresh account state: {ex.Message}");
             connectionState = "disconnected";
         }
         finally
@@ -332,7 +332,7 @@ public class AccountModule
         avatarTexture = null;
         userName = "Unknown";
         connectionState = "disconnected";
-        UltiPawLogger.LogWarning("[UltiPaw] Account state set to 'disconnected' (logged out or no authentication data).");
+        MCBLogger.LogWarning("[MCB] Account state set to 'disconnected' (logged out or no authentication data).");
         UpdateFallbackColor();
     }
 

@@ -1,17 +1,17 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEditor;
-using UltiPawEditorUtils;
+using MCBEditorUtils;
 
 public class DynamicNormalsService
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private List<string> activeBlendshapes = new List<string>();
     private Dictionary<SkinnedMeshRenderer, Mesh> originalMeshes = new Dictionary<SkinnedMeshRenderer, Mesh>();
 
-    public DynamicNormalsService(UltiPawEditor editor)
+    public DynamicNormalsService(MCBEditor editor)
     {
         this.editor = editor;
     }
@@ -30,9 +30,9 @@ public class DynamicNormalsService
 
     public void Apply(bool includeBody = true, bool includeFlexing = true)
     {
-        if (editor.ultiPawTarget == null) return;
+        if (editor.customBaseTarget == null) return;
 
-        var root = editor.ultiPawTarget.transform.root;
+        var root = editor.customBaseTarget.transform.root;
         
         // Find the Body mesh
         var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
@@ -96,7 +96,7 @@ public class DynamicNormalsService
                 .applyToBlendshapes(targetBlendshapes)
                 .enable(true);
 
-            if (editor.ultiPawTarget.useAPoseForDynamicNormals)
+            if (editor.customBaseTarget.useAPoseForDynamicNormals)
             {
                 var translations = new Dictionary<string, Vector3>(System.StringComparer.OrdinalIgnoreCase);
                 
@@ -149,9 +149,9 @@ public class DynamicNormalsService
 
     public void Remove()
     {
-        if (editor.ultiPawTarget == null) return;
+        if (editor.customBaseTarget == null) return;
 
-        var root = editor.ultiPawTarget.transform.root;
+        var root = editor.customBaseTarget.transform.root;
         
         // Find the Body mesh
         var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");

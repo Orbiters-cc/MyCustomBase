@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using UnityEditor;
@@ -45,6 +45,6 @@ public static class FeatureFlags
         try { EditorPrefs.SetBool(GetPrefKey(key), enabled); } catch { }
     }
 
-    private static string GetPrefKey(string key) => $"UltiPaw_FeatureFlag_{key}";
+    private static string GetPrefKey(string key) => $"MCB_FeatureFlag_{key}";
 }
 #endif

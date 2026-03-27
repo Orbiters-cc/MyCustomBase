@@ -72,20 +72,20 @@ public enum CorrectiveActivationType
 // This response object maps to the JSON from the server's version endpoint.
 
 [JsonObject(MemberSerialization.OptIn)]
-public class UltiPawVersionResponse
+public class CustomBaseVersionResponse
 {
 #if UNITY_EDITOR
     [JsonProperty] public string recommendedVersion;
-    [JsonProperty] public List<UltiPawVersion> versions;
+    [JsonProperty] public List<CustomBaseVersion> versions;
 #endif
 }
 
-// Represents a single available version of an UltiPaw modification.
+// Represents a single available version of an custom base modification.
 [JsonObject(MemberSerialization.OptIn)]
 #if UNITY_EDITOR
-public class UltiPawVersion : IEquatable<UltiPawVersion>
+public class CustomBaseVersion : IEquatable<CustomBaseVersion>
 #else
-public class UltiPawVersion
+public class CustomBaseVersion
 #endif
 {
     [JsonProperty] public string version;
@@ -105,7 +105,7 @@ public class UltiPawVersion
     // --- Fields for local unsubmitted versions ---
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string baseFbxHash;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string customFbxPath;
-    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string ultipawAvatarPath;
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string customBaseAvatarPath;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string logicPrefabPath;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public bool? includeCustomVeins;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string customVeinsTexturePath;
@@ -115,7 +115,18 @@ public class UltiPawVersion
     [JsonIgnore] public bool isUnsubmitted; // Runtime flag, not saved to JSON
     [JsonIgnore] public bool isImported; // Runtime flag for offline imported versions, not saved to JSON
 
-    public bool Equals(UltiPawVersion other)
+    [JsonProperty("ultipawAvatarPath")] private string LegacyCustomBaseAvatarPath
+    {
+        set
+        {
+            if (string.IsNullOrWhiteSpace(customBaseAvatarPath))
+            {
+                customBaseAvatarPath = value;
+            }
+        }
+    }
+
+    public bool Equals(CustomBaseVersion other)
     {
         if (other == null) return false;
         // Two versions are the same if their version string and base FBX version match.
@@ -129,7 +140,7 @@ public class UltiPawVersion
 
     public override bool Equals(object obj)
     {
-        return Equals(obj as UltiPawVersion);
+        return Equals(obj as CustomBaseVersion);
     }
 }
 

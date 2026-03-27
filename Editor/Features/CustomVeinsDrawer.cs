@@ -1,19 +1,19 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
 public class CustomVeinsDrawer
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private Texture2D customVeinsTexture;
     private Texture2D okIcon;
     private Texture2D koIcon;
     private MaterialService materialService;
 
-    public const string CUSTOM_VEINS_PREF_KEY = "UltiPaw_CustomVeins_Enabled";
+    public const string CUSTOM_VEINS_PREF_KEY = "MCB_CustomVeins_Enabled";
 
-    public CustomVeinsDrawer(UltiPawEditor editor)
+    public CustomVeinsDrawer(MCBEditor editor)
     {
         this.editor = editor;
         LoadTextures();
@@ -21,24 +21,24 @@ public class CustomVeinsDrawer
 
     private void LoadTextures()
     {
-        customVeinsTexture = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/customVeins.png");
-        okIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/ok.png");
-        koIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/ultipaw/Editor/ko.png");
+        customVeinsTexture = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/customVeins.png");
+        okIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/ok.png");
+        koIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/ko.png");
     }
 
     public void Draw()
     {
-        var appliedVersion = editor.ultiPawTarget.appliedUltiPawVersion;
+        var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
         
         // Only show if extraCustomization contains "customVeins" 
-        if (!editor.isUltiPaw || appliedVersion?.extraCustomization == null || 
+        if (!editor.isCustomBase || appliedVersion?.extraCustomization == null || 
             !appliedVersion.extraCustomization.Contains("customVeins"))
             return;
 
         // Initialize MaterialService with avatar root
         if (materialService == null)
         {
-            materialService = new MaterialService(editor.ultiPawTarget.transform.root);
+            materialService = new MaterialService(editor.customBaseTarget.transform.root);
         }
 
         EditorGUILayout.Space();
@@ -151,11 +151,11 @@ public class CustomVeinsDrawer
 
     private void DrawVeinsTexturePreview()
     {
-        var appliedVersion = editor.ultiPawTarget.appliedUltiPawVersion;
+        var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
         if (appliedVersion == null) return;
 
         // Construct the path to the veins normal map using the utility method
-        string versionFolder = UltiPawUtils.GetVersionDataPath(appliedVersion.version, appliedVersion.defaultAviVersion);
+        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion.version, appliedVersion.defaultAviVersion);
         string veinsNormalPath = System.IO.Path.Combine(versionFolder, "veins normal.png").Replace("\\", "/");
 
         // Load the texture
@@ -177,10 +177,10 @@ public class CustomVeinsDrawer
 
     private bool ApplyCustomVeins()
     {
-        var appliedVersion = editor.ultiPawTarget.appliedUltiPawVersion;
+        var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
         if (appliedVersion == null)
         {
-            UltiPawLogger.LogError("[CustomVeinsDrawer] No applied version found");
+            MCBLogger.LogError("[CustomVeinsDrawer] No applied version found");
             return false;
         }
 
@@ -191,10 +191,10 @@ public class CustomVeinsDrawer
         }
 
         // Construct the path to the veins normal map using the utility method
-        string versionFolder = UltiPawUtils.GetVersionDataPath(appliedVersion.version, appliedVersion.defaultAviVersion);
+        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion.version, appliedVersion.defaultAviVersion);
         string veinsNormalPath = System.IO.Path.Combine(versionFolder, "veins normal.png").Replace("\\", "/");
 
-        UltiPawLogger.Log($"[CustomVeinsDrawer] Applying custom veins from: {veinsNormalPath}");
+        MCBLogger.Log($"[CustomVeinsDrawer] Applying custom veins from: {veinsNormalPath}");
 
         // Apply the detail normal map
         bool success = materialService.SetDetailNormalMap("Body", veinsNormalPath);
@@ -202,18 +202,18 @@ public class CustomVeinsDrawer
         {
             // Set opacity to 1.0
             materialService.SetDetailNormalOpacity("Body", 1.0f);
-            UltiPawLogger.Log("[CustomVeinsDrawer] Custom veins applied successfully");
+            MCBLogger.Log("[CustomVeinsDrawer] Custom veins applied successfully");
         }
         else
         {
-            UltiPawLogger.LogError("[CustomVeinsDrawer] Failed to apply custom veins");
+            MCBLogger.LogError("[CustomVeinsDrawer] Failed to apply custom veins");
         }
         return success;
     }
 
     private bool RemoveCustomVeins()
     {
-        UltiPawLogger.Log("[CustomVeinsDrawer] Removing custom veins");
+        MCBLogger.Log("[CustomVeinsDrawer] Removing custom veins");
 
         materialService.TryGetMaterial("Body", out var bodyMaterial);
         if (!EnsureUnlocked(bodyMaterial))
@@ -224,11 +224,11 @@ public class CustomVeinsDrawer
         bool success = materialService.RemoveDetailNormalMap("Body");
         if (success)
         {
-            UltiPawLogger.Log("[CustomVeinsDrawer] Custom veins removed successfully");
+            MCBLogger.Log("[CustomVeinsDrawer] Custom veins removed successfully");
         }
         else
         {
-            UltiPawLogger.LogError("[CustomVeinsDrawer] Failed to remove custom veins");
+            MCBLogger.LogError("[CustomVeinsDrawer] Failed to remove custom veins");
         }
         return success;
     }

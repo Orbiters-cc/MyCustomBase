@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -26,7 +26,7 @@ public class UserCustomVersionService
     public List<UserCustomVersionEntry> GetAll()
     {
         if (_cache != null) return _cache;
-        string path = UltiPawUtils.USER_VERSIONS_FILE;
+        string path = MCBUtils.USER_VERSIONS_FILE;
         _cache = new List<UserCustomVersionEntry>();
         try
         {
@@ -39,7 +39,7 @@ public class UserCustomVersionService
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to load user custom versions: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to load user custom versions: {ex.Message}");
         }
         return _cache;
     }
@@ -48,13 +48,13 @@ public class UserCustomVersionService
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(UltiPawUtils.USER_VERSIONS_FILE));
-            File.WriteAllText(UltiPawUtils.USER_VERSIONS_FILE, JsonConvert.SerializeObject(_cache, Formatting.Indented));
+            Directory.CreateDirectory(Path.GetDirectoryName(MCBUtils.USER_VERSIONS_FILE));
+            File.WriteAllText(MCBUtils.USER_VERSIONS_FILE, JsonConvert.SerializeObject(_cache, Formatting.Indented));
             AssetDatabase.Refresh();
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to save user custom versions: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to save user custom versions: {ex.Message}");
         }
     }
 
@@ -74,23 +74,23 @@ public class UserCustomVersionService
         }
 
         string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
-        string folder = UltiPawUtils.USER_VERSIONS_DIR;
-        if (!AssetDatabase.IsValidFolder(UltiPawUtils.ASSETS_BASE_FOLDER))
+        string folder = MCBUtils.USER_VERSIONS_DIR;
+        if (!AssetDatabase.IsValidFolder(MCBUtils.ASSETS_BASE_FOLDER))
         {
-            AssetDatabase.CreateFolder("Assets", "UltiPaw");
+            AssetDatabase.CreateFolder("Assets", "MCB");
         }
         if (!AssetDatabase.IsValidFolder(folder))
         {
-            AssetDatabase.CreateFolder(UltiPawUtils.ASSETS_BASE_FOLDER, "userVersions");
+            AssetDatabase.CreateFolder(MCBUtils.ASSETS_BASE_FOLDER, "userVersions");
         }
 
         string customFolderName = $"custom{timestamp}";
-        string customFolderPath = UltiPawUtils.CombineUnityPath(folder, customFolderName);
+        string customFolderPath = MCBUtils.CombineUnityPath(folder, customFolderName);
         AssetDatabase.CreateFolder(folder, customFolderName);
 
         // Copy FBX
         string fbxFileName = Path.GetFileName(fbxUnityPath);
-        string destFbxPath = UltiPawUtils.CombineUnityPath(customFolderPath, fbxFileName);
+        string destFbxPath = MCBUtils.CombineUnityPath(customFolderPath, fbxFileName);
         if (!AssetDatabase.CopyAsset(fbxUnityPath, destFbxPath))
         {
             // Fallback to file copy
@@ -100,7 +100,7 @@ public class UserCustomVersionService
             }
             catch (Exception ex)
             {
-                UltiPawLogger.LogError($"[UltiPaw] Failed to copy custom FBX: {ex.Message}");
+                MCBLogger.LogError($"[MCB] Failed to copy custom FBX: {ex.Message}");
             }
         }
 
@@ -109,7 +109,7 @@ public class UserCustomVersionService
         string copiedAvatarAssetPath = null;
         if (!string.IsNullOrEmpty(avatarAssetSourcePath) && File.Exists(Path.GetFullPath(avatarAssetSourcePath)))
         {
-            string destAvatarPath = UltiPawUtils.CombineUnityPath(customFolderPath, "custom avatar.asset");
+            string destAvatarPath = MCBUtils.CombineUnityPath(customFolderPath, "custom avatar.asset");
             if (AssetDatabase.CopyAsset(avatarAssetSourcePath, destAvatarPath))
             {
                 copiedAvatarAssetPath = destAvatarPath;
@@ -123,7 +123,7 @@ public class UserCustomVersionService
                 }
                 catch (Exception ex)
                 {
-                    UltiPawLogger.LogWarning($"[UltiPaw] Could not copy avatar asset: {ex.Message}");
+                    MCBLogger.LogWarning($"[MCB] Could not copy avatar asset: {ex.Message}");
                 }
             }
         }
@@ -149,7 +149,7 @@ public class UserCustomVersionService
         try
         {
             // Resolve the folder from the stored FBX path
-            string fbxUnityPath = UltiPawUtils.ToUnityPath(entry.backupFbxPath);
+            string fbxUnityPath = MCBUtils.ToUnityPath(entry.backupFbxPath);
             string folderUnityPath = Path.GetDirectoryName(fbxUnityPath)?.Replace("\\", "/");
 
             bool deleted = false;
@@ -182,7 +182,7 @@ public class UserCustomVersionService
         }
         catch (Exception ex)
         {
-            UltiPawLogger.LogError($"[UltiPaw] Failed to delete user custom version: {ex.Message}");
+            MCBLogger.LogError($"[MCB] Failed to delete user custom version: {ex.Message}");
             return false;
         }
     }

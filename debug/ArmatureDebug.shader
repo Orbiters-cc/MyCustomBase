@@ -1,4 +1,4 @@
-Shader "UltiPaw/ArmatureDebug"
+Shader "MCB/ArmatureDebug"
 {
     Properties
     {

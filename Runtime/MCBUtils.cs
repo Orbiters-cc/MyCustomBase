@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using UnityEditor;
 using UnityEngine;
@@ -19,22 +19,22 @@ public enum ApiSimulationMode
     SslFailure = 2
 }
 
-public static class UltiPawUtils
+public static class MCBUtils
 {
     public const string SCRIPT_VERSION = "0.1";
-    public const string PACKAGE_BASE_FOLDER = "Packages/UltiPaw";
-    public const string ASSETS_BASE_FOLDER = "Assets/UltiPaw";
+    public const string PACKAGE_BASE_FOLDER = "Packages/orbiters.mcb";
+    public const string ASSETS_BASE_FOLDER = "Assets/MCB";
     public const string VERSIONS_FOLDER = ASSETS_BASE_FOLDER + "/versions";
     public const string UNSUBMITTED_VERSIONS_FILE = ASSETS_BASE_FOLDER + "/unsubmittedVersions.json";
     public const string USER_VERSIONS_DIR = ASSETS_BASE_FOLDER + "/userVersions";
     public const string USER_VERSIONS_FILE = ASSETS_BASE_FOLDER + "/userVersions.json";
     public const string DEFAULT_AVATAR_NAME = "default avatar.asset";
-    public const string ULTIPAW_AVATAR_NAME = "ultipaw avatar.asset";
-    public const string CUSTOM_LOGIC_NAME = "ultipaw logic.asset";
+    public const string CUSTOM_BASE_AVATAR_NAME = "customBase avatar.asset";
+    public const string CUSTOM_LOGIC_NAME = "mcb logic.asset";
 
     // EditorPrefs key for Dev Environment setting
-    private const string DevEnvironmentPrefKey = "UltiPaw_DevEnvironment";
-    private const string ApiSimulationModePrefKey = "UltiPaw_ApiSimulationMode";
+    private const string DevEnvironmentPrefKey = "MCB_DevEnvironment";
+    private const string ApiSimulationModePrefKey = "MCB_ApiSimulationMode";
     
     // Dev Environment property with persistent storage
     public static bool isDevEnvironment
@@ -74,17 +74,17 @@ public static class UltiPawUtils
     
     public const string SERVER_BASE_URL = "orbiters.cc/"; // Update with your server URL
     public const string API_BASE_URL = "api." + SERVER_BASE_URL; // Update with your server URL
-    public const string VERSION_ENDPOINT = "/ultipaw/versions";
-    public const string MODEL_ENDPOINT = "/ultipaw/model";
+    public const string VERSION_ENDPOINT = "/mcb/versions";
+    public const string MODEL_ENDPOINT = "/mcb/model";
     public const string TOKEN_ENDPOINT = "/token"; // Replace with your actual API endpoint
     
-    public const string NEW_VERSION_ENDPOINT = "/ultipaw/newVersion";
+    public const string NEW_VERSION_ENDPOINT = "/mcb/newVersion";
     public const string CHECK_CONNECTION_ENDPOINT = "/check-connection";
-    public static readonly string PACKAGE_BASE_FOLDER_FULL_PATH = Path.Combine(Application.dataPath, "UltiPaw");
+    public static readonly string PACKAGE_BASE_FOLDER_FULL_PATH = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Packages", "orbiters.mcb");
 
     public static HttpClient client = new HttpClient() { Timeout = System.TimeSpan.FromSeconds(30) };
     
-    public static string getApiUrl(string scope = "unity-wizard")
+    public static string getApiUrl(string scope = "mcb")
     {
         switch (apiSimulationMode)
         {
@@ -115,7 +115,7 @@ public static class UltiPawUtils
     {
         if (!File.Exists(filePath))
         {
-            UltiPawLogger.LogError($"[UltiPawUtils] File not found for hashing: {filePath}");
+            MCBLogger.LogError($"[MCBUtils] File not found for hashing: {filePath}");
             return null;
         }
 
@@ -138,34 +138,34 @@ public static class UltiPawUtils
 
     // Removes the authentication data file
 
-    public static string GetVersionDataPath(string ultiPawVersion, string defaultFbxVersion)
+    public static string GetVersionDataPath(string customBaseVersion, string defaultFbxVersion)
     {
-        if (string.IsNullOrEmpty(ultiPawVersion) || string.IsNullOrEmpty(defaultFbxVersion))
+        if (string.IsNullOrEmpty(customBaseVersion) || string.IsNullOrEmpty(defaultFbxVersion))
         {
             return null;
         }
-        return $"{VERSIONS_FOLDER}/u{ultiPawVersion}d{defaultFbxVersion}"; 
+        return $"{VERSIONS_FOLDER}/u{customBaseVersion}d{defaultFbxVersion}";
     }
 
-    public static string GetVersionBinPath(string ultiPawVersion, string defaultFbxVersion)
+    public static string GetVersionBinPath(string customBaseVersion, string defaultFbxVersion)
     {
-        string dataPath = GetVersionDataPath(ultiPawVersion, defaultFbxVersion);
+        string dataPath = GetVersionDataPath(customBaseVersion, defaultFbxVersion);
         if (dataPath == null) return null;
-        return $"{dataPath}/ultipaw.bin";
+        return $"{dataPath}/mcb.bin";
     }
 
-    public static string GetVersionAvatarPath(string ultiPawVersion, string defaultFbxVersion, string relativeAvatarPath)
+    public static string GetVersionAvatarPath(string customBaseVersion, string defaultFbxVersion, string relativeAvatarPath)
     {
         if (string.IsNullOrEmpty(relativeAvatarPath)) return null;
-        string dataPath = GetVersionDataPath(ultiPawVersion, defaultFbxVersion);
+        string dataPath = GetVersionDataPath(customBaseVersion, defaultFbxVersion);
         if (dataPath == null) return null;
         return Path.Combine(dataPath, relativeAvatarPath).Replace("\\", "/");
     }
 
-    public static string GetUltiPawDataFolder()
+    public static string GetMCBDataFolder()
     {
-        // Get the Unity Editor preferences folder and create UltiPaw subfolder
-        string dataFolder = Path.Combine(InternalEditorUtility.unityPreferencesFolder, "UltiPaw", "Data");
+        // Get the Unity Editor preferences folder and create MCB subfolder
+        string dataFolder = Path.Combine(InternalEditorUtility.unityPreferencesFolder, "MCB", "Data");
         
         // Ensure the directory exists
         if (!Directory.Exists(dataFolder))
@@ -173,13 +173,13 @@ public static class UltiPawUtils
             try
             {
                 Directory.CreateDirectory(dataFolder);
-                UltiPawLogger.Log($"[UltiPawUtils] Created UltiPaw data folder: {dataFolder}");
+                MCBLogger.Log($"[MCBUtils] Created MCB data folder: {dataFolder}");
             }
             catch (System.Exception ex)
             {
-                UltiPawLogger.LogError($"[UltiPawUtils] Failed to create UltiPaw data folder: {ex.Message}");
+                MCBLogger.LogError($"[MCBUtils] Failed to create MCB data folder: {ex.Message}");
                 // Fallback to temp directory
-                dataFolder = Path.Combine(Path.GetTempPath(), "UltiPaw", "Data");
+                dataFolder = Path.Combine(Path.GetTempPath(), "MCB", "Data");
                 Directory.CreateDirectory(dataFolder);
             }
         }
@@ -232,45 +232,45 @@ public static class UltiPawUtils
             // Normalize the path
             absoluteDirectory = Path.GetFullPath(absoluteDirectory);
 
-            UltiPawLogger.Log(
-                $"[UltiPawUtils] EnsureDirectoryExists - Input: '{directoryPath}' (canBeFilePath: {canBeFilePath}) -> Directory: '{directory}' -> Absolute: '{absoluteDirectory}'");
-            UltiPawLogger.Log($"[UltiPawUtils] Directory exists check: {Directory.Exists(absoluteDirectory)}");
+            MCBLogger.Log(
+                $"[MCBUtils] EnsureDirectoryExists - Input: '{directoryPath}' (canBeFilePath: {canBeFilePath}) -> Directory: '{directory}' -> Absolute: '{absoluteDirectory}'");
+            MCBLogger.Log($"[MCBUtils] Directory exists check: {Directory.Exists(absoluteDirectory)}");
 
             if (!Directory.Exists(absoluteDirectory))
         {
             try
             {
-                    UltiPawLogger.Log($"[UltiPawUtils] Creating directory: {absoluteDirectory}");
+                    MCBLogger.Log($"[MCBUtils] Creating directory: {absoluteDirectory}");
                     Directory.CreateDirectory(absoluteDirectory);
 
                     // Verify creation
                     if (Directory.Exists(absoluteDirectory))
                     {
-                        UltiPawLogger.Log($"[UltiPawUtils] Successfully created directory: {absoluteDirectory}");
+                        MCBLogger.Log($"[MCBUtils] Successfully created directory: {absoluteDirectory}");
                         AssetDatabase.Refresh(); // Make Unity aware of the new folder
                     }
                     else
                     {
-                        UltiPawLogger.LogError(
-                            $"[UltiPawUtils] Directory creation appeared to succeed but directory still doesn't exist: {absoluteDirectory}");
+                        MCBLogger.LogError(
+                            $"[MCBUtils] Directory creation appeared to succeed but directory still doesn't exist: {absoluteDirectory}");
                     }
             }
             catch (System.Exception e)
             {
-                    UltiPawLogger.LogError($"[UltiPawUtils] Failed to create directory '{absoluteDirectory}': {e.Message}");
-                    UltiPawLogger.LogError($"[UltiPawUtils] Exception details: {e}");
+                    MCBLogger.LogError($"[MCBUtils] Failed to create directory '{absoluteDirectory}': {e.Message}");
+                    MCBLogger.LogError($"[MCBUtils] Exception details: {e}");
                     throw; // Re-throw to let caller handle if needed
                 }
             }
             else
             {
-                UltiPawLogger.Log($"[UltiPawUtils] Directory already exists: {absoluteDirectory}");
+                MCBLogger.Log($"[MCBUtils] Directory already exists: {absoluteDirectory}");
             }
         }
         else
         {
-            UltiPawLogger.LogWarning(
-                $"[UltiPawUtils] EnsureDirectoryExists called with empty or invalid directory path: '{directoryPath}' (canBeFilePath: {canBeFilePath})");
+            MCBLogger.LogWarning(
+                $"[MCBUtils] EnsureDirectoryExists called with empty or invalid directory path: '{directoryPath}' (canBeFilePath: {canBeFilePath})");
         }
     }
     public static string ToUnityPath(string path)

@@ -257,14 +257,14 @@ public partial class BlendShapeLinkService
                && string.Equals(a.fixedBy, b.fixedBy, StringComparison.Ordinal);
     }
 
-    private static UltiPaw FindUltiPaw(GameObject avatarRoot)
+    private static MyCustomBase FindCustomBase(GameObject avatarRoot)
     {
         if (avatarRoot == null) return null;
 
-        var onRoot = avatarRoot.GetComponent<UltiPaw>();
+        var onRoot = avatarRoot.GetComponent<MyCustomBase>();
         if (onRoot != null) return onRoot;
 
-        var inChildren = avatarRoot.GetComponentInChildren<UltiPaw>(true);
+        var inChildren = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
         if (inChildren != null) return inChildren;
 
         string rootName = avatarRoot.name;
@@ -273,7 +273,7 @@ public partial class BlendShapeLinkService
             rootName = rootName.Substring(0, rootName.Length - "(Clone)".Length);
         }
 
-        var all = Resources.FindObjectsOfTypeAll<UltiPaw>();
+        var all = Resources.FindObjectsOfTypeAll<MyCustomBase>();
         return all.FirstOrDefault(x =>
             x != null &&
             x.gameObject != null &&

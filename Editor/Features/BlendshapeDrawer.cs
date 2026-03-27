@@ -1,20 +1,20 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Globalization;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UltiPawEditorUtils;
+using MCBEditorUtils;
 
 public class BlendshapeDrawer
 {
     private const float WeightEpsilon = 0.001f;
 
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     private readonly Action onBlendshapesChanged;
     private string lastAutoAppliedVersionKey;
 
-    public BlendshapeDrawer(UltiPawEditor editor, Action onBlendshapesChanged = null)
+    public BlendshapeDrawer(MCBEditor editor, Action onBlendshapesChanged = null)
     {
         this.editor = editor;
         this.onBlendshapesChanged = onBlendshapesChanged;
@@ -22,10 +22,10 @@ public class BlendshapeDrawer
 
     public void Draw()
     {
-        var appliedVersion = editor.ultiPawTarget.appliedUltiPawVersion;
-        if (!editor.isUltiPaw || appliedVersion?.customBlendshapes == null || !appliedVersion.customBlendshapes.Any()) return;
+        var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
+        if (!editor.isCustomBase || appliedVersion?.customBlendshapes == null || !appliedVersion.customBlendshapes.Any()) return;
 
-        var root = editor.ultiPawTarget.transform.root;
+        var root = editor.customBaseTarget.transform.root;
         var smr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
         var mohawkSmr = MeshFinder.FindMeshPrioritizingRoot(root, "MohawkHair");
         var maneSmr = MeshFinder.FindMeshPrioritizingRoot(root, "ManeHair");
@@ -43,7 +43,7 @@ public class BlendshapeDrawer
         while (values.arraySize > blendshapeEntries.Length) values.DeleteArrayElementAtIndex(values.arraySize - 1);
 
         string versionKey = $"{appliedVersion.version}|{appliedVersion.defaultAviVersion}";
-        bool hasOverrides = editor.ultiPawTarget.customBlendshapeOverrideNames.Count > 0;
+        bool hasOverrides = editor.customBaseTarget.customBlendshapeOverrideNames.Count > 0;
         bool allWeightsZero = true;
         bool anyDefaultAboveZero = false;
 
@@ -127,14 +127,14 @@ public class BlendshapeDrawer
                 }
                 
                 EditorUtility.SetDirty(smr);
-                EditorUtility.SetDirty(editor.ultiPawTarget);
+                EditorUtility.SetDirty(editor.customBaseTarget);
                 onBlendshapesChanged?.Invoke();
             }
         }
         
         if (allWeightsZero)
         {
-            EditorGUILayout.HelpBox("All the sliders are at 0.0, turn some of them up to use the the custom UltiPaw blenshapes", MessageType.Warning);
+            EditorGUILayout.HelpBox("All the sliders are at 0.0, turn some of them up to use the the custom MCB blenshapes", MessageType.Warning);
         }
         
         EditorGUILayout.Space();
@@ -150,8 +150,8 @@ public class BlendshapeDrawer
     
     private float GetCustomOverrideValue(string blendshapeName, float defaultValue)
     {
-        var overrideNames = editor.ultiPawTarget.customBlendshapeOverrideNames;
-        var overrideValues = editor.ultiPawTarget.customBlendshapeOverrideValues;
+        var overrideNames = editor.customBaseTarget.customBlendshapeOverrideNames;
+        var overrideValues = editor.customBaseTarget.customBlendshapeOverrideValues;
         
         int index = overrideNames.IndexOf(blendshapeName);
         if (index >= 0 && index < overrideValues.Count)
@@ -164,8 +164,8 @@ public class BlendshapeDrawer
     
     private void SetCustomOverrideValue(string blendshapeName, float value)
     {
-        var overrideNames = editor.ultiPawTarget.customBlendshapeOverrideNames;
-        var overrideValues = editor.ultiPawTarget.customBlendshapeOverrideValues;
+        var overrideNames = editor.customBaseTarget.customBlendshapeOverrideNames;
+        var overrideValues = editor.customBaseTarget.customBlendshapeOverrideValues;
         
         int index = overrideNames.IndexOf(blendshapeName);
         if (index >= 0)
@@ -181,8 +181,8 @@ public class BlendshapeDrawer
     
     private void RemoveCustomOverride(string blendshapeName)
     {
-        var overrideNames = editor.ultiPawTarget.customBlendshapeOverrideNames;
-        var overrideValues = editor.ultiPawTarget.customBlendshapeOverrideValues;
+        var overrideNames = editor.customBaseTarget.customBlendshapeOverrideNames;
+        var overrideValues = editor.customBaseTarget.customBlendshapeOverrideValues;
         
         int index = overrideNames.IndexOf(blendshapeName);
         if (index >= 0)
@@ -194,8 +194,8 @@ public class BlendshapeDrawer
     
     private void ClearAllCustomOverrides()
     {
-        editor.ultiPawTarget.customBlendshapeOverrideNames.Clear();
-        editor.ultiPawTarget.customBlendshapeOverrideValues.Clear();
+        editor.customBaseTarget.customBlendshapeOverrideNames.Clear();
+        editor.customBaseTarget.customBlendshapeOverrideValues.Clear();
     }
 
     private static float ParseDefaultValue(string defaultValueStr)
@@ -219,7 +219,7 @@ public class BlendshapeDrawer
         }
 
         EditorUtility.SetDirty(smr);
-        EditorUtility.SetDirty(editor.ultiPawTarget);
+        EditorUtility.SetDirty(editor.customBaseTarget);
     }
 
     private void ApplyDefaultBlendshapeValuesWithHair(SkinnedMeshRenderer smr, SkinnedMeshRenderer mohawkSmr, SkinnedMeshRenderer maneSmr, SerializedProperty values, CustomBlendshapeEntry[] blendshapeEntries)
@@ -260,7 +260,7 @@ public class BlendshapeDrawer
         EditorUtility.SetDirty(smr);
         if (mohawkSmr != null) EditorUtility.SetDirty(mohawkSmr);
         if (maneSmr != null) EditorUtility.SetDirty(maneSmr);
-        EditorUtility.SetDirty(editor.ultiPawTarget);
+        EditorUtility.SetDirty(editor.customBaseTarget);
     }
 }
 #endif

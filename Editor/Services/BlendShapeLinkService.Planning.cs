@@ -16,7 +16,7 @@ public partial class BlendShapeLinkService
     private static bool _animationClipLookupProjectChangedHooked;
     private const double AnimationClipLookupCacheTtlSeconds = 2.0d;
 
-    private static List<PlannedLink> BuildVersionPlannedLinks(GameObject avatarRoot, UltiPawVersion version,
+    private static List<PlannedLink> BuildVersionPlannedLinks(GameObject avatarRoot, CustomBaseVersion version,
         bool useCustomSliderSelection, List<string> customSliderSelectionNames,
         bool includeAnimationSignatures = true)
     {
@@ -28,7 +28,7 @@ public partial class BlendShapeLinkService
             customSliderSelectionNames);
         var renderers = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true) ??
                         Array.Empty<SkinnedMeshRenderer>();
-        var ultiPaw = FindUltiPaw(avatarRoot);
+        var customBase = FindCustomBase(avatarRoot);
         Dictionary<string, List<AnimationClip>> animationClipLookup = null;
         Func<Dictionary<string, List<AnimationClip>>> getAnimationClipLookup = () =>
             animationClipLookup ?? (animationClipLookup = GetAnimationClipLookupCached());
@@ -39,7 +39,7 @@ public partial class BlendShapeLinkService
             if (driver.correctiveBlendshapes == null || driver.correctiveBlendshapes.Length == 0) continue;
 
             bool isSliderFactor = driver.isSlider && selectedSliders.Contains(driver.name);
-            float globalConstantFactor = GetIntendedFactor(ultiPaw, driver, null, renderers);
+            float globalConstantFactor = GetIntendedFactor(customBase, driver, null, renderers);
 
             foreach (var corrective in driver.correctiveBlendshapes)
             {
@@ -111,7 +111,7 @@ public partial class BlendShapeLinkService
                         AnimationUtility.CalculateTransformPath(renderer.transform, avatarRoot.transform);
                     if (string.IsNullOrWhiteSpace(rendererPath)) continue;
 
-                    float constantFactor = GetIntendedFactor(ultiPaw, driver, renderer, null);
+                    float constantFactor = GetIntendedFactor(customBase, driver, renderer, null);
                     string factorParam = isSliderFactor
                         ? VRCFuryService.GetSliderGlobalParamName(driver.name)
                         : BuildConstantFactorParamName(driver.name, rendererPath, corrective.toFixType.ToString(),
@@ -464,23 +464,23 @@ public partial class BlendShapeLinkService
         return (max - min) > eps || absMax > eps;
     }
 
-    private static float GetIntendedFactor(UltiPaw ultiPaw, CustomBlendshapeEntry driver,
+    private static float GetIntendedFactor(MyCustomBase customBase, CustomBlendshapeEntry driver,
         SkinnedMeshRenderer specificRenderer, SkinnedMeshRenderer[] allRenderers)
     {
-        // 1. Priority: UltiPaw override from the component (this handles user intent best)
-        if (ultiPaw != null)
+        // 1. Priority: MCB override from the component (this handles user intent best)
+        if (customBase != null)
         {
-            int idx = ultiPaw.customBlendshapeOverrideNames.IndexOf(driver.name);
-            if (idx >= 0 && idx < ultiPaw.customBlendshapeOverrideValues.Count)
+            int idx = customBase.customBlendshapeOverrideNames.IndexOf(driver.name);
+            if (idx >= 0 && idx < customBase.customBlendshapeOverrideValues.Count)
             {
-                return Mathf.Clamp01(ultiPaw.customBlendshapeOverrideValues[idx] / 100f);
+                return Mathf.Clamp01(customBase.customBlendshapeOverrideValues[idx] / 100f);
             }
         }
 
         // 2. Fallback: Live SMR weight from the ORIGINAL avatar (if we can find it)
-        if (ultiPaw != null)
+        if (customBase != null)
         {
-            var originalRoot = ultiPaw.transform.root;
+            var originalRoot = customBase.transform.root;
             if (specificRenderer != null)
             {
                 // Try to find the same-named renderer on original root

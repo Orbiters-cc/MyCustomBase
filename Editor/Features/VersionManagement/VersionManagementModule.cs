@@ -1,11 +1,11 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
 public class VersionManagementModule
 {
-    private readonly UltiPawEditor editor;
+    private readonly MCBEditor editor;
     public readonly VersionActions actions;
     public readonly FileConfigurationDrawer fileConfigDrawer;
     private readonly VersionListDrawer versionListDrawer;
@@ -15,11 +15,11 @@ public class VersionManagementModule
     
     private bool versionsFoldout = true;
     private bool hasShownMissingVersionWarning;
-    private UltiPawVersion lastSelectionForWarning;
+    private CustomBaseVersion lastSelectionForWarning;
     private bool lastRecommendedWasNull;
 
 
-    public VersionManagementModule(UltiPawEditor editor, NetworkService network, FileManagerService files)
+    public VersionManagementModule(MCBEditor editor, NetworkService network, FileManagerService files)
     {
         this.editor = editor;
         actions = new VersionActions(editor, network, files);
@@ -61,11 +61,11 @@ public class VersionManagementModule
         if (!string.IsNullOrEmpty(editor.accessDeniedAssetId))
         {
             EditorGUILayout.Space();
-            EditorGUILayout.HelpBox("You currently don't have access to the ultipaw. Click the button to get to the asset page with instructions to get it:", MessageType.Warning);
+            EditorGUILayout.HelpBox("You currently don't have access to the MCB. Click the button to get to the asset page with instructions to get it:", MessageType.Warning);
             EditorGUILayout.Space();
-            if (GUILayout.Button("Get the Ultipaw", GUILayout.Height(30)))
+            if (GUILayout.Button("Get the MCB", GUILayout.Height(30)))
             {
-                string url = UltiPawUtils.getWebsiteUrl() + "assets/" + editor.accessDeniedAssetId;
+                string url = MCBUtils.getWebsiteUrl() + "assets/" + editor.accessDeniedAssetId;
                 Application.OpenURL(url);
             }
 
@@ -147,7 +147,7 @@ public class VersionManagementModule
                     {
                         if (!hasShownMissingVersionWarning)
                         {
-                            UltiPawLogger.LogWarning("[UltiPawEditor] No recommended version available. Please select a version from the list.");
+                            MCBLogger.LogWarning("[MCBEditor] No recommended version available. Please select a version from the list.");
                             hasShownMissingVersionWarning = true;
                         }
                         return;
@@ -171,7 +171,7 @@ public class VersionManagementModule
             var action = GetActionType();
 
             // Main Apply/Update/Downgrade/Reset/SWITCH_TO_CUSTOM Button
-            bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isUltiPaw;
+            bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isCustomBase;
             bool buttonDisabled;
             if (action == ActionType.SWITCH_TO_CUSTOM)
             {
@@ -180,7 +180,7 @@ public class VersionManagementModule
             else
             {
                 buttonDisabled = !selectionIsValid ||
-                                 (!isResetSelected && selectedVersion.Equals(editor.ultiPawTarget.appliedUltiPawVersion)) ||
+                                 (!isResetSelected && selectedVersion.Equals(editor.customBaseTarget.appliedCustomBaseVersion)) ||
                                  (isResetSelected && !canReset);
             }
             
@@ -222,10 +222,10 @@ public class VersionManagementModule
                     }
                     else
                     {
-                        string binPath = UltiPawUtils.GetVersionBinPath(selectedVersion.version, selectedVersion.defaultAviVersion);
+                        string binPath = MCBUtils.GetVersionBinPath(selectedVersion.version, selectedVersion.defaultAviVersion);
                         bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
                         
-                        if (EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using UltiPaw version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel"))
+                        if (EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using custom base version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel"))
                         {
                             if (isDownloaded)
                             {
@@ -255,9 +255,9 @@ public class VersionManagementModule
         
         if (editor.selectedVersionForAction == VersionListDrawer.RESET_VERSION) return ActionType.RESET;
 
-        var appliedVersion = editor.ultiPawTarget.appliedUltiPawVersion;
+        var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
 
-        if (!editor.isUltiPaw)
+        if (!editor.isCustomBase)
         {
             if (appliedVersion != null)
             {
@@ -274,7 +274,7 @@ public class VersionManagementModule
         return ActionType.UNAVAILABLE;
     }
 
-    private string GetActionButtonText(ActionType action, UltiPawVersion selectedVersion)
+    private string GetActionButtonText(ActionType action, CustomBaseVersion selectedVersion)
     {
         if (action == ActionType.SWITCH_TO_CUSTOM)
         {
@@ -286,16 +286,16 @@ public class VersionManagementModule
         
         if (action == ActionType.RESET) return "Reset to Original Avatar";
         
-        string binPath = UltiPawUtils.GetVersionBinPath(selectedVersion.version, selectedVersion.defaultAviVersion);
+        string binPath = MCBUtils.GetVersionBinPath(selectedVersion.version, selectedVersion.defaultAviVersion);
         bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
         string downloadPrefix = isDownloaded ? "" : "Download and ";
         
         return action switch
         {
-            ActionType.INSTALL => $"{downloadPrefix}Turn into UltiPaw",
+            ActionType.INSTALL => $"{downloadPrefix}Apply Custom Base",
             ActionType.UPDATE => $"{downloadPrefix}Update to v{selectedVersion.version}",
             ActionType.DOWNGRADE => $"{downloadPrefix}Downgrade to v{selectedVersion.version}",
-            _ => $"Installed (v{editor.ultiPawTarget.appliedUltiPawVersion?.version})"
+            _ => $"Installed (v{editor.customBaseTarget.appliedCustomBaseVersion?.version})"
         };
     }
 }

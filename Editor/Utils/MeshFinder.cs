@@ -3,7 +3,7 @@ using System;
 using System.Linq;
 using UnityEngine;
 
-namespace UltiPawEditorUtils
+namespace MCBEditorUtils
 {
     public static class MeshFinder
     {

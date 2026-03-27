@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -36,7 +36,7 @@ public class NetworkService
         }
     }
 
-    public async Task<(bool success, UltiPawVersionResponse response, string error)> FetchVersionsAsync(string url)
+    public async Task<(bool success, CustomBaseVersionResponse response, string error)> FetchVersionsAsync(string url)
     {
         using (var req = UnityWebRequest.Get(url))
         {
@@ -62,7 +62,7 @@ public class NetworkService
                 }
                 catch { /* ignore parse error and fall through to generic handling */ }
                 // If no assetId, return a generic message
-                return (false, null, "You do not seems to own the UltiPaw. Get the UltiPaw from the Orbiters website and try again.");
+                return (false, null, "You do not seems to own the MCB. Get the MCB from the Orbiters website and try again.");
             }
 
             if (req.result != UnityWebRequest.Result.Success)
@@ -93,7 +93,7 @@ public class NetworkService
 
             try
             {
-                var response = JsonConvert.DeserializeObject<UltiPawVersionResponse>(body);
+                var response = JsonConvert.DeserializeObject<CustomBaseVersionResponse>(body);
                 return (true, response, null);
             }
             catch (Exception e) { return (false, null, $"Failed to parse server response: {e.Message}"); }
@@ -127,7 +127,7 @@ public class NetworkService
                             catch { /* ignore JSON parse error */ }
                         }
                         
-                        UltiPawLogger.LogError($"[NetworkService] {errorMsg}, url = {url}");
+                        MCBLogger.LogError($"[NetworkService] {errorMsg}, url = {url}");
                         return (false, errorMsg);
                     }
 
@@ -143,7 +143,7 @@ public class NetworkService
         }
         catch (Exception ex)
         {
-             UltiPawLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {url}");
+             MCBLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {url}");
              return (false, $"Download exception: {ex.Message}");
         }
     }
@@ -194,7 +194,7 @@ public class NetworkService
                     long code = req.responseCode;
                     string body = null;
                     try { body = req.downloadHandler?.text; } catch { /* ignore */ }
-                    UltiPawLogger.LogWarning($"[UltiPaw] Connection check failed: [{code}] [url: {url}] {req.error} {(string.IsNullOrEmpty(body) ? string.Empty : "- " + body)}");
+                    MCBLogger.LogWarning($"[MCB] Connection check failed: [{code}] [url: {url}] {req.error} {(string.IsNullOrEmpty(body) ? string.Empty : "- " + body)}");
                     return "disconnected";
                 }
 
@@ -203,21 +203,21 @@ public class NetworkService
                 try { resp = JsonConvert.DeserializeObject<CheckConnectionResponse>(text); }
                 catch (Exception jex)
                 {
-                    UltiPawLogger.LogWarning($"[UltiPaw] Invalid connection check response JSON: {jex.Message}");
+                    MCBLogger.LogWarning($"[MCB] Invalid connection check response JSON: {jex.Message}");
                     return "disconnected";
                 }
                 if (resp == null || string.IsNullOrEmpty(resp.state))
                 {
-                    UltiPawLogger.LogWarning("[UltiPaw] Connection check response missing 'state'.");
+                    MCBLogger.LogWarning("[MCB] Connection check response missing 'state'.");
                     return "disconnected";
                 }
                 if (resp.state == "connected" || resp.state == "limited") return resp.state;
-                UltiPawLogger.LogWarning($"[UltiPaw] Connection check returned unexpected state '{resp.state}'. Treating as disconnected.");
+                MCBLogger.LogWarning($"[MCB] Connection check returned unexpected state '{resp.state}'. Treating as disconnected.");
                 return "disconnected";
             }
             catch (Exception ex)
             {
-                UltiPawLogger.LogWarning($"[UltiPaw] Connection check error: {ex.Message}");
+                MCBLogger.LogWarning($"[MCB] Connection check error: {ex.Message}");
                 return "disconnected";
             }
         }
