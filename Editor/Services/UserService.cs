@@ -24,7 +24,7 @@ public class UserService
     private static HashSet<int> pendingRequests = new HashSet<int>();
     private static HashSet<int> failedRequests = new HashSet<int>();
     
-    private const string AVATARS_FOLDER = "Packages/orbiters.mcb/data/avatars";
+    private static readonly string AVATARS_FOLDER = Path.Combine(MCBUtils.GetMCBDataFolder(), "avatars");
     
     static UserService()
     {
@@ -198,10 +198,8 @@ public class UserService
             {
                 Texture2D processed = MakeCircularAvatar(texture) ?? texture;
                 avatarCache[uploaderId] = processed;
-
                 if (!ReferenceEquals(processed, texture))
                 {
-                    File.WriteAllBytes(localPath, processed.EncodeToPNG());
                     Object.DestroyImmediate(texture);
                 }
 

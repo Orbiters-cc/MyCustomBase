@@ -27,6 +27,7 @@ public class MCBEditor : UnityEditor.Editor
     private AuthenticationModule authModule;
     public VersionManagementModule versionModule;
     public CreatorModeModule creatorModule;
+    private AssetGalleryModule assetGalleryModule;
     private AdvancedModeModule advancedModule;
     private AccountModule accountModule;
     private AvatarOptionsModule avatarOptionsModule;
@@ -93,6 +94,7 @@ public class MCBEditor : UnityEditor.Editor
         authModule = new AuthenticationModule(this);
         versionModule = new VersionManagementModule(this, networkService, fileManagerService);
         creatorModule = new CreatorModeModule(this);
+        assetGalleryModule = new AssetGalleryModule(this);
         advancedModule = new AdvancedModeModule(this);
         accountModule = new AccountModule(this, networkService);
         accountModule.Initialize();
@@ -148,6 +150,7 @@ public class MCBEditor : UnityEditor.Editor
     private void OnProjectChanged()
     {
         LoadImportedVersions();
+        assetGalleryModule?.OnProjectChanged();
         Repaint();
     }
 
@@ -194,7 +197,15 @@ public class MCBEditor : UnityEditor.Editor
             return;
         }
 
-        var cached = versionService.GetCachedVersions(fbxPath, authToken);
+        var selectedAsset = GetSelectedAsset();
+        if (selectedAsset == null)
+        {
+            serverVersions.Clear();
+            recommendedVersion = null;
+            return;
+        }
+
+        var cached = versionService.GetCachedVersions(fbxPath, authToken, selectedAsset.id);
         if (cached.versions.Count > 0)
         {
             serverVersions = cached.versions;
@@ -211,7 +222,7 @@ public class MCBEditor : UnityEditor.Editor
         if (isAuthenticated)
         {
             fetchAttempted = true;
-            versionService.StartVersionFetchInBackground(fbxPath, authToken, useCache: false);
+            versionService.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false);
         }
     }
 
@@ -224,6 +235,7 @@ public class MCBEditor : UnityEditor.Editor
             versionModule.actions.UpdateCurrentBaseFbxHash();
         }
         TryLoadCachedVersionsAndRefetch();
+        assetGalleryModule?.RefreshIfNeeded(force: true);
     }
 
     private void OnVersionFetchError(string error)
@@ -236,28 +248,32 @@ public class MCBEditor : UnityEditor.Editor
     private void AutoDetectBaseFbxViaHierarchy()
     {
         if (customBaseTarget == null) return;
-        var root = customBaseTarget.transform.root;
-        var bodySmr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-        
-        if (bodySmr?.sharedMesh == null) return;
-        
-        string meshPath = AssetDatabase.GetAssetPath(bodySmr.sharedMesh);
-        if (string.IsNullOrEmpty(meshPath)) return;
-        
-        var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(meshPath);
-        if (fbxAsset != null && AssetImporter.GetAtPath(meshPath) is ModelImporter)
+        var detectedPaths = GetDetectedAvatarFbxPaths();
+        if (detectedPaths.Count == 0)
         {
-            baseFbxFilesProp.ClearArray();
-            baseFbxFilesProp.InsertArrayElementAtIndex(0);
-            baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue = fbxAsset;
-            serializedObject.ApplyModifiedProperties();
-            
-            MCBLogger.Log($"[MCBEditor] Auto-detected FBX: {System.IO.Path.GetFileName(meshPath)}");
-            Repaint();
-
-            // After detection, immediately try to load cached versions and start a background refresh
-            TryLoadCachedVersionsAndRefetch();
+            return;
         }
+
+        baseFbxFilesProp.ClearArray();
+
+        for (int i = 0; i < detectedPaths.Count; i++)
+        {
+            var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(detectedPaths[i]);
+            if (fbxAsset == null)
+            {
+                continue;
+            }
+
+            baseFbxFilesProp.InsertArrayElementAtIndex(baseFbxFilesProp.arraySize);
+            baseFbxFilesProp.GetArrayElementAtIndex(baseFbxFilesProp.arraySize - 1).objectReferenceValue = fbxAsset;
+        }
+
+        serializedObject.ApplyModifiedProperties();
+        MCBLogger.Log($"[MCBEditor] Auto-detected {baseFbxFilesProp.arraySize} FBX file(s) for the avatar root.");
+        Repaint();
+
+        // After detection, immediately try to load cached versions and start a background refresh
+        TryLoadCachedVersionsAndRefetch();
     }
 
     private string GetCurrentFBXPath()
@@ -298,11 +314,17 @@ public class MCBEditor : UnityEditor.Editor
 
             if (isAuthenticated)
             {
-                SafeUiCall(() => warningsModule?.Draw());
-                SafeUiCall(() => creatorModule.Draw());
-                SafeUiCall(() => versionModule.Draw());
-                SafeUiCall(() => avatarOptionsModule?.Draw());
-                SafeUiCall(() => adjustMaterialModule?.Draw());
+                SafeUiCall(() => assetGalleryModule?.DrawSelectedAssetHeader());
+                SafeUiCall(() => assetGalleryModule?.Draw());
+
+                if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
+                {
+                    SafeUiCall(() => warningsModule?.Draw());
+                    SafeUiCall(() => creatorModule.Draw());
+                    SafeUiCall(() => versionModule.Draw());
+                    SafeUiCall(() => avatarOptionsModule?.Draw());
+                    SafeUiCall(() => adjustMaterialModule?.Draw());
+                }
             }
             else if (showOfflineSavedVersionsUi)
             {
@@ -424,11 +446,36 @@ public class MCBEditor : UnityEditor.Editor
 
     private void DrawBanner()
     {
-        if (bannerTexture == null) return;
-        float aspect = (float)bannerTexture.width / bannerTexture.height;
+        Texture2D textureToDraw = null;
+        var selectedAsset = GetSelectedAsset();
+        if (isAuthenticated && selectedAsset != null)
+        {
+            try
+            {
+                textureToDraw = AvatarAssetDiscoveryService.GetBanner(selectedAsset);
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogError($"[MCBEditor] Failed to resolve selected asset banner for assetId={selectedAsset.id} name='{selectedAsset.name}': {ex}");
+            }
+
+            // Fall back to the package banner while the asset banner is missing or still downloading.
+            if (textureToDraw == null)
+            {
+                textureToDraw = bannerTexture;
+            }
+        }
+        else if (isAuthenticated && assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly())
+        {
+            textureToDraw = bannerTexture;
+        }
+
+        if (textureToDraw == null) return;
+        if (textureToDraw.height == 0) return;
+        float aspect = (float)textureToDraw.width / textureToDraw.height;
         float desiredWidth = EditorGUIUtility.currentViewWidth;
         Rect rect = GUILayoutUtility.GetRect(desiredWidth, desiredWidth / aspect);
-        GUI.DrawTexture(rect, bannerTexture, ScaleMode.StretchToFill);
+        GUI.DrawTexture(rect, textureToDraw, ScaleMode.StretchToFill);
         GUILayout.Space(5);
     }
 
@@ -471,6 +518,7 @@ public class MCBEditor : UnityEditor.Editor
             fetchError = null;
         }
         accountModule?.Refresh();
+        assetGalleryModule?.OnAuthenticationChanged();
     }
 
     public void RefreshAccountAndVersions()
@@ -488,9 +536,14 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         string fbxPath = GetCurrentFBXPath();
-        if (!string.IsNullOrEmpty(fbxPath) && isAuthenticated)
+        var selectedAsset = GetSelectedAsset();
+        if (!string.IsNullOrEmpty(fbxPath) && isAuthenticated && selectedAsset != null)
         {
-            versionService?.StartVersionFetchInBackground(fbxPath, authToken, useCache: false);
+            versionService?.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false);
+        }
+        if (selectedAsset == null)
+        {
+            assetGalleryModule?.RefreshIfNeeded(force: true);
         }
     }
 
@@ -635,6 +688,91 @@ public class MCBEditor : UnityEditor.Editor
     }
 
     public int CompareVersions(string v1, string v2) => ParseVersion(v1).CompareTo(ParseVersion(v2));
+
+    public AvatarDiscoveredAsset GetSelectedAsset()
+    {
+        return assetGalleryModule != null ? assetGalleryModule.SelectedAsset : null;
+    }
+
+    public string GetSelectedAssetDisplayName()
+    {
+        var selectedAsset = GetSelectedAsset();
+        return selectedAsset != null && !string.IsNullOrWhiteSpace(selectedAsset.name)
+            ? selectedAsset.name
+            : "Custom Base";
+    }
+
+    public List<string> GetDetectedAvatarFbxPaths()
+    {
+        var uniquePaths = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void TryAddPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            path = path.Replace("\\", "/");
+            if (seen.Add(path))
+            {
+                uniquePaths.Add(path);
+            }
+        }
+
+        if (customBaseTarget != null)
+        {
+            Transform root = customBaseTarget.transform.root;
+            var bodySmr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
+            TryAddFbxPathFromObject(bodySmr != null ? bodySmr.sharedMesh : null, TryAddPath);
+
+            foreach (var smr in MeshFinder.GetAllSkinnedMeshRenderers(root))
+            {
+                TryAddFbxPathFromObject(smr != null ? smr.sharedMesh : null, TryAddPath);
+            }
+
+            foreach (var meshFilter in root.GetComponentsInChildren<MeshFilter>(true))
+            {
+                TryAddFbxPathFromObject(meshFilter != null ? meshFilter.sharedMesh : null, TryAddPath);
+            }
+        }
+
+        if (baseFbxFilesProp != null)
+        {
+            for (int i = 0; i < baseFbxFilesProp.arraySize; i++)
+            {
+                var fbx = baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+                if (fbx != null)
+                {
+                    TryAddPath(AssetDatabase.GetAssetPath(fbx));
+                }
+            }
+        }
+
+        return uniquePaths;
+    }
+
+    private static void TryAddFbxPathFromObject(UnityEngine.Object obj, Action<string> addPath)
+    {
+        if (obj == null || addPath == null)
+        {
+            return;
+        }
+
+        string assetPath = AssetDatabase.GetAssetPath(obj);
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return;
+        }
+
+        if (!(AssetImporter.GetAtPath(assetPath) is ModelImporter))
+        {
+            return;
+        }
+
+        addPath(assetPath);
+    }
 
     private void RepaintFromConnectivityMonitor()
     {

@@ -40,7 +40,7 @@ public class AsyncVersionService
     }
 
     public async Task<(List<CustomBaseVersion> versions, CustomBaseVersion recommended, string error)> FetchVersionsAsync(
-        string fbxPath, string authToken, bool useCache = true)
+        string fbxPath, string authToken, int assetId, bool useCache = true)
     {
         // Fast path: if we can resolve the base hash from cache and versions are cached, avoid creating any task
         if (useCache)
@@ -48,7 +48,7 @@ public class AsyncVersionService
             string cachedBaseHash = GetBaseFbxHashIfCached(fbxPath);
             if (!string.IsNullOrEmpty(cachedBaseHash))
             {
-                var cachedEntryFast = cache.GetCachedVersions(cachedBaseHash, authToken);
+                var cachedEntryFast = cache.GetCachedVersions(cachedBaseHash, authToken, assetId);
                 if (cachedEntryFast != null)
                 {
                     MCBLogger.Log($"[AsyncVersionService] Fast cache hit, returning versions without UI task for hash: {cachedBaseHash}");
@@ -83,7 +83,7 @@ public class AsyncVersionService
             {
                 taskManager.UpdateTaskProgress(taskId, 0.3f, "Checking version cache...");
                 
-                var cachedEntry = cache.GetCachedVersions(baseFbxHash, authToken);
+                var cachedEntry = cache.GetCachedVersions(baseFbxHash, authToken, assetId);
                 if (cachedEntry != null)
                 {
                     MCBLogger.Log($"[AsyncVersionService] Using cached versions for hash: {baseFbxHash}");
@@ -100,7 +100,7 @@ public class AsyncVersionService
             // Step 3: Fetch from server
             taskManager.UpdateTaskProgress(taskId, 0.5f, "Fetching from server...");
             
-            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.VERSION_ENDPOINT}?d={baseFbxHash}&t={authToken}";
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(assetId)}?d={baseFbxHash}&t={authToken}";
             var fetchTask = taskManager.ExecuteOnMainThreadAsync(() => networkService.FetchVersionsAsync(url));
 
             // Wait for network request with progress updates
@@ -122,7 +122,7 @@ public class AsyncVersionService
                 var recommendedVersion = versions.FirstOrDefault(v => v.version == response.recommendedVersion);
 
                 // Cache the results
-                await Task.Run(() => cache.CacheVersions(baseFbxHash, versions, recommendedVersion, authToken));
+                await Task.Run(() => cache.CacheVersions(baseFbxHash, versions, recommendedVersion, authToken, assetId));
 
                 taskManager.CompleteTask(taskId);
                 
@@ -180,11 +180,11 @@ public class AsyncVersionService
         return hashService.GetHashIfCached(fbxPath);
     }
 
-    public void StartVersionFetchInBackground(string fbxPath, string authToken, bool useCache = true)
+    public void StartVersionFetchInBackground(string fbxPath, string authToken, int assetId, bool useCache = true)
     {
-        if (string.IsNullOrEmpty(fbxPath) || string.IsNullOrEmpty(authToken))
+        if (string.IsNullOrEmpty(fbxPath) || string.IsNullOrEmpty(authToken) || assetId <= 0)
             return;
-        string key = System.IO.Path.GetFullPath(fbxPath) + "|" + authToken;
+        string key = System.IO.Path.GetFullPath(fbxPath) + "|" + authToken + "|" + assetId;
         lock (inflightFetches)
         {
             Task running;
@@ -193,14 +193,14 @@ public class AsyncVersionService
                 // Already fetching for this FBX+token
                 return;
             }
-            var t = FetchVersionsAsync(fbxPath, authToken, useCache);
+            var t = FetchVersionsAsync(fbxPath, authToken, assetId, useCache);
             inflightFetches[key] = t;
             t.ContinueWith(_ => { lock (inflightFetches) { inflightFetches.Remove(key); } }, TaskScheduler.Default);
         }
     }
 
 
-    public bool AreVersionsCached(string fbxPath, string authToken)
+    public bool AreVersionsCached(string fbxPath, string authToken, int assetId)
     {
         // We need the hash to check cache, but we can check if the hash is cached
         string cachedHash = hashService.GetHashIfCached(fbxPath);
@@ -217,11 +217,11 @@ public class AsyncVersionService
         if (string.IsNullOrEmpty(cachedHash))
             return false;
 
-        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken);
+        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId);
         return cachedVersions != null;
     }
 
-    public (List<CustomBaseVersion> versions, CustomBaseVersion recommended) GetCachedVersions(string fbxPath, string authToken)
+    public (List<CustomBaseVersion> versions, CustomBaseVersion recommended) GetCachedVersions(string fbxPath, string authToken, int assetId)
     {
         // Try to get cached hash first
         string cachedHash = hashService.GetHashIfCached(fbxPath);
@@ -238,7 +238,7 @@ public class AsyncVersionService
         if (string.IsNullOrEmpty(cachedHash))
             return (new List<CustomBaseVersion>(), null);
 
-        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken);
+        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId);
         if (cachedVersions != null)
         {
             return (cachedVersions.serverVersions, cachedVersions.recommendedVersion);
@@ -247,7 +247,7 @@ public class AsyncVersionService
         return (new List<CustomBaseVersion>(), null);
     }
 
-    public async Task<(bool success, string error)> DownloadVersionAsync(CustomBaseVersion version, string baseFbxHash, string authToken)
+    public async Task<(bool success, string error)> DownloadVersionAsync(CustomBaseVersion version, string baseFbxHash, string authToken, int assetId)
     {
         var taskId = $"download_{version.version}_{Guid.NewGuid().ToString().Substring(0, 8)}";
         
@@ -256,7 +256,7 @@ public class AsyncVersionService
         try
         {
             string tempZipPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
-            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.MODEL_ENDPOINT}?version={version.version}&d={baseFbxHash}&t={authToken}";
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(assetId)}?version={version.version}&d={baseFbxHash}&t={authToken}";
 
             taskManager.UpdateTaskProgress(taskId, 0.1f, "Starting download...");
 
@@ -330,9 +330,9 @@ public class AsyncVersionService
 
     // Force refresh versions (bypass cache)
     public async Task<(List<CustomBaseVersion> versions, CustomBaseVersion recommended, string error)> RefreshVersionsAsync(
-        string fbxPath, string authToken)
+        string fbxPath, string authToken, int assetId)
     {
-        return await FetchVersionsAsync(fbxPath, authToken, useCache: false);
+        return await FetchVersionsAsync(fbxPath, authToken, assetId, useCache: false);
     }
 }
 #endif

@@ -117,7 +117,7 @@ public class VersionListDrawer
     {
         EditorGUILayout.BeginHorizontal();
         
-        EditorGUILayout.LabelField("Custom Base Versions", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField($"{editor.GetSelectedAssetDisplayName()} Versions", EditorStyles.boldLabel);
         GUILayout.FlexibleSpace();
         
         EditorGUI.BeginChangeCheck();
@@ -465,7 +465,7 @@ public class VersionListDrawer
             GUILayout.FlexibleSpace();
             
             EditorGUILayout.BeginHorizontal();
-            GUILayout.Label($"Custom Base {ver.version}", GUILayout.Width(100));
+            GUILayout.Label($"{editor.GetSelectedAssetDisplayName()} {ver.version}", GUILayout.Width(180));
             
             // Draw user info if available and not unsubmitted
             if (ver.uploaderId > 0)

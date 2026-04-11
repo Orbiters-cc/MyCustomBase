@@ -36,23 +36,26 @@ public class HashCacheEntry
 public class VersionCacheEntry
 {
     public string baseFbxHash;
+    public int assetId;
     public List<CustomBaseVersion> serverVersions;
     public CustomBaseVersion recommendedVersion;
     public DateTime cacheTime;
     public string authToken; // To invalidate cache when user changes
     
-    public VersionCacheEntry(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken)
+    public VersionCacheEntry(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken, int assetId)
     {
         this.baseFbxHash = baseFbxHash;
+        this.assetId = assetId;
         this.serverVersions = serverVersions ?? new List<CustomBaseVersion>();
         this.recommendedVersion = recommendedVersion;
         this.cacheTime = DateTime.Now;
         this.authToken = authToken;
     }
     
-    public bool IsValid(string currentBaseFbxHash, string currentAuthToken, TimeSpan maxAge)
+    public bool IsValid(string currentBaseFbxHash, string currentAuthToken, int currentAssetId, TimeSpan maxAge)
     {
         return baseFbxHash == currentBaseFbxHash && 
+               assetId == currentAssetId &&
                authToken == currentAuthToken &&
                DateTime.Now - cacheTime < maxAge;
     }
@@ -192,18 +195,18 @@ public class PersistentCache
     }
 
     // Version Cache Methods
-    public VersionCacheEntry GetCachedVersions(string baseFbxHash, string authToken)
+    public VersionCacheEntry GetCachedVersions(string baseFbxHash, string authToken, int assetId)
     {
         if (string.IsNullOrEmpty(baseFbxHash))
             return null;
 
         if (!string.IsNullOrEmpty(authToken))
         {
-            string cacheKey = $"{baseFbxHash}_{authToken}";
+            string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}";
             
             if (cacheData.versionCache.TryGetValue(cacheKey, out var cacheEntry))
             {
-                if (cacheEntry.IsValid(baseFbxHash, authToken, VERSION_CACHE_MAX_AGE))
+                if (cacheEntry.IsValid(baseFbxHash, authToken, assetId, VERSION_CACHE_MAX_AGE))
                 {
                     MCBLogger.Log($"[PersistentCache] Version cache hit for hash: {baseFbxHash}");
                     return cacheEntry;
@@ -227,6 +230,7 @@ public class PersistentCache
                 }
 
                 if (!string.Equals(entry.baseFbxHash, baseFbxHash, StringComparison.Ordinal) ||
+                    entry.assetId != assetId ||
                     !string.Equals(entry.authToken, authToken, StringComparison.Ordinal))
                 {
                     continue;
@@ -239,7 +243,7 @@ public class PersistentCache
 
             if (legacyEntry != null)
             {
-                if (legacyEntry.IsValid(baseFbxHash, authToken, VERSION_CACHE_MAX_AGE))
+                if (legacyEntry.IsValid(baseFbxHash, authToken, assetId, VERSION_CACHE_MAX_AGE))
                 {
                     MCBLogger.Log($"[PersistentCache] Version cache fallback hit for hash: {baseFbxHash}");
 
@@ -272,7 +276,8 @@ public class PersistentCache
                     continue;
                 }
 
-                if (!string.Equals(entry.baseFbxHash, baseFbxHash, StringComparison.Ordinal))
+                if (!string.Equals(entry.baseFbxHash, baseFbxHash, StringComparison.Ordinal) ||
+                    entry.assetId != assetId)
                 {
                     continue;
                 }
@@ -284,7 +289,7 @@ public class PersistentCache
 
             if (fallbackEntry != null)
             {
-                if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.authToken, VERSION_CACHE_MAX_AGE))
+                if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.authToken, assetId, VERSION_CACHE_MAX_AGE))
                 {
                     MCBLogger.Log($"[PersistentCache] Version cache fallback hit without auth token for hash: {baseFbxHash}");
                     return fallbackEntry;
@@ -298,13 +303,13 @@ public class PersistentCache
         return null;
     }
 
-    public void CacheVersions(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken)
+    public void CacheVersions(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken, int assetId)
     {
         if (string.IsNullOrEmpty(baseFbxHash) || string.IsNullOrEmpty(authToken))
             return;
 
-        string cacheKey = $"{baseFbxHash}_{authToken}";
-        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, authToken);
+        string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}";
+        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, authToken, assetId);
         
         cacheData.versionCache[cacheKey] = cacheEntry;
         MCBLogger.Log($"[PersistentCache] Cached {serverVersions?.Count ?? 0} versions for hash: {baseFbxHash}");

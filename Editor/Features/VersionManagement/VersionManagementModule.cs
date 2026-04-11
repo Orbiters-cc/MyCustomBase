@@ -87,7 +87,8 @@ public class VersionManagementModule
 
     private void DrawFetchUpdatesButton()
     {
-        using (new EditorGUI.DisabledScope(editor.isFetching || editor.isDownloading || editor.isDeleting))
+        bool noAssetSelected = editor.isAuthenticated && editor.GetSelectedAsset() == null;
+        using (new EditorGUI.DisabledScope(editor.isFetching || editor.isDownloading || editor.isDeleting || noAssetSelected))
         {
             if (GUILayout.Button(editor.isFetching ? "Fetching..." : "Check for Updates"))
             {
@@ -224,8 +225,9 @@ public class VersionManagementModule
                     {
                         string binPath = MCBUtils.GetVersionBinPath(selectedVersion.version, selectedVersion.defaultAviVersion);
                         bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
+                        string assetName = editor.GetSelectedAssetDisplayName();
                         
-                        if (EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using custom base version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel"))
+                        if (EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using {assetName} version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel"))
                         {
                             if (isDownloaded)
                             {
@@ -276,6 +278,7 @@ public class VersionManagementModule
 
     private string GetActionButtonText(ActionType action, CustomBaseVersion selectedVersion)
     {
+        string assetName = editor.GetSelectedAssetDisplayName();
         if (action == ActionType.SWITCH_TO_CUSTOM)
         {
             var cv = editor.selectedCustomVersionForAction;
@@ -292,9 +295,9 @@ public class VersionManagementModule
         
         return action switch
         {
-            ActionType.INSTALL => $"{downloadPrefix}Apply Custom Base",
-            ActionType.UPDATE => $"{downloadPrefix}Update to v{selectedVersion.version}",
-            ActionType.DOWNGRADE => $"{downloadPrefix}Downgrade to v{selectedVersion.version}",
+            ActionType.INSTALL => $"{downloadPrefix}Apply {assetName}",
+            ActionType.UPDATE => $"{downloadPrefix}Update {assetName} to v{selectedVersion.version}",
+            ActionType.DOWNGRADE => $"{downloadPrefix}Downgrade {assetName} to v{selectedVersion.version}",
             _ => $"Installed (v{editor.customBaseTarget.appliedCustomBaseVersion?.version})"
         };
     }

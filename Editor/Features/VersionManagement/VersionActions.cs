@@ -88,6 +88,7 @@ public class VersionActions
 
         if (string.IsNullOrEmpty(editor.currentBaseFbxHash))
         {
+            MCBLogger.LogWarning("[VersionActions] Version fetch aborted because currentBaseFbxHash is empty.");
             editor.serverVersions.Clear();
             UpdateAppliedVersionAndState(); // This will clear the applied state
             editor.isFetching = false;
@@ -95,7 +96,21 @@ public class VersionActions
             yield break;
         }
 
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.VERSION_ENDPOINT}?d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        var selectedAsset = editor.GetSelectedAsset();
+        if (selectedAsset == null)
+        {
+            MCBLogger.LogWarning("[VersionActions] Version fetch aborted because no asset is selected in the gallery.");
+            editor.serverVersions.Clear();
+            editor.recommendedVersion = null;
+            editor.isFetching = false;
+            editor.Repaint();
+            yield break;
+        }
+
+        string currentFbxPath = GetCurrentFBXPath();
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        string sanitizedUrl = System.Text.RegularExpressions.Regex.Replace(url, @"([?&]t=)([^&]+)", "$1<redacted>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        MCBLogger.Log($"[VersionActions] Starting version fetch. assetId={selectedAsset.id} | url={sanitizedUrl} | currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash}");
         var fetchTask = networkService.FetchVersionsAsync(url);
         
         while (!fetchTask.IsCompleted)
@@ -125,6 +140,7 @@ public class VersionActions
             }
             else
             {
+                MCBLogger.LogError($"[VersionActions] Version fetch failed. currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash} | error={error}");
                 editor.warningsModule.AddWarning(error, MessageType.Error, "Fetch failed");
                 editor.serverVersions.Clear();
                 editor.recommendedVersion = null;
@@ -142,9 +158,18 @@ public class VersionActions
         editor.isDownloading = true;
         editor.warningsModule.Clear();
         editor.Repaint();
+
+        var selectedAsset = editor.GetSelectedAsset();
+        if (selectedAsset == null)
+        {
+            MCBLogger.LogWarning("[VersionActions] Download aborted because no asset is selected in the gallery.");
+            editor.isDownloading = false;
+            editor.Repaint();
+            yield break;
+        }
         
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.MODEL_ENDPOINT}?version={version.version}&d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={editor.currentBaseFbxHash}&t={editor.authToken}";
         
         // --- Setup phase (no yield returns) ---
         var downloadTask = networkService.DownloadFileAsync(url, tempZipPath);

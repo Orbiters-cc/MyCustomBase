@@ -14,6 +14,8 @@ public enum NetworkRequestType
 {
     UserInfo,
     AvatarDownload,
+    AssetImageDownload,
+    AssetDiscovery,
     VersionFetch,
     ModelDownload,
     Upload,
@@ -28,6 +30,8 @@ public class NetworkService
         {
             case NetworkRequestType.UserInfo: return 2;
             case NetworkRequestType.AvatarDownload: return 10;
+            case NetworkRequestType.AssetImageDownload: return 10;
+            case NetworkRequestType.AssetDiscovery: return 8;
             case NetworkRequestType.VersionFetch: return 5;
             case NetworkRequestType.ModelDownload: return 180;
             case NetworkRequestType.Upload: return 300;
@@ -40,6 +44,7 @@ public class NetworkService
     {
         using (var req = UnityWebRequest.Get(url))
         {
+            MCBLogger.Log($"[NetworkService] FetchVersionsAsync GET {SanitizeUrlForLogs(url)}");
             req.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
             await req.SendWebRequest();
 
@@ -50,6 +55,7 @@ public class NetworkService
 
             if (code == 203 || code == 204)
             {
+                MCBLogger.LogWarning($"[NetworkService] FetchVersionsAsync access denied: {BuildHttpContext(req, url, body)}");
                 try
                 {
                     // Try to parse a minimal object with assetId
@@ -67,14 +73,17 @@ public class NetworkService
 
             if (req.result != UnityWebRequest.Result.Success)
             {
+                string httpContext = BuildHttpContext(req, url, body);
+                MCBLogger.LogError($"[NetworkService] FetchVersionsAsync failed: {httpContext}");
+
                 // Try to extract specific error message from JSON body
                 if (!string.IsNullOrEmpty(body))
                 {
                     try
                     {
                         var errorObj = JsonConvert.DeserializeObject<AccessDeniedPayload>(body);
-                        if (!string.IsNullOrEmpty(errorObj.errorMessage)) return (false, null, errorObj.errorMessage);
-                        if (!string.IsNullOrEmpty(errorObj.error)) return (false, null, errorObj.error);
+                        if (!string.IsNullOrEmpty(errorObj.errorMessage)) return (false, null, $"{errorObj.errorMessage}\n{httpContext}");
+                        if (!string.IsNullOrEmpty(errorObj.error)) return (false, null, $"{errorObj.error}\n{httpContext}");
                     }
                     catch { /* ignore JSON parse errors */ }
                 }
@@ -82,13 +91,13 @@ public class NetworkService
                 switch (req.responseCode)
                 {
                     case 401:
-                        return (false, null, "Unauthorized: If you haven't done anything that could lead to your account being limited, contact blackorbit.");
+                        return (false, null, $"Unauthorized while fetching versions.\n{httpContext}");
                     case 404:
-                        return (false, null, "Not Found: The requested resource could not be found.");
+                        return (false, null, $"Version discovery endpoint returned 404.\n{httpContext}");
                     case 500:
-                        return (false, null, "Server Error: An error occurred on the server.");
+                        return (false, null, $"Server error while fetching versions.\n{httpContext}");
                 }
-                return (false, null, $"Request failed: {req.error}");
+                return (false, null, $"Version fetch request failed.\n{httpContext}");
             }
 
             try
@@ -96,12 +105,51 @@ public class NetworkService
                 var response = JsonConvert.DeserializeObject<CustomBaseVersionResponse>(body);
                 return (true, response, null);
             }
-            catch (Exception e) { return (false, null, $"Failed to parse server response: {e.Message}"); }
+            catch (Exception e)
+            {
+                string parseContext = BuildHttpContext(req, url, body);
+                MCBLogger.LogError($"[NetworkService] FetchVersionsAsync parse failure: {e.Message}. {parseContext}");
+                return (false, null, $"Failed to parse version response: {e.Message}\n{parseContext}");
+            }
         }
     }
 
     // Minimal payload to read assetId from access denied responses
     private class AccessDeniedPayload { public string error; public string assetId; public string errorMessage; }
+
+    private static string BuildHttpContext(UnityWebRequest req, string url, string body)
+    {
+        string bodySnippet = CreateBodySnippet(body);
+        return $"HTTP {(long)req.responseCode} {req.error} | url={SanitizeUrlForLogs(url)}" +
+               (string.IsNullOrEmpty(bodySnippet) ? string.Empty : $" | body={bodySnippet}");
+    }
+
+    private static string SanitizeUrlForLogs(string url)
+    {
+        return url;
+        if (string.IsNullOrEmpty(url))
+        {
+            return url;
+        }
+
+        return Regex.Replace(url, @"([?&]t=)([^&]+)", "$1<redacted>", RegexOptions.IgnoreCase);
+    }
+
+    private static string CreateBodySnippet(string body, int maxLength = 240)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        string compact = Regex.Replace(body, @"\s+", " ").Trim();
+        if (compact.Length <= maxLength)
+        {
+            return compact;
+        }
+
+        return compact.Substring(0, maxLength) + "...";
+    }
 
     public async Task<(bool success, string error)> DownloadFileAsync(string url, string destinationPath)
     {

@@ -74,8 +74,9 @@ public static class MCBUtils
     
     public const string SERVER_BASE_URL = "orbiters.cc/"; // Update with your server URL
     public const string API_BASE_URL = "api." + SERVER_BASE_URL; // Update with your server URL
-    public const string VERSION_ENDPOINT = "/mcb/versions";
-    public const string MODEL_ENDPOINT = "/mcb/model";
+    public const string VERSION_ENDPOINT = "/:assetId/versions";
+    public const string MODEL_ENDPOINT = "/:assetId/model";
+    public const string AVATAR_ASSET_DISCOVERY_ENDPOINT = "/assets/by-avatar-base";
     public const string TOKEN_ENDPOINT = "/token"; // Replace with your actual API endpoint
     
     public const string NEW_VERSION_ENDPOINT = "/mcb/newVersion";
@@ -108,6 +109,16 @@ public static class MCBUtils
             return "https://dev." + SERVER_BASE_URL;
         }
         return "https://" + SERVER_BASE_URL;
+    }
+
+    public static string GetAssetVersionEndpoint(int assetId)
+    {
+        return VERSION_ENDPOINT.Replace(":assetId", assetId.ToString());
+    }
+
+    public static string GetAssetModelEndpoint(int assetId)
+    {
+        return MODEL_ENDPOINT.Replace(":assetId", assetId.ToString());
     }
 
     // Calculates SHA256 hash of a file
