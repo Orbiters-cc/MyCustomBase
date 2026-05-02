@@ -674,12 +674,6 @@ public partial class BlendShapeLinkService
             TryAppendCurveCandidate(output, dedupe, binding.path, binding.type, binding.propertyName, curve);
         }
 
-        foreach (var curveData in AnimationUtility.GetAllCurves(clip, true))
-        {
-            if (curveData == null) continue;
-            TryAppendCurveCandidate(output, dedupe, curveData.path, curveData.type, curveData.propertyName, curveData.curve);
-        }
-
         return output;
     }
 
@@ -715,7 +709,7 @@ public partial class BlendShapeLinkService
         if (!string.Equals(signature.propertyName ?? string.Empty, candidate.propertyName ?? string.Empty, StringComparison.Ordinal))
             return false;
 
-        // Allow one side to be null (GetAllCurves can have reduced type metadata in some cases).
+        // Allow one side to be null when Unity returns reduced type metadata.
         if (signature.type == null || candidate.type == null) return true;
         return signature.type == candidate.type;
     }

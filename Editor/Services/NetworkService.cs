@@ -126,7 +126,6 @@ public class NetworkService
 
     private static string SanitizeUrlForLogs(string url)
     {
-        return url;
         if (string.IsNullOrEmpty(url))
         {
             return url;
@@ -175,7 +174,7 @@ public class NetworkService
                             catch { /* ignore JSON parse error */ }
                         }
                         
-                        MCBLogger.LogError($"[NetworkService] {errorMsg}, url = {url}");
+                        MCBLogger.LogError($"[NetworkService] {errorMsg}, url = {SanitizeUrlForLogs(url)}");
                         return (false, errorMsg);
                     }
 
@@ -191,7 +190,7 @@ public class NetworkService
         }
         catch (Exception ex)
         {
-             MCBLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {url}");
+             MCBLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
              return (false, $"Download exception: {ex.Message}");
         }
     }

@@ -88,7 +88,8 @@ public class PersistentCache
     private static readonly TimeSpan CLEANUP_INTERVAL = TimeSpan.FromDays(1); // Cleanup old entries daily
     
     private PersistentCacheData cacheData;
-    private string cacheFilePath;
+    private string cacheFilePath; 
+    private readonly object cacheLock = new object();
 
     private PersistentCache()
     {
@@ -131,15 +132,29 @@ public class PersistentCache
 
     private void SaveCache()
     {
-        try
+        lock (cacheLock)
         {
-            string json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
-            File.WriteAllText(cacheFilePath, json);
-            MCBLogger.Log($"[PersistentCache] Saved cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
-        }
-        catch (Exception ex)
-        {
-            MCBLogger.LogError($"[PersistentCache] Failed to save cache: {ex.Message}");
+            try
+            {
+                string json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
+                string tempPath = cacheFilePath + ".tmp";
+                File.WriteAllText(tempPath, json);
+
+                if (File.Exists(cacheFilePath))
+                {
+                    File.Replace(tempPath, cacheFilePath, null);
+                }
+                else
+                {
+                    File.Move(tempPath, cacheFilePath);
+                }
+
+                MCBLogger.Log($"[PersistentCache] Saved cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogError($"[PersistentCache] Failed to save cache: {ex.Message}");
+            }
         }
     }
 
@@ -151,16 +166,16 @@ public class PersistentCache
 
         string normalizedPath = Path.GetFullPath(filePath);
         
-        if (cacheData.hashCache.TryGetValue(normalizedPath, out var cacheEntry))
+        lock (cacheLock)
         {
-            if (cacheEntry.IsValid() && DateTime.Now - cacheEntry.cacheTime < HASH_CACHE_MAX_AGE)
+            if (cacheData.hashCache.TryGetValue(normalizedPath, out var cacheEntry))
             {
-                MCBLogger.Log($"[PersistentCache] Hash cache hit for: {normalizedPath}");
-                return cacheEntry.hash;
-            }
-            else
-            {
-                // Remove invalid entry
+                if (cacheEntry.IsValid() && DateTime.Now - cacheEntry.cacheTime < HASH_CACHE_MAX_AGE)
+                {
+                    MCBLogger.Log($"[PersistentCache] Hash cache hit for: {normalizedPath}");
+                    return cacheEntry.hash;
+                }
+
                 cacheData.hashCache.Remove(normalizedPath);
                 MCBLogger.Log($"[PersistentCache] Hash cache invalidated for: {normalizedPath}");
             }
@@ -173,7 +188,13 @@ public class PersistentCache
     {
         if (string.IsNullOrEmpty(filePath)) return;
         string normalizedPath = Path.GetFullPath(filePath);
-        if (cacheData.hashCache.Remove(normalizedPath))
+        bool removed;
+        lock (cacheLock)
+        {
+            removed = cacheData.hashCache.Remove(normalizedPath);
+        }
+
+        if (removed)
         {
             SaveCache();
             MCBLogger.Log($"[PersistentCache] Manually invalidated hash for: {normalizedPath}");
@@ -188,7 +209,10 @@ public class PersistentCache
         string normalizedPath = Path.GetFullPath(filePath);
         long lastWriteTime = File.GetLastWriteTime(normalizedPath).ToBinary();
         
-        cacheData.hashCache[normalizedPath] = new HashCacheEntry(normalizedPath, hash, lastWriteTime);
+        lock (cacheLock)
+        {
+            cacheData.hashCache[normalizedPath] = new HashCacheEntry(normalizedPath, hash, lastWriteTime);
+        }
         MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         
         SaveCache();
@@ -204,63 +228,21 @@ public class PersistentCache
         {
             string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}";
             
-            if (cacheData.versionCache.TryGetValue(cacheKey, out var cacheEntry))
+            lock (cacheLock)
             {
-                if (cacheEntry.IsValid(baseFbxHash, authToken, assetId, VERSION_CACHE_MAX_AGE))
+                if (cacheData.versionCache.TryGetValue(cacheKey, out var cacheEntry))
                 {
-                    MCBLogger.Log($"[PersistentCache] Version cache hit for hash: {baseFbxHash}");
-                    return cacheEntry;
-                }
-                else
-                {
+                    if (cacheEntry.IsValid(baseFbxHash, authToken, assetId, VERSION_CACHE_MAX_AGE))
+                    {
+                        MCBLogger.Log($"[PersistentCache] Version cache hit for hash: {baseFbxHash}");
+                        return cacheEntry;
+                    }
+
                     cacheData.versionCache.Remove(cacheKey);
                     MCBLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash}");
                 }
             }
 
-            // Fallback for legacy keys where the auth token hash was used
-            string legacyKey = null;
-            VersionCacheEntry legacyEntry = null;
-            foreach (var kvp in cacheData.versionCache)
-            {
-                var entry = kvp.Value;
-                if (entry == null)
-                {
-                    continue;
-                }
-
-                if (!string.Equals(entry.baseFbxHash, baseFbxHash, StringComparison.Ordinal) ||
-                    entry.assetId != assetId ||
-                    !string.Equals(entry.authToken, authToken, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                legacyKey = kvp.Key;
-                legacyEntry = entry;
-                break;
-            }
-
-            if (legacyEntry != null)
-            {
-                if (legacyEntry.IsValid(baseFbxHash, authToken, assetId, VERSION_CACHE_MAX_AGE))
-                {
-                    MCBLogger.Log($"[PersistentCache] Version cache fallback hit for hash: {baseFbxHash}");
-
-                    if (!string.Equals(legacyKey, cacheKey, StringComparison.Ordinal))
-                    {
-                        cacheData.versionCache[cacheKey] = legacyEntry;
-                        cacheData.versionCache.Remove(legacyKey);
-                        SaveCache();
-                        MCBLogger.Log($"[PersistentCache] Migrated version cache key for hash: {baseFbxHash}");
-                    }
-
-                    return legacyEntry;
-                }
-
-                cacheData.versionCache.Remove(legacyKey);
-                MCBLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash} (fallback)");
-            }
         }
         else
         {
@@ -268,35 +250,38 @@ public class PersistentCache
             string fallbackKey = null;
             VersionCacheEntry fallbackEntry = null;
 
-            foreach (var kvp in cacheData.versionCache)
+            lock (cacheLock)
             {
-                var entry = kvp.Value;
-                if (entry == null)
+                foreach (var kvp in cacheData.versionCache)
                 {
-                    continue;
+                    var entry = kvp.Value;
+                    if (entry == null)
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(entry.baseFbxHash, baseFbxHash, StringComparison.Ordinal) ||
+                        entry.assetId != assetId)
+                    {
+                        continue;
+                    }
+
+                    fallbackKey = kvp.Key;
+                    fallbackEntry = entry;
+                    break;
                 }
 
-                if (!string.Equals(entry.baseFbxHash, baseFbxHash, StringComparison.Ordinal) ||
-                    entry.assetId != assetId)
+                if (fallbackEntry != null)
                 {
-                    continue;
+                    if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.authToken, assetId, VERSION_CACHE_MAX_AGE))
+                    {
+                        MCBLogger.Log($"[PersistentCache] Version cache fallback hit without auth token for hash: {baseFbxHash}");
+                        return fallbackEntry;
+                    }
+
+                    cacheData.versionCache.Remove(fallbackKey);
+                    MCBLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash} (no auth token)");
                 }
-
-                fallbackKey = kvp.Key;
-                fallbackEntry = entry;
-                break;
-            }
-
-            if (fallbackEntry != null)
-            {
-                if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.authToken, assetId, VERSION_CACHE_MAX_AGE))
-                {
-                    MCBLogger.Log($"[PersistentCache] Version cache fallback hit without auth token for hash: {baseFbxHash}");
-                    return fallbackEntry;
-                }
-
-                cacheData.versionCache.Remove(fallbackKey);
-                MCBLogger.Log($"[PersistentCache] Version cache invalidated for hash: {baseFbxHash} (no auth token)");
             }
         }
 
@@ -311,7 +296,10 @@ public class PersistentCache
         string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}";
         var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, authToken, assetId);
         
-        cacheData.versionCache[cacheKey] = cacheEntry;
+        lock (cacheLock)
+        {
+            cacheData.versionCache[cacheKey] = cacheEntry;
+        }
         MCBLogger.Log($"[PersistentCache] Cached {serverVersions?.Count ?? 0} versions for hash: {baseFbxHash}");
         
         SaveCache();
@@ -333,36 +321,37 @@ public class PersistentCache
         int removedHashEntries = 0;
         int removedVersionEntries = 0;
 
-        // Cleanup hash cache
-        var expiredHashKeys = new List<string>();
-        foreach (var kvp in cacheData.hashCache)
+        lock (cacheLock)
         {
-            if (!kvp.Value.IsValid() || DateTime.Now - kvp.Value.cacheTime > HASH_CACHE_MAX_AGE)
+            var expiredHashKeys = new List<string>();
+            foreach (var kvp in cacheData.hashCache)
             {
-                expiredHashKeys.Add(kvp.Key);
+                if (!kvp.Value.IsValid() || DateTime.Now - kvp.Value.cacheTime > HASH_CACHE_MAX_AGE)
+                {
+                    expiredHashKeys.Add(kvp.Key);
+                }
             }
-        }
 
-        foreach (var key in expiredHashKeys)
-        {
-            cacheData.hashCache.Remove(key);
-            removedHashEntries++;
-        }
-
-        // Cleanup version cache
-        var expiredVersionKeys = new List<string>();
-        foreach (var kvp in cacheData.versionCache)
-        {
-            if (DateTime.Now - kvp.Value.cacheTime > VERSION_CACHE_MAX_AGE)
+            foreach (var key in expiredHashKeys)
             {
-                expiredVersionKeys.Add(kvp.Key);
+                cacheData.hashCache.Remove(key);
+                removedHashEntries++;
             }
-        }
 
-        foreach (var key in expiredVersionKeys)
-        {
-            cacheData.versionCache.Remove(key);
-            removedVersionEntries++;
+            var expiredVersionKeys = new List<string>();
+            foreach (var kvp in cacheData.versionCache)
+            {
+                if (DateTime.Now - kvp.Value.cacheTime > VERSION_CACHE_MAX_AGE)
+                {
+                    expiredVersionKeys.Add(kvp.Key);
+                }
+            }
+
+            foreach (var key in expiredVersionKeys)
+            {
+                cacheData.versionCache.Remove(key);
+                removedVersionEntries++;
+            }
         }
 
         if (removedHashEntries > 0 || removedVersionEntries > 0)
@@ -373,22 +362,31 @@ public class PersistentCache
 
     public void ClearAllCache()
     {
-        cacheData.hashCache.Clear();
-        cacheData.versionCache.Clear();
+        lock (cacheLock)
+        {
+            cacheData.hashCache.Clear();
+            cacheData.versionCache.Clear();
+        }
         SaveCache();
         MCBLogger.Log("[PersistentCache] Cleared all cache data.");
     }
 
     public void ClearHashCache()
     {
-        cacheData.hashCache.Clear();
+        lock (cacheLock)
+        {
+            cacheData.hashCache.Clear();
+        }
         SaveCache();
         MCBLogger.Log("[PersistentCache] Cleared hash cache.");
     }
 
     public void ClearVersionCache()
     {
-        cacheData.versionCache.Clear();
+        lock (cacheLock)
+        {
+            cacheData.versionCache.Clear();
+        }
         SaveCache();
         MCBLogger.Log("[PersistentCache] Cleared version cache.");
     }
@@ -396,7 +394,10 @@ public class PersistentCache
     // Statistics
     public (int hashEntries, int versionEntries) GetCacheStats()
     {
-        return (cacheData.hashCache.Count, cacheData.versionCache.Count);
+        lock (cacheLock)
+        {
+            return (cacheData.hashCache.Count, cacheData.versionCache.Count);
+        }
     }
 }
 #endif

@@ -35,7 +35,7 @@ public class VersionActions
     {
         if (version == null) return;
 
-        string versionFolderPath = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string versionFolderPath = MCBUtils.GetVersionDataPath(version);
         if (string.IsNullOrWhiteSpace(versionFolderPath) || !Directory.Exists(Path.GetFullPath(versionFolderPath)))
         {
             editor.warningsModule.AddWarning("The selected version is not available locally, so it cannot be exported.", MessageType.Error, "Export failed");
@@ -191,7 +191,6 @@ public class VersionActions
         
         // --- Process result and cleanup ---
         var (success, error) = downloadTask.Result;
-        bool downloadSucceeded = false;
         bool extractionSucceeded = false;
         string tempExtractPath = null;
         
@@ -203,8 +202,7 @@ public class VersionActions
             }
             else
             {
-                downloadSucceeded = true;
-                string finalDest = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+                string finalDest = MCBUtils.GetVersionDataPath(version);
                 tempExtractPath = Path.Combine(Path.GetTempPath(), $"mcb_extract_{Guid.NewGuid()}");
                 
                 fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest);
@@ -239,8 +237,7 @@ public class VersionActions
             if (applyAfter) 
             {
                 editor.selectedVersionForAction = version;
-                // Start the coroutine but don't yield return it (since it returns void)
-                EditorCoroutineUtility.StartCoroutineOwnerless(ApplyOrResetCoroutine(version, false));
+                yield return ApplyOrResetCoroutine(version, false);
             }
         }
     }
@@ -252,7 +249,7 @@ public class VersionActions
         editor.warningsModule.Clear();
         editor.Repaint();
 
-        string path = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string path = MCBUtils.GetVersionDataPath(version);
         bool deleted = false;
         try
         {
@@ -302,7 +299,7 @@ public class VersionActions
             {
                 if (version == null) throw new ArgumentNullException(nameof(version), "A version must be provided to apply.");
                 
-                string binPath = MCBUtils.GetVersionBinPath(version.version, version.defaultAviVersion);
+                string binPath = MCBUtils.GetVersionBinPath(version);
                 if (!File.Exists(binPath)) throw new FileNotFoundException("Apply failed: .bin file not found. Please download or build it first.");
 
                 string originalFbxPath = fbxPath.EndsWith(FileManagerService.OriginalSuffix) ? fbxPath : fbxPath + FileManagerService.OriginalSuffix;
@@ -347,9 +344,9 @@ public class VersionActions
             var versionForAssets = isReset ? (editor.customBaseTarget.appliedCustomBaseVersion ?? editor.selectedVersionForAction) : version;
             if (versionForAssets != null)
             {
-                string dataPath = MCBUtils.GetVersionDataPath(versionForAssets.version, versionForAssets.defaultAviVersion);
-                string avatarName = isReset ? MCBUtils.DEFAULT_AVATAR_NAME : MCBUtils.CUSTOM_BASE_AVATAR_NAME;
-                string avatarPath = MCBUtils.CombineUnityPath(dataPath, avatarName);
+                string avatarPath = isReset
+                    ? MCBUtils.GetDefaultAvatarPath(versionForAssets)
+                    : MCBUtils.GetCustomBaseAvatarPath(versionForAssets);
                 
                 var fbxGameObject = editor.baseFbxFilesProp.arraySize > 0 ? editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject : null;
                 MCBLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath}");
@@ -362,28 +359,10 @@ public class VersionActions
 
                 if (!isReset)
                 {
-                    string packagePath = MCBUtils.CombineUnityPath(dataPath, "mcb logic.unitypackage");
+                    string packagePath = MCBUtils.GetLogicPackagePath(versionForAssets);
                     fileManagerService.InstantiateLogicPrefab(packagePath, root);
                 }
             }
-            
-            string customLogicPath = MCBUtils.CombineUnityPath(MCBUtils.GetVersionDataPath(versionForAssets.version, versionForAssets.defaultAviVersion), MCBUtils.CUSTOM_LOGIC_NAME);
-            string customLogicAbsolutePath = Path.GetFullPath(customLogicPath);
-            if (File.Exists(customLogicAbsolutePath))
-            {
-                GameObject customLogicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(customLogicPath);
-                if (customLogicPrefab != null)
-                {
-                    GameObject logicInstance = UnityEngine.Object.Instantiate(customLogicPrefab, root);
-                    logicInstance.name = customLogicPrefab.name;
-                    Undo.RegisterCreatedObjectUndo(logicInstance, "Instantiate Custom Logic");
-                }
-                else
-                {
-                    MCBLogger.LogWarning($"[MCB] Custom logic prefab not found at: {customLogicPath}");
-                }
-            }
-            
             editor.customBaseTarget.appliedCustomBaseVersion = version;
             SyncAppliedVersionBlendshapeLinkCache(version);
             
@@ -437,7 +416,7 @@ public class VersionActions
             if (hasCustomVeins)
             {
                 // Apply custom veins
-                string versionFolder = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+                string versionFolder = MCBUtils.GetVersionDataPath(version);
                 string veinsNormalPath = MCBUtils.CombineUnityPath(versionFolder, "veins normal.png");
                 string veinsNormalAbsolutePath = Path.GetFullPath(veinsNormalPath);
 
@@ -478,7 +457,7 @@ public class VersionActions
                 else
                 {
                     ApplyVersionBlendshapeValues(root, version);
-                    MCBLogger.Log("[VersionActions] Blendshape preservation on version switch is disabled. Applied version defaults/overrides using legacy behavior.");
+                MCBLogger.Log("[VersionActions] Blendshape preservation on version switch is disabled. Applied version defaults/overrides.");
                 }
 
                 // Handle "mcb sliders" GameObject state and deletion
@@ -1052,7 +1031,7 @@ public class VersionActions
         {
             bool isNewer = editor.customBaseTarget.appliedCustomBaseVersion == null ||
                            editor.CompareVersions(editor.recommendedVersion.version, editor.customBaseTarget.appliedCustomBaseVersion.version) > 0;
-            string binPath = MCBUtils.GetVersionBinPath(editor.recommendedVersion.version, editor.recommendedVersion.defaultAviVersion);
+            string binPath = MCBUtils.GetVersionBinPath(editor.recommendedVersion);
             bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
 
             if (isNewer && isDownloaded)

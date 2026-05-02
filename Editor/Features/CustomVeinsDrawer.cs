@@ -155,7 +155,7 @@ public class CustomVeinsDrawer
         if (appliedVersion == null) return;
 
         // Construct the path to the veins normal map using the utility method
-        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion.version, appliedVersion.defaultAviVersion);
+        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion);
         string veinsNormalPath = System.IO.Path.Combine(versionFolder, "veins normal.png").Replace("\\", "/");
 
         // Load the texture
@@ -191,7 +191,7 @@ public class CustomVeinsDrawer
         }
 
         // Construct the path to the veins normal map using the utility method
-        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion.version, appliedVersion.defaultAviVersion);
+        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion);
         string veinsNormalPath = System.IO.Path.Combine(versionFolder, "veins normal.png").Replace("\\", "/");
 
         MCBLogger.Log($"[CustomVeinsDrawer] Applying custom veins from: {veinsNormalPath}");

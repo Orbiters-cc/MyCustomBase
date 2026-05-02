@@ -13,7 +13,6 @@ public class ConnectivityTestsWindow : EditorWindow
     private bool httpClientRunning;
     private bool unityWebRequestRunning;
     private bool forceTls12 = true;
-    private bool allowLegacyTls;
     private bool ignoreCertificateErrors;
     private bool diagnosticsRunning;
     private string diagnosticsReport = string.Empty;
@@ -51,7 +50,6 @@ public class ConnectivityTestsWindow : EditorWindow
         return new ConnectivityDiagnosticsOptions
         {
             ForceTls12 = forceTls12,
-            AllowLegacyTls = allowLegacyTls,
             IgnoreCertificateErrors = ignoreCertificateErrors
         };
     }
@@ -81,7 +79,6 @@ public class ConnectivityTestsWindow : EditorWindow
         {
             EditorGUILayout.LabelField("Options (diagnostics)", EditorStyles.boldLabel);
             forceTls12 = EditorGUILayout.ToggleLeft("Force TLS 1.2", forceTls12);
-            allowLegacyTls = EditorGUILayout.ToggleLeft("Allow legacy TLS 1.0/1.1 (diagnostic only)", allowLegacyTls);
             ignoreCertificateErrors = EditorGUILayout.ToggleLeft("Ignore certificate errors (TEST ONLY)", ignoreCertificateErrors);
         }
 

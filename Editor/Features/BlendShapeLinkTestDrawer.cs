@@ -37,8 +37,6 @@ public class BlendShapeLinkTestDrawer
     private const string ToFixPrefKey = "MCB_BlendShapeLinkTest_ToFix";
     private const string FixedByTypePrefKey = "MCB_BlendShapeLinkTest_FixedByType";
     private const string FixedByPrefKey = "MCB_BlendShapeLinkTest_FixedBy";
-    private const string SourceLegacyPrefKey = "MCB_BlendShapeLinkTest_Source";
-    private const string DestinationLegacyPrefKey = "MCB_BlendShapeLinkTest_Destination";
     private const string ParamPrefKey = "MCB_BlendShapeLinkTest_Param";
     private const string ActiveVersionLinksFoldoutPrefKey = "MCB_BlendShapeLinkTest_ActiveVersionLinksFoldout";
 
@@ -49,8 +47,8 @@ public class BlendShapeLinkTestDrawer
         testEnabled = EditorPrefs.GetBool(EnabledPrefKey, true);
         toFixType = (CorrectiveActivationType)EditorPrefs.GetInt(ToFixTypePrefKey, (int)CorrectiveActivationType.Blendshape);
         fixedByType = (CorrectiveActivationType)EditorPrefs.GetInt(FixedByTypePrefKey, (int)CorrectiveActivationType.Blendshape);
-        toFix = EditorPrefs.GetString(ToFixPrefKey, EditorPrefs.GetString(SourceLegacyPrefKey, toFix));
-        fixedBy = EditorPrefs.GetString(FixedByPrefKey, EditorPrefs.GetString(DestinationLegacyPrefKey, fixedBy));
+        toFix = EditorPrefs.GetString(ToFixPrefKey, toFix);
+        fixedBy = EditorPrefs.GetString(FixedByPrefKey, fixedBy);
         factorParameterName = EditorPrefs.GetString(ParamPrefKey, factorParameterName);
         activeVersionLinksFoldout = EditorPrefs.GetBool(ActiveVersionLinksFoldoutPrefKey, false);
     }

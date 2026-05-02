@@ -13,10 +13,19 @@ using System.Reflection;
 /// </summary>
 public static class EditorCoroutineUtility
 {
+    private static readonly List<EditorCoroutineRunner> ActiveRunners = new List<EditorCoroutineRunner>();
+
+    static EditorCoroutineUtility()
+    {
+        AssemblyReloadEvents.beforeAssemblyReload += StopAllCoroutines;
+        EditorApplication.quitting += StopAllCoroutines;
+    }
+
     private class EditorCoroutineRunner
     {
         private readonly Stack<IEnumerator> _coroutineStack;
         private readonly EditorApplication.CallbackFunction _updateDelegate;
+        private bool _isRunning;
 
         public EditorCoroutineRunner(IEnumerator coroutine)
         {
@@ -27,12 +36,26 @@ public static class EditorCoroutineUtility
 
         public void Start()
         {
+            if (_isRunning)
+            {
+                return;
+            }
+
+            _isRunning = true;
+            ActiveRunners.Add(this);
             EditorApplication.update += _updateDelegate;
         }
 
         public void Stop()
         {
+            if (!_isRunning)
+            {
+                return;
+            }
+
+            _isRunning = false;
             EditorApplication.update -= _updateDelegate;
+            ActiveRunners.Remove(this);
         }
 
         private void Update()
@@ -142,6 +165,16 @@ public static class EditorCoroutineUtility
 
         EditorCoroutineRunner runner = new EditorCoroutineRunner(coroutine);
         runner.Start();
+    }
+
+    public static void StopAllCoroutines()
+    {
+        for (int i = ActiveRunners.Count - 1; i >= 0; i--)
+        {
+            ActiveRunners[i]?.Stop();
+        }
+
+        ActiveRunners.Clear();
     }
 
     // You could add StartCoroutine methods that take an owner object

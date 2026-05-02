@@ -13,7 +13,6 @@ public class VersionManagementModule
     
     private enum ActionType { INSTALL, UPDATE, DOWNGRADE, RESET, SWITCH_TO_CUSTOM, UNAVAILABLE }
     
-    private bool versionsFoldout = true;
     private bool hasShownMissingVersionWarning;
     private CustomBaseVersion lastSelectionForWarning;
     private bool lastRecommendedWasNull;
@@ -223,7 +222,7 @@ public class VersionManagementModule
                     }
                     else
                     {
-                        string binPath = MCBUtils.GetVersionBinPath(selectedVersion.version, selectedVersion.defaultAviVersion);
+                        string binPath = MCBUtils.GetVersionBinPath(selectedVersion);
                         bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
                         string assetName = editor.GetSelectedAssetDisplayName();
                         
@@ -289,7 +288,7 @@ public class VersionManagementModule
         
         if (action == ActionType.RESET) return "Reset to Original Avatar";
         
-        string binPath = MCBUtils.GetVersionBinPath(selectedVersion.version, selectedVersion.defaultAviVersion);
+        string binPath = MCBUtils.GetVersionBinPath(selectedVersion);
         bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
         string downloadPrefix = isDownloaded ? "" : "Download and ";
         

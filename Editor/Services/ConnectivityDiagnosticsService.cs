@@ -16,7 +16,6 @@ using UnityEngine.Networking;
 public sealed class ConnectivityDiagnosticsOptions
 {
     public bool ForceTls12 = true;
-    public bool AllowLegacyTls;
     public bool IgnoreCertificateErrors;
 }
 
@@ -460,10 +459,6 @@ public static class ConnectivityDiagnosticsService
             try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
         }
 
-        if (options.AllowLegacyTls)
-        {
-            try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls | SecurityProtocolType.Tls11; } catch { }
-        }
     }
 
     private static System.Security.Authentication.SslProtocols BuildSslProtocols(ConnectivityDiagnosticsOptions options)
@@ -477,10 +472,6 @@ public static class ConnectivityDiagnosticsService
                 protocols |= System.Security.Authentication.SslProtocols.Tls12;
             }
 
-            if (options.AllowLegacyTls)
-            {
-                protocols |= System.Security.Authentication.SslProtocols.Tls11 | System.Security.Authentication.SslProtocols.Tls;
-            }
         }
 
         return protocols == 0 ? System.Security.Authentication.SslProtocols.None : protocols;
@@ -496,7 +487,7 @@ public static class ConnectivityDiagnosticsService
             string escapedUrl = url.Replace("'", "''");
             string script = "$ErrorActionPreference='Stop';" +
                             "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;" +
-                            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls;" +
+                            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" +
                             "try {" +
                             "  $r = Invoke-WebRequest -UseBasicParsing -Uri '" + escapedUrl + "' -TimeoutSec " + timeoutSeconds + ";" +
                             "  Write-Output ('HTTP_STATUS=' + [int]$r.StatusCode);" +

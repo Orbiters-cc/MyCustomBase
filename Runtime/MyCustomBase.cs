@@ -5,17 +5,14 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Scripting.APIUpdating;
-using UnityEngine.Serialization;
 
 // Represents a blendshape with a default value in creator mode.
 [Serializable]
 public class CreatorCorrectiveBlendshapeEntry
 {
     public CorrectiveActivationType toFixType = CorrectiveActivationType.Blendshape;
-    [FormerlySerializedAs("blendshapeToFix")]
     public string toFix;
     public CorrectiveActivationType fixedByType = CorrectiveActivationType.Blendshape;
-    [FormerlySerializedAs("fixingBlendshape")]
     public string fixedBy;
 }
 
@@ -35,10 +32,8 @@ public class BlendShapeFactorLinkEntry
     public bool enabled = true;
     public string targetRendererPath;
     public CorrectiveActivationType toFixType = CorrectiveActivationType.Blendshape;
-    [FormerlySerializedAs("sourceBlendshape")]
     public string toFix;
     public CorrectiveActivationType fixedByType = CorrectiveActivationType.Blendshape;
-    [FormerlySerializedAs("destinationBlendshape")]
     public string fixedBy;
     public string factorParameterName;
 }
@@ -60,7 +55,7 @@ public class MyCustomBase : MonoBehaviour
 
     // --- APPLIED STATE ---
     [Tooltip("The version information of the custom base modification that is currently applied to this avatar's FBX.")]
-    [HideInInspector] [FormerlySerializedAs("appliedUltiPawVersion")] public CustomBaseVersion appliedCustomBaseVersion = null;
+    [HideInInspector] public CustomBaseVersion appliedCustomBaseVersion = null;
 
     [Tooltip("Stores the current values of the custom blendshape sliders.")]
     [HideInInspector] public List<float> blendShapeValues = new List<float>();
@@ -106,7 +101,7 @@ public class MyCustomBase : MonoBehaviour
     // --- CREATOR MODE PERSISTENT DATA ---
     [HideInInspector] public bool isCreatorMode = false;
     [HideInInspector] public GameObject customFbxForCreator;
-    [HideInInspector] [FormerlySerializedAs("ultipawAvatarForCreatorProp")] public Avatar customBaseAvatarForCreatorProp;
+    [HideInInspector] public Avatar customBaseAvatarForCreatorProp;
     [HideInInspector] public GameObject avatarLogicPrefab;
     [HideInInspector] public bool includeCustomVeinsForCreator = false;
     [HideInInspector] public Texture2D customVeinsNormalMap;

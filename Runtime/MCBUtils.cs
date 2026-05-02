@@ -8,6 +8,7 @@ using System.Text;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
+using System.Linq;
 using UnityEditorInternal;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
@@ -24,13 +25,12 @@ public static class MCBUtils
     public const string SCRIPT_VERSION = "0.1";
     public const string PACKAGE_BASE_FOLDER = "Packages/orbiters.mcb";
     public const string ASSETS_BASE_FOLDER = "Assets/MCB";
-    public const string VERSIONS_FOLDER = ASSETS_BASE_FOLDER + "/versions";
+    public const string ASSET_VERSIONS_FOLDER = ASSETS_BASE_FOLDER + "/assets";
     public const string UNSUBMITTED_VERSIONS_FILE = ASSETS_BASE_FOLDER + "/unsubmittedVersions.json";
     public const string USER_VERSIONS_DIR = ASSETS_BASE_FOLDER + "/userVersions";
     public const string USER_VERSIONS_FILE = ASSETS_BASE_FOLDER + "/userVersions.json";
     public const string DEFAULT_AVATAR_NAME = "default avatar.asset";
     public const string CUSTOM_BASE_AVATAR_NAME = "customBase avatar.asset";
-    public const string CUSTOM_LOGIC_NAME = "mcb logic.asset";
 
     // EditorPrefs key for Dev Environment setting
     private const string DevEnvironmentPrefKey = "MCB_DevEnvironment";
@@ -79,7 +79,7 @@ public static class MCBUtils
     public const string AVATAR_ASSET_DISCOVERY_ENDPOINT = "/assets/by-avatar-base";
     public const string TOKEN_ENDPOINT = "/token"; // Replace with your actual API endpoint
     
-    public const string NEW_VERSION_ENDPOINT = "/mcb/newVersion";
+    public const string NEW_VERSION_ENDPOINT = "/newVersion";
     public const string CHECK_CONNECTION_ENDPOINT = "/check-connection";
     public static readonly string PACKAGE_BASE_FOLDER_FULL_PATH = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Packages", "orbiters.mcb");
 
@@ -149,28 +149,84 @@ public static class MCBUtils
 
     // Removes the authentication data file
 
-    public static string GetVersionDataPath(string customBaseVersion, string defaultFbxVersion)
+    public static string GetVersionDataPath(int assetId, string customBaseVersion, string defaultFbxVersion)
     {
-        if (string.IsNullOrEmpty(customBaseVersion) || string.IsNullOrEmpty(defaultFbxVersion))
+        if (assetId <= 0 || string.IsNullOrEmpty(customBaseVersion) || string.IsNullOrEmpty(defaultFbxVersion))
         {
             return null;
         }
-        return $"{VERSIONS_FOLDER}/u{customBaseVersion}d{defaultFbxVersion}";
+
+        return $"{ASSET_VERSIONS_FOLDER}/{assetId}/versions/u{customBaseVersion}d{defaultFbxVersion}";
     }
 
-    public static string GetVersionBinPath(string customBaseVersion, string defaultFbxVersion)
+    public static string GetVersionDataPath(CustomBaseVersion version)
     {
-        string dataPath = GetVersionDataPath(customBaseVersion, defaultFbxVersion);
-        if (dataPath == null) return null;
-        return $"{dataPath}/mcb.bin";
+        if (version == null) return null;
+        return GetVersionDataPath(version.assetId, version.version, version.defaultAviVersion);
     }
 
-    public static string GetVersionAvatarPath(string customBaseVersion, string defaultFbxVersion, string relativeAvatarPath)
+    public static string GetVersionBinPath(CustomBaseVersion version)
+    {
+        string dataPath = GetVersionDataPath(version);
+        return FindSingleVersionFile(dataPath, "*.bin");
+    }
+
+    public static string GetVersionAvatarPath(CustomBaseVersion version, string relativeAvatarPath)
     {
         if (string.IsNullOrEmpty(relativeAvatarPath)) return null;
-        string dataPath = GetVersionDataPath(customBaseVersion, defaultFbxVersion);
+        string dataPath = GetVersionDataPath(version);
         if (dataPath == null) return null;
         return Path.Combine(dataPath, relativeAvatarPath).Replace("\\", "/");
+    }
+
+    public static string GetDefaultAvatarPath(CustomBaseVersion version)
+    {
+        string dataPath = GetVersionDataPath(version);
+        if (dataPath == null) return null;
+
+        string defaultAvatarPath = Path.Combine(dataPath, DEFAULT_AVATAR_NAME).Replace("\\", "/");
+        return File.Exists(Path.GetFullPath(defaultAvatarPath)) ? defaultAvatarPath : null;
+    }
+
+    public static string GetCustomBaseAvatarPath(CustomBaseVersion version)
+    {
+        string dataPath = GetVersionDataPath(version);
+        if (dataPath == null) return null;
+
+        string absoluteDataPath = Path.GetFullPath(dataPath);
+        if (!Directory.Exists(absoluteDataPath)) return null;
+
+        string defaultAvatarName = Path.GetFileName(DEFAULT_AVATAR_NAME);
+        return Directory.GetFiles(absoluteDataPath, "*avatar.asset", SearchOption.TopDirectoryOnly)
+            .Where(path => !string.Equals(Path.GetFileName(path), defaultAvatarName, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(ToUnityPath)
+            .FirstOrDefault();
+    }
+
+    public static string GetLogicPackagePath(CustomBaseVersion version)
+    {
+        string dataPath = GetVersionDataPath(version);
+        return FindSingleVersionFile(dataPath, "*.unitypackage");
+    }
+
+    public static string GetLogicPrefabPath(string versionDataFolderUnity)
+    {
+        return FindSingleVersionFile(versionDataFolderUnity, "*.prefab");
+    }
+
+    private static string FindSingleVersionFile(string versionDataFolderUnity, string searchPattern)
+    {
+        if (string.IsNullOrEmpty(versionDataFolderUnity)) return null;
+
+        string absoluteDataPath = Path.GetFullPath(versionDataFolderUnity);
+        if (!Directory.Exists(absoluteDataPath)) return null;
+
+        string match = Directory.GetFiles(absoluteDataPath, searchPattern, SearchOption.TopDirectoryOnly)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+
+        return string.IsNullOrEmpty(match) ? null : ToUnityPath(match);
     }
 
     public static string GetMCBDataFolder()

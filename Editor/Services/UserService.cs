@@ -167,7 +167,6 @@ public class UserService
                         File.WriteAllBytes(localPath, pngData);
 
                         avatarCache[uploaderId] = processed;
-                        MCBLogger.Log($"[MCB] Downloaded and cached avatar for user {uploaderId}");
 
                         if (!ReferenceEquals(processed, texture))
                         {
@@ -203,7 +202,6 @@ public class UserService
                     Object.DestroyImmediate(texture);
                 }
 
-                MCBLogger.Log($"[MCB] Loaded cached avatar for user {uploaderId}");
             }
         }
         catch (Exception ex)

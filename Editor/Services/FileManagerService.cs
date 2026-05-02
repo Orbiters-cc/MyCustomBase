@@ -176,7 +176,13 @@ public class FileManagerService
         }
         
         string versionDataFolderUnity = MCBUtils.ToUnityPath(Path.GetDirectoryName(unityPackagePath));
-        string prefabPath = MCBUtils.CombineUnityPath(versionDataFolderUnity, "mcb logic.prefab");
+        string prefabPath = MCBUtils.GetLogicPrefabPath(versionDataFolderUnity);
+        if (string.IsNullOrEmpty(prefabPath))
+        {
+            MCBLogger.LogWarning($"[FileManager] No logic prefab found in '{versionDataFolderUnity}'.");
+            return;
+        }
+
         string absolutePrefabPath = Path.GetFullPath(prefabPath);
 
         if (!File.Exists(absolutePrefabPath))
@@ -276,7 +282,7 @@ public class FileManagerService
         if (version == null) throw new ArgumentNullException(nameof(version));
         if (string.IsNullOrWhiteSpace(outputUnityPackagePath)) throw new ArgumentNullException(nameof(outputUnityPackagePath));
 
-        string versionFolderUnityPath = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string versionFolderUnityPath = MCBUtils.GetVersionDataPath(version);
         if (string.IsNullOrWhiteSpace(versionFolderUnityPath))
             throw new InvalidOperationException("Version folder path could not be resolved.");
 
@@ -314,6 +320,7 @@ public class FileManagerService
     }
     
     public string CreateVersionPackageForUpload(
+        int assetId,
         string newVersionString, 
         string baseFbxVersion,
         string originalFbxPath,
@@ -325,7 +332,11 @@ public class FileManagerService
         Texture2D customVeinsTexture,
         IEnumerable<string> additionalAnimationAssetPaths = null)
     {
-        string newVersionDataPath = MCBUtils.GetVersionDataPath(newVersionString, baseFbxVersion);
+        string newVersionDataPath = MCBUtils.GetVersionDataPath(assetId, newVersionString, baseFbxVersion);
+        if (string.IsNullOrEmpty(newVersionDataPath))
+        {
+            throw new ArgumentException("A valid assetId, version, and base FBX version are required to create a version package.");
+        }
         string newVersionDataFullPath = Path.GetFullPath(newVersionDataPath);
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_{Guid.NewGuid()}.zip");
 

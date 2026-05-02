@@ -49,7 +49,7 @@ public class AsyncVersionService
             if (!string.IsNullOrEmpty(cachedBaseHash))
             {
                 var cachedEntryFast = cache.GetCachedVersions(cachedBaseHash, authToken, assetId);
-                if (cachedEntryFast != null)
+                if (cachedEntryFast != null && HasRequiredAssetIds(cachedEntryFast.serverVersions))
                 {
                     MCBLogger.Log($"[AsyncVersionService] Fast cache hit, returning versions without UI task for hash: {cachedBaseHash}");
                     taskManager.ExecuteOnMainThread(() =>
@@ -84,7 +84,7 @@ public class AsyncVersionService
                 taskManager.UpdateTaskProgress(taskId, 0.3f, "Checking version cache...");
                 
                 var cachedEntry = cache.GetCachedVersions(baseFbxHash, authToken, assetId);
-                if (cachedEntry != null)
+                if (cachedEntry != null && HasRequiredAssetIds(cachedEntry.serverVersions))
                 {
                     MCBLogger.Log($"[AsyncVersionService] Using cached versions for hash: {baseFbxHash}");
                     taskManager.CompleteTask(taskId);
@@ -119,6 +119,13 @@ public class AsyncVersionService
                 taskManager.UpdateTaskProgress(taskId, 0.9f, "Processing server response...");
                 
                 var versions = response.versions ?? new List<CustomBaseVersion>();
+                if (!HasRequiredAssetIds(versions))
+                {
+                    var errorMsg = "Version response is missing assetId.";
+                    taskManager.CompleteTask(taskId, true, errorMsg);
+                    taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(errorMsg));
+                    return (new List<CustomBaseVersion>(), null, errorMsg);
+                }
                 var recommendedVersion = versions.FirstOrDefault(v => v.version == response.recommendedVersion);
 
                 // Cache the results
@@ -218,7 +225,7 @@ public class AsyncVersionService
             return false;
 
         var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId);
-        return cachedVersions != null;
+        return cachedVersions != null && HasRequiredAssetIds(cachedVersions.serverVersions);
     }
 
     public (List<CustomBaseVersion> versions, CustomBaseVersion recommended) GetCachedVersions(string fbxPath, string authToken, int assetId)
@@ -239,7 +246,7 @@ public class AsyncVersionService
             return (new List<CustomBaseVersion>(), null);
 
         var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId);
-        if (cachedVersions != null)
+        if (cachedVersions != null && HasRequiredAssetIds(cachedVersions.serverVersions))
         {
             return (cachedVersions.serverVersions, cachedVersions.recommendedVersion);
         }
@@ -255,6 +262,10 @@ public class AsyncVersionService
 
         try
         {
+            if (version.assetId <= 0)
+            {
+                version.assetId = assetId;
+            }
             string tempZipPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
             string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(assetId)}?version={version.version}&d={baseFbxHash}&t={authToken}";
 
@@ -279,7 +290,7 @@ public class AsyncVersionService
                 taskManager.UpdateTaskProgress(taskId, 0.8f, "Extracting files...");
                 
                 // Extract and move files (this should also be made async in the future)
-                string dataPath = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+                string dataPath = MCBUtils.GetVersionDataPath(version);
                 if (!string.IsNullOrEmpty(dataPath))
                 {
                     MCBUtils.EnsureDirectoryExists(dataPath, false);
@@ -334,5 +345,11 @@ public class AsyncVersionService
     {
         return await FetchVersionsAsync(fbxPath, authToken, assetId, useCache: false);
     }
+
+    private static bool HasRequiredAssetIds(IEnumerable<CustomBaseVersion> versions)
+    {
+        return versions != null && versions.All(version => version != null && version.assetId > 0);
+    }
+
 }
 #endif

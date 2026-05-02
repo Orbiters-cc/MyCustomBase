@@ -454,7 +454,7 @@ public class VersionListDrawer
 
     private void DrawVersionListItem(CustomBaseVersion ver, bool isFirst, bool isLast)
     {
-        string versionFolderPath = MCBUtils.GetVersionDataPath(ver.version, ver.defaultAviVersion);
+        string versionFolderPath = MCBUtils.GetVersionDataPath(ver);
         bool hasLocalContent = !string.IsNullOrEmpty(versionFolderPath) && Directory.Exists(Path.GetFullPath(versionFolderPath));
         bool isSelected = ver.Equals(editor.selectedVersionForAction);
         bool isApplied = ver.Equals(editor.customBaseTarget.appliedCustomBaseVersion);

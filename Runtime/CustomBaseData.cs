@@ -12,30 +12,6 @@ public class CorrectiveBlendshapeEntry
     [JsonProperty] public string toFix;
     [JsonProperty] public CorrectiveActivationType fixedByType = CorrectiveActivationType.Blendshape;
     [JsonProperty] public string fixedBy;
-
-    // Backward-compat with older payloads.
-    [JsonProperty("blendshapeToFix")] private string LegacyBlendshapeToFix
-    {
-        set
-        {
-            if (string.IsNullOrWhiteSpace(toFix))
-            {
-                toFix = value;
-            }
-        }
-    }
-
-    // Backward-compat with older payloads.
-    [JsonProperty("fixingBlendshape")] private string LegacyFixingBlendshape
-    {
-        set
-        {
-            if (string.IsNullOrWhiteSpace(fixedBy))
-            {
-                fixedBy = value;
-            }
-        }
-    }
 }
 
 [JsonObject(MemberSerialization.OptIn)]
@@ -46,20 +22,6 @@ public class CustomBlendshapeEntry
     [JsonProperty] public bool isSlider;
     [JsonProperty] public bool isSliderDefault;
     [JsonProperty("correctives", NullValueHandling = NullValueHandling.Ignore)] public CorrectiveBlendshapeEntry[] correctiveBlendshapes;
-
-    // Backward-compat with older payloads.
-    [JsonProperty("correctiveBlendshapes")] private CorrectiveBlendshapeEntry[] LegacyCorrectiveBlendshapes
-    {
-        set
-        {
-            if ((correctiveBlendshapes == null || correctiveBlendshapes.Length == 0) &&
-                value != null &&
-                value.Length > 0)
-            {
-                correctiveBlendshapes = value;
-            }
-        }
-    }
 }
 
 [JsonConverter(typeof(StringEnumConverter))]
@@ -101,6 +63,7 @@ public class CustomBaseVersion
     [JsonProperty] public Dictionary<string, string> dependencies;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int uploaderId;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string parentVersion;
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int assetId;
     
     // --- Fields for local unsubmitted versions ---
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string baseFbxHash;
@@ -115,27 +78,15 @@ public class CustomBaseVersion
     [JsonIgnore] public bool isUnsubmitted; // Runtime flag, not saved to JSON
     [JsonIgnore] public bool isImported; // Runtime flag for offline imported versions, not saved to JSON
 
-    [JsonProperty("ultipawAvatarPath")] private string LegacyCustomBaseAvatarPath
-    {
-        set
-        {
-            if (string.IsNullOrWhiteSpace(customBaseAvatarPath))
-            {
-                customBaseAvatarPath = value;
-            }
-        }
-    }
-
     public bool Equals(CustomBaseVersion other)
     {
         if (other == null) return false;
-        // Two versions are the same if their version string and base FBX version match.
-        return version == other.version && defaultAviVersion == other.defaultAviVersion;
+        return assetId == other.assetId && version == other.version && defaultAviVersion == other.defaultAviVersion;
     }
 
     public override int GetHashCode()
     {
-        return HashCode.Combine(version, defaultAviVersion);
+        return HashCode.Combine(assetId, version, defaultAviVersion);
     }
 
     public override bool Equals(object obj)

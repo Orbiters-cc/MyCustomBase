@@ -154,7 +154,7 @@ public class MCBEditor : UnityEditor.Editor
         Repaint();
     }
 
-    private async void StartAsyncInitialization()
+    private void StartAsyncInitialization()
     {
         // Skip async initialization if already in progress or if we're submitting/building
         if (isFetching || isSubmitting) return;
@@ -539,6 +539,7 @@ public class MCBEditor : UnityEditor.Editor
         var selectedAsset = GetSelectedAsset();
         if (!string.IsNullOrEmpty(fbxPath) && isAuthenticated && selectedAsset != null)
         {
+            fetchAttempted = true;
             versionService?.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false);
         }
         if (selectedAsset == null)
@@ -605,7 +606,7 @@ public class MCBEditor : UnityEditor.Editor
     {
         importedVersions.Clear();
 
-        string versionsRoot = Path.Combine(Application.dataPath, "MCB", "versions");
+        string versionsRoot = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
         if (!Directory.Exists(versionsRoot))
         {
             return;
@@ -619,7 +620,7 @@ public class MCBEditor : UnityEditor.Editor
                 {
                     string json = File.ReadAllText(versionJsonPath);
                     var version = JsonConvert.DeserializeObject<CustomBaseVersion>(json);
-                    if (version == null || string.IsNullOrWhiteSpace(version.version) || string.IsNullOrWhiteSpace(version.defaultAviVersion))
+                    if (version == null || version.assetId <= 0 || string.IsNullOrWhiteSpace(version.version) || string.IsNullOrWhiteSpace(version.defaultAviVersion))
                     {
                         MCBLogger.LogWarning($"[MCB] Ignoring invalid imported version metadata at {versionJsonPath}");
                         continue;
@@ -652,21 +653,25 @@ public class MCBEditor : UnityEditor.Editor
 
         // Merge sources while letting local variants override matching server entries.
         var merged = new Dictionary<string, CustomBaseVersion>(StringComparer.Ordinal);
+        int selectedAssetId = GetSelectedAsset()?.id ?? 0;
 
         foreach (var version in serverVersions)
         {
+            if (!BelongsToSelectedAsset(version, selectedAssetId)) continue;
             if (version == null) continue;
             merged[GetVersionKey(version)] = version;
         }
 
         foreach (var version in importedVersions)
         {
+            if (!BelongsToSelectedAsset(version, selectedAssetId)) continue;
             if (version == null) continue;
             merged[GetVersionKey(version)] = version;
         }
 
         foreach (var version in unsubmittedVersions)
         {
+            if (!BelongsToSelectedAsset(version, selectedAssetId)) continue;
             if (version == null) continue;
             merged[GetVersionKey(version)] = version;
         }
@@ -674,9 +679,14 @@ public class MCBEditor : UnityEditor.Editor
         return merged.Values.OrderByDescending(v => ParseVersion(v.version)).ToList();
     }
 
+    private static bool BelongsToSelectedAsset(CustomBaseVersion version, int selectedAssetId)
+    {
+        return version != null && selectedAssetId > 0 && version.assetId == selectedAssetId;
+    }
+
     private static string GetVersionKey(CustomBaseVersion version)
     {
-        return $"{version.version}|{version.defaultAviVersion}";
+        return $"{version.assetId}|{version.version}|{version.defaultAviVersion}";
     }
     
     public Version ParseVersion(string v)

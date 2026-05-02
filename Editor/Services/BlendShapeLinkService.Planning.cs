@@ -400,13 +400,6 @@ public partial class BlendShapeLinkService
             TryAppendSignature(output, dedupe, binding.path, binding.type, binding.propertyName, curve);
         }
 
-        // Some generated clips expose curves only through GetAllCurves (humanoid/muscle channels).
-        foreach (var curveData in AnimationUtility.GetAllCurves(clip, true))
-        {
-            if (curveData == null) continue;
-            TryAppendSignature(output, dedupe, curveData.path, curveData.type, curveData.propertyName, curveData.curve);
-        }
-
         // Keep only distinctive channels to reduce false positives in semantic matching.
         return output.Where(IsDistinctiveSignature).ToList();
     }

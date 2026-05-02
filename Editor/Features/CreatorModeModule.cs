@@ -944,7 +944,7 @@ public class CreatorModeModule
     private static string GetVeinsTexturePathForVersion(CustomBaseVersion version)
     {
         if (version == null) return null;
-        string folder = MCBUtils.GetVersionDataPath(version.version, version.defaultAviVersion);
+        string folder = MCBUtils.GetVersionDataPath(version);
         if (string.IsNullOrEmpty(folder)) return null;
         return Path.Combine(folder, "veins normal.png").Replace("\\", "/");
     }
@@ -1207,11 +1207,18 @@ public class CreatorModeModule
             .ToArray();
 
         var fixedByAnimationAssetPaths = CollectAnimationAssetPathsFromFixedBy(customBlendshapeEntries);
+        var selectedAsset = editor.GetSelectedAsset();
+        if (selectedAsset == null || selectedAsset.id <= 0)
+        {
+            throw new InvalidOperationException("Select a custom base asset before building a version.");
+        }
+        int assetId = selectedAsset.id;
 
         string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
         EditorUtility.DisplayProgressBar("Preparing Build", "Creating version package...", 0.2f);
 
         string tempZipPath = fileManagerService.CreateVersionPackageForUpload(
+            assetId,
             newVersionString,
             selectedParentVersionObject.defaultAviVersion,
             originalFbxPath,
@@ -1225,7 +1232,12 @@ public class CreatorModeModule
         );
 
         EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
-        string binPath = MCBUtils.CombineUnityPath(MCBUtils.GetVersionDataPath(newVersionString, selectedParentVersionObject.defaultAviVersion), "mcb.bin");
+        string binPath = MCBUtils.GetVersionBinPath(new CustomBaseVersion
+        {
+            assetId = assetId,
+            version = newVersionString,
+            defaultAviVersion = selectedParentVersionObject.defaultAviVersion
+        });
 
         var extraCustomization = new List<string>();
         if (selectedParentVersionObject.extraCustomization != null)
@@ -1274,6 +1286,7 @@ public class CreatorModeModule
         string customVeinsAssetPath = shouldIncludeCustomVeins ? AssetDatabase.GetAssetPath(customVeinsTexture) : null;
 
         var metadata = new CustomBaseVersion {
+            assetId = assetId,
             version = newVersionString,
             scope = newVersionScope,
             changelog = newChangelog,
@@ -1503,10 +1516,17 @@ public class CreatorModeModule
             if (parentVersion == null)
                 throw new Exception("Parent version not found.");
 
+            var selectedAsset = editor.GetSelectedAsset();
+            if (unsubmittedVersion.assetId <= 0 && selectedAsset != null)
+            {
+                unsubmittedVersion.assetId = selectedAsset.id;
+            }
+
             EditorUtility.DisplayProgressBar("Preparing Upload", "Creating version package...", 0.3f);
 
             // Re-create the zip from existing files
             zipPath = fileManagerService.CreateVersionPackageForUpload(
+                unsubmittedVersion.assetId,
                 unsubmittedVersion.version,
                 unsubmittedVersion.defaultAviVersion,
                 originalFbxPath,
