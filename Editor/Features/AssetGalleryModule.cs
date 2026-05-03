@@ -31,6 +31,7 @@ public class CreatorAssetCreateResponseAsset
     [JsonProperty] public string thumbnail;
     [JsonProperty] public string mcbBanner;
     [JsonProperty] public CreatorAvatarBaseOption selectedAvatarBase;
+    [JsonProperty] public ModelFileData[] sourceFiles;
 }
 
 public class CreateCustomBaseAssetResponse
@@ -620,12 +621,39 @@ public class AssetGalleryModule
             {
                 EditorGUILayout.HelpBox("Target files must be FBX model assets.", MessageType.Warning);
             }
+            else if (targetFbxFiles[i] != null)
+            {
+                DrawSmrPathsForTargetFbx(path);
+            }
         }
 
         if (GUILayout.Button("Add Target FBX", GUILayout.Width(140f)))
         {
             targetFbxFiles.Add(null);
         }
+    }
+
+    private void DrawSmrPathsForTargetFbx(string targetPath)
+    {
+        if (editor?.customBaseTarget == null || string.IsNullOrWhiteSpace(targetPath)) return;
+
+        var entries = SmrPathService.CollectSmrPathsForFbx(editor.customBaseTarget.transform.root, targetPath);
+        if (entries.Count == 0)
+        {
+            EditorGUILayout.HelpBox("No avatar SkinnedMeshRenderer currently uses this FBX.", MessageType.Warning);
+            return;
+        }
+
+        EditorGUI.indentLevel++;
+        EditorGUILayout.LabelField("Avatar SMR Paths", EditorStyles.miniBoldLabel);
+        foreach (var entry in entries)
+        {
+            string label = string.IsNullOrWhiteSpace(entry.meshName)
+                ? entry.avatarPath
+                : $"{entry.avatarPath}  ->  {entry.meshName}";
+            EditorGUILayout.LabelField(label, EditorStyles.miniLabel);
+        }
+        EditorGUI.indentLevel--;
     }
 
     private bool IsCreateFormValid()
@@ -785,6 +813,7 @@ public class AssetGalleryModule
                         avatarBase = response.asset.selectedAvatarBase != null
                             ? new AvatarAssetBaseInfo { id = response.asset.selectedAvatarBase.id, name = response.asset.selectedAvatarBase.name }
                             : null,
+                        sourceFiles = response.asset.sourceFiles,
                         isCompatible = true
                     };
 
@@ -808,10 +837,18 @@ public class AssetGalleryModule
         editor.Repaint();
     }
 
-    private static List<ModelFileData> BuildSourceFilePayload(IEnumerable<string> unityPaths)
+    private List<ModelFileData> BuildSourceFilePayload(IEnumerable<string> unityPaths)
     {
         var files = new List<ModelFileData>();
-        foreach (string unityPath in unityPaths ?? Enumerable.Empty<string>())
+        var pathList = (unityPaths ?? Enumerable.Empty<string>())
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path.Replace("\\", "/"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var smrPathsByFbx = editor?.customBaseTarget != null
+            ? SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, pathList)
+            : new Dictionary<string, List<ModelFileSmrPathData>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string unityPath in pathList)
         {
             if (string.IsNullOrWhiteSpace(unityPath)) continue;
 
@@ -839,7 +876,10 @@ public class AssetGalleryModule
                 hash = hash,
                 type = "FBX",
                 role = "SOURCE",
-                metas = metas
+                metas = metas,
+                smrPaths = smrPathsByFbx.TryGetValue(normalizedPath, out var smrEntries)
+                    ? smrEntries
+                    : new List<ModelFileSmrPathData>()
             });
         }
 

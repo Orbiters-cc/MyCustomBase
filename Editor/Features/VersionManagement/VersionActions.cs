@@ -367,7 +367,7 @@ public class VersionActions
                 MCBLogger.Log("[VersionActions] Dynamic normals removal completed.");
             }
 
-            RefreshTargetMeshesFromFBXs(root, affectedFbxPaths);
+            RefreshTargetMeshesFromFBXs(root, affectedFbxPaths, versionForAssets);
             
             if (shouldApplyDynamicNormals)
             {
@@ -901,7 +901,7 @@ public class VersionActions
         return string.Join("/", segments);
     }
 
-    private void RefreshTargetMeshesFromFBXs(Transform root, IEnumerable<string> fbxPaths)
+    private void RefreshTargetMeshesFromFBXs(Transform root, IEnumerable<string> fbxPaths, CustomBaseVersion version)
     {
         if (root == null || fbxPaths == null) return;
 
@@ -910,32 +910,10 @@ public class VersionActions
             StringComparer.OrdinalIgnoreCase);
         if (targetPaths.Count == 0) return;
 
-        var meshesByFbxPath = new Dictionary<string, Dictionary<string, Mesh>>(StringComparer.OrdinalIgnoreCase);
         foreach (string fbxPath in targetPaths)
         {
-            var fbxObject = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
-            if (fbxObject == null) continue;
-
-            var meshLookup = new Dictionary<string, Mesh>(StringComparer.Ordinal);
-            foreach (var smr in fbxObject.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-            {
-                if (smr?.sharedMesh == null || meshLookup.ContainsKey(smr.sharedMesh.name)) continue;
-                meshLookup.Add(smr.sharedMesh.name, smr.sharedMesh);
-            }
-            meshesByFbxPath[fbxPath] = meshLookup;
-        }
-
-        foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-        {
-            if (smr?.sharedMesh == null) continue;
-            string currentAssetPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(smr.sharedMesh));
-            if (string.IsNullOrWhiteSpace(currentAssetPath) || !targetPaths.Contains(currentAssetPath)) continue;
-            if (!meshesByFbxPath.TryGetValue(currentAssetPath, out var meshLookup)) continue;
-            if (!meshLookup.TryGetValue(smr.sharedMesh.name, out var replacementMesh)) continue;
-
-            Undo.RecordObject(smr, "Refresh Mesh from FBX");
-            smr.sharedMesh = replacementMesh;
-            EditorUtility.SetDirty(smr);
+            var smrPaths = SmrPathService.ResolveSmrPathsForSource(version, fbxPath);
+            SmrPathService.RefreshTargetMeshesFromFbx(root, fbxPath, smrPaths);
         }
     }
     

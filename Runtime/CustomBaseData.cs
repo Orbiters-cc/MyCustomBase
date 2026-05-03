@@ -58,7 +58,17 @@ public class ModelFileData
     [JsonProperty] public int? sourceModelFileId;
     [JsonProperty] public int? storageFileId;
     [JsonProperty] public List<Dictionary<string, string>> metas;
+    [JsonProperty] public List<ModelFileSmrPathData> smrPaths;
     [JsonProperty] public Dictionary<string, object> metadata;
+}
+
+[JsonObject(MemberSerialization.OptIn)]
+public class ModelFileSmrPathData
+{
+    [JsonProperty] public string avatarPath;
+    [JsonProperty] public string fbxMeshPath;
+    [JsonProperty] public string meshName;
+    [JsonProperty] public string rendererName;
 }
 
 // Represents a single available version of an custom base modification.

@@ -230,6 +230,12 @@ public class UserService
         
         return avatarCache.ContainsKey(uploaderId) ? avatarCache[uploaderId] : null;
     }
+
+    public static string GetUserAvatarLocalPath(int uploaderId)
+    {
+        string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
+        return File.Exists(localPath) ? localPath : null;
+    }
     
     public static void UpdateUserInfo(int userId, string username, string avatarUrl)
     {

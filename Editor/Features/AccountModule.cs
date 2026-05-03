@@ -319,7 +319,7 @@ public class AccountModule
         UserService.RequestUserInfo(accountUserId.Value, tokenForUserInfo, () =>
         {
             userInfoRequested = false;
-            ApplyUserInfoFromCache();
+            ApplyUserInfoFromCache(); 
             editor.Repaint();
         });
     }

@@ -247,6 +247,35 @@ public static class AvatarAssetDiscoveryService
         return GetImage(asset.bannerUrl, "banner", asset.id);
     }
 
+    public static string GetBannerLocalPath(AvatarDiscoveredAsset asset)
+    {
+        if (asset == null)
+        {
+            return null;
+        }
+
+        string url = asset.bannerUrl;
+        if (string.IsNullOrWhiteSpace(url) && asset.id > 0)
+        {
+            url = BuildAssetImageUrl(asset.id, "mcb-banner");
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        url = ExpandImageUrl(url);
+        url = NormalizeImageUrl(url, "banner", asset.id);
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        string localPath = GetImageLocalPath("banner", asset.id, url);
+        return File.Exists(localPath) ? localPath : null;
+    }
+
     public static void PreloadBanner(AvatarDiscoveredAsset asset)
     {
         GetBanner(asset);

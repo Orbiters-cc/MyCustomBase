@@ -146,6 +146,8 @@ public class CreatorModeModule
         using (new EditorGUI.DisabledScope(editor.isSubmitting))
         {
             PopulateParentVersionDropdown();
+
+            DrawBlenderSyncSection();
             
             // Auto-populate fields if an unsubmitted version is selected
             if (editor.selectedVersionForAction != previouslySelectedVersion)
@@ -259,6 +261,11 @@ public class CreatorModeModule
         
         EditorGUILayout.EndVertical();
     }
+
+    private void DrawBlenderSyncSection()
+    {
+        BlenderSyncService.DrawCreatorModeSection(editor);
+    }
     
 
     private void OnBlendshapeSearchInputChanged(string searchString)
@@ -298,9 +305,32 @@ public class CreatorModeModule
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
                 EditorGUILayout.LabelField(targetLabel, EditorStyles.miniBoldLabel);
+                DrawSmrPathsForTargetFbx(targetFbx);
                 EditorGUILayout.PropertyField(customFbxProp, new GUIContent("Custom FBX (Transformed)"));
                 EditorGUILayout.PropertyField(avatarProp, new GUIContent("Custom Base Avatar (Transformed)"));
             }
+        }
+    }
+
+    private void DrawSmrPathsForTargetFbx(GameObject targetFbx)
+    {
+        if (targetFbx == null || editor.customBaseTarget == null) return;
+
+        string targetPath = AssetDatabase.GetAssetPath(targetFbx);
+        var entries = SmrPathService.CollectSmrPathsForFbx(editor.customBaseTarget.transform.root, targetPath);
+        if (entries.Count == 0)
+        {
+            EditorGUILayout.HelpBox("No avatar SkinnedMeshRenderer currently uses this FBX.", MessageType.Warning);
+            return;
+        }
+
+        EditorGUILayout.LabelField("Avatar SMR Paths", EditorStyles.miniBoldLabel);
+        foreach (var entry in entries)
+        {
+            string label = string.IsNullOrWhiteSpace(entry.meshName)
+                ? entry.avatarPath
+                : $"{entry.avatarPath}  ->  {entry.meshName}";
+            EditorGUILayout.LabelField(label, EditorStyles.miniLabel);
         }
     }
 
@@ -1336,6 +1366,18 @@ public class CreatorModeModule
         EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
         var sourceFileEntries = new List<ModelFileData>();
         var versionFileEntries = new List<ModelFileData>();
+        var packageSourcePaths = packageEntries
+            .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.sourceFbxPath))
+            .Select(entry =>
+            {
+                string path = MCBUtils.ToUnityPath(entry.sourceFbxPath);
+                return path.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase)
+                    ? path.Substring(0, path.Length - FileManagerService.OriginalSuffix.Length)
+                    : path;
+            })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var smrPathsByFbx = SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, packageSourcePaths);
         foreach (var packageEntry in packageEntries)
         {
             string sourceUnityPath = MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
@@ -1361,7 +1403,10 @@ public class CreatorModeModule
                 hash = packageEntry.sourceHash,
                 type = "FBX",
                 role = "SOURCE",
-                metas = sourceMetas
+                metas = sourceMetas,
+                smrPaths = smrPathsByFbx.TryGetValue(sourceUnityPath, out var smrEntries)
+                    ? smrEntries
+                    : new List<ModelFileSmrPathData>()
             });
 
             var modelFileMetadata = new Dictionary<string, object>
