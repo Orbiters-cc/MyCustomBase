@@ -191,18 +191,60 @@ public class MaterialService
         return true;
     }
 
+    public List<SkinnedMeshRenderer> GetSkinnedMeshRenderersForFbxPaths(IEnumerable<string> targetFbxPaths)
+    {
+        if (avatarRoot == null)
+        {
+            MCBLogger.LogError("[MaterialService] Avatar root is null");
+            return new List<SkinnedMeshRenderer>();
+        }
+
+        var normalizedTargetPaths = new HashSet<string>(
+            (targetFbxPaths ?? Enumerable.Empty<string>())
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(MCBUtils.ToUnityPath),
+            StringComparer.OrdinalIgnoreCase);
+
+        return avatarRoot
+            .GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .Where(renderer => renderer != null && renderer.sharedMesh != null)
+            .Where(renderer =>
+            {
+                if (normalizedTargetPaths.Count == 0)
+                {
+                    return true;
+                }
+
+                string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
+                return normalizedTargetPaths.Contains(meshPath);
+            })
+            .OrderBy(renderer => GetTransformPath(renderer.transform), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public bool TryGetMaterialWithRenderer(SkinnedMeshRenderer smr, out Material material)
+    {
+        material = smr?.sharedMaterial;
+        return material != null;
+    }
+
     /// <summary>
     /// Sets the detail normal map texture for the specified material slot
     /// </summary>
     public bool SetDetailNormalMap(string materialSlot, string filePath)
     {
         var smr = GetSkinnedMeshRendererForSlot(materialSlot);
+        return SetDetailNormalMap(smr, filePath);
+    }
+
+    public bool SetDetailNormalMap(SkinnedMeshRenderer smr, string filePath)
+    {
         if (smr == null) return false;
-        
+
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{GetRendererLabel(smr)}' has no material assigned");
             return false;
         }
 
@@ -232,7 +274,7 @@ public class MaterialService
         AssetDatabase.SaveAssets(); // Force save to disk
         AssetDatabase.Refresh(); // Force asset refresh
         
-        MCBLogger.Log($"[MaterialService] Set detail normal map on {materialSlot} material to: {filePath}");
+        MCBLogger.Log($"[MaterialService] Set detail normal map on {GetRendererLabel(smr)} material to: {filePath}");
         return true;
     }
 
@@ -242,12 +284,17 @@ public class MaterialService
     public bool SetDetailNormalOpacity(string materialSlot, float opacity)
     {
         var smr = GetSkinnedMeshRendererForSlot(materialSlot);
+        return SetDetailNormalOpacity(smr, opacity);
+    }
+
+    public bool SetDetailNormalOpacity(SkinnedMeshRenderer smr, float opacity)
+    {
         if (smr == null) return false;
-        
+
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{GetRendererLabel(smr)}' has no material assigned");
             return false;
         }
 
@@ -265,7 +312,7 @@ public class MaterialService
         AssetDatabase.SaveAssets(); // Force save to disk
         AssetDatabase.Refresh(); // Force asset refresh
         
-        MCBLogger.Log($"[MaterialService] Set detail normal map opacity on {materialSlot} material to: {opacity}");
+        MCBLogger.Log($"[MaterialService] Set detail normal map opacity on {GetRendererLabel(smr)} material to: {opacity}");
         return true;
     }
 
@@ -275,12 +322,17 @@ public class MaterialService
     public bool RemoveDetailNormalMap(string materialSlot)
     {
         var smr = GetSkinnedMeshRendererForSlot(materialSlot);
+        return RemoveDetailNormalMap(smr);
+    }
+
+    public bool RemoveDetailNormalMap(SkinnedMeshRenderer smr)
+    {
         if (smr == null) return false;
-        
+
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{GetRendererLabel(smr)}' has no material assigned");
             return false;
         }
 
@@ -303,7 +355,7 @@ public class MaterialService
         AssetDatabase.SaveAssets(); // Force save to disk
         AssetDatabase.Refresh(); // Force asset refresh
         
-        MCBLogger.Log($"[MaterialService] Removed detail normal map from {materialSlot} material");
+        MCBLogger.Log($"[MaterialService] Removed detail normal map from {GetRendererLabel(smr)} material");
         return true;
     }
 
@@ -352,16 +404,26 @@ public class MaterialService
             return false;
         }
 
+        return SetLightingMode(smr, lightingModeIndex); 
+    }
+
+    public bool SetLightingMode(SkinnedMeshRenderer smr, int lightingModeIndex)
+    {
+        if (smr == null)
+        {
+            return false;
+        }
+
         var material = smr.sharedMaterial;
         if (material == null)
         {
-            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{materialSlot}' has no material assigned");
+            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{GetRendererLabel(smr)}' has no material assigned");
             return false;
         }
 
         if (!material.HasProperty(LightingModeProperty))
         {
-            MCBLogger.LogError($"[MaterialService] Material on '{materialSlot}' does not expose property {LightingModeProperty}");
+            MCBLogger.LogError($"[MaterialService] Material on '{GetRendererLabel(smr)}' does not expose property {LightingModeProperty}");
             return false;
         }
 
@@ -392,7 +454,6 @@ public class MaterialService
 
         if (smr == null)
         {
-            MCBLogger.LogError($"[MaterialService] Could not find SkinnedMeshRenderer with name: {materialSlot}");
             return null;
         }
 
@@ -415,6 +476,29 @@ public class MaterialService
         }
 
         return smr.sharedMaterial;
+    }
+
+    private static string GetRendererLabel(SkinnedMeshRenderer renderer)
+    {
+        return renderer == null ? "Unknown" : GetTransformPath(renderer.transform);
+    }
+
+    private static string GetTransformPath(Transform transform)
+    {
+        if (transform == null)
+        {
+            return string.Empty;
+        }
+
+        var names = new Stack<string>();
+        var current = transform;
+        while (current != null)
+        {
+            names.Push(current.name);
+            current = current.parent;
+        }
+
+        return string.Join("/", names);
     }
 
     private void EnableDetailNormalFeatures(Material material)

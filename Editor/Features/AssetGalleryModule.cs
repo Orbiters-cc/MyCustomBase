@@ -60,7 +60,8 @@ public class AssetGalleryModule
     private string createJinxxyLink = "";
     private string createGumroadLink = "";
     private int selectedAvatarBaseIndex;
-    private GameObject otherAvatarBaseFbx;
+    private string otherAvatarBaseName = "";
+    private readonly List<GameObject> targetFbxFiles = new List<GameObject>();
     private bool isLoadingAvatarBases;
     private string avatarBaseLoadError;
     private List<CreatorAvatarBaseOption> avatarBaseOptions = new List<CreatorAvatarBaseOption>();
@@ -479,6 +480,15 @@ public class AssetGalleryModule
         isCreatingCustomBase = true;
         createError = null;
         selectedAvatarBaseIndex = 0;
+        targetFbxFiles.Clear();
+        foreach (string path in editor.GetDetectedAvatarFbxPaths())
+        {
+            var fbx = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (fbx != null)
+            {
+                targetFbxFiles.Add(fbx);
+            }
+        }
         LoadAvatarBasesIfNeeded();
         editor.Repaint();
     }
@@ -576,12 +586,45 @@ public class AssetGalleryModule
 
         if (IsOtherAvatarBaseSelected())
         {
-            otherAvatarBaseFbx = EditorGUILayout.ObjectField("Base Avatar FBX", otherAvatarBaseFbx, typeof(GameObject), false) as GameObject;
-            string path = otherAvatarBaseFbx != null ? AssetDatabase.GetAssetPath(otherAvatarBaseFbx) : null;
-            if (otherAvatarBaseFbx != null && !IsValidFbxPath(path))
+            otherAvatarBaseName = EditorGUILayout.TextField("Avatar Base Name", otherAvatarBaseName);
+        }
+
+        DrawTargetFbxFiles();
+    }
+
+    private void DrawTargetFbxFiles()
+    {
+        EditorGUILayout.Space(6f);
+        EditorGUILayout.LabelField("Target FBX Files", EditorStyles.miniBoldLabel);
+
+        if (targetFbxFiles.Count == 0)
+        {
+            targetFbxFiles.Add(null);
+        }
+
+        for (int i = 0; i < targetFbxFiles.Count; i++)
+        {
+            using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.HelpBox("The base avatar object must be an FBX asset.", MessageType.Warning);
+                targetFbxFiles[i] = EditorGUILayout.ObjectField($"FBX {i + 1}", targetFbxFiles[i], typeof(GameObject), false) as GameObject;
+                if (GUILayout.Button("-", GUILayout.Width(24f)))
+                {
+                    targetFbxFiles.RemoveAt(i);
+                    i--;
+                    continue;
+                }
             }
+
+            string path = targetFbxFiles[i] != null ? AssetDatabase.GetAssetPath(targetFbxFiles[i]) : null;
+            if (targetFbxFiles[i] != null && !IsValidFbxPath(path))
+            {
+                EditorGUILayout.HelpBox("Target files must be FBX model assets.", MessageType.Warning);
+            }
+        }
+
+        if (GUILayout.Button("Add Target FBX", GUILayout.Width(140f)))
+        {
+            targetFbxFiles.Add(null);
         }
     }
 
@@ -592,12 +635,17 @@ public class AssetGalleryModule
             return false;
         }
 
+        if (GetValidTargetFbxPaths().Count == 0)
+        {
+            return false;
+        }
+
         if (!IsOtherAvatarBaseSelected())
         {
             return selectedAvatarBaseIndex >= 0 && selectedAvatarBaseIndex < avatarBaseOptions.Count;
         }
 
-        return otherAvatarBaseFbx != null && IsValidFbxPath(AssetDatabase.GetAssetPath(otherAvatarBaseFbx));
+        return !string.IsNullOrWhiteSpace(otherAvatarBaseName);
     }
 
     private bool IsOtherAvatarBaseSelected()
@@ -610,6 +658,16 @@ public class AssetGalleryModule
         return !string.IsNullOrWhiteSpace(path) &&
                path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase) &&
                AssetImporter.GetAtPath(path) is ModelImporter;
+    }
+
+    private List<string> GetValidTargetFbxPaths()
+    {
+        return targetFbxFiles
+            .Where(fbx => fbx != null)
+            .Select(AssetDatabase.GetAssetPath)
+            .Where(IsValidFbxPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private void LoadAvatarBasesIfNeeded()
@@ -683,9 +741,10 @@ public class AssetGalleryModule
             ["gumroadLink"] = string.IsNullOrWhiteSpace(createGumroadLink) ? null : createGumroadLink.Trim()
         };
 
+        metadata["sourceFiles"] = JArray.FromObject(BuildSourceFilePayload(GetValidTargetFbxPaths()));
         if (IsOtherAvatarBaseSelected())
         {
-            metadata["otherAvatarBasePath"] = AssetDatabase.GetAssetPath(otherAvatarBaseFbx);
+            metadata["otherAvatarBaseName"] = otherAvatarBaseName.Trim();
         }
         else
         {
@@ -749,6 +808,44 @@ public class AssetGalleryModule
         editor.Repaint();
     }
 
+    private static List<ModelFileData> BuildSourceFilePayload(IEnumerable<string> unityPaths)
+    {
+        var files = new List<ModelFileData>();
+        foreach (string unityPath in unityPaths ?? Enumerable.Empty<string>())
+        {
+            if (string.IsNullOrWhiteSpace(unityPath)) continue;
+
+            string normalizedPath = unityPath.Replace("\\", "/");
+            string fullPath = Path.GetFullPath(normalizedPath);
+            if (!File.Exists(fullPath)) continue;
+
+            string hash = MCBUtils.CalculateFileHash(fullPath);
+            if (string.IsNullOrWhiteSpace(hash)) continue;
+
+            var metas = new List<Dictionary<string, string>>();
+            string metaPath = normalizedPath + ".meta";
+            if (File.Exists(Path.GetFullPath(metaPath)))
+            {
+                metas.Add(new Dictionary<string, string>
+                {
+                    { "file", Path.GetFileName(normalizedPath) },
+                    { "meta", File.ReadAllText(Path.GetFullPath(metaPath)) }
+                });
+            }
+
+            files.Add(new ModelFileData
+            {
+                path = normalizedPath,
+                hash = hash,
+                type = "FBX",
+                role = "SOURCE",
+                metas = metas
+            });
+        }
+
+        return files;
+    }
+
     private static void AddImageToForm(WWWForm form, string fieldName, Texture2D texture)
     {
         if (texture == null)
@@ -800,7 +897,8 @@ public class AssetGalleryModule
         createJinxxyLink = "";
         createGumroadLink = "";
         selectedAvatarBaseIndex = 0;
-        otherAvatarBaseFbx = null;
+        otherAvatarBaseName = "";
+        targetFbxFiles.Clear();
         createError = null;
     }
 
@@ -864,6 +962,7 @@ public class AssetGalleryModule
 
         bool changed = SelectedAsset == null || SelectedAsset.id != asset.id;
         SelectedAsset = asset;
+        editor.SyncBaseFbxFilesFromSelectedAsset();
 
         if (persist)
         {

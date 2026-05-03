@@ -42,6 +42,25 @@ public class CustomBaseVersionResponse
 #endif
 }
 
+[JsonObject(MemberSerialization.OptIn)]
+public class ModelFileData
+{
+    [JsonProperty] public int id;
+    [JsonProperty] public string path;
+    [JsonProperty] public string hash;
+    [JsonProperty] public string type;
+    [JsonProperty] public string role;
+    [JsonProperty] public string transform;
+    [JsonProperty] public string compression;
+    [JsonProperty] public string outputHash;
+    [JsonProperty] public int? customBaseAssetId;
+    [JsonProperty] public int? avatarVersionId;
+    [JsonProperty] public int? sourceModelFileId;
+    [JsonProperty] public int? storageFileId;
+    [JsonProperty] public List<Dictionary<string, string>> metas;
+    [JsonProperty] public Dictionary<string, object> metadata;
+}
+
 // Represents a single available version of an custom base modification.
 [JsonObject(MemberSerialization.OptIn)]
 #if UNITY_EDITOR
@@ -61,6 +80,8 @@ public class CustomBaseVersion
     [JsonProperty] public CustomBlendshapeEntry[] customBlendshapes;
     [JsonProperty] public string[] extraCustomization;
     [JsonProperty] public Dictionary<string, string> dependencies;
+    [JsonProperty] public ModelFileData[] sourceFiles;
+    [JsonProperty] public ModelFileData[] versionFiles;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int uploaderId;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string parentVersion;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int assetId;

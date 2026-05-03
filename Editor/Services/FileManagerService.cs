@@ -16,6 +16,19 @@ public class FileManagerService
 {
     public const string OriginalSuffix = ".old";
 
+    public class ModelFilePackageEntry
+    {
+        public string sourceFbxPath;
+        public GameObject customFbx;
+        public Avatar customBaseAvatar;
+        public string binUnityPath;
+        public string avatarUnityPath;
+        public string sourceHash;
+        public string binHash;
+        public string avatarHash;
+        public string outputHash;
+    }
+
     public string CalculateFileHash(string path)
     {
         if (!File.Exists(path)) return null;
@@ -321,13 +334,10 @@ public class FileManagerService
     
     public string CreateVersionPackageForUpload(
         int assetId,
-        string newVersionString, 
+        string newVersionString,
         string baseFbxVersion,
-        string originalFbxPath,
-        GameObject customFbx,
-        Avatar customBaseAvatar,
+        IList<ModelFilePackageEntry> modelEntries,
         GameObject logicPrefab,
-        CustomBaseVersion parentVersion,
         bool includeCustomVeins,
         Texture2D customVeinsTexture,
         IEnumerable<string> additionalAnimationAssetPaths = null)
@@ -337,81 +347,71 @@ public class FileManagerService
         {
             throw new ArgumentException("A valid assetId, version, and base FBX version are required to create a version package.");
         }
+
         string newVersionDataFullPath = Path.GetFullPath(newVersionDataPath);
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_{Guid.NewGuid()}.zip");
 
         try
         {
             MCBUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
-            
-            // 1. Copy Avatars
-            string customBaseAvatarSourcePath = AssetDatabase.GetAssetPath(customBaseAvatar);
-            AssetDatabase.CopyAsset(customBaseAvatarSourcePath, MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.CUSTOM_BASE_AVATAR_NAME));
-            
+
             string defaultAvatarSourcePath = "Packages/orbiters.mcb/creator assets/default avatar.asset";
-            var defaultAvatarAsset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(defaultAvatarSourcePath);
-            if (defaultAvatarAsset == null)
+            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(defaultAvatarSourcePath) == null)
                 throw new FileNotFoundException("Could not find the required 'default avatar.asset' in 'Packages/orbiters.mcb/creator assets'.");
             AssetDatabase.CopyAsset(defaultAvatarSourcePath, MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.DEFAULT_AVATAR_NAME));
 
-            // 2. Create .bin file (Encrypt custom FBX against original base FBX)
-            string customFbxPath = AssetDatabase.GetAssetPath(customFbx);
-            byte[] baseData = File.ReadAllBytes(originalFbxPath);
-            byte[] targetData = File.ReadAllBytes(customFbxPath);
-            // In this case, we are creating the "key" (the .bin file). The operation is the same.
-            byte[] encryptedData = XorTransform(baseData, targetData); 
-            string binFilePath = Path.Combine(newVersionDataFullPath, "mcb.bin");
-            File.WriteAllBytes(binFilePath, encryptedData);
-
-            // 3. Create logic package
-            string prefabSourcePath = AssetDatabase.GetAssetPath(logicPrefab);
-            string prefabDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.prefab");
-            AssetDatabase.CopyAsset(prefabSourcePath, prefabDestPath);
-            
-            string packageUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.unitypackage");
-            string packagePath = Path.GetFullPath(packageUnityPath);
-
-            var exportAssets = new HashSet<string>(AssetDatabase.GetDependencies(prefabSourcePath, true), StringComparer.Ordinal);
-            if (additionalAnimationAssetPaths != null)
+            var entries = modelEntries ?? Array.Empty<ModelFilePackageEntry>();
+            for (int i = 0; i < entries.Count; i++)
             {
-                foreach (var animationPath in additionalAnimationAssetPaths)
+                var entry = entries[i];
+                if (entry == null || string.IsNullOrWhiteSpace(entry.sourceFbxPath) || (entry.customFbx == null && entry.customBaseAvatar == null))
+                    throw new InvalidOperationException($"Target model file entry {i + 1} is incomplete.");
+
+                string customFbxPath = entry.customFbx != null ? AssetDatabase.GetAssetPath(entry.customFbx) : null;
+                string customAvatarSourcePath = entry.customBaseAvatar != null ? AssetDatabase.GetAssetPath(entry.customBaseAvatar) : null;
+                if (entry.customFbx != null && string.IsNullOrWhiteSpace(customFbxPath))
+                    throw new InvalidOperationException($"Target model file entry {i + 1} has invalid asset references.");
+                if (entry.customBaseAvatar != null && string.IsNullOrWhiteSpace(customAvatarSourcePath))
+                    throw new InvalidOperationException($"Target model file entry {i + 1} has an invalid avatar asset reference.");
+
+                string safeBaseName = SanitizeFileName(Path.GetFileNameWithoutExtension(entry.sourceFbxPath));
+                entry.sourceHash = CalculateFileHash(entry.sourceFbxPath);
+
+                if (entry.customFbx != null)
                 {
-                    if (string.IsNullOrWhiteSpace(animationPath)) continue;
-                    if (AssetDatabase.LoadAssetAtPath<AnimationClip>(animationPath) == null) continue;
-                    exportAssets.Add(animationPath);
+                    byte[] baseData = File.ReadAllBytes(entry.sourceFbxPath);
+                    byte[] targetData = File.ReadAllBytes(customFbxPath);
+                    byte[] encryptedData = XorTransform(baseData, targetData);
+
+                    string binName = $"{i + 1:00}_{safeBaseName}.bin";
+                    string binUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, binName);
+                    File.WriteAllBytes(Path.GetFullPath(binUnityPath), encryptedData);
+
+                    entry.binUnityPath = binUnityPath;
+                    entry.binHash = CalculateFileHash(Path.GetFullPath(binUnityPath));
+                    entry.outputHash = CalculateFileHash(customFbxPath);
+                }
+
+                if (entry.customBaseAvatar != null)
+                {
+                    string avatarName = $"{i + 1:00}_{safeBaseName} avatar.asset";
+                    string avatarUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, avatarName);
+                    if (!string.Equals(MCBUtils.ToUnityPath(customAvatarSourcePath), MCBUtils.ToUnityPath(avatarUnityPath), StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (AssetDatabase.LoadAssetAtPath<Avatar>(avatarUnityPath) != null)
+                        {
+                            AssetDatabase.DeleteAsset(avatarUnityPath);
+                        }
+                        AssetDatabase.CopyAsset(customAvatarSourcePath, avatarUnityPath);
+                    }
+
+                    entry.avatarUnityPath = avatarUnityPath;
+                    entry.avatarHash = CalculateFileHash(Path.GetFullPath(avatarUnityPath));
                 }
             }
 
-            AssetDatabase.ExportPackage(exportAssets.ToArray(), packagePath, ExportPackageOptions.Recurse | ExportPackageOptions.IncludeDependencies);
+            CopyLogicAndExtras(newVersionDataPath, logicPrefab, includeCustomVeins, customVeinsTexture, additionalAnimationAssetPaths);
 
-            // 4. Copy custom veins normal map if requested
-            if (includeCustomVeins)
-            {
-                if (customVeinsTexture == null)
-                    throw new ArgumentNullException(nameof(customVeinsTexture), "Custom veins texture is required when includeCustomVeins is enabled.");
-
-                string sourceTexturePath = AssetDatabase.GetAssetPath(customVeinsTexture);
-                if (string.IsNullOrEmpty(sourceTexturePath))
-                    throw new FileNotFoundException("Could not resolve asset path for the selected custom veins texture.");
-
-                string sourceTextureFullPath = Path.GetFullPath(sourceTexturePath);
-                if (!File.Exists(sourceTextureFullPath))
-                    throw new FileNotFoundException("Custom veins texture asset file not found on disk.", sourceTextureFullPath);
-
-                if (!sourceTexturePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Custom veins normal map must be provided as a PNG texture.");
-
-                string veinsDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "veins normal.png");
-                if (AssetDatabase.LoadAssetAtPath<Texture2D>(veinsDestPath) != null)
-                {
-                    AssetDatabase.DeleteAsset(veinsDestPath);
-                }
-
-                if (!AssetDatabase.CopyAsset(sourceTexturePath, veinsDestPath))
-                    throw new IOException($"Failed to copy custom veins normal map to {veinsDestPath}");
-            }
-
-            // 5. Create ZIP
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
             if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
             ZipFile.CreateFromDirectory(newVersionDataFullPath, tempZipPath, CompressionLevel.Optimal, false);
@@ -420,11 +420,83 @@ public class FileManagerService
         }
         catch (Exception)
         {
-            // Cleanup on failure
             if (Directory.Exists(newVersionDataPath)) Directory.Delete(newVersionDataPath, true);
             if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
-            throw; // Re-throw the exception for the module to catch and display
+            throw;
         }
+    }
+
+    private void CopyLogicAndExtras(
+        string newVersionDataPath,
+        GameObject logicPrefab,
+        bool includeCustomVeins,
+        Texture2D customVeinsTexture,
+        IEnumerable<string> additionalAnimationAssetPaths)
+    {
+        var exportAssets = new HashSet<string>(StringComparer.Ordinal);
+        if (logicPrefab != null)
+        {
+            string prefabSourcePath = AssetDatabase.GetAssetPath(logicPrefab);
+            string prefabDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.prefab");
+            AssetDatabase.CopyAsset(prefabSourcePath, prefabDestPath);
+            foreach (string dependency in AssetDatabase.GetDependencies(prefabSourcePath, true))
+            {
+                exportAssets.Add(dependency);
+            }
+        }
+
+        if (additionalAnimationAssetPaths != null)
+        {
+            foreach (var animationPath in additionalAnimationAssetPaths)
+            {
+                if (string.IsNullOrWhiteSpace(animationPath)) continue;
+                if (AssetDatabase.LoadAssetAtPath<AnimationClip>(animationPath) == null) continue;
+                exportAssets.Add(animationPath);
+            }
+        }
+
+        if (exportAssets.Count > 0)
+        {
+            string packageUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.unitypackage");
+            string packagePath = Path.GetFullPath(packageUnityPath);
+            AssetDatabase.ExportPackage(exportAssets.ToArray(), packagePath, ExportPackageOptions.Recurse | ExportPackageOptions.IncludeDependencies);
+        }
+
+        if (includeCustomVeins)
+        {
+            if (customVeinsTexture == null)
+                throw new ArgumentNullException(nameof(customVeinsTexture), "Custom veins texture is required when includeCustomVeins is enabled.");
+
+            string sourceTexturePath = AssetDatabase.GetAssetPath(customVeinsTexture);
+            if (string.IsNullOrEmpty(sourceTexturePath))
+                throw new FileNotFoundException("Could not resolve asset path for the selected custom veins texture.");
+
+            string sourceTextureFullPath = Path.GetFullPath(sourceTexturePath);
+            if (!File.Exists(sourceTextureFullPath))
+                throw new FileNotFoundException("Custom veins texture asset file not found on disk.", sourceTextureFullPath);
+
+            if (!sourceTexturePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Custom veins normal map must be provided as a PNG texture.");
+
+            string veinsDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "veins normal.png");
+            if (AssetDatabase.LoadAssetAtPath<Texture2D>(veinsDestPath) != null)
+            {
+                AssetDatabase.DeleteAsset(veinsDestPath);
+            }
+
+            if (!AssetDatabase.CopyAsset(sourceTexturePath, veinsDestPath))
+                throw new IOException($"Failed to copy custom veins normal map to {veinsDestPath}");
+        }
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "model";
+        foreach (char c in Path.GetInvalidFileNameChars())
+        {
+            value = value.Replace(c, '_');
+        }
+        return value;
     }
 }
 #endif

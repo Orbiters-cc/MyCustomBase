@@ -171,6 +171,16 @@ public static class MCBUtils
         return FindSingleVersionFile(dataPath, "*.bin");
     }
 
+    public static bool IsVersionDownloaded(CustomBaseVersion version)
+    {
+        string dataPath = GetVersionDataPath(version);
+        if (string.IsNullOrEmpty(dataPath)) return false;
+
+        string absoluteDataPath = Path.GetFullPath(dataPath);
+        return Directory.Exists(absoluteDataPath) &&
+               Directory.GetFiles(absoluteDataPath, "*", SearchOption.TopDirectoryOnly).Length > 0;
+    }
+
     public static string GetVersionAvatarPath(CustomBaseVersion version, string relativeAvatarPath)
     {
         if (string.IsNullOrEmpty(relativeAvatarPath)) return null;

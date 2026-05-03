@@ -9,8 +9,6 @@ using UnityEngine;
 // Provides contextual warnings and quick fixes for Poiyomi body materials.
 public class AdjustMaterialModule
 {
-    private const string MaterialSlotName = "Body";
-    private static readonly string[] AdditionalLightingSlots = { "Tail1", "Tail2" };
     private const string LightingModeProperty = "_LightingMode";
     private const string BumpMapProperty = "_BumpMap";
     private const int LightingModeTextureRampIndex = 0;
@@ -39,37 +37,29 @@ public class AdjustMaterialModule
             return;
         }
 
-        if (!materialService.TryGetMaterialWithRenderer(MaterialSlotName, out var material, out var smr))
+        List<SkinnedMeshRenderer> targetRenderers = materialService
+            .GetSkinnedMeshRenderersForFbxPaths(GetTargetFbxPaths())
+            .Where(renderer => materialService.TryGetMaterialWithRenderer(renderer, out var material) && IsPoiyomiShader(material?.shader))
+            .ToList();
+
+        if (targetRenderers.Count == 0)
         {
             return;
         }
 
-        if (!IsPoiyomiShader(material?.shader))
-        {
-            return;
-        }
-
-        var lightingInfos = new List<LightingMaterialInfo>();
-        var bodyLightingInfo = CreateLightingMaterialInfo(MaterialSlotName, material);
-        if (bodyLightingInfo != null)
-        {
-            lightingInfos.Add(bodyLightingInfo);
-        }
-
-        foreach (string slotName in AdditionalLightingSlots)
-        {
-            var slotInfo = CreateLightingMaterialInfo(slotName);
-            if (slotInfo != null)
-            {
-                lightingInfos.Add(slotInfo);
-            }
-        }
+        var lightingInfos = targetRenderers
+            .Select(CreateLightingMaterialInfo)
+            .Where(info => info != null)
+            .ToList();
 
         bool shouldShowLightingWarning = lightingInfos.Any(info => info.HasLightingProperty && info.IsTextureRamp);
 
-        bool hasMuscleNormal = TryGetMuscleNormal(material, out var normalTexture, out var normalTexturePath);
+        var normalInfos = targetRenderers
+            .Select(CreateNormalMaterialInfo)
+            .Where(info => info != null)
+            .ToList();
 
-        bool shouldShowModule = shouldShowLightingWarning || hasMuscleNormal;
+        bool shouldShowModule = shouldShowLightingWarning || normalInfos.Count > 0;
         if (!shouldShowModule)
         {
             return;
@@ -89,9 +79,12 @@ public class AdjustMaterialModule
             DrawLightingWarning(lightingInfos);
         }
 
-        if (hasMuscleNormal)
+        if (normalInfos.Count > 0)
         {
-            DrawNormalMapWarning(material, smr, normalTexture, normalTexturePath);
+            foreach (NormalMaterialInfo normalInfo in normalInfos)
+            {
+                DrawNormalMapWarning(normalInfo);
+            }
         }
 
         EditorGUILayout.EndVertical();
@@ -174,46 +167,48 @@ public class AdjustMaterialModule
                     }
                 }
 
-                List<string> slotsToUpdate = lightingInfos
+                List<SkinnedMeshRenderer> renderersToUpdate = lightingInfos
                     .Where(info => info.HasLightingProperty)
-                    .Select(info => info.SlotName)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(info => info.Renderer)
+                    .Where(renderer => renderer != null)
+                    .GroupBy(renderer => renderer.GetInstanceID())
+                    .Select(group => group.First())
                     .ToList();
 
-                if (slotsToUpdate.Count > 0)
+                if (renderersToUpdate.Count > 0)
                 {
-                    ApplyLightingMode(slotsToUpdate);
+                    ApplyLightingMode(renderersToUpdate);
                 }
             }
         }
     }
 
-    private void DrawNormalMapWarning(Material material, SkinnedMeshRenderer smr, Texture normalTexture, string normalTexturePath)
+    private void DrawNormalMapWarning(NormalMaterialInfo info)
     {
         EditorGUILayout.HelpBox(
-            "Your body material is using a normal map with fake muscles, it will conflict with the custom base muscles look.",
+            $"Your {info.SlotName} material is using a normal map with fake muscles, it will conflict with the custom base muscles look.",
             MessageType.Warning);
 
-        if (normalTexture != null)
+        if (info.NormalTexture != null)
         {
             EditorGUILayout.LabelField("Detected normal map:", EditorStyles.miniLabel);
             using (new EditorGUI.DisabledScope(true))
             {
-                EditorGUILayout.ObjectField(normalTexture, typeof(Texture), false);
+                EditorGUILayout.ObjectField(info.NormalTexture, typeof(Texture), false);
             }
         }
-        else if (!string.IsNullOrEmpty(normalTexturePath))
+        else if (!string.IsNullOrEmpty(info.NormalTexturePath))
         {
             EditorGUILayout.LabelField("Detected normal map:", EditorStyles.miniLabel);
-            EditorGUILayout.LabelField(normalTexturePath, EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField(info.NormalTexturePath, EditorStyles.wordWrappedMiniLabel);
         }
 
-        bool isLocked = materialService.IsMaterialLocked(material);
+        bool isLocked = materialService.IsMaterialLocked(info.Material);
         string buttonLabel = isLocked ? "Unlock and remove normal map" : "Remove normal map";
 
         if (GUILayout.Button(buttonLabel, GUILayout.Width(220f)))
         {
-            if (!EnsureUnlocked(material))
+            if (!EnsureUnlocked(info.Material))
             {
                 EditorUtility.DisplayDialog(
                     "Unlock Failed",
@@ -222,7 +217,7 @@ public class AdjustMaterialModule
                 return;
             }
 
-            RemoveNormalMap(material, smr);
+            RemoveNormalMap(info.Material, info.Renderer);
         }
     }
 
@@ -247,24 +242,24 @@ public class AdjustMaterialModule
         return !string.IsNullOrEmpty(shaderName) && shaderName.IndexOf("poiyomi", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    private void ApplyLightingMode(IEnumerable<string> slotNames)
+    private void ApplyLightingMode(IEnumerable<SkinnedMeshRenderer> renderers)
     {
-        if (slotNames == null)
+        if (renderers == null)
         {
             return;
         }
 
         bool anyFailures = false;
 
-        foreach (string slotName in slotNames)
+        foreach (SkinnedMeshRenderer renderer in renderers)
         {
-            if (!materialService.SetLightingMode(slotName, LightingModeRealisticIndex))
+            if (!materialService.SetLightingMode(renderer, LightingModeRealisticIndex))
             {
                 anyFailures = true;
                 continue;
             }
 
-            MCBLogger.Log($"[AdjustMaterial] Set {slotName} lighting mode to Realistic");
+            MCBLogger.Log($"[AdjustMaterial] Set {GetRendererLabel(renderer)} lighting mode to Realistic");
         }
 
         if (anyFailures)
@@ -276,16 +271,11 @@ public class AdjustMaterialModule
         }
     }
 
-    private LightingMaterialInfo CreateLightingMaterialInfo(string slotName, Material existingMaterial = null)
+    private LightingMaterialInfo CreateLightingMaterialInfo(SkinnedMeshRenderer renderer)
     {
-        Material slotMaterial = existingMaterial;
-
-        if (slotMaterial == null)
+        if (!materialService.TryGetMaterialWithRenderer(renderer, out Material slotMaterial))
         {
-            if (!materialService.TryGetMaterialWithRenderer(slotName, out slotMaterial, out _))
-            {
-                return null;
-            }
+            return null;
         }
 
         if (!IsPoiyomiShader(slotMaterial?.shader))
@@ -295,7 +285,8 @@ public class AdjustMaterialModule
 
         var info = new LightingMaterialInfo
         {
-            SlotName = slotName,
+            SlotName = GetRendererLabel(renderer),
+            Renderer = renderer,
             Material = slotMaterial
         };
 
@@ -321,8 +312,8 @@ public class AdjustMaterialModule
             return;
         }
 
-        Undo.RecordObject(material, "Remove body normal map");
-        Undo.RecordObject(smr, "Remove body normal map");
+        Undo.RecordObject(material, "Remove normal map");
+        Undo.RecordObject(smr, "Remove normal map");
 
         material.SetTexture(BumpMapProperty, null);
         material.DisableKeyword("_NORMALMAP");
@@ -331,7 +322,7 @@ public class AdjustMaterialModule
         EditorUtility.SetDirty(material);
         EditorUtility.SetDirty(smr);
 
-        MCBLogger.Log("[AdjustMaterial] Removed body normal map");
+        MCBLogger.Log($"[AdjustMaterial] Removed normal map from {GetRendererLabel(smr)}");
     }
 
     private static bool TryGetMuscleNormal(Material material, out Texture texture, out string texturePath)
@@ -364,12 +355,72 @@ public class AdjustMaterialModule
         return true;
     }
 
+    private NormalMaterialInfo CreateNormalMaterialInfo(SkinnedMeshRenderer renderer)
+    {
+        if (!materialService.TryGetMaterialWithRenderer(renderer, out Material material))
+        {
+            return null;
+        }
+
+        if (!TryGetMuscleNormal(material, out Texture normalTexture, out string normalTexturePath))
+        {
+            return null;
+        }
+
+        return new NormalMaterialInfo
+        {
+            SlotName = GetRendererLabel(renderer),
+            Renderer = renderer,
+            Material = material,
+            NormalTexture = normalTexture,
+            NormalTexturePath = normalTexturePath
+        };
+    }
+
+    private List<string> GetTargetFbxPaths()
+    {
+        var paths = new List<string>();
+        if (editor?.baseFbxFilesProp == null)
+        {
+            return paths;
+        }
+
+        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        {
+            var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                paths.Add(MCBUtils.ToUnityPath(path));
+            }
+        }
+
+        return paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string GetRendererLabel(SkinnedMeshRenderer renderer)
+    {
+        return renderer == null ? "Unknown" : renderer.name;
+    }
+
     private sealed class LightingMaterialInfo
     {
         public string SlotName;
+        public SkinnedMeshRenderer Renderer;
         public Material Material;
         public bool HasLightingProperty;
         public bool IsTextureRamp;
+    }
+
+    private sealed class NormalMaterialInfo
+    {
+        public string SlotName;
+        public SkinnedMeshRenderer Renderer;
+        public Material Material;
+        public Texture NormalTexture;
+        public string NormalTexturePath;
     }
 }
 #endif

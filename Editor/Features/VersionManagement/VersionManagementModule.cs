@@ -222,8 +222,7 @@ public class VersionManagementModule
                     }
                     else
                     {
-                        string binPath = MCBUtils.GetVersionBinPath(selectedVersion);
-                        bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
+                        bool isDownloaded = MCBUtils.IsVersionDownloaded(selectedVersion);
                         string assetName = editor.GetSelectedAssetDisplayName();
                         
                         if (EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using {assetName} version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel"))
@@ -288,8 +287,7 @@ public class VersionManagementModule
         
         if (action == ActionType.RESET) return "Reset to Original Avatar";
         
-        string binPath = MCBUtils.GetVersionBinPath(selectedVersion);
-        bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
+        bool isDownloaded = MCBUtils.IsVersionDownloaded(selectedVersion);
         string downloadPrefix = isDownloaded ? "" : "Download and ";
         
         return action switch

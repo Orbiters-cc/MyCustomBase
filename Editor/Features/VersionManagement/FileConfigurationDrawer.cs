@@ -79,22 +79,20 @@ public class FileConfigurationDrawer
 
     private void AutoDetectBaseFbxViaHierarchy()
     {
-        var root = editor.customBaseTarget.transform.root;
-        var bodySmr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-        
-        if (bodySmr?.sharedMesh == null) return;
-        
-        string meshPath = AssetDatabase.GetAssetPath(bodySmr.sharedMesh);
-        if (string.IsNullOrEmpty(meshPath)) return;
-        
-        var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(meshPath);
-        if (fbxAsset != null && AssetImporter.GetAtPath(meshPath) is ModelImporter)
+        var detectedPaths = editor.GetDetectedAvatarFbxPaths();
+        if (detectedPaths.Count == 0) return;
+
+        editor.baseFbxFilesProp.ClearArray();
+        foreach (string meshPath in detectedPaths)
         {
-            editor.baseFbxFilesProp.ClearArray();
-            editor.baseFbxFilesProp.InsertArrayElementAtIndex(0);
-            editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue = fbxAsset;
-            editor.serializedObject.ApplyModifiedProperties();
+            var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(meshPath);
+            if (fbxAsset == null || !(AssetImporter.GetAtPath(meshPath) is ModelImporter)) continue;
+
+            editor.baseFbxFilesProp.InsertArrayElementAtIndex(editor.baseFbxFilesProp.arraySize);
+            editor.baseFbxFilesProp.GetArrayElementAtIndex(editor.baseFbxFilesProp.arraySize - 1).objectReferenceValue = fbxAsset;
         }
+
+        editor.serializedObject.ApplyModifiedProperties();
     }
 }
 #endif

@@ -22,7 +22,7 @@ public static class FeatureFlags
         {
             key = SUPPORT_USER_UNKNOWN_VERSION,
             label = "Support custom (unknown-hash) base",
-            description = "Detect and manage user-custom Winterpaw bases when the current FBX hash is unknown but a .fbx.old exists.",
+            description = "Detect and manage user-custom avatar bases when the current FBX hash is unknown but a .fbx.old exists.",
             defaultValue = false
         }
     };

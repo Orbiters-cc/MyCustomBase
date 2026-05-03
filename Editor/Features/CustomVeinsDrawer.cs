@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System.Linq;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
@@ -10,6 +11,7 @@ public class CustomVeinsDrawer
     private Texture2D okIcon;
     private Texture2D koIcon;
     private MaterialService materialService;
+    private Transform cachedRoot;
 
     public const string CUSTOM_VEINS_PREF_KEY = "MCB_CustomVeins_Enabled";
 
@@ -35,10 +37,9 @@ public class CustomVeinsDrawer
             !appliedVersion.extraCustomization.Contains("customVeins"))
             return;
 
-        // Initialize MaterialService with avatar root
-        if (materialService == null)
+        if (!EnsureMaterialService())
         {
-            materialService = new MaterialService(editor.customBaseTarget.transform.root);
+            return;
         }
 
         EditorGUILayout.Space();
@@ -93,18 +94,18 @@ public class CustomVeinsDrawer
         // "Applied on detail normal map" label and texture preview
         DrawVeinsTexturePreview();
 
-        materialService.TryGetMaterial("Body", out var bodyMaterial);
-        bool isLocked = bodyMaterial != null && materialService.IsMaterialLocked(bodyMaterial);
-        bool veinsApplied = bodyMaterial != null && materialService.HasDetailNormalMap(bodyMaterial);
+        var targetMaterials = GetTargetMaterials();
+        bool isLocked = targetMaterials.Any(material => materialService.IsMaterialLocked(material));
+        bool veinsApplied = targetMaterials.Count > 0 && targetMaterials.All(material => materialService.HasDetailNormalMap(material));
         bool shouldShowWarning = currentEnabled && !veinsApplied;
 
         if (shouldShowWarning)
         {
-            DrawVeinsMissingWarning(bodyMaterial, isLocked);
+            DrawVeinsMissingWarning(isLocked);
         }
         else
         {
-            DrawReapplyButton(currentEnabled, bodyMaterial, isLocked);
+            DrawReapplyButton(currentEnabled, isLocked);
         }
         
         GUILayout.EndVertical();
@@ -115,15 +116,21 @@ public class CustomVeinsDrawer
 
     private void DrawShaderCompatibility()
     {
-        string shaderName = materialService.GetShader("Body");
+        var targetMaterials = GetTargetMaterials();
         
-        if (string.IsNullOrEmpty(shaderName))
+        if (targetMaterials.Count == 0)
         {
-            EditorGUILayout.HelpBox("Could not detect shader on Body material", MessageType.Warning);
+            EditorGUILayout.HelpBox("Could not detect materials on the targeted FBX meshes", MessageType.Warning);
             return;
         }
 
-        bool isSupported = materialService.IsShaderSupported(shaderName);
+        var shaderNames = targetMaterials
+            .Select(material => material?.shader?.name)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct()
+            .ToList();
+
+        bool isSupported = shaderNames.Count > 0 && shaderNames.All(materialService.IsShaderSupported);
         Texture2D icon = isSupported ? okIcon : koIcon;
 
         // Display "Detected Shader:" label
@@ -139,12 +146,15 @@ public class CustomVeinsDrawer
         }
         
         string supportText = isSupported ? "Supported" : "Not Supported";
+        string shaderLabel = shaderNames.Count == 0
+            ? "Unknown shader"
+            : string.Join(", ", shaderNames.Take(3)) + (shaderNames.Count > 3 ? $" and {shaderNames.Count - 3} more" : string.Empty);
         // Create a custom style with top padding to vertically center the text with the 20x20 icon
         GUIStyle centeredLabelStyle = new GUIStyle(EditorStyles.miniLabel)
         {
             padding = new RectOffset(0, 0, 4, 0) // Add 4px top padding to align with icon center
         };
-        GUILayout.Label($"{shaderName}: {supportText}", centeredLabelStyle, GUILayout.ExpandHeight(false));
+        GUILayout.Label($"{shaderLabel}: {supportText}", centeredLabelStyle, GUILayout.ExpandHeight(false));
         
         EditorGUILayout.EndHorizontal();
     }
@@ -184,8 +194,9 @@ public class CustomVeinsDrawer
             return false;
         }
 
-        materialService.TryGetMaterial("Body", out var bodyMaterial);
-        if (!EnsureUnlocked(bodyMaterial))
+        var targetRenderers = GetTargetRenderers();
+        var targetMaterials = GetTargetMaterials(targetRenderers);
+        if (!EnsureUnlocked(targetMaterials))
         {
             return false;
         }
@@ -196,15 +207,27 @@ public class CustomVeinsDrawer
 
         MCBLogger.Log($"[CustomVeinsDrawer] Applying custom veins from: {veinsNormalPath}");
 
-        // Apply the detail normal map
-        bool success = materialService.SetDetailNormalMap("Body", veinsNormalPath);
+        bool success = false;
+        bool anyFailures = false;
+        foreach (var renderer in targetRenderers)
+        {
+            bool rendererSuccess = materialService.SetDetailNormalMap(renderer, veinsNormalPath);
+            if (rendererSuccess)
+            {
+                materialService.SetDetailNormalOpacity(renderer, 1.0f);
+                success = true;
+            }
+            else
+            {
+                anyFailures = true;
+            }
+        }
+
         if (success)
         {
-            // Set opacity to 1.0
-            materialService.SetDetailNormalOpacity("Body", 1.0f);
             MCBLogger.Log("[CustomVeinsDrawer] Custom veins applied successfully");
         }
-        else
+        if (!success || anyFailures)
         {
             MCBLogger.LogError("[CustomVeinsDrawer] Failed to apply custom veins");
         }
@@ -215,13 +238,19 @@ public class CustomVeinsDrawer
     {
         MCBLogger.Log("[CustomVeinsDrawer] Removing custom veins");
 
-        materialService.TryGetMaterial("Body", out var bodyMaterial);
-        if (!EnsureUnlocked(bodyMaterial))
+        var targetRenderers = GetTargetRenderers();
+        var targetMaterials = GetTargetMaterials(targetRenderers);
+        if (!EnsureUnlocked(targetMaterials))
         {
             return false;
         }
 
-        bool success = materialService.RemoveDetailNormalMap("Body");
+        bool success = false;
+        foreach (var renderer in targetRenderers)
+        {
+            success |= materialService.RemoveDetailNormalMap(renderer);
+        }
+
         if (success)
         {
             MCBLogger.Log("[CustomVeinsDrawer] Custom veins removed successfully");
@@ -233,14 +262,14 @@ public class CustomVeinsDrawer
         return success;
     }
 
-    private void DrawReapplyButton(bool currentEnabled, Material bodyMaterial, bool isLocked)
+    private void DrawReapplyButton(bool currentEnabled, bool isLocked)
     {
         using (new EditorGUI.DisabledScope(!currentEnabled))
         {
             string label = isLocked ? "Unlock and re-apply" : "Re-apply";
             if (GUILayout.Button(label, GUILayout.Width(140)))
             {
-                if (EnsureUnlocked(bodyMaterial))
+                if (EnsureUnlocked(GetTargetMaterials()))
                 {
                     ApplyCustomVeins();
                 }
@@ -248,7 +277,7 @@ public class CustomVeinsDrawer
         }
     }
 
-    private void DrawVeinsMissingWarning(Material bodyMaterial, bool isLocked)
+    private void DrawVeinsMissingWarning(bool isLocked)
     {
         EditorGUILayout.BeginVertical(EditorStyles.helpBox);
         EditorGUILayout.LabelField("the custom veins are not applied anymore.", EditorStyles.wordWrappedMiniLabel);
@@ -258,7 +287,7 @@ public class CustomVeinsDrawer
         string reapplyLabel = isLocked ? "Unlock and re-apply" : "Re-apply";
         if (GUILayout.Button(reapplyLabel, GUILayout.Width(140)))
         {
-            if (EnsureUnlocked(bodyMaterial))
+            if (EnsureUnlocked(GetTargetMaterials()))
             {
                 ApplyCustomVeins();
             }
@@ -271,6 +300,24 @@ public class CustomVeinsDrawer
         }
         EditorGUILayout.EndHorizontal();
         EditorGUILayout.EndVertical();
+    }
+
+    private bool EnsureUnlocked(IReadOnlyList<Material> materials)
+    {
+        if (materials == null || materials.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var material in materials)
+        {
+            if (!EnsureUnlocked(material))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private bool EnsureUnlocked(Material material)
@@ -290,6 +337,68 @@ public class CustomVeinsDrawer
             "Could not unlock the material shader. Please unlock it manually from Poiyomi before trying again.",
             "Ok");
         return false;
+    }
+
+    private bool EnsureMaterialService()
+    {
+        Transform root = editor?.customBaseTarget != null && editor.customBaseTarget.transform != null
+            ? editor.customBaseTarget.transform.root
+            : null;
+
+        if (root == null)
+        {
+            return false;
+        }
+
+        if (materialService == null || cachedRoot != root)
+        {
+            materialService = new MaterialService(root);
+            cachedRoot = root;
+        }
+
+        return true;
+    }
+
+    private List<SkinnedMeshRenderer> GetTargetRenderers()
+    {
+        return materialService
+            .GetSkinnedMeshRenderersForFbxPaths(GetTargetFbxPaths())
+            .Where(renderer => renderer?.sharedMaterial != null)
+            .ToList();
+    }
+
+    private List<Material> GetTargetMaterials(List<SkinnedMeshRenderer> renderers = null)
+    {
+        renderers = renderers ?? GetTargetRenderers();
+        return renderers
+            .Select(renderer => renderer.sharedMaterial)
+            .Where(material => material != null)
+            .GroupBy(material => material.GetInstanceID())
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private List<string> GetTargetFbxPaths()
+    {
+        var paths = new List<string>();
+        if (editor?.baseFbxFilesProp == null)
+        {
+            return paths;
+        }
+
+        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        {
+            var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                paths.Add(MCBUtils.ToUnityPath(path));
+            }
+        }
+
+        return paths
+            .Distinct()
+            .ToList();
     }
 }
 #endif

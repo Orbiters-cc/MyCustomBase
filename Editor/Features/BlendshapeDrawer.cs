@@ -26,11 +26,8 @@ public class BlendshapeDrawer
         if (!editor.isCustomBase || appliedVersion?.customBlendshapes == null || !appliedVersion.customBlendshapes.Any()) return;
 
         var root = editor.customBaseTarget.transform.root;
-        var smr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-        var mohawkSmr = MeshFinder.FindMeshPrioritizingRoot(root, "MohawkHair");
-        var maneSmr = MeshFinder.FindMeshPrioritizingRoot(root, "ManeHair");
-        
-        if (smr?.sharedMesh == null) return;
+        var renderers = GetTargetBlendshapeRenderers(root).ToArray();
+        if (renderers.Length == 0) return;
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Blendshapes", EditorStyles.boldLabel);
@@ -53,10 +50,11 @@ public class BlendshapeDrawer
             float defaultValue = ParseDefaultValue(entry.defaultValue);
             if (defaultValue > WeightEpsilon) anyDefaultAboveZero = true;
 
-            int index = smr.sharedMesh.GetBlendShapeIndex(entry.name);
-            if (index < 0) continue;
-
-            if (smr.GetBlendShapeWeight(index) > WeightEpsilon)
+            if (renderers.Any(renderer =>
+            {
+                int index = renderer.sharedMesh.GetBlendShapeIndex(entry.name);
+                return index >= 0 && renderer.GetBlendShapeWeight(index) > WeightEpsilon;
+            }))
             {
                 allWeightsZero = false;
             }
@@ -64,7 +62,7 @@ public class BlendshapeDrawer
 
         if (!hasOverrides && anyDefaultAboveZero && allWeightsZero && lastAutoAppliedVersionKey != versionKey)
         {
-            ApplyDefaultBlendshapeValues(smr, values, blendshapeEntries);
+            ApplyDefaultBlendshapeValues(renderers, values, blendshapeEntries);
             allWeightsZero = false;
             lastAutoAppliedVersionKey = versionKey;
         }
@@ -81,35 +79,24 @@ public class BlendshapeDrawer
             string shapeName = entry.name;
             float defaultValue = ParseDefaultValue(entry.defaultValue);
             
-            int index = smr.sharedMesh.GetBlendShapeIndex(shapeName);
-            if (index < 0) continue;
+            var primaryRenderer = renderers.FirstOrDefault(renderer => renderer.sharedMesh.GetBlendShapeIndex(shapeName) >= 0);
+            if (primaryRenderer == null) continue;
 
             // Get current weight from the mesh
-            float currentWeight = smr.GetBlendShapeWeight(index);
+            int primaryIndex = primaryRenderer.sharedMesh.GetBlendShapeIndex(shapeName);
+            float currentWeight = primaryRenderer.GetBlendShapeWeight(primaryIndex);
             
             EditorGUI.BeginChangeCheck();
             float newWeight = EditorGUILayout.Slider(new GUIContent(shapeName), currentWeight, 0f, 100f);
             if (EditorGUI.EndChangeCheck())
             {
-                smr.SetBlendShapeWeight(index, newWeight);
-
-                // Also apply the same-named blendshape to MohawkHair and ManeHair if present
-                if (mohawkSmr != null && mohawkSmr.sharedMesh != null)
+                foreach (var renderer in renderers)
                 {
-                    int mhIndex = mohawkSmr.sharedMesh.GetBlendShapeIndex(shapeName);
-                    if (mhIndex >= 0)
+                    int index = renderer.sharedMesh.GetBlendShapeIndex(shapeName);
+                    if (index >= 0)
                     {
-                        mohawkSmr.SetBlendShapeWeight(mhIndex, newWeight);
-                        EditorUtility.SetDirty(mohawkSmr);
-                    }
-                }
-                if (maneSmr != null && maneSmr.sharedMesh != null)
-                {
-                    int maIndex = maneSmr.sharedMesh.GetBlendShapeIndex(shapeName);
-                    if (maIndex >= 0)
-                    {
-                        maneSmr.SetBlendShapeWeight(maIndex, newWeight);
-                        EditorUtility.SetDirty(maneSmr);
+                        renderer.SetBlendShapeWeight(index, newWeight);
+                        EditorUtility.SetDirty(renderer);
                     }
                 }
 
@@ -126,7 +113,6 @@ public class BlendshapeDrawer
                     RemoveCustomOverride(shapeName);
                 }
                 
-                EditorUtility.SetDirty(smr);
                 EditorUtility.SetDirty(editor.customBaseTarget);
                 onBlendshapesChanged?.Invoke();
             }
@@ -141,7 +127,7 @@ public class BlendshapeDrawer
         if (GUILayout.Button("Set to Default Values"))
         {
             ClearAllCustomOverrides();
-            ApplyDefaultBlendshapeValuesWithHair(smr, mohawkSmr, maneSmr, values, blendshapeEntries);
+            ApplyDefaultBlendshapeValues(renderers, values, blendshapeEntries);
             onBlendshapesChanged?.Invoke();
         }
         
@@ -205,62 +191,46 @@ public class BlendshapeDrawer
             : 0f;
     }
 
-    private void ApplyDefaultBlendshapeValues(SkinnedMeshRenderer smr, SerializedProperty values, CustomBlendshapeEntry[] blendshapeEntries)
+    private void ApplyDefaultBlendshapeValues(SkinnedMeshRenderer[] renderers, SerializedProperty values, CustomBlendshapeEntry[] blendshapeEntries)
     {
         for (int i = 0; i < blendshapeEntries.Length; i++)
         {
             var entry = blendshapeEntries[i];
             float defaultValue = ParseDefaultValue(entry.defaultValue);
-            int index = smr.sharedMesh.GetBlendShapeIndex(entry.name);
-            if (index < 0) continue;
-
-            smr.SetBlendShapeWeight(index, defaultValue);
+            bool applied = false;
+            foreach (var renderer in renderers)
+            {
+                int index = renderer.sharedMesh.GetBlendShapeIndex(entry.name);
+                if (index < 0) continue;
+                renderer.SetBlendShapeWeight(index, defaultValue);
+                EditorUtility.SetDirty(renderer);
+                applied = true;
+            }
+            if (!applied) continue;
             values.GetArrayElementAtIndex(i).floatValue = defaultValue;
         }
 
-        EditorUtility.SetDirty(smr);
         EditorUtility.SetDirty(editor.customBaseTarget);
     }
 
-    private void ApplyDefaultBlendshapeValuesWithHair(SkinnedMeshRenderer smr, SkinnedMeshRenderer mohawkSmr, SkinnedMeshRenderer maneSmr, SerializedProperty values, CustomBlendshapeEntry[] blendshapeEntries)
+    private SkinnedMeshRenderer[] GetTargetBlendshapeRenderers(Transform root)
     {
-        if (smr == null || smr.sharedMesh == null || blendshapeEntries == null) return;
-
-        for (int i = 0; i < blendshapeEntries.Length; i++)
+        if (root == null) return Array.Empty<SkinnedMeshRenderer>();
+        var targetPaths = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (editor.baseFbxFilesProp != null)
         {
-            var entry = blendshapeEntries[i];
-            float defaultValue = ParseDefaultValue(entry.defaultValue);
-
-            int bodyIndex = smr.sharedMesh.GetBlendShapeIndex(entry.name);
-            if (bodyIndex >= 0)
+            for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
             {
-                smr.SetBlendShapeWeight(bodyIndex, defaultValue);
-                values.GetArrayElementAtIndex(i).floatValue = defaultValue;
-            }
-
-            if (mohawkSmr != null && mohawkSmr.sharedMesh != null)
-            {
-                int mhIndex = mohawkSmr.sharedMesh.GetBlendShapeIndex(entry.name);
-                if (mhIndex >= 0)
-                {
-                    mohawkSmr.SetBlendShapeWeight(mhIndex, defaultValue);
-                }
-            }
-
-            if (maneSmr != null && maneSmr.sharedMesh != null)
-            {
-                int maIndex = maneSmr.sharedMesh.GetBlendShapeIndex(entry.name);
-                if (maIndex >= 0)
-                {
-                    maneSmr.SetBlendShapeWeight(maIndex, defaultValue);
-                }
+                var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+                string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
+                if (!string.IsNullOrWhiteSpace(path)) targetPaths.Add(MCBUtils.ToUnityPath(path));
             }
         }
 
-        EditorUtility.SetDirty(smr);
-        if (mohawkSmr != null) EditorUtility.SetDirty(mohawkSmr);
-        if (maneSmr != null) EditorUtility.SetDirty(maneSmr);
-        EditorUtility.SetDirty(editor.customBaseTarget);
+        return root.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .Where(renderer => renderer?.sharedMesh != null && renderer.sharedMesh.blendShapeCount > 0)
+            .Where(renderer => targetPaths.Count == 0 || targetPaths.Contains(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh))))
+            .ToArray();
     }
 }
 #endif

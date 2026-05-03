@@ -226,20 +226,7 @@ public class VRCFuryService
             return 0f;
         }
 
-        var root = avatarRoot.transform.root;
-        SkinnedMeshRenderer bodySmr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-
-        if (bodySmr != null && bodySmr.sharedMesh != null)
-        {
-            int bodyIndex = bodySmr.sharedMesh.GetBlendShapeIndex(blendshapeName);
-            if (bodyIndex >= 0)
-            {
-                return Mathf.Clamp01(bodySmr.GetBlendShapeWeight(bodyIndex) / 100f);
-            }
-        }
-
-        var skinnedMeshes = MeshFinder.GetAllSkinnedMeshRenderers(root);
-        foreach (var smr in skinnedMeshes)
+        foreach (var smr in MeshFinder.GetAllSkinnedMeshRenderers(avatarRoot.transform.root))
         {
             if (smr == null || smr.sharedMesh == null) continue;
 

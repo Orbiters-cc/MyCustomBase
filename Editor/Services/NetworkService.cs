@@ -214,7 +214,15 @@ public class NetworkService
             
             if (req.result != UnityWebRequest.Result.Success)
             {
-                return (false, req.downloadHandler.text, $"Upload failed: [{req.responseCode}] {req.error}");
+                string body = null;
+                try { body = req.downloadHandler?.text; } catch { }
+                string serverMessage = CreateBodySnippet(body, 500);
+                string error = $"Upload failed: [{req.responseCode}] {req.error}";
+                if (!string.IsNullOrWhiteSpace(serverMessage))
+                {
+                    error += $" | {serverMessage}";
+                }
+                return (false, body, error);
             }
 
             return (true, req.downloadHandler.text, null);

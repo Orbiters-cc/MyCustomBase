@@ -20,7 +20,7 @@ public class VersionListDrawer
     // Special reset version identifier
     public static readonly CustomBaseVersion RESET_VERSION = new CustomBaseVersion
     {
-        version = "Base Default Winterpaw",
+        version = "Base Default",
         scope = Scope.PUBLIC,
         changelog = "Reset to the original avatar configuration without any custom base modifications."
     };
@@ -53,7 +53,7 @@ public class VersionListDrawer
         {
             if (editor.currentIsCustom && !editor.customWarningShown)
             {
-                EditorGUILayout.HelpBox("The current custom version of your Winterpaw is not supported. If you update it to one of the custom base versions, you may lose some custom features or blendshapes of your custom Winterpaw base.", MessageType.Warning);
+                EditorGUILayout.HelpBox("The current custom version of your avatar base is not supported. If you update it to one of the custom base versions, you may lose some custom features or blendshapes of your custom base.", MessageType.Warning);
                 editor.customWarningShown = true;
             }
         }
@@ -699,7 +699,7 @@ public class VersionListDrawer
             // Vertically center the reset label with the helpbox
             EditorGUILayout.BeginVertical();
             GUILayout.FlexibleSpace();
-            GUILayout.Label("Base Default Winterpaw", GUILayout.Width(140));
+            GUILayout.Label("Base Default", GUILayout.Width(140));
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndVertical();
             

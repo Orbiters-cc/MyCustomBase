@@ -38,6 +38,13 @@ public class BlendShapeFactorLinkEntry
     public string factorParameterName;
 }
 
+[Serializable]
+public class CreatorModelFileBuildEntry
+{
+    public GameObject customFbx;
+    public Avatar customBaseAvatar;
+}
+
 // This component is a pure data container for an avatar that has been modified
 // by the custom base workflow. It holds only the state that needs to be saved with the scene/prefab.
 [AddComponentMenu("Orbiters/My Custom Base (MCB)")]
@@ -102,6 +109,7 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public bool isCreatorMode = false;
     [HideInInspector] public GameObject customFbxForCreator;
     [HideInInspector] public Avatar customBaseAvatarForCreatorProp;
+    [HideInInspector] public List<CreatorModelFileBuildEntry> modelFileBuildEntries = new List<CreatorModelFileBuildEntry>();
     [HideInInspector] public GameObject avatarLogicPrefab;
     [HideInInspector] public bool includeCustomVeinsForCreator = false;
     [HideInInspector] public Texture2D customVeinsNormalMap;

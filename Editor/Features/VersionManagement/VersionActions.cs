@@ -289,31 +289,13 @@ public class VersionActions
         {
             if (isReset)
             {
-                // Force restore the original Winterpaw FBX regardless of current selection/state
-                string winterpawUnityPath = "Assets/MasculineCanine/FX/MasculineCanine.v1.5.fbx";
-                fileManagerService.ForceRestoreBackupAtPath(winterpawUnityPath);
-                // Ensure subsequent import/refresh uses the restored original FBX path
-                fbxPath = winterpawUnityPath;
+                fileManagerService.ForceRestoreBackupAtPath(fbxPath);
             }
             else
             {
                 if (version == null) throw new ArgumentNullException(nameof(version), "A version must be provided to apply.");
-                
-                string binPath = MCBUtils.GetVersionBinPath(version);
-                if (!File.Exists(binPath)) throw new FileNotFoundException("Apply failed: .bin file not found. Please download or build it first.");
 
-                string originalFbxPath = fbxPath.EndsWith(FileManagerService.OriginalSuffix) ? fbxPath : fbxPath + FileManagerService.OriginalSuffix;
-                if (!File.Exists(originalFbxPath))
-                {
-                    fileManagerService.CreateBackup(fbxPath);
-                    originalFbxPath = fbxPath + FileManagerService.OriginalSuffix;
-                }
-                
-                byte[] baseData = File.ReadAllBytes(originalFbxPath);
-                byte[] binData = File.ReadAllBytes(binPath);
-                byte[] transformedData = fileManagerService.XorTransform(baseData, binData);
-                
-                File.WriteAllBytes(fbxPath, transformedData);
+                ApplyVersionModelFilePatches(version, fbxPath);
             }
             success = true;
         }
@@ -325,11 +307,12 @@ public class VersionActions
         
         if (success)
         {
-            // --- CRITICAL FIX FOR RE-IMPORT ---
-            // Force Unity to re-import the specific FBX we just changed synchronously.
-            // ForceSynchronousImport blocks until the import completes, preventing race conditions.
-            MCBLogger.Log($"[VersionActions] Importing modified FBX at {fbxPath}");
-            AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            var affectedFbxPaths = GetAffectedFbxPaths(version, fbxPath);
+            foreach (string affectedPath in affectedFbxPaths)
+            {
+                MCBLogger.Log($"[VersionActions] Importing modified FBX at {affectedPath}");
+                AssetDatabase.ImportAsset(affectedPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            }
             MCBLogger.Log("[VersionActions] FBX import completed.");
             
             // Wait until Unity has finished compiling (if any compilation was triggered).
@@ -344,13 +327,7 @@ public class VersionActions
             var versionForAssets = isReset ? (editor.customBaseTarget.appliedCustomBaseVersion ?? editor.selectedVersionForAction) : version;
             if (versionForAssets != null)
             {
-                string avatarPath = isReset
-                    ? MCBUtils.GetDefaultAvatarPath(versionForAssets)
-                    : MCBUtils.GetCustomBaseAvatarPath(versionForAssets);
-                
-                var fbxGameObject = editor.baseFbxFilesProp.arraySize > 0 ? editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject : null;
-                MCBLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath}");
-                fileManagerService.ApplyAvatarToModel(root, fbxGameObject, avatarPath);
+                ApplyAvatarImportsForVersion(root, versionForAssets, isReset);
                 while (EditorApplication.isCompiling || EditorApplication.isUpdating)
                 {
                     yield return null;
@@ -390,9 +367,7 @@ public class VersionActions
                 MCBLogger.Log("[VersionActions] Dynamic normals removal completed.");
             }
 
-            // Always detach the current Body mesh before reassigning from the newly imported FBX.
-            ClearBodyMeshAssignment(root);
-            RefreshBodyMeshFromFBX(root, fbxPath);
+            RefreshTargetMeshesFromFBXs(root, affectedFbxPaths);
             
             if (shouldApplyDynamicNormals)
             {
@@ -412,6 +387,7 @@ public class VersionActions
             
             // Apply or remove custom veins based on version feature flag
             var materialService = new MaterialService(root);
+            var targetMaterialRenderers = materialService.GetSkinnedMeshRenderersForFbxPaths(affectedFbxPaths);
             
             if (hasCustomVeins)
             {
@@ -422,10 +398,18 @@ public class VersionActions
 
                 if (File.Exists(veinsNormalAbsolutePath))
                 {
-                    bool veinsApplied = materialService.SetDetailNormalMap("Body", veinsNormalPath);
+                    bool veinsApplied = false;
+                    foreach (var renderer in targetMaterialRenderers)
+                    {
+                        if (materialService.SetDetailNormalMap(renderer, veinsNormalPath))
+                        {
+                            materialService.SetDetailNormalOpacity(renderer, 1.0f);
+                            veinsApplied = true;
+                        }
+                    }
+
                     if (veinsApplied)
                     {
-                        materialService.SetDetailNormalOpacity("Body", 1.0f);
                         // Sync the toggle state with the applied state
                         EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, true);
                         MCBLogger.Log($"[VersionActions] Custom veins applied from version {version.version}");
@@ -439,7 +423,10 @@ public class VersionActions
             else
             {
                 // Remove custom veins when switching to a version without the feature or resetting
-                materialService.RemoveDetailNormalMap("Body");
+                foreach (var renderer in targetMaterialRenderers)
+                {
+                    materialService.RemoveDetailNormalMap(renderer);
+                }
                 // Sync the toggle state - set to false when removing veins
                 EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, false);
                 MCBLogger.Log("[VersionActions] Custom veins removed");
@@ -533,21 +520,177 @@ public class VersionActions
         EditorUtility.SetDirty(editor.customBaseTarget);
         editor.Repaint();
     }
-    
-    private void ClearBodyMeshAssignment(Transform root)
+
+    private void ApplyVersionModelFilePatches(CustomBaseVersion version, string fallbackFbxPath)
     {
-        if (root == null) return;
+        var patchFiles = version.versionFiles?
+            .Where(file => file != null && string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
 
-        var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
+        if (patchFiles == null || patchFiles.Length == 0)
+        {
+            MCBLogger.Log("[VersionActions] Version has no model file patches. Skipping FBX transformation.");
+            return;
+        }
 
-        if (bodyMesh?.sharedMesh == null) return;
+        foreach (var patchFile in patchFiles)
+        {
+            string transform = string.IsNullOrWhiteSpace(patchFile.transform)
+                ? "XOR_BIN_TO_FBX"
+                : patchFile.transform;
 
-        Undo.RecordObject(bodyMesh, "Clear Body Mesh");
-        bodyMesh.sharedMesh = null;
-        EditorUtility.SetDirty(bodyMesh);
-        MCBLogger.Log("[VersionActions] Cleared Body mesh assignment prior to refresh.");
+            if (string.Equals(transform, "XOR_BIN_TO_UNITY_ASSET", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyXorBinToUnityAsset(version, patchFile);
+                continue;
+            }
+
+            if (string.Equals(transform, "DIRECT_ASSET", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!string.Equals(transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new NotSupportedException($"Unsupported model file transform '{transform}'.");
+            }
+
+            string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+            string binPath = ResolveVersionPatchPath(version, patchFile);
+            ApplyXorBinToFbx(binPath, targetFbxPath);
+        }
     }
 
+    private void ApplyXorBinToFbx(string binPath, string fbxPath)
+    {
+        if (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath))
+            throw new FileNotFoundException("Apply failed: .bin file not found. Please download or build it first.");
+
+        if (string.IsNullOrWhiteSpace(fbxPath) || !File.Exists(fbxPath))
+            throw new FileNotFoundException("Apply failed: target FBX file not found.", fbxPath);
+
+        string originalFbxPath = fbxPath.EndsWith(FileManagerService.OriginalSuffix) ? fbxPath : fbxPath + FileManagerService.OriginalSuffix;
+        if (!File.Exists(originalFbxPath))
+        {
+            fileManagerService.CreateBackup(fbxPath);
+            originalFbxPath = fbxPath + FileManagerService.OriginalSuffix;
+        }
+
+        byte[] baseData = File.ReadAllBytes(originalFbxPath);
+        byte[] binData = File.ReadAllBytes(binPath);
+        byte[] transformedData = fileManagerService.XorTransform(baseData, binData);
+
+        File.WriteAllBytes(fbxPath, transformedData);
+    }
+
+    private string ResolveTargetFbxPath(CustomBaseVersion version, ModelFileData patchFile, string fallbackFbxPath)
+    {
+        var source = version.sourceFiles?.FirstOrDefault(file =>
+            file != null &&
+            patchFile.sourceModelFileId.HasValue &&
+            file.id == patchFile.sourceModelFileId.Value);
+
+        string sourcePath = source?.path;
+        if (string.IsNullOrWhiteSpace(sourcePath) && patchFile.metadata != null)
+        {
+            if (patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue) ||
+                patchFile.metadata.TryGetValue("targetPath", out sourcePathValue))
+            {
+                sourcePath = sourcePathValue?.ToString();
+            }
+        }
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            sourcePath = version.sourceFiles?.FirstOrDefault(file =>
+                file != null &&
+                string.Equals(file.path, patchFile.path, StringComparison.OrdinalIgnoreCase))?.path;
+        }
+
+        return string.IsNullOrWhiteSpace(sourcePath)
+            ? fallbackFbxPath
+            : MCBUtils.ToUnityPath(sourcePath);
+    }
+
+    private string ResolveVersionPatchPath(CustomBaseVersion version, ModelFileData patchFile)
+    {
+        string versionFolder = MCBUtils.GetVersionDataPath(version);
+        if (string.IsNullOrWhiteSpace(versionFolder)) return null;
+
+        string candidateName = string.IsNullOrWhiteSpace(patchFile.path)
+            ? null
+            : Path.GetFileName(patchFile.path);
+        if (!string.IsNullOrWhiteSpace(candidateName))
+        {
+            string candidatePath = MCBUtils.CombineUnityPath(versionFolder, candidateName);
+            if (File.Exists(Path.GetFullPath(candidatePath))) return candidatePath;
+        }
+
+        return MCBUtils.GetVersionBinPath(version);
+    }
+
+    private void ApplyXorBinToUnityAsset(CustomBaseVersion version, ModelFileData patchFile)
+    {
+        // TODO: Implement the native Unity mesh asset workflow. This must still decrypt only on the client:
+        // original FBX bytes + encrypted BIN patch -> generated Unity Mesh/Prefab assets.
+        throw new NotSupportedException("Unity .asset mesh patch delivery is not implemented yet.");
+    }
+
+    private List<string> GetAffectedFbxPaths(CustomBaseVersion version, string fallbackFbxPath)
+    {
+        var paths = new List<string>();
+        if (version?.versionFiles != null)
+        {
+            foreach (var patchFile in version.versionFiles)
+            {
+                if (patchFile == null) continue;
+                if (!string.Equals(patchFile.transform ?? "XOR_BIN_TO_FBX", "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase)) continue;
+                string path = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+                if (!string.IsNullOrWhiteSpace(path)) paths.Add(path);
+            }
+        }
+
+        if (paths.Count == 0 && !string.IsNullOrWhiteSpace(fallbackFbxPath))
+        {
+            paths.Add(fallbackFbxPath);
+        }
+
+        return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private void ApplyAvatarImportsForVersion(Transform root, CustomBaseVersion version, bool isReset)
+    {
+        if (isReset)
+        {
+            string defaultAvatarPath = MCBUtils.GetDefaultAvatarPath(version);
+            for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+            {
+                var fbxGameObject = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+                fileManagerService.ApplyAvatarToModel(root, fbxGameObject, defaultAvatarPath);
+            }
+            return;
+        }
+
+        foreach (var patchFile in version.versionFiles ?? Array.Empty<ModelFileData>())
+        {
+            string avatarPath = null;
+            if (patchFile?.metadata != null && patchFile.metadata.TryGetValue("customAvatarPath", out object avatarPathValue))
+            {
+                avatarPath = avatarPathValue?.ToString();
+            }
+
+            if (string.IsNullOrWhiteSpace(avatarPath))
+            {
+                MCBLogger.Log($"[VersionActions] Patch file {patchFile?.path} has no custom avatar. Skipping avatar import.");
+                continue;
+            }
+
+            string sourcePath = ResolveTargetFbxPath(version, patchFile, null);
+            var fbxGameObject = string.IsNullOrWhiteSpace(sourcePath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(sourcePath);
+            MCBLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath} to {sourcePath}");
+            fileManagerService.ApplyAvatarToModel(root, fbxGameObject, avatarPath);
+        }
+    }
+    
     private Dictionary<string, Dictionary<string, float>> CaptureBlendshapeState(Transform root)
     {
         var snapshot = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
@@ -629,8 +772,8 @@ public class VersionActions
 
         if (root == null || version?.customBlendshapes == null) return;
 
-        var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-        if (bodyMesh?.sharedMesh == null) return;
+        var renderers = GetTargetBlendshapeRenderers(root).ToList();
+        if (renderers.Count == 0) return;
 
         foreach (var entry in version.customBlendshapes)
         {
@@ -642,10 +785,14 @@ public class VersionActions
 
             float defaultValue = ParseBlendshapeDefaultValue(entry.defaultValue);
             float currentValue = defaultValue;
-            int bodyIndex = bodyMesh.sharedMesh.GetBlendShapeIndex(entry.name);
-            if (bodyIndex >= 0)
+            foreach (var renderer in renderers)
             {
-                currentValue = bodyMesh.GetBlendShapeWeight(bodyIndex);
+                int index = renderer.sharedMesh.GetBlendShapeIndex(entry.name);
+                if (index >= 0)
+                {
+                    currentValue = renderer.GetBlendShapeWeight(index);
+                    break;
+                }
             }
 
             editor.customBaseTarget.blendShapeValues.Add(currentValue);
@@ -664,11 +811,8 @@ public class VersionActions
 
         if (root == null || version?.customBlendshapes == null || version.customBlendshapes.Length == 0) return;
 
-        var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-        var mohawkMesh = MeshFinder.FindMeshPrioritizingRoot(root, "MohawkHair");
-        var maneMesh = MeshFinder.FindMeshPrioritizingRoot(root, "ManeHair");
-
-        if (bodyMesh?.sharedMesh == null) return;
+        var renderers = GetTargetBlendshapeRenderers(root).ToList();
+        if (renderers.Count == 0) return;
 
         foreach (var entry in version.customBlendshapes)
         {
@@ -686,30 +830,51 @@ public class VersionActions
                 valueToApply = editor.customBaseTarget.customBlendshapeOverrideValues[overrideIdx];
             }
 
-            int bodyIndex = bodyMesh.sharedMesh.GetBlendShapeIndex(entry.name);
-            if (bodyIndex >= 0)
+            foreach (var renderer in renderers)
             {
-                bodyMesh.SetBlendShapeWeight(bodyIndex, valueToApply);
-            }
-
-            if (mohawkMesh?.sharedMesh != null)
-            {
-                int mhIndex = mohawkMesh.sharedMesh.GetBlendShapeIndex(entry.name);
-                if (mhIndex >= 0) mohawkMesh.SetBlendShapeWeight(mhIndex, valueToApply);
-            }
-
-            if (maneMesh?.sharedMesh != null)
-            {
-                int maIndex = maneMesh.sharedMesh.GetBlendShapeIndex(entry.name);
-                if (maIndex >= 0) maneMesh.SetBlendShapeWeight(maIndex, valueToApply);
+                int index = renderer.sharedMesh.GetBlendShapeIndex(entry.name);
+                if (index >= 0)
+                {
+                    renderer.SetBlendShapeWeight(index, valueToApply);
+                    EditorUtility.SetDirty(renderer);
+                }
             }
 
             editor.customBaseTarget.blendShapeValues.Add(valueToApply);
         }
 
-        EditorUtility.SetDirty(bodyMesh);
-        if (mohawkMesh != null) EditorUtility.SetDirty(mohawkMesh);
-        if (maneMesh != null) EditorUtility.SetDirty(maneMesh);
+    }
+
+    private IEnumerable<SkinnedMeshRenderer> GetTargetBlendshapeRenderers(Transform root)
+    {
+        if (root == null) yield break;
+
+        var targetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (editor.baseFbxFilesProp != null)
+        {
+            for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+            {
+                var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+                string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
+                if (!string.IsNullOrWhiteSpace(path)) targetPaths.Add(MCBUtils.ToUnityPath(path));
+            }
+        }
+
+        foreach (var renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (renderer?.sharedMesh == null || renderer.sharedMesh.blendShapeCount == 0) continue;
+            if (targetPaths.Count == 0)
+            {
+                yield return renderer;
+                continue;
+            }
+
+            string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
+            if (!string.IsNullOrWhiteSpace(meshPath) && targetPaths.Contains(meshPath))
+            {
+                yield return renderer;
+            }
+        }
     }
 
     private static float ParseBlendshapeDefaultValue(string defaultValue)
@@ -736,40 +901,42 @@ public class VersionActions
         return string.Join("/", segments);
     }
 
-    private void RefreshBodyMeshFromFBX(Transform root, string fbxPath)
+    private void RefreshTargetMeshesFromFBXs(Transform root, IEnumerable<string> fbxPaths)
     {
-        // Find the shallowest Body SkinnedMeshRenderer in the scene hierarchy.
-        var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-        
-        if (bodyMesh == null)
+        if (root == null || fbxPaths == null) return;
+
+        var targetPaths = new HashSet<string>(
+            fbxPaths.Where(path => !string.IsNullOrWhiteSpace(path)).Select(MCBUtils.ToUnityPath),
+            StringComparer.OrdinalIgnoreCase);
+        if (targetPaths.Count == 0) return;
+
+        var meshesByFbxPath = new Dictionary<string, Dictionary<string, Mesh>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string fbxPath in targetPaths)
         {
-            MCBLogger.LogWarning("[VersionActions] Body SkinnedMeshRenderer not found in hierarchy.");
-            return;
+            var fbxObject = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
+            if (fbxObject == null) continue;
+
+            var meshLookup = new Dictionary<string, Mesh>(StringComparer.Ordinal);
+            foreach (var smr in fbxObject.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (smr?.sharedMesh == null || meshLookup.ContainsKey(smr.sharedMesh.name)) continue;
+                meshLookup.Add(smr.sharedMesh.name, smr.sharedMesh);
+            }
+            meshesByFbxPath[fbxPath] = meshLookup;
         }
-        
-        // Load the FBX GameObject
-        GameObject fbxObject = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
-        if (fbxObject == null)
+
+        foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
-            MCBLogger.LogWarning($"[VersionActions] Could not load FBX at path: {fbxPath}");
-            return;
+            if (smr?.sharedMesh == null) continue;
+            string currentAssetPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(smr.sharedMesh));
+            if (string.IsNullOrWhiteSpace(currentAssetPath) || !targetPaths.Contains(currentAssetPath)) continue;
+            if (!meshesByFbxPath.TryGetValue(currentAssetPath, out var meshLookup)) continue;
+            if (!meshLookup.TryGetValue(smr.sharedMesh.name, out var replacementMesh)) continue;
+
+            Undo.RecordObject(smr, "Refresh Mesh from FBX");
+            smr.sharedMesh = replacementMesh;
+            EditorUtility.SetDirty(smr);
         }
-        
-        // Find the shallowest Body mesh in the FBX too, so refresh targets the intended mesh there as well.
-        var fbxBodyMesh = MeshFinder.FindMeshPrioritizingRoot(fbxObject.transform, "Body");
-        
-        if (fbxBodyMesh?.sharedMesh == null)
-        {
-            MCBLogger.LogWarning("[VersionActions] Body mesh not found in FBX.");
-            return;
-        }
-        
-        // Assign the mesh from the FBX to the scene's Body SkinnedMeshRenderer
-        Undo.RecordObject(bodyMesh, "Refresh Body Mesh from FBX");
-        bodyMesh.sharedMesh = fbxBodyMesh.sharedMesh;
-        EditorUtility.SetDirty(bodyMesh);
-        
-        MCBLogger.Log($"[VersionActions] Refreshed Body mesh to: {fbxBodyMesh.sharedMesh.name}");
     }
     
     public void DisplayErrors()
@@ -779,7 +946,8 @@ public class VersionActions
     
     public void UpdateCurrentBaseFbxHash()
     {
-        string path = GetCurrentFBXPath();
+        var paths = GetCurrentFBXPaths();
+        string path = paths.FirstOrDefault();
         if (string.IsNullOrEmpty(path))
         {
             editor.currentBaseFbxHash = null;
@@ -792,6 +960,7 @@ public class VersionActions
         // Try to get cached hashes first (non-blocking)
         var hashService = AsyncHashService.Instance;
         string cachedCurrentHash = hashService.GetHashIfCached(path);
+        bool allCurrentHashesCached = paths.All(targetPath => !string.IsNullOrEmpty(hashService.GetHashIfCached(targetPath)));
         
         string originalPath = path + FileManagerService.OriginalSuffix;
         string cachedOriginalHash = null;
@@ -803,7 +972,7 @@ public class VersionActions
         }
 
         // Use cached hashes if available, otherwise start async calculation
-        if (cachedCurrentHash != null && (!hasBackup || cachedOriginalHash != null))
+        if (cachedCurrentHash != null && allCurrentHashesCached && (!hasBackup || cachedOriginalHash != null))
         {
             // We have all needed cached hashes - use them immediately
             editor.currentAppliedFbxHash = cachedCurrentHash;
@@ -820,6 +989,11 @@ public class VersionActions
             {
                 try
                 {
+                    foreach (string targetPath in paths)
+                    {
+                        await hashService.CalculateFileHashAsync(targetPath, null, true);
+                    }
+
                     string currentHash = await hashService.CalculateFileHashAsync(path, null, true);
                     string originalHash = null;
                     
@@ -847,13 +1021,17 @@ public class VersionActions
     
     private IEnumerator RecalculateCurrentFbxHashCoroutine()
     {
-        string path = GetCurrentFBXPath();
+        var paths = GetCurrentFBXPaths();
+        string path = paths.FirstOrDefault();
         if (string.IsNullOrEmpty(path)) yield break;
 
         var hashService = AsyncHashService.Instance;
 
-        // Invalidate caches for current and backup FBX
-        hashService.InvalidateHashCache(path);
+        // Invalidate caches for current and backup FBX files
+        foreach (string targetPath in paths)
+        {
+            hashService.InvalidateHashCache(targetPath);
+        }
         string originalPath = path + FileManagerService.OriginalSuffix;
         bool hasBackup = File.Exists(originalPath);
         if (hasBackup)
@@ -874,6 +1052,15 @@ public class VersionActions
             yield return null;
         }
         var (currentHash, originalHash) = calcTask.Result;
+
+        foreach (string targetPath in paths.Skip(1))
+        {
+            var targetHashTask = hashService.CalculateFileHashAsync(targetPath, null, true);
+            while (!targetHashTask.IsCompleted)
+            {
+                yield return null;
+            }
+        }
 
         // Update editor state
         editor.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
@@ -914,9 +1101,7 @@ public class VersionActions
             return;
         }
 
-        var matchingVersion = candidateVersions.FirstOrDefault(v =>
-            !string.IsNullOrEmpty(v.appliedCustomAviHash) &&
-            v.appliedCustomAviHash.Equals(currentFileHash, StringComparison.OrdinalIgnoreCase));
+        var matchingVersion = FindMatchingAppliedVersion(candidateVersions, currentFileHash);
 
         if (editor?.customBaseTarget == null) return;
         Undo.RecordObject(editor.customBaseTarget, "Update MCB State");
@@ -1031,8 +1216,7 @@ public class VersionActions
         {
             bool isNewer = editor.customBaseTarget.appliedCustomBaseVersion == null ||
                            editor.CompareVersions(editor.recommendedVersion.version, editor.customBaseTarget.appliedCustomBaseVersion.version) > 0;
-            string binPath = MCBUtils.GetVersionBinPath(editor.recommendedVersion);
-            bool isDownloaded = !string.IsNullOrEmpty(binPath) && System.IO.File.Exists(binPath);
+            bool isDownloaded = MCBUtils.IsVersionDownloaded(editor.recommendedVersion);
 
             if (isNewer && isDownloaded)
             {
@@ -1045,15 +1229,158 @@ public class VersionActions
 
     public string GetCurrentFBXPath()
     {
-        if (editor.baseFbxFilesProp.arraySize > 0)
+        return GetCurrentFBXPaths().FirstOrDefault();
+    }
+
+    private List<string> GetCurrentFBXPaths()
+    {
+        var paths = new List<string>();
+        if (editor?.baseFbxFilesProp == null)
         {
-            var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject;
-            if(fbx != null) return AssetDatabase.GetAssetPath(fbx);
+            return paths;
         }
-        // Fallback to default Winterpaw if none assigned (maintain behavior)
-        string defaultPath = "Assets/MasculineCanine/FX/MasculineCanine.v1.5.fbx";
-        if (File.Exists(defaultPath)) return defaultPath;
-        return null;
+
+        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        {
+            var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                paths.Add(MCBUtils.ToUnityPath(path));
+            }
+        }
+
+        return paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private CustomBaseVersion FindMatchingAppliedVersion(IReadOnlyList<CustomBaseVersion> candidateVersions, string currentFileHash)
+    {
+        if (candidateVersions == null || candidateVersions.Count == 0)
+        {
+            return null;
+        }
+
+        var directMatch = candidateVersions.FirstOrDefault(v =>
+            !string.IsNullOrEmpty(v.appliedCustomAviHash) &&
+            v.appliedCustomAviHash.Equals(currentFileHash, StringComparison.OrdinalIgnoreCase));
+        if (directMatch != null)
+        {
+            return directMatch;
+        }
+
+        var currentHashesByPath = GetCurrentTargetHashes(currentFileHash);
+        if (currentHashesByPath.Count == 0)
+        {
+            return null;
+        }
+
+        return candidateVersions.FirstOrDefault(version => DoesVersionMatchCurrentTargetHashes(version, currentHashesByPath));
+    }
+
+    private Dictionary<string, string> GetCurrentTargetHashes(string currentFileHash)
+    {
+        var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var hashService = AsyncHashService.Instance;
+        var paths = GetCurrentFBXPaths();
+
+        for (int i = 0; i < paths.Count; i++)
+        {
+            string path = MCBUtils.ToUnityPath(paths[i]);
+            string hash = i == 0 ? currentFileHash : null;
+            if (string.IsNullOrWhiteSpace(hash))
+            {
+                hash = hashService.GetHashIfCached(path);
+            }
+
+            if (!string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(hash))
+            {
+                hashes[path] = hash;
+            }
+        }
+
+        return hashes;
+    }
+
+    private bool DoesVersionMatchCurrentTargetHashes(CustomBaseVersion version, Dictionary<string, string> currentHashesByPath)
+    {
+        if (version?.sourceFiles == null || version.sourceFiles.Length == 0)
+        {
+            return false;
+        }
+
+        bool comparedAny = false;
+        foreach (var sourceFile in version.sourceFiles)
+        {
+            if (sourceFile == null || string.IsNullOrWhiteSpace(sourceFile.path))
+            {
+                continue;
+            }
+
+            string sourcePath = MCBUtils.ToUnityPath(sourceFile.path);
+            if (!currentHashesByPath.TryGetValue(sourcePath, out string currentHash))
+            {
+                return false;
+            }
+
+            string expectedHash = ResolveExpectedHashForSource(version, sourceFile);
+            if (string.IsNullOrWhiteSpace(expectedHash))
+            {
+                return false;
+            }
+
+            if (!expectedHash.Equals(currentHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            comparedAny = true;
+        }
+
+        return comparedAny;
+    }
+
+    private string ResolveExpectedHashForSource(CustomBaseVersion version, ModelFileData sourceFile)
+    {
+        var patchFile = version.versionFiles?.FirstOrDefault(file =>
+            file != null &&
+            string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(file.transform ?? "XOR_BIN_TO_FBX", "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) &&
+            IsPatchForSourceFile(file, sourceFile));
+
+        if (!string.IsNullOrWhiteSpace(patchFile?.outputHash))
+        {
+            return patchFile.outputHash;
+        }
+
+        return sourceFile.hash;
+    }
+
+    private bool IsPatchForSourceFile(ModelFileData patchFile, ModelFileData sourceFile)
+    {
+        if (patchFile == null || sourceFile == null)
+        {
+            return false;
+        }
+
+        if (patchFile.sourceModelFileId.HasValue && sourceFile.id == patchFile.sourceModelFileId.Value)
+        {
+            return true;
+        }
+
+        string sourcePath = MCBUtils.ToUnityPath(sourceFile.path);
+        string patchSourcePath = null;
+        if (patchFile.metadata != null &&
+            (patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue) ||
+             patchFile.metadata.TryGetValue("targetPath", out sourcePathValue)))
+        {
+            patchSourcePath = sourcePathValue?.ToString();
+        }
+
+        return !string.IsNullOrWhiteSpace(sourcePath) &&
+               !string.IsNullOrWhiteSpace(patchSourcePath) &&
+               string.Equals(sourcePath, MCBUtils.ToUnityPath(patchSourcePath), StringComparison.OrdinalIgnoreCase);
     }
 
     private IEnumerator ApplyCustomVersionCoroutine(UserCustomVersionEntry entry)

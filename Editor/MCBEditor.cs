@@ -19,6 +19,7 @@ public class MCBEditor : UnityEditor.Editor
     // --- Serialized Properties ---
     public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
                               customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
+                              modelFileBuildEntriesProp,
                               includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
                               includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp;
 
@@ -228,7 +229,10 @@ public class MCBEditor : UnityEditor.Editor
 
     private void DetectAndLoadCached()
     {
-        AutoDetectBaseFbxViaHierarchy();
+        if (!SyncBaseFbxFilesFromSelectedAsset())
+        {
+            AutoDetectBaseFbxViaHierarchy();
+        }
         // Immediately update hash state so UI knows an FBX is present
         if (versionModule != null && versionModule.actions != null)
         {
@@ -283,10 +287,6 @@ public class MCBEditor : UnityEditor.Editor
             var fbx = baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject;
             if (fbx != null) return AssetDatabase.GetAssetPath(fbx);
         }
-        
-        // Fallback to default Winterpaw if none assigned (maintain consistency with VersionActions)
-        string defaultPath = "Assets/MasculineCanine/FX/MasculineCanine.v1.5.fbx";
-        if (File.Exists(defaultPath)) return defaultPath;
         return null;
     }
 
@@ -505,7 +505,7 @@ public class MCBEditor : UnityEditor.Editor
 
     private void DrawOfflineSavedVersionsInfo()
     {
-        EditorGUILayout.HelpBox("Imported saved versions are available offline. You can apply them or reset to the original Winterpaw without logging in.", MessageType.Info);
+        EditorGUILayout.HelpBox("Imported saved versions are available offline. You can apply them or reset to the original avatar base without logging in.", MessageType.Info);
     }
     
     public void CheckAuthentication()
@@ -535,6 +535,8 @@ public class MCBEditor : UnityEditor.Editor
             RecordUiException(ex);
         }
 
+        SyncBaseFbxFilesFromSelectedAsset();
+
         string fbxPath = GetCurrentFBXPath();
         var selectedAsset = GetSelectedAsset();
         if (!string.IsNullOrEmpty(fbxPath) && isAuthenticated && selectedAsset != null)
@@ -556,6 +558,7 @@ public class MCBEditor : UnityEditor.Editor
         isCreatorModeProp = serializedObject.FindProperty("isCreatorMode");
         customFbxForCreatorProp = serializedObject.FindProperty("customFbxForCreator");
         customBaseAvatarForCreatorProp = serializedObject.FindProperty("customBaseAvatarForCreatorProp");
+        modelFileBuildEntriesProp = serializedObject.FindProperty("modelFileBuildEntries");
         avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
         customBlendshapesForCreatorProp = serializedObject.FindProperty("customBlendshapesForCreator");
         includeCustomVeinsForCreatorProp = serializedObject.FindProperty("includeCustomVeinsForCreator");
@@ -704,6 +707,47 @@ public class MCBEditor : UnityEditor.Editor
         return assetGalleryModule != null ? assetGalleryModule.SelectedAsset : null;
     }
 
+    public bool SyncBaseFbxFilesFromSelectedAsset()
+    {
+        var selectedAsset = GetSelectedAsset();
+        if (selectedAsset?.sourceFiles == null || selectedAsset.sourceFiles.Length == 0 || baseFbxFilesProp == null)
+        {
+            return false;
+        }
+
+        var paths = selectedAsset.sourceFiles
+            .Where(file => file != null
+                           && string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase)
+                           && string.Equals(file.role, "SOURCE", StringComparison.OrdinalIgnoreCase)
+                           && !string.IsNullOrWhiteSpace(file.path))
+            .Select(file => MCBUtils.ToUnityPath(file.path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (paths.Count == 0)
+        {
+            return false;
+        }
+
+        baseFbxFilesProp.ClearArray();
+        foreach (string path in paths)
+        {
+            var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (fbxAsset == null || !(AssetImporter.GetAtPath(path) is ModelImporter))
+            {
+                MCBLogger.LogWarning($"[MCBEditor] Selected custom base source FBX is not present in this project: {path}");
+                continue;
+            }
+
+            baseFbxFilesProp.InsertArrayElementAtIndex(baseFbxFilesProp.arraySize);
+            baseFbxFilesProp.GetArrayElementAtIndex(baseFbxFilesProp.arraySize - 1).objectReferenceValue = fbxAsset;
+        }
+
+        serializedObject.ApplyModifiedProperties();
+        MCBLogger.Log($"[MCBEditor] Synced {baseFbxFilesProp.arraySize} target FBX file(s) from selected custom base source ModelFiles.");
+        return true;
+    }
+
     public string GetSelectedAssetDisplayName()
     {
         var selectedAsset = GetSelectedAsset();
@@ -734,9 +778,6 @@ public class MCBEditor : UnityEditor.Editor
         if (customBaseTarget != null)
         {
             Transform root = customBaseTarget.transform.root;
-            var bodySmr = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-            TryAddFbxPathFromObject(bodySmr != null ? bodySmr.sharedMesh : null, TryAddPath);
-
             foreach (var smr in MeshFinder.GetAllSkinnedMeshRenderers(root))
             {
                 TryAddFbxPathFromObject(smr != null ? smr.sharedMesh : null, TryAddPath);

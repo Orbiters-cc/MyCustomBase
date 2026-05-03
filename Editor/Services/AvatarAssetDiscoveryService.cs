@@ -34,6 +34,7 @@ public class AvatarDiscoveredAsset
     [JsonProperty] public string bannerUrl;
     [JsonProperty] public string latestVersion;
     [JsonProperty] public AvatarAssetBaseInfo avatarBase;
+    [JsonProperty] public ModelFileData[] sourceFiles;
     [JsonProperty] public bool isCompatible;
     [JsonProperty] public JObject compatibility;
 }
@@ -48,6 +49,7 @@ public class AvatarAssetDiscoveryResponse
 internal class AvatarAssetDiscoveryRequest
 {
     [JsonProperty] public List<string> paths;
+    [JsonProperty] public List<ModelFileData> files;
     [JsonProperty] public bool filterOnlyCompatible;
 }
 
@@ -108,9 +110,12 @@ public static class AvatarAssetDiscoveryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var projectFiles = BuildProjectFileInventory(normalizedPaths);
+
         var requestPayload = new AvatarAssetDiscoveryRequest
         {
             paths = normalizedPaths,
+            files = projectFiles,
             filterOnlyCompatible = filterOnlyCompatible
         };
 
@@ -167,6 +172,31 @@ public static class AvatarAssetDiscoveryService
             PreloadThumbnails(response.assets);
             onComplete?.Invoke(response, null);
         }
+    }
+
+    private static List<ModelFileData> BuildProjectFileInventory(IEnumerable<string> paths)
+    {
+        var files = new List<ModelFileData>();
+        foreach (string path in paths ?? Enumerable.Empty<string>())
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+
+            string fullPath = Path.GetFullPath(path);
+            if (!File.Exists(fullPath)) continue;
+
+            string hash = MCBUtils.CalculateFileHash(fullPath);
+            if (string.IsNullOrWhiteSpace(hash)) continue;
+
+            files.Add(new ModelFileData
+            {
+                path = NormalizeUnityPath(path),
+                hash = hash,
+                type = "FBX",
+                role = "SOURCE"
+            });
+        }
+
+        return files;
     }
 
     public static void PreloadThumbnails(IEnumerable<AvatarDiscoveredAsset> assets)

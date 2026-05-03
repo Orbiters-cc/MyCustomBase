@@ -160,8 +160,7 @@ public class CreatorModeModule
             DrawParentVersionDropdown();
             DrawParentBlendshapeImportControls();
             
-            EditorGUILayout.PropertyField(editor.customFbxForCreatorProp, new GUIContent("Custom FBX (Transformed)"));
-            EditorGUILayout.PropertyField(editor.customBaseAvatarForCreatorProp, new GUIContent("Custom Base Avatar (Transformed)"));
+            DrawModelFileBuildEntries();
             EditorGUILayout.PropertyField(editor.avatarLogicPrefabProp, new GUIContent("Avatar Logic Prefab"));
             DrawCustomVeinsSection();
             DrawDynamicNormalsSection();
@@ -209,9 +208,15 @@ public class CreatorModeModule
 
             EditorGUILayout.Space();
             bool requiresParentVersion = RequiresParentVersion();
-            bool canSubmit = editor.customFbxForCreatorProp.objectReferenceValue != null &&
-                             editor.avatarLogicPrefabProp.objectReferenceValue != null &&
-                             editor.customBaseAvatarForCreatorProp.objectReferenceValue != null &&
+            bool hasCustomVeinsPayload = editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null;
+            bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue || editor.includeDynamicNormalsFlexingForCreatorProp.boolValue;
+            bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
+                                     editor.avatarLogicPrefabProp.objectReferenceValue != null ||
+                                     hasCustomVeinsPayload ||
+                                     hasDynamicNormalsPayload ||
+                                     editor.customBlendshapesForCreatorProp.arraySize > 0;
+            bool canSubmit = AreModelFileBuildEntriesValid() &&
+                             hasVersionPayload &&
                              (!requiresParentVersion || selectedParentVersionObject != null) &&
                              isVersionValid;
             if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
@@ -275,6 +280,80 @@ public class CreatorModeModule
                 blendshapeSearchField.AddResult(shapeName);
             }
         }
+    }
+
+    private void DrawModelFileBuildEntries()
+    {
+        SyncModelFileBuildEntryCount();
+
+        EditorGUILayout.LabelField("Target Model Files", EditorStyles.miniBoldLabel);
+        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        {
+            var targetFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            string targetLabel = targetFbx != null ? AssetDatabase.GetAssetPath(targetFbx) : $"Target FBX {i + 1}";
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var customFbxProp = entry.FindPropertyRelative("customFbx");
+            var avatarProp = entry.FindPropertyRelative("customBaseAvatar");
+
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField(targetLabel, EditorStyles.miniBoldLabel);
+                EditorGUILayout.PropertyField(customFbxProp, new GUIContent("Custom FBX (Transformed)"));
+                EditorGUILayout.PropertyField(avatarProp, new GUIContent("Custom Base Avatar (Transformed)"));
+            }
+        }
+    }
+
+    private void SyncModelFileBuildEntryCount()
+    {
+        if (editor.modelFileBuildEntriesProp == null || editor.baseFbxFilesProp == null) return;
+
+        while (editor.modelFileBuildEntriesProp.arraySize < editor.baseFbxFilesProp.arraySize)
+        {
+            editor.modelFileBuildEntriesProp.InsertArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize);
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize - 1);
+            entry.FindPropertyRelative("customFbx").objectReferenceValue = null;
+            entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = null;
+        }
+
+        while (editor.modelFileBuildEntriesProp.arraySize > editor.baseFbxFilesProp.arraySize)
+        {
+            editor.modelFileBuildEntriesProp.DeleteArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize - 1);
+        }
+    }
+
+    private bool AreModelFileBuildEntriesValid()
+    {
+        SyncModelFileBuildEntryCount();
+        if (editor.modelFileBuildEntriesProp == null) return true;
+
+        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        {
+            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var customFbx = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            var avatar = entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
+            if ((customFbx != null || avatar != null) && sourceFbx == null) return false;
+        }
+
+        return true;
+    }
+
+    private bool HasModelFileBuildEntryPayload()
+    {
+        SyncModelFileBuildEntryCount();
+        if (editor.modelFileBuildEntriesProp == null || editor.baseFbxFilesProp == null) return false;
+
+        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        {
+            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var customFbx = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            var avatar = entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
+            if (sourceFbx != null && (customFbx != null || avatar != null)) return true;
+        }
+
+        return false;
     }
 
     private void OnBlendshapeSearchConfirm(string selectedBlendshape)
@@ -633,40 +712,38 @@ public class CreatorModeModule
 
     private IEnumerable<string> GetAllBlendshapeNamesFromCustomFbx()
     {
-        var fbxObject = editor.customFbxForCreatorProp.objectReferenceValue as GameObject;
-        if (fbxObject == null)
-        {
-            cachedCustomFbxMeshId = 0;
-            cachedCustomFbxBlendshapeNames.Clear();
-            return cachedCustomFbxBlendshapeNames;
-        }
+        SyncModelFileBuildEntryCount();
+        var meshIds = new List<int>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
 
-        var smr = fbxObject.GetComponentInChildren<SkinnedMeshRenderer>();
-        if (smr == null || smr.sharedMesh == null)
+        for (int entryIndex = 0; entryIndex < editor.modelFileBuildEntriesProp.arraySize; entryIndex++)
         {
-            cachedCustomFbxMeshId = 0;
-            cachedCustomFbxBlendshapeNames.Clear();
-            return cachedCustomFbxBlendshapeNames;
-        }
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
+            var fbxObject = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            if (fbxObject == null) continue;
 
-        int meshId = smr.sharedMesh.GetInstanceID();
-        if (meshId == cachedCustomFbxMeshId)
-        {
-            return cachedCustomFbxBlendshapeNames;
-        }
-
-        var names = new List<string>(smr.sharedMesh.blendShapeCount);
-        for (int i = 0; i < smr.sharedMesh.blendShapeCount; i++)
-        {
-            string name = smr.sharedMesh.GetBlendShapeName(i);
-            if (!string.IsNullOrWhiteSpace(name))
+            foreach (var smr in fbxObject.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             {
-                names.Add(name);
+                if (smr?.sharedMesh == null) continue;
+                meshIds.Add(smr.sharedMesh.GetInstanceID());
+                for (int i = 0; i < smr.sharedMesh.blendShapeCount; i++)
+                {
+                    string name = smr.sharedMesh.GetBlendShapeName(i);
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        names.Add(name);
+                    }
+                }
             }
         }
 
-        names = names.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToList();
-        cachedCustomFbxBlendshapeNames = names;
+        int meshId = string.Join("|", meshIds.OrderBy(id => id)).GetHashCode();
+        if (meshId == cachedCustomFbxMeshId && cachedCustomFbxBlendshapeNames.Count == names.Count)
+        {
+            return cachedCustomFbxBlendshapeNames;
+        }
+
+        cachedCustomFbxBlendshapeNames = names.OrderBy(n => n, StringComparer.Ordinal).ToList();
         cachedCustomFbxMeshId = meshId;
         return cachedCustomFbxBlendshapeNames;
     }
@@ -1156,9 +1233,6 @@ public class CreatorModeModule
 
     private (CustomBaseVersion metadata, string zipPath) BuildNewVersion()
     {
-        var customFbxGO = editor.customFbxForCreatorProp.objectReferenceValue as GameObject;
-        var customFbxPath = AssetDatabase.GetAssetPath(customFbxGO);
-        var customBaseAvatar = editor.customBaseAvatarForCreatorProp.objectReferenceValue as Avatar;
         var logicPrefab = editor.avatarLogicPrefabProp.objectReferenceValue as GameObject;
         bool shouldIncludeCustomVeins = editor.includeCustomVeinsForCreatorProp.boolValue;
         var customVeinsTexture = editor.customVeinsNormalMapProp.objectReferenceValue as Texture2D;
@@ -1169,17 +1243,6 @@ public class CreatorModeModule
         {
             if (customVeinsTexture == null)
                 throw new Exception("Custom veins is enabled but no normal map texture is assigned.");
-        }
-
-        string currentFbxPath = new VersionActions(editor, networkService, fileManagerService).GetCurrentFBXPath();
-        string originalFbxPath = currentFbxPath + FileManagerService.OriginalSuffix;
-        
-        // If .old backup doesn't exist, use the current FBX (first-time submission case)
-        if (!File.Exists(originalFbxPath))
-        {
-            originalFbxPath = currentFbxPath;
-            if (!File.Exists(originalFbxPath))
-                throw new Exception("FBX file not found. Cannot proceed with version creation.");
         }
 
         bool requiresParentVersion = RequiresParentVersion();
@@ -1226,27 +1289,120 @@ public class CreatorModeModule
         string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
         EditorUtility.DisplayProgressBar("Preparing Build", "Creating version package...", 0.2f);
 
+        SyncModelFileBuildEntryCount();
+        var packageEntries = new List<FileManagerService.ModelFilePackageEntry>();
+        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        {
+            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var customFbx = entryProp.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            var customAvatar = entryProp.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
+            bool hasCustomFbx = customFbx != null;
+            bool hasCustomAvatar = customAvatar != null;
+            if (!hasCustomFbx && !hasCustomAvatar) continue;
+            if (sourceFbx == null)
+                throw new Exception($"Target model file {i + 1} is missing its source FBX.");
+
+            string sourceFbxPath = AssetDatabase.GetAssetPath(sourceFbx);
+            if (string.IsNullOrWhiteSpace(sourceFbxPath))
+                throw new Exception($"Source FBX {i + 1} is missing.");
+
+            string originalFbxPath = sourceFbxPath + FileManagerService.OriginalSuffix;
+            if (!File.Exists(originalFbxPath))
+            {
+                originalFbxPath = sourceFbxPath;
+            }
+            if (!File.Exists(originalFbxPath))
+                throw new Exception($"FBX file not found for target {i + 1}: {sourceFbxPath}");
+
+            packageEntries.Add(new FileManagerService.ModelFilePackageEntry
+            {
+                sourceFbxPath = originalFbxPath,
+                customFbx = customFbx,
+                customBaseAvatar = customAvatar
+            });
+        }
+
         string tempZipPath = fileManagerService.CreateVersionPackageForUpload(
             assetId,
             newVersionString,
             defaultAviVersion,
-            originalFbxPath,
-            customFbxGO,
-            customBaseAvatar,
+            packageEntries,
             logicPrefab,
-            selectedParentVersionObject,
             shouldIncludeCustomVeins,
             customVeinsTexture,
-            fixedByAnimationAssetPaths
-        );
+            fixedByAnimationAssetPaths);
 
         EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
-        string binPath = MCBUtils.GetVersionBinPath(new CustomBaseVersion
+        var sourceFileEntries = new List<ModelFileData>();
+        var versionFileEntries = new List<ModelFileData>();
+        foreach (var packageEntry in packageEntries)
         {
-            assetId = assetId,
-            version = newVersionString,
-            defaultAviVersion = defaultAviVersion
-        });
+            string sourceUnityPath = MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
+            if (sourceUnityPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                sourceUnityPath = sourceUnityPath.Substring(0, sourceUnityPath.Length - FileManagerService.OriginalSuffix.Length);
+            }
+
+            var sourceMetas = new List<Dictionary<string, string>>();
+            string sourceMetaPath = sourceUnityPath + ".meta";
+            if (File.Exists(Path.GetFullPath(sourceMetaPath)))
+            {
+                sourceMetas.Add(new Dictionary<string, string>
+                {
+                    { "file", Path.GetFileName(sourceUnityPath) },
+                    { "meta", File.ReadAllText(Path.GetFullPath(sourceMetaPath)) }
+                });
+            }
+
+            sourceFileEntries.Add(new ModelFileData
+            {
+                path = sourceUnityPath,
+                hash = packageEntry.sourceHash,
+                type = "FBX",
+                role = "SOURCE",
+                metas = sourceMetas
+            });
+
+            var modelFileMetadata = new Dictionary<string, object>
+            {
+                { "sourcePath", sourceUnityPath }
+            };
+            if (packageEntry.customFbx != null)
+            {
+                modelFileMetadata["customFbxPath"] = AssetDatabase.GetAssetPath(packageEntry.customFbx);
+            }
+            if (!string.IsNullOrWhiteSpace(packageEntry.avatarUnityPath))
+            {
+                modelFileMetadata["customAvatarPath"] = packageEntry.avatarUnityPath;
+            }
+
+            if (!string.IsNullOrWhiteSpace(packageEntry.binUnityPath))
+            {
+                versionFileEntries.Add(new ModelFileData
+                {
+                    path = Path.GetFileName(packageEntry.binUnityPath),
+                    hash = packageEntry.binHash,
+                    type = "BIN",
+                    role = "PATCH",
+                    transform = "XOR_BIN_TO_FBX",
+                    outputHash = packageEntry.outputHash,
+                    metadata = modelFileMetadata
+                });
+            }
+            else if (!string.IsNullOrWhiteSpace(packageEntry.avatarUnityPath))
+            {
+                versionFileEntries.Add(new ModelFileData
+                {
+                    path = Path.GetFileName(packageEntry.avatarUnityPath),
+                    hash = packageEntry.avatarHash,
+                    type = "PREFAB",
+                    role = "PATCH",
+                    transform = "DIRECT_ASSET",
+                    metadata = modelFileMetadata
+                });
+            }
+        }
 
         var extraCustomization = new List<string>();
         if (selectedParentVersionObject?.extraCustomization != null)
@@ -1309,13 +1465,15 @@ public class CreatorModeModule
             includeDynamicNormalsBody = shouldIncludeDynamicNormalsBody ? true : (bool?)null,
             includeDynamicNormalsFlexing = shouldIncludeDynamicNormalsFlexing ? true : (bool?)null,
             // Local-only data for repopulating fields
-            baseFbxHash = fileManagerService.CalculateFileHash(originalFbxPath),
-            customFbxPath = customFbxPath,
-            customBaseAvatarPath = AssetDatabase.GetAssetPath(customBaseAvatar),
-            logicPrefabPath = AssetDatabase.GetAssetPath(logicPrefab),
+            baseFbxHash = sourceFileEntries.FirstOrDefault()?.hash,
+            customFbxPath = packageEntries.FirstOrDefault(entry => entry.customFbx != null) is { } firstFbxEntry ? AssetDatabase.GetAssetPath(firstFbxEntry.customFbx) : null,
+            customBaseAvatarPath = packageEntries.FirstOrDefault(entry => entry.customBaseAvatar != null) is { } firstAvatarEntry ? AssetDatabase.GetAssetPath(firstAvatarEntry.customBaseAvatar) : null,
+            logicPrefabPath = logicPrefab != null ? AssetDatabase.GetAssetPath(logicPrefab) : null,
             // Hashes of created files
-            customAviHash = fileManagerService.CalculateFileHash(binPath),
-            appliedCustomAviHash = fileManagerService.CalculateFileHash(customFbxPath)
+            customAviHash = versionFileEntries.FirstOrDefault()?.hash,
+            appliedCustomAviHash = versionFileEntries.FirstOrDefault()?.outputHash,
+            sourceFiles = sourceFileEntries.ToArray(),
+            versionFiles = versionFileEntries.ToArray()
         };
 
         return (metadata, tempZipPath);
@@ -1391,8 +1549,16 @@ public class CreatorModeModule
                 SetDefaultVersionNumbers(null);
             }
 
-            editor.customFbxForCreatorProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(ver.customFbxPath);
-            editor.customBaseAvatarForCreatorProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<Avatar>(ver.customBaseAvatarPath);
+            SyncModelFileBuildEntryCount();
+            for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+            {
+                var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+                var versionFile = ver.versionFiles != null && i < ver.versionFiles.Length ? ver.versionFiles[i] : null;
+                string customFbxPath = GetMetadataString(versionFile, "customFbxPath") ?? (i == 0 ? ver.customFbxPath : null);
+                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath") ?? (i == 0 ? ver.customBaseAvatarPath : null);
+                entryProp.FindPropertyRelative("customFbx").objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
+                entryProp.FindPropertyRelative("customBaseAvatar").objectReferenceValue = AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath);
+            }
             editor.avatarLogicPrefabProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(ver.logicPrefabPath);
 
             editor.customBlendshapesForCreatorProp.ClearArray();
@@ -1434,6 +1600,12 @@ public class CreatorModeModule
         {
             isRestoringFromVersionState = false;
         }
+    }
+
+    private static string GetMetadataString(ModelFileData file, string key)
+    {
+        if (file?.metadata == null || string.IsNullOrWhiteSpace(key)) return null;
+        return file.metadata.TryGetValue(key, out object value) ? value?.ToString() : null;
     }
 
     private IEnumerator BuildAndApplyLocalVersionCoroutine()
@@ -1501,34 +1673,46 @@ public class CreatorModeModule
 
         try
         {
-            // Load the assets from the stored paths
-            var customFbxGO = AssetDatabase.LoadAssetAtPath<GameObject>(unsubmittedVersion.customFbxPath);
-            var customBaseAvatar = AssetDatabase.LoadAssetAtPath<Avatar>(unsubmittedVersion.customBaseAvatarPath);
             var logicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(unsubmittedVersion.logicPrefabPath);
             var customVeinsTexture = !string.IsNullOrEmpty(unsubmittedVersion.customVeinsTexturePath) 
                 ? AssetDatabase.LoadAssetAtPath<Texture2D>(unsubmittedVersion.customVeinsTexturePath) 
                 : null;
 
-            string currentFbxPath = new VersionActions(editor, networkService, fileManagerService).GetCurrentFBXPath();
-            string originalFbxPath = currentFbxPath + FileManagerService.OriginalSuffix;
-            
-            // If .old backup doesn't exist, use the current FBX (first-time submission case)
-            if (!File.Exists(originalFbxPath))
-            {
-                originalFbxPath = currentFbxPath;
-                if (!File.Exists(originalFbxPath))
-                    throw new Exception("FBX file not found. Cannot proceed with version creation.");
-            }
-
-            // Get parent version
-            var parentVersion = editor.serverVersions.FirstOrDefault(v => v.version == unsubmittedVersion.parentVersion);
-            if (!string.IsNullOrEmpty(unsubmittedVersion.parentVersion) && parentVersion == null)
-                throw new Exception("Parent version not found.");
-
             var selectedAsset = editor.GetSelectedAsset();
             if (unsubmittedVersion.assetId <= 0 && selectedAsset != null)
             {
                 unsubmittedVersion.assetId = selectedAsset.id;
+            }
+
+            if (unsubmittedVersion.assetId <= 0)
+                throw new Exception("Unsubmitted version is missing its custom base asset id.");
+            var packageEntries = new List<FileManagerService.ModelFilePackageEntry>();
+            foreach (var versionFile in (unsubmittedVersion.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => string.Equals(file?.role, "PATCH", StringComparison.OrdinalIgnoreCase)))
+            {
+                string sourcePath = GetMetadataString(versionFile, "sourcePath");
+                string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
+                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
+                if (string.IsNullOrWhiteSpace(sourcePath) || (string.IsNullOrWhiteSpace(customFbxPath) && string.IsNullOrWhiteSpace(customAvatarPath)))
+                    throw new Exception("Unsubmitted version patch metadata is incomplete.");
+
+                string originalSourcePath = sourcePath + FileManagerService.OriginalSuffix;
+                if (!File.Exists(originalSourcePath)) originalSourcePath = sourcePath;
+                if (!File.Exists(originalSourcePath))
+                    throw new Exception($"Source FBX file not found for version upload: {sourcePath}");
+
+                var customFbx = string.IsNullOrWhiteSpace(customFbxPath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
+                var customBaseAvatar = string.IsNullOrWhiteSpace(customAvatarPath) ? null : AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath);
+                if (!string.IsNullOrWhiteSpace(customFbxPath) && customFbx == null)
+                    throw new Exception($"Custom FBX asset not found for version upload: {customFbxPath}");
+                if (!string.IsNullOrWhiteSpace(customAvatarPath) && customBaseAvatar == null)
+                    throw new Exception($"Custom avatar asset not found for version upload: {customAvatarPath}");
+
+                packageEntries.Add(new FileManagerService.ModelFilePackageEntry
+                {
+                    sourceFbxPath = originalSourcePath,
+                    customFbx = customFbx,
+                    customBaseAvatar = customBaseAvatar
+                });
             }
 
             EditorUtility.DisplayProgressBar("Preparing Upload", "Creating version package...", 0.3f);
@@ -1538,11 +1722,8 @@ public class CreatorModeModule
                 unsubmittedVersion.assetId,
                 unsubmittedVersion.version,
                 unsubmittedVersion.defaultAviVersion,
-                originalFbxPath,
-                customFbxGO,
-                customBaseAvatar,
+                packageEntries,
                 logicPrefab,
-                parentVersion,
                 unsubmittedVersion.includeCustomVeins ?? false,
                 customVeinsTexture,
                 CollectAnimationAssetPathsFromFixedBy(unsubmittedVersion.customBlendshapes)
