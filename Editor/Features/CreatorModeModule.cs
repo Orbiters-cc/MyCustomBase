@@ -15,6 +15,7 @@ using AutocompleteSearchField;
 public class CreatorModeModule
 {
     private const double AnimationClipLookupCacheTtlSeconds = 2.0d;
+    private const string InitialDefaultAviVersion = "1.0.0";
     private static Dictionary<string, List<AnimationClip>> animationClipsByNameCache;
     private static double animationClipsByNameCacheTimestamp;
     private static bool animationClipProjectChangedHooked;
@@ -207,10 +208,11 @@ public class CreatorModeModule
             newChangelog = EditorGUILayout.TextArea(newChangelog, GUILayout.Height(80));
 
             EditorGUILayout.Space();
+            bool requiresParentVersion = RequiresParentVersion();
             bool canSubmit = editor.customFbxForCreatorProp.objectReferenceValue != null &&
                              editor.avatarLogicPrefabProp.objectReferenceValue != null &&
                              editor.customBaseAvatarForCreatorProp.objectReferenceValue != null &&
-                             selectedParentVersionObject != null &&
+                             (!requiresParentVersion || selectedParentVersionObject != null) &&
                              isVersionValid;
             if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
             {
@@ -744,7 +746,7 @@ public class CreatorModeModule
 
         if (parentVersionDisplayOptions == null || parentVersionDisplayOptions.Count == 0)
         {
-            EditorGUILayout.Popup(0, Array.Empty<string>());
+            EditorGUILayout.Popup(0, new[] { "First version" });
             EditorGUILayout.EndHorizontal();
             HandleParentVersionChanged(null);
             return;
@@ -1147,6 +1149,11 @@ public class CreatorModeModule
         return editor.CompareVersions(newVersionString, baseVersionString) > 0;
     }
 
+    private bool RequiresParentVersion()
+    {
+        return editor.serverVersions != null && editor.serverVersions.Count > 0;
+    }
+
     private (CustomBaseVersion metadata, string zipPath) BuildNewVersion()
     {
         var customFbxGO = editor.customFbxForCreatorProp.objectReferenceValue as GameObject;
@@ -1175,8 +1182,10 @@ public class CreatorModeModule
                 throw new Exception("FBX file not found. Cannot proceed with version creation.");
         }
 
-        if (selectedParentVersionObject == null)
+        bool requiresParentVersion = RequiresParentVersion();
+        if (requiresParentVersion && selectedParentVersionObject == null)
             throw new Exception("A Parent Version must be selected.");
+        string defaultAviVersion = selectedParentVersionObject?.defaultAviVersion ?? InitialDefaultAviVersion;
 
         // Convert CreatorBlendshapeEntry list to CustomBlendshapeEntry array.
         var customBlendshapeEntries = editor.customBaseTarget.customBlendshapesForCreator
@@ -1220,7 +1229,7 @@ public class CreatorModeModule
         string tempZipPath = fileManagerService.CreateVersionPackageForUpload(
             assetId,
             newVersionString,
-            selectedParentVersionObject.defaultAviVersion,
+            defaultAviVersion,
             originalFbxPath,
             customFbxGO,
             customBaseAvatar,
@@ -1236,11 +1245,11 @@ public class CreatorModeModule
         {
             assetId = assetId,
             version = newVersionString,
-            defaultAviVersion = selectedParentVersionObject.defaultAviVersion
+            defaultAviVersion = defaultAviVersion
         });
 
         var extraCustomization = new List<string>();
-        if (selectedParentVersionObject.extraCustomization != null)
+        if (selectedParentVersionObject?.extraCustomization != null)
         {
             extraCustomization.AddRange(selectedParentVersionObject.extraCustomization);
         }
@@ -1290,7 +1299,7 @@ public class CreatorModeModule
             version = newVersionString,
             scope = newVersionScope,
             changelog = newChangelog,
-            defaultAviVersion = selectedParentVersionObject.defaultAviVersion,
+            defaultAviVersion = defaultAviVersion,
             parentVersion = selectedParentVersionObject?.version,
             dependencies = fileManagerService.FindPrefabDependencies(logicPrefab),
             customBlendshapes = customBlendshapeEntries,
@@ -1513,7 +1522,7 @@ public class CreatorModeModule
 
             // Get parent version
             var parentVersion = editor.serverVersions.FirstOrDefault(v => v.version == unsubmittedVersion.parentVersion);
-            if (parentVersion == null)
+            if (!string.IsNullOrEmpty(unsubmittedVersion.parentVersion) && parentVersion == null)
                 throw new Exception("Parent version not found.");
 
             var selectedAsset = editor.GetSelectedAsset();
