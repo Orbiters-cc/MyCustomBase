@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using MCBEditorUtils;
 
@@ -76,6 +77,7 @@ public class VersionActions
 
     private IEnumerator FetchVersionsCoroutine()
     {
+        if (!editor.HasServerAccess) yield break;
         if (editor.isFetching) yield break;
         editor.isFetching = true;
         editor.warningsModule.Clear();
@@ -337,7 +339,37 @@ public class VersionActions
                 if (!isReset)
                 {
                     string packagePath = MCBUtils.GetLogicPackagePath(versionForAssets);
-                    fileManagerService.InstantiateLogicPrefab(packagePath, root);
+                    IEnumerator importLogicRoutine = null;
+                    try
+                    {
+                        importLogicRoutine = fileManagerService.InstantiateLogicPrefabCoroutine(packagePath, root);
+                    }
+                    catch (Exception ex)
+                    {
+                        editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Logic package import failed");
+                        yield break;
+                    }
+
+                    while (true)
+                    {
+                        object current;
+                        try
+                        {
+                            if (importLogicRoutine == null || !importLogicRoutine.MoveNext())
+                            {
+                                break;
+                            }
+
+                            current = importLogicRoutine.Current;
+                        }
+                        catch (Exception ex)
+                        {
+                            editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Logic package import failed");
+                            yield break;
+                        }
+
+                        yield return current;
+                    }
                 }
             }
             editor.customBaseTarget.appliedCustomBaseVersion = version;
@@ -518,6 +550,7 @@ public class VersionActions
         EditorCoroutineUtility.StartCoroutineOwnerless(RecalculateCurrentFbxHashCoroutine());
 
         EditorUtility.SetDirty(editor.customBaseTarget);
+        AutoSaveProjectAfterVersionSwitch();
         editor.Repaint();
     }
 
@@ -899,6 +932,28 @@ public class VersionActions
 
         segments.Reverse();
         return string.Join("/", segments);
+    }
+
+    private void AutoSaveProjectAfterVersionSwitch()
+    {
+        try
+        {
+            AssetDatabase.SaveAssets();
+            bool savedScenes = EditorSceneManager.SaveOpenScenes();
+            if (!savedScenes)
+            {
+                MCBLogger.LogWarning("[VersionActions] Auto-save completed for assets, but one or more open scenes could not be saved.");
+            }
+            else
+            {
+                MCBLogger.Log("[VersionActions] Auto-saved assets and open scenes after version change.");
+            }
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogError($"[VersionActions] Auto-save after version change failed: {ex.Message}");
+            editor.warningsModule.AddWarning("The version switch succeeded, but MCB could not auto-save the project. Save the project manually to persist the scene state.", MessageType.Warning, "Auto-save failed");
+        }
     }
 
     private void RefreshTargetMeshesFromFBXs(Transform root, IEnumerable<string> fbxPaths, CustomBaseVersion version)

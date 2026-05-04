@@ -229,9 +229,14 @@ public class NetworkService
         }
     }
 
-    public class CheckConnectionResponse { public string state; }
+    public class CheckConnectionResponse
+    {
+        public string state;
+        public string latestVersion;
+        public string updateMessage;
+    }
 
-    public async Task<string> CheckConnectionAsync(string url, string authToken = null)
+    public async Task<CheckConnectionResponse> CheckConnectionDetailedAsync(string url, string authToken = null)
     {
         using (var req = UnityWebRequest.Get(url))
         {
@@ -250,7 +255,7 @@ public class NetworkService
                     string body = null;
                     try { body = req.downloadHandler?.text; } catch { /* ignore */ }
                     MCBLogger.LogWarning($"[MCB] Connection check failed: [{code}] [url: {url}] {req.error} {(string.IsNullOrEmpty(body) ? string.Empty : "- " + body)}");
-                    return "disconnected";
+                    return new CheckConnectionResponse { state = "disconnected" };
                 }
 
                 var text = req.downloadHandler.text;
@@ -258,24 +263,30 @@ public class NetworkService
                 try { resp = JsonConvert.DeserializeObject<CheckConnectionResponse>(text); }
                 catch (Exception jex)
                 {
-                    MCBLogger.LogWarning($"[MCB] Invalid connection check response JSON: {jex.Message}");
-                    return "disconnected";
-                }
-                if (resp == null || string.IsNullOrEmpty(resp.state))
+                MCBLogger.LogWarning($"[MCB] Invalid connection check response JSON: {jex.Message}");
+                return new CheckConnectionResponse { state = "disconnected" };
+            }
+            if (resp == null || string.IsNullOrEmpty(resp.state))
                 {
                     MCBLogger.LogWarning("[MCB] Connection check response missing 'state'.");
-                    return "disconnected";
+                    return new CheckConnectionResponse { state = "disconnected" };
                 }
-                if (resp.state == "connected" || resp.state == "limited") return resp.state;
+                if (resp.state == "connected" || resp.state == "limited" || resp.state == "disconnected") return resp;
                 MCBLogger.LogWarning($"[MCB] Connection check returned unexpected state '{resp.state}'. Treating as disconnected.");
-                return "disconnected";
+                return new CheckConnectionResponse { state = "disconnected" };
             }
             catch (Exception ex)
             {
                 MCBLogger.LogWarning($"[MCB] Connection check error: {ex.Message}");
-                return "disconnected";
+                return new CheckConnectionResponse { state = "disconnected" };
             }
         }
+    }
+
+    public async Task<string> CheckConnectionAsync(string url, string authToken = null)
+    {
+        var response = await CheckConnectionDetailedAsync(url, authToken);
+        return response != null && !string.IsNullOrEmpty(response.state) ? response.state : "disconnected";
     }
 
 }

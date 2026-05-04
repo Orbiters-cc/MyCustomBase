@@ -50,14 +50,13 @@ public class VersionManagementModule
     public void Draw()
     {
         // TODO fileConfigDrawer.Draw();
-        bool offlineImportedOnly = !editor.isAuthenticated && editor.importedVersions != null && editor.importedVersions.Count > 0;
-        if (!offlineImportedOnly)
+        if (editor.HasServerAccess)
         {
             DrawFetchUpdatesButton();
         }
         
         // Special UI when user doesn't have access to the asset
-        if (!string.IsNullOrEmpty(editor.accessDeniedAssetId))
+        if (editor.HasServerAccess && !string.IsNullOrEmpty(editor.accessDeniedAssetId))
         {
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox("You currently don't have access to the MCB. Click the button to get to the asset page with instructions to get it:", MessageType.Warning);
@@ -137,7 +136,7 @@ public class VersionManagementModule
             {
                 if (editor.recommendedVersion == null)
                 {
-                    if (!editor.isAuthenticated && availableVersions.Count > 0)
+                    if (!editor.HasServerAccess && availableVersions.Count > 0)
                     {
                         selectedVersion = availableVersions[0];
                         editor.selectedVersionForAction = selectedVersion;

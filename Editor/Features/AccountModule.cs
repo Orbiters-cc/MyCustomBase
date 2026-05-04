@@ -139,8 +139,7 @@ public class AccountModule
             {
                 if (AuthenticationService.RemoveAuth())
                 {
-                    editor.isAuthenticated = false;
-                    editor.authToken = null;
+                    editor.CheckAuthentication();
                     ResetAccountState();
                     editor.Repaint();
                 }

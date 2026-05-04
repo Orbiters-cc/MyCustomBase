@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -168,9 +169,9 @@ public class FileManagerService
         SetRootAnimatorAvatar(root, unityAvatarPath);
     }
 
-    public void InstantiateLogicPrefab(string packagePath, Transform parent)
+    public IEnumerator InstantiateLogicPrefabCoroutine(string packagePath, Transform parent)
     {
-        if (string.IsNullOrEmpty(packagePath) || parent == null) return;
+        if (string.IsNullOrEmpty(packagePath) || parent == null) yield break;
 
         string unityPackagePath = MCBUtils.ToUnityPath(packagePath);
         string absolutePackagePath = Path.GetFullPath(unityPackagePath);
@@ -179,7 +180,60 @@ public class FileManagerService
         if (File.Exists(absolutePackagePath))
         {
             MCBLogger.Log($"[FileManager] Importing unity package at {unityPackagePath}");
-            AssetDatabase.ImportPackage(unityPackagePath, false);
+            bool packageImportFinished = false;
+            bool packageImportFailed = false;
+            bool packageImportCancelled = false;
+            string packageImportFailureMessage = null;
+
+            void HandleImportCompleted(string _) => packageImportFinished = true;
+            void HandleImportCancelled(string _) => packageImportCancelled = true;
+            void HandleImportFailed(string _, string error)
+            {
+                packageImportFailed = true;
+                packageImportFailureMessage = error;
+            }
+
+            AssetDatabase.importPackageCompleted += HandleImportCompleted;
+            AssetDatabase.importPackageCancelled += HandleImportCancelled;
+            AssetDatabase.importPackageFailed += HandleImportFailed;
+
+            try
+            {
+                AssetDatabase.ImportPackage(unityPackagePath, false);
+
+                double startTime = EditorApplication.timeSinceStartup;
+                const double timeoutSeconds = 30.0d;
+                while (!packageImportFinished && !packageImportFailed && !packageImportCancelled)
+                {
+                    if (EditorApplication.timeSinceStartup - startTime > timeoutSeconds)
+                    {
+                        throw new TimeoutException($"Timed out while importing nested package '{unityPackagePath}'.");
+                    }
+
+                    yield return null;
+                }
+            }
+            finally
+            {
+                AssetDatabase.importPackageCompleted -= HandleImportCompleted;
+                AssetDatabase.importPackageCancelled -= HandleImportCancelled;
+                AssetDatabase.importPackageFailed -= HandleImportFailed;
+            }
+
+            if (packageImportCancelled)
+            {
+                MCBLogger.LogWarning($"[FileManager] Unity package import was cancelled: {unityPackagePath}");
+            }
+            else if (packageImportFailed)
+            {
+                throw new InvalidOperationException($"Nested unitypackage import failed for '{unityPackagePath}': {packageImportFailureMessage}");
+            }
+
+            while (EditorApplication.isCompiling || EditorApplication.isUpdating)
+            {
+                yield return null;
+            }
+
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
             MCBLogger.Log("[FileManager] Unity package import completed.");
         }
@@ -193,7 +247,7 @@ public class FileManagerService
         if (string.IsNullOrEmpty(prefabPath))
         {
             MCBLogger.LogWarning($"[FileManager] No logic prefab found in '{versionDataFolderUnity}'.");
-            return;
+            yield break;
         }
 
         string absolutePrefabPath = Path.GetFullPath(prefabPath);
@@ -201,7 +255,7 @@ public class FileManagerService
         if (!File.Exists(absolutePrefabPath))
         {
             MCBLogger.LogWarning($"[FileManager] Expected prefab not found at '{absolutePrefabPath}'.");
-            return;
+            yield break;
         }
 
         MCBLogger.Log($"[FileManager] Importing logic prefab at {prefabPath}");

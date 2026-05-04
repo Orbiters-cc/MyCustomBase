@@ -11,6 +11,9 @@ using Newtonsoft.Json;
 [CustomEditor(typeof(MyCustomBase))]
 public class MCBEditor : UnityEditor.Editor
 {
+    private const float ConnectivityOverrideCardHeight = 86f;
+    private const float ConnectivityOverrideCardSpacing = 6f;
+
     // --- Target & Serialized Object ---
     public MyCustomBase customBaseTarget;
     public new SerializedObject serializedObject;
@@ -70,6 +73,11 @@ public class MCBEditor : UnityEditor.Editor
     // Runtime state for detection
     public string currentAppliedFbxHash;
     public bool customWarningShown;
+
+    public bool HasServerAccess
+    {
+        get { return MCBPackageVersionService.HasServerAccess(authToken); }
+    }
     
     private void OnEnable()
     {
@@ -118,6 +126,8 @@ public class MCBEditor : UnityEditor.Editor
         CheckAuthentication();
         MCBConnectivityMonitor.StatusChanged += RepaintFromConnectivityMonitor;
         MCBConnectivityMonitor.EnsureCheckStarted(authToken);
+        MCBPackageVersionService.StatusChanged += RepaintFromPackageVersionStatus;
+        MCBPackageVersionService.EnsureCheckStarted(authToken);
         
         // Ensure modules are enabled
         versionModule.OnEnable();
@@ -144,6 +154,7 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         MCBConnectivityMonitor.StatusChanged -= RepaintFromConnectivityMonitor;
+        MCBPackageVersionService.StatusChanged -= RepaintFromPackageVersionStatus;
         EditorApplication.projectChanged -= OnProjectChanged;
         EditorApplication.hierarchyChanged -= OnHierarchyChanged;
     }
@@ -238,7 +249,7 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         var cached = versionService.GetCachedVersions(fbxPath, authToken, selectedAsset.id);
-        if (cached.versions.Count > 0)
+        if (HasServerAccess && cached.versions.Count > 0)
         {
             serverVersions = cached.versions;
             recommendedVersion = cached.recommended;
@@ -251,7 +262,7 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         // Start background version fetch (will update UI when complete)
-        if (isAuthenticated)
+        if (HasServerAccess)
         {
             fetchAttempted = true;
             versionService.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false);
@@ -355,9 +366,20 @@ public class MCBEditor : UnityEditor.Editor
                 SafeUiCall(() => authModule.DrawMagicSyncAuth());
             }
 
-            bool showOfflineSavedVersionsUi = !isAuthenticated && importedVersions != null && importedVersions.Count > 0;
+            bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
+            bool showOfflineSavedVersionsUi = !HasServerAccess && importedVersions != null && importedVersions.Count > 0;
 
-            if (isAuthenticated)
+            if (hasMajorUpdateLockout)
+            {
+                SafeUiCall(DrawMajorUpdateRequiredInfo);
+                if (showOfflineSavedVersionsUi)
+                {
+                    SafeUiCall(DrawOfflineSavedVersionsInfo);
+                    SafeUiCall(() => versionModule.Draw());
+                    SafeUiCall(() => avatarOptionsModule?.Draw());
+                }
+            }
+            else if (HasServerAccess)
             {
                 SafeUiCall(() => assetGalleryModule?.DrawSelectedAssetHeader());
                 SafeUiCall(() => assetGalleryModule?.Draw());
@@ -439,8 +461,7 @@ public class MCBEditor : UnityEditor.Editor
             {
                 if (AuthenticationService.RemoveAuth())
                 {
-                    isAuthenticated = false;
-                    authToken = null;
+                    CheckAuthentication();
                     Repaint();
                 }
             }
@@ -526,7 +547,13 @@ public class MCBEditor : UnityEditor.Editor
 
     private void DrawConnectivityDiagnosticsPanel()
     {
-        if (string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport))
+        bool isDevModeEnabled = MCBUtils.isDevEnvironment;
+        ApiSimulationMode simulationMode = MCBUtils.apiSimulationMode;
+        bool isFakeNetworkErrorEnabled = simulationMode != ApiSimulationMode.Off;
+        bool hasOverrideUi = isDevModeEnabled || isFakeNetworkErrorEnabled;
+        bool hasFailureReport = !string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
+
+        if (!hasFailureReport && !hasOverrideUi)
         {
             return;
         }
@@ -534,23 +561,136 @@ public class MCBEditor : UnityEditor.Editor
         EditorGUILayout.Space(4);
         using (new EditorGUILayout.VerticalScope("box"))
         {
-            EditorGUILayout.HelpBox("The tool cannot connect to the server, copy the data bellow and send it to @blackorbit on discord", MessageType.Error);
-
-            connectivityReportScroll = EditorGUILayout.BeginScrollView(connectivityReportScroll, GUILayout.MinHeight(140f));
-            var style = new GUIStyle(EditorStyles.textArea) { wordWrap = false };
-            EditorGUILayout.TextArea(MCBConnectivityMonitor.FailureReport, style, GUILayout.ExpandHeight(true));
-            EditorGUILayout.EndScrollView();
-
-            if (GUILayout.Button("copy in the clipboard", GUILayout.Height(24f)))
+            if (hasFailureReport)
             {
-                EditorGUIUtility.systemCopyBuffer = MCBConnectivityMonitor.FailureReport;
+                EditorGUILayout.HelpBox("The tool cannot connect to the server, copy the data bellow and send it to @blackorbit on discord", MessageType.Error);
             }
+
+            if (isDevModeEnabled || isFakeNetworkErrorEnabled)
+            {
+                EditorGUILayout.LabelField("Some advanced connectivity overrides are enabled.", EditorStyles.boldLabel);
+                DrawConnectivityOverrideBoxes(isDevModeEnabled, isFakeNetworkErrorEnabled, simulationMode);
+
+                Color oldColor = GUI.backgroundColor;
+                GUI.backgroundColor = Color.green;
+                if (GUILayout.Button("Refresh with overrides off", GUILayout.Height(32f)))
+                {
+                    RefreshWithOverridesOff();
+                }
+                GUI.backgroundColor = oldColor;
+            }
+
+            if (hasFailureReport)
+            {
+                connectivityReportScroll = EditorGUILayout.BeginScrollView(connectivityReportScroll, GUILayout.MinHeight(140f));
+                var style = new GUIStyle(EditorStyles.textArea) { wordWrap = false };
+                EditorGUILayout.TextArea(MCBConnectivityMonitor.FailureReport, style, GUILayout.ExpandHeight(true));
+                EditorGUILayout.EndScrollView();
+
+                if (GUILayout.Button("copy in the clipboard", GUILayout.Height(24f)))
+                {
+                    EditorGUIUtility.systemCopyBuffer = MCBConnectivityMonitor.FailureReport;
+                }
+            }
+        }
+    }
+
+    private void DrawConnectivityOverrideBoxes(bool isDevModeEnabled, bool isFakeNetworkErrorEnabled, ApiSimulationMode simulationMode)
+    {
+        int cardCount = 0;
+        if (isDevModeEnabled) cardCount++;
+        if (isFakeNetworkErrorEnabled) cardCount++;
+        if (cardCount <= 0) return;
+
+        Rect rowRect = GUILayoutUtility.GetRect(0f, ConnectivityOverrideCardHeight, GUILayout.ExpandWidth(true));
+        float cardWidth = (rowRect.width - (ConnectivityOverrideCardSpacing * (cardCount - 1))) / cardCount;
+        float currentX = rowRect.x;
+
+        if (isDevModeEnabled)
+        {
+            Rect cardRect = new Rect(currentX, rowRect.y, cardWidth, ConnectivityOverrideCardHeight);
+            DrawConnectivityOverrideBox(
+                cardRect,
+                "Dev mode",
+                "Requests are using the dev environment endpoints.",
+                DisableDevModeOverrideAndRefresh);
+            currentX += cardWidth + ConnectivityOverrideCardSpacing;
+        }
+
+        if (isFakeNetworkErrorEnabled)
+        {
+            Rect cardRect = new Rect(currentX, rowRect.y, cardWidth, ConnectivityOverrideCardHeight);
+            DrawConnectivityOverrideBox(
+                cardRect,
+                "Fake network error",
+                GetConnectivitySimulationLabel(simulationMode),
+                DisableFakeNetworkErrorOverrideAndRefresh);
+        }
+    }
+
+    private static string GetConnectivitySimulationLabel(ApiSimulationMode simulationMode)
+    {
+        switch (simulationMode)
+        {
+            case ApiSimulationMode.TransportFailure:
+                return "Transport Failure";
+            case ApiSimulationMode.SslFailure:
+                return "SSL Failure";
+            default:
+                return "Off";
+        }
+    }
+
+    private void DrawConnectivityOverrideBox(Rect rect, string title, string description, Action onTurnOff)
+    {
+        GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
+
+        Rect contentRect = new Rect(rect.x + 8f, rect.y + 8f, rect.width - 16f, rect.height - 16f);
+        Rect titleRect = new Rect(contentRect.x, contentRect.y, contentRect.width, 18f);
+        GUI.Label(titleRect, title, EditorStyles.boldLabel);
+
+        float buttonHeight = 22f;
+        float buttonWidth = Mathf.Min(90f, contentRect.width);
+        Rect buttonRect = new Rect(contentRect.x, contentRect.yMax - buttonHeight, buttonWidth, buttonHeight);
+
+        float descriptionY = titleRect.yMax + 4f;
+        float descriptionHeight = Mathf.Max(16f, buttonRect.y - descriptionY - 6f);
+        Rect descriptionRect = new Rect(contentRect.x, descriptionY, contentRect.width, descriptionHeight);
+        GUI.Label(descriptionRect, description, EditorStyles.wordWrappedLabel);
+
+        if (GUI.Button(buttonRect, "Turn off"))
+        {
+            onTurnOff?.Invoke();
         }
     }
 
     private void DrawOfflineSavedVersionsInfo()
     {
         EditorGUILayout.HelpBox("Imported saved versions are available offline. You can apply them or reset to the original avatar base without logging in.", MessageType.Info);
+    }
+
+    private void DrawMajorUpdateRequiredInfo()
+    {
+        var status = MCBPackageVersionService.CurrentStatus;
+        if (status == null || !status.requiresMajorUpdate)
+        {
+            return;
+        }
+
+        var titleStyle = new GUIStyle(EditorStyles.boldLabel);
+        titleStyle.fontSize = 20;
+        titleStyle.alignment = TextAnchor.MiddleCenter;
+        titleStyle.normal.textColor = new Color(0.85f, 0.15f, 0.15f);
+
+        EditorGUILayout.Space(8f);
+        EditorGUILayout.LabelField("Update needed !", titleStyle, GUILayout.Height(28f));
+        EditorGUILayout.Space(4f);
+
+        string message = string.IsNullOrWhiteSpace(status.updateMessage)
+            ? $"A new major version of MCB is available.\n\nCurrent version: {status.currentVersion}\nLatest version: {status.latestVersion}\n\nUpdate the package from VCC before using connected features."
+            : status.updateMessage;
+
+        EditorGUILayout.HelpBox(message, MessageType.Warning);
     }
     
     public void CheckAuthentication()
@@ -562,6 +702,7 @@ public class MCBEditor : UnityEditor.Editor
             accessDeniedAssetId = null;
             fetchError = null;
         }
+        MCBPackageVersionService.EnsureCheckStarted(authToken, true);
         accountModule?.Refresh();
         assetGalleryModule?.OnAuthenticationChanged();
     }
@@ -584,7 +725,7 @@ public class MCBEditor : UnityEditor.Editor
 
         string fbxPath = GetCurrentFBXPath();
         var selectedAsset = GetSelectedAsset();
-        if (!string.IsNullOrEmpty(fbxPath) && isAuthenticated && selectedAsset != null)
+        if (!string.IsNullOrEmpty(fbxPath) && HasServerAccess && selectedAsset != null)
         {
             fetchAttempted = true;
             versionService?.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false);
@@ -593,6 +734,47 @@ public class MCBEditor : UnityEditor.Editor
         {
             assetGalleryModule?.RefreshIfNeeded(force: true);
         }
+    }
+
+    public void DisableDevModeOverride()
+    {
+        if (!MCBUtils.isDevEnvironment) return;
+        MCBUtils.isDevEnvironment = false;
+        CheckAuthentication();
+        Repaint();
+    }
+
+    public void DisableFakeNetworkErrorOverride()
+    {
+        if (MCBUtils.apiSimulationMode == ApiSimulationMode.Off) return;
+        MCBUtils.apiSimulationMode = ApiSimulationMode.Off;
+        Repaint();
+    }
+
+    public void DisableDevModeOverrideAndRefresh()
+    {
+        DisableDevModeOverride();
+        MCBConnectivityMonitor.Retry(authToken);
+        RefreshAccountAndVersions();
+        Repaint();
+    }
+
+    public void DisableFakeNetworkErrorOverrideAndRefresh()
+    {
+        DisableFakeNetworkErrorOverride();
+        MCBConnectivityMonitor.Retry(authToken);
+        RefreshAccountAndVersions();
+        Repaint();
+    }
+
+    public void RefreshWithOverridesOff()
+    {
+        DisableDevModeOverride();
+        DisableFakeNetworkErrorOverride();
+        CheckAuthentication();
+        MCBConnectivityMonitor.Retry(authToken);
+        RefreshAccountAndVersions();
+        Repaint();
     }
 
     private void FindSerializedProperties()
@@ -691,7 +873,7 @@ public class MCBEditor : UnityEditor.Editor
 
     public List<CustomBaseVersion> GetAllVersions()
     {
-        if (!isAuthenticated)
+        if (!HasServerAccess)
         {
             return importedVersions
                 .Where(v => v != null)
@@ -935,6 +1117,11 @@ public class MCBEditor : UnityEditor.Editor
     }
 
     private void RepaintFromConnectivityMonitor()
+    {
+        Repaint();
+    }
+
+    private void RepaintFromPackageVersionStatus()
     {
         Repaint();
     }

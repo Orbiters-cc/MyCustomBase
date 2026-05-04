@@ -60,8 +60,7 @@ public class AuthenticationModule
             {
                 if (AuthenticationService.RemoveAuth())
                 {
-                    editor.isAuthenticated = false;
-                    editor.authToken = null;
+                    editor.CheckAuthentication();
                     editor.Repaint();
                 }
             }

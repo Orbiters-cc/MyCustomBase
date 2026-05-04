@@ -2,6 +2,7 @@
 using UnityEditor;
 using UnityEngine;
 using System.IO;
+using System.Threading.Tasks;
 
 public class AdvancedModeModule
 {
@@ -19,12 +20,18 @@ public class AdvancedModeModule
     private string fbxHash;
     private string fbxHashError;
     private bool fbxHashBusy = false;
+    private bool connectionMockEnabledDraft;
+    private string connectionMockJsonDraft;
+    private string connectionMockError;
+    private bool connectionMockBusy;
     
     public AdvancedModeModule(MCBEditor editor)
     {
         this.editor = editor;
         dynamicNormalsService = new DynamicNormalsService(editor);
         blendShapeLinkTestDrawer = new BlendShapeLinkTestDrawer(editor);
+        connectionMockEnabledDraft = MCBPackageVersionService.IsMockEnabled;
+        connectionMockJsonDraft = MCBPackageVersionService.MockResponseJson;
         // Ensure issue reporter subscribes according to current settings
         EditorIssueReporter.RefreshListener();
     }
@@ -118,6 +125,8 @@ public class AdvancedModeModule
                     "SSL Failure points requests to https://wrong.host.badssl.com.\n" +
                     "Turn this back to Off before using Magic Sync normally.",
                     MessageType.None);
+
+                DrawConnectionMockControls();
 
                 EditorGUILayout.BeginHorizontal();
                 GUILayout.Space(EditorGUI.indentLevel * 15);
@@ -649,6 +658,109 @@ public class AdvancedModeModule
 
         // Draw using shared util (rounded chip with border)
         EditorUIUtils.DrawChipLabel(label, isActive ? bg : bgInactive, txt, border, width: 70, height: 20, cornerRadius: 8f, borderWidth: 1.0f);
+    }
+
+    private void DrawConnectionMockControls()
+    {
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Check Connection Mock", EditorStyles.boldLabel);
+
+        connectionMockEnabledDraft = EditorGUILayout.Toggle(
+            new GUIContent("Enable mock", "When enabled, MCB package version checks use the JSON below instead of the real /unity-wizard/check-connection response."),
+            connectionMockEnabledDraft);
+
+        if (string.IsNullOrWhiteSpace(connectionMockJsonDraft))
+        {
+            connectionMockJsonDraft = MCBPackageVersionService.MockResponseJson;
+        }
+
+        EditorGUILayout.LabelField("Mock JSON");
+        connectionMockJsonDraft = EditorGUILayout.TextArea(connectionMockJsonDraft ?? string.Empty, GUILayout.MinHeight(110f));
+
+        if (!string.IsNullOrEmpty(connectionMockError))
+        {
+            EditorGUILayout.HelpBox(connectionMockError, MessageType.Error);
+        }
+
+        using (new EditorGUI.DisabledScope(connectionMockBusy))
+        {
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(EditorGUI.indentLevel * 15);
+
+            if (GUILayout.Button("Apply", GUILayout.Width(100f)))
+            {
+                ApplyConnectionMock();
+            }
+
+            if (GUILayout.Button(connectionMockBusy ? "Fetching..." : "Fetch", GUILayout.Width(100f)))
+            {
+                _ = FetchRealConnectionMockAsync();
+            }
+
+            EditorGUILayout.EndHorizontal();
+        }
+
+        EditorGUILayout.HelpBox(
+            "Disabled by default. The text area is initialized from the first real /unity-wizard/check-connection response MCB receives. " +
+            "Apply saves the current draft and refreshes the package-version status. Fetch pulls the real server response and replaces the draft JSON.",
+            MessageType.None);
+    }
+
+    private void ApplyConnectionMock()
+    {
+        connectionMockError = null;
+        if (!MCBPackageVersionService.TryApplyMock(connectionMockJsonDraft, connectionMockEnabledDraft, out var error))
+        {
+            connectionMockError = error;
+            return;
+        }
+
+        editor.CheckAuthentication();
+        editor.Repaint();
+    }
+
+    private async Task FetchRealConnectionMockAsync()
+    {
+        if (connectionMockBusy)
+        {
+            return;
+        }
+
+        connectionMockBusy = true;
+        connectionMockError = null;
+        editor.Repaint();
+
+        try
+        {
+            var result = await MCBPackageVersionService.FetchRealResponseJsonAsync(editor.authToken);
+            EditorApplication.delayCall += () =>
+            {
+                connectionMockBusy = false;
+                if (!result.success)
+                {
+                    connectionMockError = "Fetch failed: " + result.error;
+                }
+                else
+                {
+                    connectionMockJsonDraft = result.json;
+                    connectionMockError = null;
+                    if (!connectionMockEnabledDraft)
+                    {
+                        editor.CheckAuthentication();
+                    }
+                }
+                editor.Repaint();
+            };
+        }
+        catch (System.Exception ex)
+        {
+            EditorApplication.delayCall += () =>
+            {
+                connectionMockBusy = false;
+                connectionMockError = "Fetch failed: " + ex.Message;
+                editor.Repaint();
+            };
+        }
     }
 }
 #endif
