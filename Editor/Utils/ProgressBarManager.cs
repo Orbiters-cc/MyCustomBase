@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+﻿#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using UnityEditor;
@@ -21,6 +21,7 @@ public class ProgressBarManager
     private readonly Dictionary<string, double> taskStartTimes = new Dictionary<string, double>();
     private readonly Dictionary<string, double> scheduledRemovalTimes = new Dictionary<string, double>();
     private readonly AsyncTaskManager taskManager;
+    private bool repaintScheduled; 
 
     private const double LINGER_SECONDS = 1.5;         // how long a completed task stays visible
     private const double MIN_DISPLAY_SECONDS = 0.25;   // hide tasks that complete faster than this
@@ -46,8 +47,7 @@ public class ProgressBarManager
         {
             visibleTasks[task.id] = task;
             taskStartTimes[task.id] = EditorApplication.timeSinceStartup;
-            // Request UI repaint
-            EditorApplication.delayCall += () => EditorWindow.focusedWindow?.Repaint();
+            ScheduleRepaint();
         }
     }
 
@@ -57,8 +57,7 @@ public class ProgressBarManager
         if (visibleTasks.ContainsKey(task.id))
         {
             visibleTasks[task.id] = task;
-            // Request UI repaint
-            EditorApplication.delayCall += () => EditorWindow.focusedWindow?.Repaint();
+            ScheduleRepaint();
         }
     }
 
@@ -78,12 +77,13 @@ public class ProgressBarManager
                 visibleTasks.Remove(task.id);
                 taskStartTimes.Remove(task.id);
                 scheduledRemovalTimes.Remove(task.id);
-                EditorWindow.focusedWindow?.Repaint();
+                ScheduleRepaint();
                 return;
             }
 
             // Otherwise, schedule removal after a short linger period
             scheduledRemovalTimes[task.id] = now + LINGER_SECONDS;
+            ScheduleRepaint();
         }
     }
 
@@ -130,9 +130,24 @@ public class ProgressBarManager
 
         if (removedAny)
         {
+            ScheduleRepaint();
+        }
+    }
+
+    private void ScheduleRepaint()
+    {
+        if (repaintScheduled)
+        {
+            return;
+        }
+
+        repaintScheduled = true;
+        EditorApplication.delayCall += () =>
+        {
+            repaintScheduled = false;
             var win = EditorWindow.focusedWindow;
             if (win != null) win.Repaint();
-        }
+        };
     }
 
     /// <summary>

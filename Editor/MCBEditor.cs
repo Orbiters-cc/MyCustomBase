@@ -11,6 +11,7 @@ using Newtonsoft.Json;
 [CustomEditor(typeof(MyCustomBase))]
 public class MCBEditor : UnityEditor.Editor
 {
+    private const string DevModeWarningEnabledPrefKey = "MCB.DevModeWarningEnabled";
     private const float ConnectivityOverrideCardHeight = 86f;
     private const float ConnectivityOverrideCardSpacing = 6f;
 
@@ -77,6 +78,19 @@ public class MCBEditor : UnityEditor.Editor
     public bool HasServerAccess
     {
         get { return MCBPackageVersionService.HasServerAccess(authToken); }
+    }
+
+    public static bool IsDevModeWarningEnabled
+    {
+        get
+        {
+            try { return EditorPrefs.GetBool(DevModeWarningEnabledPrefKey, true); }
+            catch { return true; }
+        }
+        set
+        {
+            try { EditorPrefs.SetBool(DevModeWarningEnabledPrefKey, value); } catch { }
+        }
     }
     
     private void OnEnable()
@@ -548,9 +562,10 @@ public class MCBEditor : UnityEditor.Editor
     private void DrawConnectivityDiagnosticsPanel()
     {
         bool isDevModeEnabled = MCBUtils.isDevEnvironment;
+        bool showDevModeWarning = isDevModeEnabled && IsDevModeWarningEnabled;
         ApiSimulationMode simulationMode = MCBUtils.apiSimulationMode;
         bool isFakeNetworkErrorEnabled = simulationMode != ApiSimulationMode.Off;
-        bool hasOverrideUi = isDevModeEnabled || isFakeNetworkErrorEnabled;
+        bool hasOverrideUi = showDevModeWarning || isFakeNetworkErrorEnabled;
         bool hasFailureReport = !string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
 
         if (!hasFailureReport && !hasOverrideUi)
@@ -566,10 +581,10 @@ public class MCBEditor : UnityEditor.Editor
                 EditorGUILayout.HelpBox("The tool cannot connect to the server, copy the data bellow and send it to @blackorbit on discord", MessageType.Error);
             }
 
-            if (isDevModeEnabled || isFakeNetworkErrorEnabled)
+            if (hasOverrideUi)
             {
                 EditorGUILayout.LabelField("Some advanced connectivity overrides are enabled.", EditorStyles.boldLabel);
-                DrawConnectivityOverrideBoxes(isDevModeEnabled, isFakeNetworkErrorEnabled, simulationMode);
+                DrawConnectivityOverrideBoxes(showDevModeWarning, isFakeNetworkErrorEnabled, simulationMode);
 
                 Color oldColor = GUI.backgroundColor;
                 GUI.backgroundColor = Color.green;

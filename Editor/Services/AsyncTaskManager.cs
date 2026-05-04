@@ -43,10 +43,16 @@ public class AsyncTaskManager
         }
     }
 
-    private Dictionary<string, TaskProgress> activeTasks = new Dictionary<string, TaskProgress>();
-    private Dictionary<string, Task> runningTasks = new Dictionary<string, Task>();
-    private Dictionary<string, List<string>> taskDependencies = new Dictionary<string, List<string>>();
-    private List<Action> mainThreadCallbacks = new List<Action>();
+    private static readonly TimeSpan CompletedTaskRetention = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(30);
+
+    private readonly object taskStateLock = new object();
+    private readonly Dictionary<string, TaskProgress> activeTasks = new Dictionary<string, TaskProgress>();
+    private readonly Dictionary<string, Task> runningTasks = new Dictionary<string, Task>();
+    private readonly Dictionary<string, List<string>> taskDependencies = new Dictionary<string, List<string>>();
+    private readonly Dictionary<string, DateTime> completedTaskTimes = new Dictionary<string, DateTime>();
+    private readonly List<Action> mainThreadCallbacks = new List<Action>();
+    private DateTime lastCleanupUtc = DateTime.MinValue;
 
     public event Action<TaskProgress> OnTaskProgressChanged;
     public event Action<TaskProgress> OnTaskCompleted;
@@ -65,19 +71,24 @@ public class AsyncTaskManager
 
     public TaskProgress StartTask(string taskId, string description, bool hideInUi, List<string> dependencies = null)
     {
-        if (activeTasks.ContainsKey(taskId))
+        TaskProgress taskProgress;
+        lock (taskStateLock)
         {
-            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' already exists. Returning existing task.");
-            return activeTasks[taskId];
-        }
+            if (activeTasks.ContainsKey(taskId))
+            {
+                MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' already exists. Returning existing task.");
+                return activeTasks[taskId];
+            }
 
-        var taskProgress = new TaskProgress(taskId, description);
-        taskProgress.isUiHidden = hideInUi;
-        activeTasks[taskId] = taskProgress;
-        
-        if (dependencies != null && dependencies.Count > 0)
-        {
-            taskDependencies[taskId] = new List<string>(dependencies);
+            taskProgress = new TaskProgress(taskId, description);
+            taskProgress.isUiHidden = hideInUi;
+            activeTasks[taskId] = taskProgress;
+            completedTaskTimes.Remove(taskId);
+
+            if (dependencies != null && dependencies.Count > 0)
+            {
+                taskDependencies[taskId] = new List<string>(dependencies);
+            }
         }
 
         OnTaskStarted?.Invoke(taskProgress);
@@ -88,40 +99,42 @@ public class AsyncTaskManager
 
     public void UpdateTaskProgress(string taskId, float progress, string description = null)
     {
-        if (!activeTasks.TryGetValue(taskId, out var taskProgress))
+        TaskProgress taskProgress;
+        lock (taskStateLock)
         {
-            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for progress update.");
-            return;
-        }
+            if (!activeTasks.TryGetValue(taskId, out taskProgress))
+            {
+                MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for progress update.");
+                return;
+            }
 
-        taskProgress.progress = Mathf.Clamp01(progress);
-        if (!string.IsNullOrEmpty(description))
-            taskProgress.description = description;
+            taskProgress.progress = Mathf.Clamp01(progress);
+            if (!string.IsNullOrEmpty(description))
+                taskProgress.description = description;
+        }
 
         ExecuteOnMainThread(() => OnTaskProgressChanged?.Invoke(taskProgress));
     }
 
     public void CompleteTask(string taskId, bool hasError = false, string errorMessage = null)
     {
-        if (!activeTasks.TryGetValue(taskId, out var taskProgress))
+        TaskProgress taskProgress;
+        lock (taskStateLock)
         {
-            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for completion.");
-            return;
-        }
+            if (!activeTasks.TryGetValue(taskId, out taskProgress))
+            {
+                MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for completion.");
+                return;
+            }
 
-        taskProgress.isCompleted = true;
-        taskProgress.hasError = hasError;
-        taskProgress.errorMessage = errorMessage;
-        taskProgress.progress = 1.0f;
+            taskProgress.isCompleted = true;
+            taskProgress.hasError = hasError;
+            taskProgress.errorMessage = errorMessage;
+            taskProgress.progress = 1.0f;
 
-        if (runningTasks.ContainsKey(taskId))
-        {
             runningTasks.Remove(taskId);
-        }
-
-        if (taskDependencies.ContainsKey(taskId))
-        {
             taskDependencies.Remove(taskId);
+            completedTaskTimes[taskId] = DateTime.UtcNow;
         }
 
         ExecuteOnMainThread(() => 
@@ -133,23 +146,20 @@ public class AsyncTaskManager
 
     public void CancelTask(string taskId)
     {
-        if (!activeTasks.TryGetValue(taskId, out var taskProgress))
+        TaskProgress taskProgress;
+        lock (taskStateLock)
         {
-            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for cancellation.");
-            return;
-        }
+            if (!activeTasks.TryGetValue(taskId, out taskProgress))
+            {
+                MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' not found for cancellation.");
+                return;
+            }
 
-        taskProgress.isCancelled = true;
-        taskProgress.isCompleted = true;
-
-        if (runningTasks.ContainsKey(taskId))
-        {
+            taskProgress.isCancelled = true;
+            taskProgress.isCompleted = true;
             runningTasks.Remove(taskId);
-        }
-
-        if (taskDependencies.ContainsKey(taskId))
-        {
             taskDependencies.Remove(taskId);
+            completedTaskTimes[taskId] = DateTime.UtcNow;
         }
 
         ExecuteOnMainThread(() => 
@@ -161,41 +171,53 @@ public class AsyncTaskManager
 
     public bool AreTasksDependenciesSatisfied(string taskId)
     {
-        if (!taskDependencies.TryGetValue(taskId, out var dependencies))
-            return true; // No dependencies
-
-        foreach (var depId in dependencies)
+        lock (taskStateLock)
         {
-            if (!activeTasks.TryGetValue(depId, out var depTask) || !depTask.isCompleted || depTask.hasError)
-                return false;
-        }
+            if (!taskDependencies.TryGetValue(taskId, out var dependencies))
+                return true; // No dependencies
 
-        return true;
+            foreach (var depId in dependencies)
+            {
+                if (!activeTasks.TryGetValue(depId, out var depTask) || !depTask.isCompleted || depTask.hasError)
+                    return false;
+            }
+
+            return true;
+        }
     }
 
     public TaskProgress GetTaskProgress(string taskId)
     {
-        activeTasks.TryGetValue(taskId, out var taskProgress);
-        return taskProgress;
+        lock (taskStateLock)
+        {
+            activeTasks.TryGetValue(taskId, out var taskProgress);
+            return taskProgress;
+        }
     }
 
     public List<TaskProgress> GetAllActiveTasks()
     {
         var result = new List<TaskProgress>();
-        foreach (var task in activeTasks.Values)
+        lock (taskStateLock)
         {
-            if (!task.isCompleted)
-                result.Add(task);
+            foreach (var task in activeTasks.Values)
+            {
+                if (!task.isCompleted)
+                    result.Add(task);
+            }
         }
         return result;
     }
 
     public Task RunTaskAsync<T>(string taskId, Func<IProgress<float>, Task<T>> taskFunc, Action<T> onCompleted = null)
     {
-        if (runningTasks.ContainsKey(taskId))
+        lock (taskStateLock)
         {
-            MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' is already running.");
-            return runningTasks[taskId];
+            if (runningTasks.ContainsKey(taskId))
+            {
+                MCBLogger.LogWarning($"[AsyncTaskManager] Task '{taskId}' is already running.");
+                return runningTasks[taskId];
+            }
         }
 
         var progress = new Progress<float>(p => UpdateTaskProgress(taskId, p));
@@ -222,7 +244,17 @@ public class AsyncTaskManager
             }
         });
 
-        runningTasks[taskId] = task;
+        lock (taskStateLock)
+        {
+            if (activeTasks.TryGetValue(taskId, out var taskProgress) && taskProgress.isCompleted)
+            {
+                runningTasks.Remove(taskId);
+            }
+            else
+            {
+                runningTasks[taskId] = task;
+            }
+        }
         return task;
     }
 
@@ -368,11 +400,13 @@ public class AsyncTaskManager
 
     private void ProcessMainThreadCallbacks()
     {
-        if (mainThreadCallbacks.Count == 0) return;
+        CleanupCompletedTasksIfNeeded();
 
         List<Action> callbacksToExecute;
         lock (mainThreadCallbacks)
         {
+            if (mainThreadCallbacks.Count == 0) return;
+
             callbacksToExecute = new List<Action>(mainThreadCallbacks);
             mainThreadCallbacks.Clear();
         }
@@ -393,19 +427,54 @@ public class AsyncTaskManager
     public void CleanupCompletedTasks()
     {
         var keysToRemove = new List<string>();
-        foreach (var kvp in activeTasks)
+        DateTime now = DateTime.UtcNow;
+
+        lock (taskStateLock)
         {
-            if (kvp.Value.isCompleted && DateTime.Now.Subtract(TimeSpan.FromMinutes(5)).Ticks > 0) // Keep completed tasks for 5 minutes
+            foreach (var kvp in activeTasks)
             {
-                keysToRemove.Add(kvp.Key);
+                if (!kvp.Value.isCompleted && !kvp.Value.isCancelled)
+                {
+                    continue;
+                }
+
+                if (!completedTaskTimes.TryGetValue(kvp.Key, out var completedAt))
+                {
+                    completedAt = now;
+                    completedTaskTimes[kvp.Key] = completedAt;
+                }
+
+                if (now - completedAt >= CompletedTaskRetention)
+                {
+                    keysToRemove.Add(kvp.Key);
+                }
+            }
+
+            foreach (var key in keysToRemove)
+            {
+                activeTasks.Remove(key);
+                runningTasks.Remove(key);
+                taskDependencies.Remove(key);
+                completedTaskTimes.Remove(key);
             }
         }
 
         foreach (var key in keysToRemove)
         {
-            activeTasks.Remove(key);
             MCBLogger.Log($"[AsyncTaskManager] Cleaned up completed task: {key}");
         }
+    }
+
+    private void CleanupCompletedTasksIfNeeded()
+    {
+        DateTime now = DateTime.UtcNow;
+        if (now - lastCleanupUtc < CleanupInterval)
+        {
+            return;
+        }
+
+        lastCleanupUtc = now;
+        CleanupCompletedTasks();
     }
 }
 #endif

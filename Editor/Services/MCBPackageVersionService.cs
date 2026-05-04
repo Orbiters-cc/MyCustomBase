@@ -19,6 +19,7 @@ public static class MCBPackageVersionService
     private static string lastRequestedToken;
     private static bool hasPendingForcedCheck;
     private static string pendingAuthToken;
+    private static bool hierarchyScanQueued;
 
     public static PackageVersionStatus CurrentStatus { get; private set; }
     public static event Action StatusChanged;
@@ -101,6 +102,18 @@ public static class MCBPackageVersionService
 
     private static void OnHierarchyChanged()
     {
+        if (hierarchyScanQueued)
+        {
+            return;
+        }
+
+        hierarchyScanQueued = true;
+        EditorApplication.delayCall += ProcessQueuedHierarchyChanged;
+    }
+
+    private static void ProcessQueuedHierarchyChanged()
+    {
+        hierarchyScanQueued = false;
         int currentCount = CountLoadedMCBComponents();
         bool addedComponent = lastKnownMCBCount >= 0 && currentCount > lastKnownMCBCount;
         lastKnownMCBCount = currentCount;

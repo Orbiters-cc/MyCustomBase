@@ -65,6 +65,14 @@ public class AdvancedModeModule
                     editor.CheckAuthentication(); // Refresh auth token for the selected environment
                 }
 
+                bool currentDevModeWarning = MCBEditor.IsDevModeWarningEnabled;
+                bool newDevModeWarning = EditorGUILayout.Toggle("enable dev mode warning", currentDevModeWarning);
+                if (newDevModeWarning != currentDevModeWarning)
+                {
+                    MCBEditor.IsDevModeWarningEnabled = newDevModeWarning;
+                    editor.Repaint();
+                }
+
                 // Magic Sync buttons for each environment
                 EditorGUILayout.BeginHorizontal();
                 GUILayout.Space(EditorGUI.indentLevel * 15);
