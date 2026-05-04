@@ -17,10 +17,13 @@ public static class BlenderSyncService
     private const string ReadyKind = "orbiters.mcb.blenderExportReady";
     private const int ProtocolVersion = 1;
     private const double BlenderHeartbeatTimeoutSeconds = 4.0;
+    private const double PollIntervalSeconds = 0.5;
+    private const double PersistedSessionMaxAgeDays = 2.0;
 
     private static readonly List<ActiveSession> ActiveSessions = new List<ActiveSession>();
     private static bool pollingHooked;
     private static bool sessionsRestored;
+    private static double nextPollTime;
     private static string lastStatus;
     private static MessageType lastStatusType = MessageType.Info;
 
@@ -292,6 +295,14 @@ public static class BlenderSyncService
     {
         RestorePersistedSessionsIfNeeded();
         if (ActiveSessions.Count == 0) return;
+
+        double now = EditorApplication.timeSinceStartup;
+        if (now < nextPollTime)
+        {
+            return;
+        }
+
+        nextPollTime = now + PollIntervalSeconds;
 
         for (int i = ActiveSessions.Count - 1; i >= 0; i--)
         {
@@ -624,6 +635,11 @@ public static class BlenderSyncService
         {
             try
             {
+                if (IsPersistedSessionExpired(sessionFile))
+                {
+                    continue;
+                }
+
                 var persisted = JsonConvert.DeserializeObject<PersistedSession>(File.ReadAllText(sessionFile));
                 if (persisted == null || string.IsNullOrWhiteSpace(persisted.sessionId) || string.IsNullOrWhiteSpace(persisted.token))
                 {
@@ -653,6 +669,38 @@ public static class BlenderSyncService
             {
                 MCBLogger.LogWarning($"[BlenderSync] Failed to restore session file '{sessionFile}': {ex.Message}");
             }
+        }
+    }
+
+    private static bool IsPersistedSessionExpired(string sessionFile)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(sessionFile) || !File.Exists(sessionFile))
+            {
+                return true;
+            }
+
+            DateTime newestWrite = File.GetLastWriteTimeUtc(sessionFile);
+            string sessionDir = Path.GetDirectoryName(sessionFile);
+            if (!string.IsNullOrWhiteSpace(sessionDir))
+            {
+                string heartbeatPath = Path.Combine(sessionDir, "blender_heartbeat.json");
+                if (File.Exists(heartbeatPath))
+                {
+                    DateTime heartbeatWrite = File.GetLastWriteTimeUtc(heartbeatPath);
+                    if (heartbeatWrite > newestWrite)
+                    {
+                        newestWrite = heartbeatWrite;
+                    }
+                }
+            }
+
+            return (DateTime.UtcNow - newestWrite).TotalDays > PersistedSessionMaxAgeDays;
+        }
+        catch
+        {
+            return false;
         }
     }
 

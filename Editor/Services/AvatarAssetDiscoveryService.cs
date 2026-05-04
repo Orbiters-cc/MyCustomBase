@@ -110,7 +110,21 @@ public static class AvatarAssetDiscoveryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var projectFiles = BuildProjectFileInventory(normalizedPaths);
+        var inventoryTask = BuildProjectFileInventoryAsync(normalizedPaths);
+        while (!inventoryTask.IsCompleted)
+        {
+            yield return null;
+        }
+
+        if (inventoryTask.IsFaulted)
+        {
+            string error = inventoryTask.Exception?.GetBaseException().Message ?? "Unknown inventory error.";
+            MCBLogger.LogError($"[AvatarAssetDiscovery] Failed to build project file inventory: {error}");
+            onComplete?.Invoke(null, $"Failed to prepare avatar asset discovery: {error}");
+            yield break;
+        }
+
+        var projectFiles = inventoryTask.Result;
 
         var requestPayload = new AvatarAssetDiscoveryRequest
         {
@@ -174,29 +188,52 @@ public static class AvatarAssetDiscoveryService
         }
     }
 
-    private static List<ModelFileData> BuildProjectFileInventory(IEnumerable<string> paths)
+    private static async Task<List<ModelFileData>> BuildProjectFileInventoryAsync(IEnumerable<string> paths)
     {
-        var files = new List<ModelFileData>();
+        var tasks = new List<Task<ModelFileData>>();
         foreach (string path in paths ?? Enumerable.Empty<string>())
         {
             if (string.IsNullOrWhiteSpace(path)) continue;
 
-            string fullPath = Path.GetFullPath(path);
-            if (!File.Exists(fullPath)) continue;
-
-            string hash = MCBUtils.CalculateFileHash(fullPath);
-            if (string.IsNullOrWhiteSpace(hash)) continue;
-
-            files.Add(new ModelFileData
-            {
-                path = NormalizeUnityPath(path),
-                hash = hash,
-                type = "FBX",
-                role = "SOURCE"
-            });
+            tasks.Add(BuildProjectFileDataAsync(path));
         }
 
-        return files;
+        if (tasks.Count == 0)
+        {
+            return new List<ModelFileData>();
+        }
+
+        var results = await Task.WhenAll(tasks);
+        return results
+            .Where(file => file != null)
+            .ToList();
+    }
+
+    private static async Task<ModelFileData> BuildProjectFileDataAsync(string path)
+    {
+        string normalizedPath = NormalizeUnityPath(path);
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(normalizedPath);
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (!File.Exists(fullPath)) return null;
+
+        string hash = await AsyncHashService.Instance.CalculateFileHashAsync(fullPath, null, true);
+        if (string.IsNullOrWhiteSpace(hash)) return null;
+
+        return new ModelFileData
+        {
+            path = normalizedPath,
+            hash = hash,
+            type = "FBX",
+            role = "SOURCE"
+        };
     }
 
     public static void PreloadThumbnails(IEnumerable<AvatarDiscoveredAsset> assets)

@@ -77,11 +77,13 @@ public class AsyncHashService
         var taskManager = AsyncTaskManager.Instance;
         var fileName = Path.GetFileName(normalizedPath);
         
-        // Start the task (optionally hidden)
-        taskManager.StartTask(taskId, $"Calculating hash for {fileName}", hideUi);
+        if (!hideUi)
+        {
+            taskManager.StartTask(taskId, $"Calculating hash for {fileName}");
+        }
 
         // Create computation task and register as in-flight
-        Task<string> computeTask = Task.Run(() => CalculateHashInternal(normalizedPath, taskId, taskManager));
+        Task<string> computeTask = Task.Run(() => CalculateHashInternal(normalizedPath, taskId, taskManager, !hideUi));
         lock (_lockObject)
         {
             _inflightByPath[normalizedPath] = computeTask;
@@ -97,13 +99,19 @@ public class AsyncHashService
                 PersistentCache.Instance.CacheHash(normalizedPath, hash);
             }
             
-            taskManager.CompleteTask(taskId);
+            if (!hideUi)
+            {
+                taskManager.CompleteTask(taskId);
+            }
             return hash;
         }
         catch (Exception ex)
         {
             MCBLogger.LogError($"[AsyncHashService] Hash calculation failed for {fileName}: {ex.Message}");
-            taskManager.CompleteTask(taskId, true, ex.Message);
+            if (!hideUi)
+            {
+                taskManager.CompleteTask(taskId, true, ex.Message);
+            }
             return null;
         }
         finally
@@ -119,7 +127,7 @@ public class AsyncHashService
         }
     }
 
-    private string CalculateHashInternal(string filePath, string taskId, AsyncTaskManager taskManager)
+    private string CalculateHashInternal(string filePath, string taskId, AsyncTaskManager taskManager, bool reportProgress)
     {
         var fileInfo = new FileInfo(filePath);
         long totalBytes = fileInfo.Length;
@@ -135,7 +143,10 @@ public class AsyncHashService
             {
                 // Empty file
                 sha256.TransformFinalBlock(new byte[0], 0, 0);
-                taskManager.UpdateTaskProgress(taskId, 1.0f);
+                if (reportProgress)
+                {
+                    taskManager.UpdateTaskProgress(taskId, 1.0f);
+                }
                 return BitConverter.ToString(sha256.Hash).Replace("-", "").ToLowerInvariant();
             }
 
@@ -153,8 +164,11 @@ public class AsyncHashService
                     sha256.TransformBlock(buffer, 0, bytesRead, buffer, 0);
                 }
 
-                float progress = totalBytes > 0 ? (float)processedBytes / totalBytes : 1.0f;
-                taskManager.UpdateTaskProgress(taskId, progress);
+                if (reportProgress)
+                {
+                    float progress = totalBytes > 0 ? (float)processedBytes / totalBytes : 1.0f;
+                    taskManager.UpdateTaskProgress(taskId, progress);
+                }
 
                 if (isFinal)
                 {
@@ -169,7 +183,10 @@ public class AsyncHashService
             }
 
             // Ensure UI shows completion
-            taskManager.UpdateTaskProgress(taskId, 1.0f);
+            if (reportProgress)
+            {
+                taskManager.UpdateTaskProgress(taskId, 1.0f);
+            }
 
             var hashBytes = sha256.Hash;
             return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();

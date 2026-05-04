@@ -14,7 +14,6 @@ using AutocompleteSearchField;
 // Handles all UI and logic for the Creator Mode feature.
 public class CreatorModeModule
 {
-    private const double AnimationClipLookupCacheTtlSeconds = 2.0d;
     private const string InitialDefaultAviVersion = "1.0.0";
     private static Dictionary<string, List<AnimationClip>> animationClipsByNameCache;
     private static double animationClipsByNameCacheTimestamp;
@@ -30,7 +29,7 @@ public class CreatorModeModule
     private readonly Dictionary<string, string> pendingCorrectiveValues = new Dictionary<string, string>();
     private readonly HashSet<string> activeCorrectiveFieldKeys = new HashSet<string>(StringComparer.Ordinal);
     private GUIStyle clippedMiniLabelStyle;
-    private int cachedCustomFbxMeshId;
+    private string cachedCustomFbxSignature;
     private List<string> cachedCustomFbxBlendshapeNames = new List<string>();
 
     // UI State
@@ -171,11 +170,15 @@ public class CreatorModeModule
             
             // vertical group with helpbox style
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUI.BeginChangeCheck();
             creatorBlendshapeEditorFoldout = EditorGUILayout.Foldout(
                 creatorBlendshapeEditorFoldout,
                 "Blendshape And Correctives Editor",
                 true);
-            EditorPrefs.SetBool("MCB_CreatorMode_BlendshapeEditorFoldout", creatorBlendshapeEditorFoldout);
+            if (EditorGUI.EndChangeCheck())
+            {
+                EditorPrefs.SetBool("MCB_CreatorMode_BlendshapeEditorFoldout", creatorBlendshapeEditorFoldout);
+            }
 
             if (creatorBlendshapeEditorFoldout)
             {
@@ -743,7 +746,25 @@ public class CreatorModeModule
     private IEnumerable<string> GetAllBlendshapeNamesFromCustomFbx()
     {
         SyncModelFileBuildEntryCount();
-        var meshIds = new List<int>();
+        var signatureParts = new List<string>();
+        for (int entryIndex = 0; entryIndex < editor.modelFileBuildEntriesProp.arraySize; entryIndex++)
+        {
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
+            var fbxObject = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            if (fbxObject == null) continue;
+
+            string path = AssetDatabase.GetAssetPath(fbxObject);
+            signatureParts.Add(string.IsNullOrWhiteSpace(path) ? fbxObject.GetInstanceID().ToString() : MCBUtils.ToUnityPath(path));
+        }
+
+        string signature = string.Join("|", signatureParts.OrderBy(part => part, StringComparer.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(signature) &&
+            string.Equals(signature, cachedCustomFbxSignature, StringComparison.Ordinal) &&
+            cachedCustomFbxBlendshapeNames != null)
+        {
+            return cachedCustomFbxBlendshapeNames;
+        }
+
         var names = new HashSet<string>(StringComparer.Ordinal);
 
         for (int entryIndex = 0; entryIndex < editor.modelFileBuildEntriesProp.arraySize; entryIndex++)
@@ -755,7 +776,6 @@ public class CreatorModeModule
             foreach (var smr in fbxObject.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             {
                 if (smr?.sharedMesh == null) continue;
-                meshIds.Add(smr.sharedMesh.GetInstanceID());
                 for (int i = 0; i < smr.sharedMesh.blendShapeCount; i++)
                 {
                     string name = smr.sharedMesh.GetBlendShapeName(i);
@@ -767,14 +787,8 @@ public class CreatorModeModule
             }
         }
 
-        int meshId = string.Join("|", meshIds.OrderBy(id => id)).GetHashCode();
-        if (meshId == cachedCustomFbxMeshId && cachedCustomFbxBlendshapeNames.Count == names.Count)
-        {
-            return cachedCustomFbxBlendshapeNames;
-        }
-
         cachedCustomFbxBlendshapeNames = names.OrderBy(n => n, StringComparer.Ordinal).ToList();
-        cachedCustomFbxMeshId = meshId;
+        cachedCustomFbxSignature = signature;
         return cachedCustomFbxBlendshapeNames;
     }
 
@@ -782,9 +796,7 @@ public class CreatorModeModule
     {
         EnsureAnimationClipProjectChangedHook();
 
-        double now = EditorApplication.timeSinceStartup;
-        if (animationClipsByNameCache != null &&
-            (now - animationClipsByNameCacheTimestamp) <= AnimationClipLookupCacheTtlSeconds)
+        if (animationClipsByNameCache != null)
         {
             return animationClipsByNameCache;
         }
@@ -812,7 +824,7 @@ public class CreatorModeModule
         }
 
         animationClipsByNameCache = lookup;
-        animationClipsByNameCacheTimestamp = now;
+        animationClipsByNameCacheTimestamp = EditorApplication.timeSinceStartup;
         return animationClipsByNameCache;
     }
 
