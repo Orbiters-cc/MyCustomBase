@@ -114,6 +114,8 @@ public class AdvancedModeModule
                 }
                 EditorGUILayout.EndHorizontal();
 
+                BlenderSyncService.DrawAdvancedBlenderConnectorSettings();
+
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Connectivity Simulation", EditorStyles.boldLabel);
                 ApiSimulationMode currentSimulationMode = MCBUtils.apiSimulationMode;

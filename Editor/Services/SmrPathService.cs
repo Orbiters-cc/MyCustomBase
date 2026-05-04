@@ -63,7 +63,7 @@ public static class SmrPathService
 
         foreach (var smr in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
-            if (smr?.sharedMesh == null) continue;
+            if (smr == null || smr.sharedMesh == null) continue;
 
             string meshAssetPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(smr.sharedMesh));
             if (string.IsNullOrWhiteSpace(meshAssetPath) || !targetPaths.Contains(meshAssetPath)) continue;
@@ -121,17 +121,25 @@ public static class SmrPathService
         Transform avatarRoot,
         string fbxPath,
         IEnumerable<ModelFileSmrPathData> smrPaths,
-        bool allowNameFallback = true)
+        bool allowNameFallback = true,
+        IEnumerable<string> meshNamesToRefresh = null)
     {
         if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return;
 
         string unityFbxPath = MCBUtils.ToUnityPath(fbxPath);
         var fbxRoot = GetFbxRoot(unityFbxPath);
         if (fbxRoot == null) return;
+        var meshNameFilter = BuildMeshNameFilter(meshNamesToRefresh);
 
         var entries = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>())
             .Where(entry => entry != null && entry.avatarPath != null)
             .ToList();
+        if (meshNameFilter.Count > 0)
+        {
+            entries = entries
+                .Where(entry => EntryMatchesMeshFilter(entry, meshNameFilter))
+                .ToList();
+        }
 
         if (entries.Count > 0)
         {
@@ -153,7 +161,7 @@ public static class SmrPathService
         }
 
         if (!allowNameFallback) return;
-        RefreshTargetMeshesByCurrentMeshName(avatarRoot, unityFbxPath, fbxRoot);
+        RefreshTargetMeshesByCurrentMeshName(avatarRoot, unityFbxPath, fbxRoot, meshNameFilter);
     }
 
     public static List<ModelFileSmrPathData> ResolveSmrPathsForSource(CustomBaseVersion version, string sourceFbxPath)
@@ -234,7 +242,7 @@ public static class SmrPathService
         lookup.root = fbxRoot.transform;
         foreach (var smr in fbxRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
-            if (smr?.sharedMesh == null || string.IsNullOrWhiteSpace(smr.sharedMesh.name)) continue;
+            if (smr == null || smr.sharedMesh == null || string.IsNullOrWhiteSpace(smr.sharedMesh.name)) continue;
             if (!lookup.renderersByMeshName.TryGetValue(smr.sharedMesh.name, out var renderers))
             {
                 renderers = new List<SkinnedMeshRenderer>();
@@ -292,6 +300,66 @@ public static class SmrPathService
         return clone;
     }
 
+    private static HashSet<string> BuildMeshNameFilter(IEnumerable<string> meshNames)
+    {
+        return new HashSet<string>(
+            (meshNames ?? Enumerable.Empty<string>())
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .SelectMany(MeshNameVariants),
+            StringComparer.Ordinal);
+    }
+
+    private static IEnumerable<string> MeshNameVariants(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            yield break;
+        }
+
+        string trimmed = value.Trim();
+        yield return trimmed;
+
+        if (trimmed.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return System.IO.Path.GetFileNameWithoutExtension(trimmed);
+        }
+
+        string fileName = System.IO.Path.GetFileName(trimmed.Replace('\\', '/'));
+        if (!string.IsNullOrWhiteSpace(fileName) && !string.Equals(fileName, trimmed, StringComparison.Ordinal))
+        {
+            yield return fileName;
+            if (fileName.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return System.IO.Path.GetFileNameWithoutExtension(fileName);
+            }
+        }
+    }
+
+    private static bool EntryMatchesMeshFilter(ModelFileSmrPathData entry, HashSet<string> meshNameFilter)
+    {
+        if (entry == null || meshNameFilter == null || meshNameFilter.Count == 0)
+        {
+            return true;
+        }
+
+        foreach (string value in MeshNameVariants(entry.meshName))
+        {
+            if (meshNameFilter.Contains(value)) return true;
+        }
+
+        foreach (string value in MeshNameVariants(entry.rendererName))
+        {
+            if (meshNameFilter.Contains(value)) return true;
+        }
+
+        foreach (string value in MeshNameVariants(entry.fbxMeshPath))
+        {
+            if (meshNameFilter.Contains(value)) return true;
+        }
+
+        return false;
+    }
+
     private static Mesh ResolveFbxMesh(Transform fbxRoot, ModelFileSmrPathData entry)
     {
         if (fbxRoot == null || entry == null) return null;
@@ -299,18 +367,27 @@ public static class SmrPathService
         if (!string.IsNullOrWhiteSpace(entry.fbxMeshPath))
         {
             var transform = FindTransformByRelativePath(fbxRoot, entry.fbxMeshPath);
-            var smr = transform != null ? transform.GetComponent<SkinnedMeshRenderer>() : null;
-            if (smr?.sharedMesh != null) return smr.sharedMesh;
+            var mesh = ResolveMeshFromTransform(transform);
+            if (mesh != null) return mesh;
         }
 
         if (!string.IsNullOrWhiteSpace(entry.meshName))
         {
             foreach (var smr in fbxRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             {
-                if (smr?.sharedMesh == null) continue;
+                if (smr == null || smr.sharedMesh == null) continue;
                 if (string.Equals(smr.sharedMesh.name, entry.meshName, StringComparison.Ordinal))
                 {
                     return smr.sharedMesh;
+                }
+            }
+
+            foreach (var meshFilter in fbxRoot.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (meshFilter == null || meshFilter.sharedMesh == null) continue;
+                if (string.Equals(meshFilter.sharedMesh.name, entry.meshName, StringComparison.Ordinal))
+                {
+                    return meshFilter.sharedMesh;
                 }
             }
         }
@@ -318,18 +395,65 @@ public static class SmrPathService
         return null;
     }
 
-    private static void RefreshTargetMeshesByCurrentMeshName(Transform avatarRoot, string fbxPath, GameObject fbxRoot)
+    private static Mesh ResolveMeshFromTransform(Transform transform)
+    {
+        if (transform == null) return null;
+
+        var smr = transform.GetComponent<SkinnedMeshRenderer>();
+        if (smr != null && smr.sharedMesh != null)
+        {
+            return smr.sharedMesh;
+        }
+
+        foreach (var childSmr in transform.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (childSmr != null && childSmr.sharedMesh != null)
+            {
+                return childSmr.sharedMesh;
+            }
+        }
+
+        var meshFilter = transform.GetComponent<MeshFilter>();
+        if (meshFilter != null && meshFilter.sharedMesh != null)
+        {
+            return meshFilter.sharedMesh;
+        }
+
+        foreach (var childMeshFilter in transform.GetComponentsInChildren<MeshFilter>(true))
+        {
+            if (childMeshFilter != null && childMeshFilter.sharedMesh != null)
+            {
+                return childMeshFilter.sharedMesh;
+            }
+        }
+
+        return null;
+    }
+
+    private static void RefreshTargetMeshesByCurrentMeshName(Transform avatarRoot, string fbxPath, GameObject fbxRoot, HashSet<string> meshNameFilter)
     {
         var meshLookup = new Dictionary<string, Mesh>(StringComparer.Ordinal);
         foreach (var smr in fbxRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
-            if (smr?.sharedMesh == null || meshLookup.ContainsKey(smr.sharedMesh.name)) continue;
+            if (smr == null || smr.sharedMesh == null || meshLookup.ContainsKey(smr.sharedMesh.name)) continue;
             meshLookup.Add(smr.sharedMesh.name, smr.sharedMesh);
+        }
+
+        foreach (var meshFilter in fbxRoot.GetComponentsInChildren<MeshFilter>(true))
+        {
+            if (meshFilter == null || meshFilter.sharedMesh == null || meshLookup.ContainsKey(meshFilter.sharedMesh.name)) continue;
+            meshLookup.Add(meshFilter.sharedMesh.name, meshFilter.sharedMesh);
         }
 
         foreach (var smr in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
-            if (smr?.sharedMesh == null) continue;
+            if (smr == null || smr.sharedMesh == null) continue;
+            if (meshNameFilter != null && meshNameFilter.Count > 0)
+            {
+                bool matchesFilter = meshNameFilter.Contains(smr.sharedMesh.name) || meshNameFilter.Contains(smr.transform.name);
+                if (!matchesFilter) continue;
+            }
+
             string currentAssetPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(smr.sharedMesh));
             if (!string.Equals(currentAssetPath, fbxPath, StringComparison.OrdinalIgnoreCase)) continue;
             if (!meshLookup.TryGetValue(smr.sharedMesh.name, out var replacementMesh)) continue;
