@@ -47,8 +47,8 @@ public class FileManagerService
     {
         if (string.IsNullOrEmpty(fbxPath) || !File.Exists(fbxPath)) return;
         string backupPath = fbxPath + OriginalSuffix;
-        if (File.Exists(backupPath)) File.Delete(backupPath);
-        File.Move(fbxPath, backupPath);
+        if (File.Exists(backupPath)) return;
+        File.Copy(fbxPath, backupPath);
     }
     
     public bool BackupExists(string fbxPath)
@@ -56,16 +56,92 @@ public class FileManagerService
         return !string.IsNullOrEmpty(fbxPath) && File.Exists(fbxPath + OriginalSuffix);
     }
 
+    public bool ReplaceFbxWithCustomCopy(string targetFbxPath, string customFbxPath)
+    {
+        if (string.IsNullOrWhiteSpace(targetFbxPath)) throw new ArgumentNullException(nameof(targetFbxPath));
+        if (string.IsNullOrWhiteSpace(customFbxPath)) throw new ArgumentNullException(nameof(customFbxPath));
+
+        string targetUnityPath = MCBUtils.ToUnityPath(targetFbxPath);
+        string customUnityPath = MCBUtils.ToUnityPath(customFbxPath);
+        string targetFullPath = Path.GetFullPath(targetUnityPath);
+        string customFullPath = Path.GetFullPath(customUnityPath);
+
+        if (!File.Exists(targetFullPath))
+            throw new FileNotFoundException("Target FBX file was not found.", targetFullPath);
+        if (!File.Exists(customFullPath))
+            throw new FileNotFoundException("Custom FBX file was not found.", customFullPath);
+
+        if (string.Equals(targetFullPath, customFullPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string backupPath = targetFullPath + OriginalSuffix;
+        if (!File.Exists(backupPath))
+        {
+            File.Copy(targetFullPath, backupPath);
+            MCBLogger.Log($"[FileManager] Created original FBX backup: {backupPath}");
+        }
+
+        if (FilesAreEqual(targetFullPath, customFullPath))
+        {
+            return false;
+        }
+
+        File.Copy(customFullPath, targetFullPath, true);
+        return true;
+    }
+
+    private static bool FilesAreEqual(string firstPath, string secondPath)
+    {
+        var firstInfo = new FileInfo(firstPath);
+        var secondInfo = new FileInfo(secondPath);
+        if (!firstInfo.Exists || !secondInfo.Exists || firstInfo.Length != secondInfo.Length)
+        {
+            return false;
+        }
+
+        const int bufferSize = 1024 * 1024;
+        byte[] firstBuffer = new byte[bufferSize];
+        byte[] secondBuffer = new byte[bufferSize];
+        using (var first = File.OpenRead(firstPath))
+        using (var second = File.OpenRead(secondPath))
+        {
+            while (true)
+            {
+                int firstRead = first.Read(firstBuffer, 0, firstBuffer.Length);
+                int secondRead = second.Read(secondBuffer, 0, secondBuffer.Length);
+                if (firstRead != secondRead)
+                {
+                    return false;
+                }
+
+                if (firstRead == 0)
+                {
+                    return true;
+                }
+
+                for (int i = 0; i < firstRead; i++)
+                {
+                    if (firstBuffer[i] != secondBuffer[i])
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
     public void RestoreBackup(string fbxPath)
     {
         string backupPath = fbxPath + OriginalSuffix;
         if (!File.Exists(backupPath)) return;
-        if (File.Exists(fbxPath)) File.Delete(fbxPath);
-        File.Move(backupPath, fbxPath);
+        File.Copy(backupPath, fbxPath, true);
     }
 
     // Force-restore a specific FBX regardless of current selection/state.
-    // Always delete the .fbx (if present) and rename .fbx.old back to .fbx, then force re-import.
+    // Always overwrite the .fbx from .fbx.old, then force re-import.
+    // The .old file is the immutable default-base source and must remain in place.
     public void ForceRestoreBackupAtPath(string unityFbxPath)
     {
         if (string.IsNullOrEmpty(unityFbxPath)) throw new ArgumentNullException(nameof(unityFbxPath));
@@ -78,12 +154,7 @@ public class FileManagerService
             throw new FileNotFoundException($"Backup FBX not found: {fullBackupPath}");
         }
 
-        if (File.Exists(fullFbxPath))
-        {
-            File.Delete(fullFbxPath);
-        }
-
-        File.Move(fullBackupPath, fullFbxPath);
+        File.Copy(fullBackupPath, fullFbxPath, true);
 
         // Force Unity to reimport the restored FBX
         AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
@@ -163,10 +234,14 @@ public class FileManagerService
         string absoluteAvatarPath = Path.GetFullPath(unityAvatarPath);
         if (!File.Exists(absoluteAvatarPath)) return;
 
-        // FIX: Re-enabled the actual avatar application logic. This call re-imports the model with the new avatar.
-        CustomBaseAvatarUtility.ApplyExternalAvatar(fbx, unityAvatarPath);
+        Avatar avatar = AssetDatabase.LoadAssetAtPath<Avatar>(unityAvatarPath);
+        if (avatar == null)
+        {
+            MCBLogger.LogWarning($"[FileManager] Could not load Avatar at '{unityAvatarPath}'.");
+            return;
+        }
 
-        SetRootAnimatorAvatar(root, unityAvatarPath);
+        AvatarDefinitionGenerationService.ApplyAvatarToFbxAndAnimator(fbx, avatar, root);
     }
 
     public IEnumerator InstantiateLogicPrefabCoroutine(string packagePath, Transform parent)

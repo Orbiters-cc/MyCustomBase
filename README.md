@@ -1,5 +1,15 @@
 # My Custom Base (MCB) by Enzo
 
+## Custom base FBX backup invariant
+
+MCB custom base versions are applied over the original/default base FBX. If the default base is `A` and custom bases are `B` or `C`, then `*.fbx.old` is always the preserved copy of `A`.
+
+- Applying a custom FBX or version creates `*.fbx.old` only when it is missing.
+- Existing `*.fbx.old` files must not be overwritten, deleted, or moved during apply/reset flows.
+- Resetting to Base Default copies `*.fbx.old` back over `*.fbx` while keeping `*.fbx.old` in place.
+- The only valid state without `*.fbx.old` is the untouched default-base state where `*.fbx` is already `A`.
+- XOR `.bin` patches are computed against `A`, so version switching depends on `*.fbx.old` remaining the original default source.
+
 ## Testing SSL failures on Windows
 
 The easiest way to test MCB's connectivity failure UI is now built into the package.

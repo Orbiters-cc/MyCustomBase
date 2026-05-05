@@ -73,9 +73,7 @@ public static class CustomBaseAvatarUtility
         {
             try
             {
-                EditorUtility.SetDirty(importer);
-                importer.SaveAndReimport();
-                AssetDatabase.SaveAssets(); // Persist settings
+                SaveImporterSettingsAndReimport(importer, fbxPath);
                 MCBLogger.Log($"[MCB] Avatar '{avatar.name}' applied successfully via importer.");
                 return true; // Indicate success
             }
@@ -89,6 +87,24 @@ public static class CustomBaseAvatarUtility
         {
             MCBLogger.Log($"[MCB] Avatar '{avatar.name}' already applied. No reimport needed.");
             return true; // Indicate success (already correct)
+        }
+    }
+
+    private static void SaveImporterSettingsAndReimport(ModelImporter importer, string assetPath)
+    {
+        if (importer == null) return;
+
+        string normalizedPath = MCBUtils.ToUnityPath(string.IsNullOrWhiteSpace(assetPath) ? importer.assetPath : assetPath);
+        EditorUtility.SetDirty(importer);
+        AssetDatabase.WriteImportSettingsIfDirty(normalizedPath);
+        importer.SaveAndReimport();
+        AssetDatabase.WriteImportSettingsIfDirty(normalizedPath);
+        AssetDatabase.SaveAssets();
+
+        var reloadedImporter = AssetImporter.GetAtPath(normalizedPath);
+        if (reloadedImporter != null)
+        {
+            EditorUtility.ClearDirty(reloadedImporter);
         }
     }
 

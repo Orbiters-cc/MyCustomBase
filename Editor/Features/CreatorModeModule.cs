@@ -308,32 +308,173 @@ public class CreatorModeModule
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
                 EditorGUILayout.LabelField(targetLabel, EditorStyles.miniBoldLabel);
-                DrawSmrPathsForTargetFbx(targetFbx);
-                EditorGUILayout.PropertyField(customFbxProp, new GUIContent("Custom FBX (Transformed)"));
-                EditorGUILayout.PropertyField(avatarProp, new GUIContent("Custom Base Avatar (Transformed)"));
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.PropertyField(customFbxProp, new GUIContent("Custom FBX (Transformed)"));
+                    var customFbx = customFbxProp.objectReferenceValue as GameObject;
+                    using (new EditorGUI.DisabledScope(targetFbx == null || customFbx == null))
+                    {
+                        if (GUILayout.Button("Apply", GUILayout.Width(80f)))
+                        {
+                            editor.serializedObject.ApplyModifiedProperties();
+                            ApplyCustomFbxForModelEntry(targetFbx, customFbx);
+                        }
+                    }
+                }
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.PropertyField(avatarProp, new GUIContent("Custom Base Avatar (Transformed)"));
+                    var customFbx = customFbxProp.objectReferenceValue as GameObject;
+                    var avatar = avatarProp.objectReferenceValue as Avatar;
+                    using (new EditorGUI.DisabledScope(targetFbx == null || customFbx == null))
+                    {
+                        string generateButtonText = avatar == null ? "Generate" : "Update";
+                        if (GUILayout.Button(generateButtonText, GUILayout.Width(80f)))
+                        {
+                            editor.serializedObject.ApplyModifiedProperties();
+                            GenerateAvatarForModelEntry(targetFbx, customFbx, avatarProp);
+                        }
+                    }
+
+                    using (new EditorGUI.DisabledScope(targetFbx == null || customFbx == null || avatar == null))
+                    {
+                        if (GUILayout.Button("Apply", GUILayout.Width(80f)))
+                        {
+                            editor.serializedObject.ApplyModifiedProperties();
+                            ApplyCustomAvatarForModelEntry(targetFbx, customFbx, avatar);
+                        }
+                    }
+                }
             }
         }
     }
 
-    private void DrawSmrPathsForTargetFbx(GameObject targetFbx)
+    private void ApplyCustomFbxForModelEntry(GameObject targetFbx, GameObject customFbx)
     {
-        if (targetFbx == null || editor.customBaseTarget == null) return;
-
-        string targetPath = AssetDatabase.GetAssetPath(targetFbx);
-        var entries = SmrPathService.CollectSmrPathsForFbx(editor.customBaseTarget.transform.root, targetPath);
-        if (entries.Count == 0)
+        if (editor.customBaseTarget == null || targetFbx == null || customFbx == null)
         {
-            EditorGUILayout.HelpBox("No avatar SkinnedMeshRenderer currently uses this FBX.", MessageType.Warning);
             return;
         }
 
-        EditorGUILayout.LabelField("Avatar SMR Paths", EditorStyles.miniBoldLabel);
-        foreach (var entry in entries)
+        try
         {
-            string label = string.IsNullOrWhiteSpace(entry.meshName)
-                ? entry.avatarPath
-                : $"{entry.avatarPath}  ->  {entry.meshName}";
-            EditorGUILayout.LabelField(label, EditorStyles.miniLabel);
+            string targetPath = AssetDatabase.GetAssetPath(targetFbx);
+            string customPath = AssetDatabase.GetAssetPath(customFbx);
+            if (string.IsNullOrWhiteSpace(targetPath) || string.IsNullOrWhiteSpace(customPath))
+            {
+                throw new InvalidOperationException("The target FBX or custom FBX has no AssetDatabase path.");
+            }
+
+            AssetDatabase.ImportAsset(customPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+
+            Transform avatarRoot = editor.customBaseTarget.transform.root;
+            var smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, targetPath);
+            if (smrPaths.Count == 0)
+            {
+                smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, customPath);
+            }
+
+            bool replacedFbx = fileManagerService.ReplaceFbxWithCustomCopy(targetPath, customPath);
+            if (replacedFbx)
+            {
+                AssetDatabase.ImportAsset(targetPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            }
+            SmrPathService.RefreshTargetMeshesFromFbx(avatarRoot, targetPath, smrPaths);
+
+            SaveTemporaryInternalVersion("custom FBX apply");
+            new VersionActions(editor, networkService, fileManagerService).StartRecalculateCurrentFbxHash();
+
+            EditorUtility.SetDirty(editor.customBaseTarget);
+            MCBLogger.Log($"[MCB] Applied custom FBX '{customPath}' to target '{targetPath}'.");
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogError($"[MCB] Failed to apply custom FBX: {ex.Message}");
+            EditorUtility.DisplayDialog("Apply Custom FBX", $"Could not apply the custom FBX:\n{ex.Message}", "OK");
+        }
+    }
+
+    private void ApplyCustomAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, Avatar customAvatar)
+    {
+        if (editor.customBaseTarget == null || targetFbx == null || customFbx == null || customAvatar == null)
+        {
+            return;
+        }
+
+        try
+        {
+            string targetPath = AssetDatabase.GetAssetPath(targetFbx);
+            string customPath = AssetDatabase.GetAssetPath(customFbx);
+            if (string.IsNullOrWhiteSpace(targetPath) || string.IsNullOrWhiteSpace(customPath))
+            {
+                throw new InvalidOperationException("The target FBX or custom FBX has no AssetDatabase path.");
+            }
+
+            bool replacedFbx = fileManagerService.ReplaceFbxWithCustomCopy(targetPath, customPath);
+            if (replacedFbx)
+            {
+                AssetDatabase.ImportAsset(targetPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            }
+            Transform avatarRoot = editor.customBaseTarget.transform.root;
+            var smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, targetPath);
+            if (smrPaths.Count == 0)
+            {
+                smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, customPath);
+            }
+
+            SmrPathService.RefreshTargetMeshesFromFbx(avatarRoot, targetPath, smrPaths);
+
+            var reimportedTargetFbx = AssetDatabase.LoadAssetAtPath<GameObject>(targetPath);
+            AvatarDefinitionGenerationService.ApplyAvatarToFbxAndAnimator(
+                reimportedTargetFbx != null ? reimportedTargetFbx : targetFbx,
+                customAvatar,
+                avatarRoot);
+
+            SaveTemporaryInternalVersion("custom avatar apply");
+            new VersionActions(editor, networkService, fileManagerService).StartRecalculateCurrentFbxHash();
+
+            EditorUtility.SetDirty(editor.customBaseTarget);
+            MCBLogger.Log($"[MCB] Applied custom Avatar '{AssetDatabase.GetAssetPath(customAvatar)}' to target '{targetPath}'.");
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogError($"[MCB] Failed to apply custom Avatar: {ex.Message}");
+            EditorUtility.DisplayDialog("Apply Custom Avatar", $"Could not apply the custom Avatar:\n{ex.Message}", "OK");
+        }
+    }
+
+    private void GenerateAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, SerializedProperty avatarProp)
+    {
+        if (targetFbx == null || customFbx == null || avatarProp == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = AvatarDefinitionGenerationService.GenerateAvatarAsset(
+                customFbx,
+                targetFbx,
+                applyGeneratedAvatarToFbx: false,
+                keepImporterConfiguredForEditing: true);
+            if (result?.avatar == null)
+            {
+                throw new InvalidOperationException("Unity did not return a generated Avatar.");
+            }
+
+            avatarProp.objectReferenceValue = result.avatar;
+            editor.serializedObject.ApplyModifiedProperties();
+            EditorUtility.SetDirty(editor.customBaseTarget);
+            AvatarDefinitionGenerationService.SetRootAnimatorAvatar(editor.customBaseTarget.transform.root, result.avatar);
+            SaveTemporaryInternalVersion("avatar generation");
+
+            MCBLogger.Log($"[MCB] Generated custom base Avatar '{result.avatarPath}'. {result.message}");
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogError($"[MCB] Failed to generate custom base Avatar: {ex.Message}");
+            EditorUtility.DisplayDialog("Generate Avatar", $"Could not generate an Avatar asset:\n{ex.Message}", "OK");
         }
     }
 
@@ -387,6 +528,69 @@ public class CreatorModeModule
         }
 
         return false;
+    }
+
+    private void SaveTemporaryInternalVersion(string reason)
+    {
+        if (isRestoringFromVersionState || editor?.customBaseTarget == null)
+        {
+            return;
+        }
+
+        string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
+        if (!IsNewVersionValid(newVersionString))
+        {
+            MCBLogger.LogWarning($"[CreatorMode] Temporary version was not saved after {reason}: version {newVersionString} is not higher than the selected parent version.");
+            return;
+        }
+
+        bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
+                                 editor.avatarLogicPrefabProp.objectReferenceValue != null ||
+                                 (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null) ||
+                                 editor.includeDynamicNormalsBodyForCreatorProp.boolValue ||
+                                 editor.includeDynamicNormalsFlexingForCreatorProp.boolValue ||
+                                 editor.customBlendshapesForCreatorProp.arraySize > 0;
+        if (!hasVersionPayload)
+        {
+            return;
+        }
+
+        (CustomBaseVersion metadata, string zipPath) buildResult = default;
+        Exception buildError = null;
+
+        try
+        {
+            buildResult = BuildNewVersion();
+            if (buildResult.metadata == null)
+            {
+                return;
+            }
+
+            buildResult.metadata.isUnsubmitted = true;
+            SaveUnsubmittedVersion(buildResult.metadata);
+            editor.selectedVersionForAction = buildResult.metadata;
+            editor.selectedCustomVersionForAction = null;
+            MCBLogger.Log($"[CreatorMode] Saved temporary internal version {buildResult.metadata.version} after {reason}.");
+        }
+        catch (Exception ex)
+        {
+            buildError = ex;
+            MCBLogger.LogWarning($"[CreatorMode] Temporary version was not saved after {reason}: {ex.Message}");
+        }
+        finally
+        {
+            if (!string.IsNullOrEmpty(buildResult.zipPath) && File.Exists(buildResult.zipPath))
+            {
+                File.Delete(buildResult.zipPath);
+            }
+
+            EditorUtility.ClearProgressBar();
+        }
+
+        if (buildError != null)
+        {
+            editor.warningsModule.AddWarning(buildError.Message, MessageType.Warning, "Temporary Version Not Saved");
+        }
     }
 
     private void OnBlendshapeSearchConfirm(string selectedBlendshape)
@@ -1607,12 +1811,37 @@ public class CreatorModeModule
             }
 
             SyncModelFileBuildEntryCount();
+            var versionFilesBySourcePath = new Dictionary<string, ModelFileData>(StringComparer.OrdinalIgnoreCase);
+            foreach (var versionFile in ver.versionFiles ?? Array.Empty<ModelFileData>())
+            {
+                string sourcePath = GetMetadataString(versionFile, "sourcePath") ?? GetMetadataString(versionFile, "targetPath");
+                if (string.IsNullOrWhiteSpace(sourcePath))
+                {
+                    continue;
+                }
+
+                versionFilesBySourcePath[MCBUtils.ToUnityPath(sourcePath)] = versionFile;
+            }
+
+            bool hasPathMappedVersionFiles = versionFilesBySourcePath.Count > 0;
             for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
             {
                 var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
-                var versionFile = ver.versionFiles != null && i < ver.versionFiles.Length ? ver.versionFiles[i] : null;
-                string customFbxPath = GetMetadataString(versionFile, "customFbxPath") ?? (i == 0 ? ver.customFbxPath : null);
-                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath") ?? (i == 0 ? ver.customBaseAvatarPath : null);
+                var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+                string sourcePath = sourceFbx != null ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(sourceFbx)) : null;
+                ModelFileData versionFile = null;
+                if (!string.IsNullOrWhiteSpace(sourcePath))
+                {
+                    versionFilesBySourcePath.TryGetValue(sourcePath, out versionFile);
+                }
+
+                if (versionFile == null && !hasPathMappedVersionFiles && ver.versionFiles != null && i < ver.versionFiles.Length)
+                {
+                    versionFile = ver.versionFiles[i];
+                }
+
+                string customFbxPath = GetMetadataString(versionFile, "customFbxPath") ?? (!hasPathMappedVersionFiles && i == 0 ? ver.customFbxPath : null);
+                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath") ?? (!hasPathMappedVersionFiles && i == 0 ? ver.customBaseAvatarPath : null);
                 entryProp.FindPropertyRelative("customFbx").objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
                 entryProp.FindPropertyRelative("customBaseAvatar").objectReferenceValue = AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath);
             }

@@ -114,3 +114,10 @@
 - Do not patch authoring controllers directly.
 - Keep link operations idempotent and safe across repeated preprocess calls.
 - Keep naming deterministic for parameters and generated assets.
+
+## Custom Base FBX Backup Invariant
+- For a custom base version B/C applied over a default base A, every affected `*.fbx.old` file must always remain a copy of A.
+- Applying any custom FBX or downloaded/unsubmitted version may create `*.fbx.old` if it is missing, but must never overwrite or move an existing `*.fbx.old`.
+- Resetting to Base Default copies `*.fbx.old` back over `*.fbx` and leaves `*.fbx.old` in place.
+- The only valid state without `*.fbx.old` is the untouched default-base state where `*.fbx` itself is A.
+- XOR `.bin` patches are defined against A, so all version switching logic must read from `*.fbx.old` when it exists.

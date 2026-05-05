@@ -928,6 +928,7 @@ public static class BlenderSyncService
         }
 
         var updatedTargets = new List<string>();
+        int generatedAvatarCount = 0;
         for (int modelIndex = 0; modelIndex < models.Count; modelIndex++)
         {
             var model = models[modelIndex];
@@ -953,8 +954,14 @@ public static class BlenderSyncService
             {
                 string exportedUnityPath = CopyModelToProjectExports(session, sourceFbxPath, targetFbxPath, modelIndex);
                 AssetDatabase.ImportAsset(exportedUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                Avatar generatedAvatar = GenerateAvatarForImportedFbx(exportedUnityPath, targetFbxPath, keepImporterConfiguredForEditing: true);
+                if (generatedAvatar != null)
+                {
+                    generatedAvatarCount++;
+                }
                 RefreshTargetMeshesFromFbx(session, exportedUnityPath, targetFbxPath, model.meshNames);
-                AssignCreatorCustomFbx(session, targetFbxPath, exportedUnityPath);
+                AssignCreatorCustomFbx(session, targetFbxPath, exportedUnityPath, generatedAvatar);
+                ApplyGeneratedAvatarToPreview(session, exportedUnityPath, generatedAvatar);
                 updatedTargets.Add(exportedUnityPath);
                 MCBLogger.Log($"[BlenderSync] Imported Blender export. source={sourceFbxPath} projectExport={exportedUnityPath} target={targetFbxPath}");
             }
@@ -962,7 +969,13 @@ public static class BlenderSyncService
             {
                 ReplaceTargetFbx(sourceFbxPath, targetFbxPath);
                 AssetDatabase.ImportAsset(targetFbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                Avatar generatedAvatar = GenerateAvatarForImportedFbx(targetFbxPath, targetFbxPath, keepImporterConfiguredForEditing: false);
+                if (generatedAvatar != null)
+                {
+                    generatedAvatarCount++;
+                }
                 RefreshTargetMeshesFromFbx(session, targetFbxPath, targetFbxPath, model.meshNames);
+                ApplyGeneratedAvatarToPreview(session, targetFbxPath, generatedAvatar);
                 updatedTargets.Add(targetFbxPath);
                 MCBLogger.Log($"[BlenderSync] Imported Blender export. source={sourceFbxPath} target={targetFbxPath}");
             }
@@ -981,7 +994,10 @@ public static class BlenderSyncService
         }
 
         string action = session.useProjectExports ? "Updated avatar from" : "Replaced";
-        SetStatus($"Blender export imported for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).", MessageType.Info);
+        string avatarMessage = generatedAvatarCount > 0
+            ? $"\nGenerated {generatedAvatarCount} Avatar asset(s)."
+            : "\nNo Avatar asset was generated.";
+        SetStatus($"Blender export imported for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}", MessageType.Info);
     }
 
     private static void DrawBlenderConnectionState(MCBEditor editor)
@@ -1132,7 +1148,47 @@ public static class BlenderSyncService
         SmrPathService.RefreshTargetMeshesFromFbx(session.customBase.transform.root, MCBUtils.ToUnityPath(sourceFbxPath), target?.smrPaths, meshNamesToRefresh: meshNames);
     }
 
-    private static void AssignCreatorCustomFbx(ActiveSession session, string targetFbxPath, string customFbxUnityPath)
+    private static Avatar GenerateAvatarForImportedFbx(string customFbxUnityPath, string sourceMappingFbxPath, bool keepImporterConfiguredForEditing)
+    {
+        try
+        {
+            var result = AvatarDefinitionGenerationService.GenerateAvatarAsset(
+                customFbxUnityPath,
+                sourceMappingFbxPath,
+                outputPath: null,
+                applyGeneratedAvatarToFbx: !keepImporterConfiguredForEditing,
+                keepImporterConfiguredForEditing: keepImporterConfiguredForEditing);
+            if (result?.avatar != null)
+            {
+                MCBLogger.Log($"[BlenderSync] Generated Avatar '{result.avatarPath}' for '{customFbxUnityPath}'. {result.message}");
+                return result.avatar;
+            }
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogWarning($"[BlenderSync] Could not generate Avatar for '{customFbxUnityPath}': {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private static void ApplyGeneratedAvatarToPreview(ActiveSession session, string customFbxUnityPath, Avatar generatedAvatar)
+    {
+        if (session?.customBase == null || generatedAvatar == null || string.IsNullOrWhiteSpace(customFbxUnityPath))
+        {
+            return;
+        }
+
+        var customFbx = AssetDatabase.LoadAssetAtPath<GameObject>(MCBUtils.ToUnityPath(customFbxUnityPath));
+        if (customFbx == null)
+        {
+            return;
+        }
+
+        AvatarDefinitionGenerationService.SetRootAnimatorAvatar(session.customBase.transform.root, generatedAvatar);
+    }
+
+    private static void AssignCreatorCustomFbx(ActiveSession session, string targetFbxPath, string customFbxUnityPath, Avatar customBaseAvatar = null)
     {
         if (session?.customBase == null || string.IsNullOrWhiteSpace(customFbxUnityPath))
         {
@@ -1170,6 +1226,10 @@ public static class BlenderSyncService
 
         var entry = entriesProp.GetArrayElementAtIndex(targetIndex);
         entry.FindPropertyRelative("customFbx").objectReferenceValue = customFbx;
+        if (customBaseAvatar != null)
+        {
+            entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = customBaseAvatar;
+        }
         serialized.ApplyModifiedProperties();
         EditorUtility.SetDirty(session.customBase);
     }

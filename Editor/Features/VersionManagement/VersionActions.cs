@@ -285,13 +285,14 @@ public class VersionActions
 
         string fbxPath = GetCurrentFBXPath();
         if (string.IsNullOrEmpty(fbxPath)) yield break;
+        var versionForAssets = isReset ? (editor.customBaseTarget.appliedCustomBaseVersion ?? editor.selectedVersionForAction) : version;
         
         bool success = false;
         try
         {
             if (isReset)
             {
-                fileManagerService.ForceRestoreBackupAtPath(fbxPath);
+                RestoreBackupsForVersion(versionForAssets, fbxPath);
             }
             else
             {
@@ -309,7 +310,9 @@ public class VersionActions
         
         if (success)
         {
-            var affectedFbxPaths = GetAffectedFbxPaths(version, fbxPath);
+            var affectedFbxPaths = isReset
+                ? GetResetAffectedFbxPaths(versionForAssets, fbxPath)
+                : GetAffectedFbxPaths(version, fbxPath);
             foreach (string affectedPath in affectedFbxPaths)
             {
                 MCBLogger.Log($"[VersionActions] Importing modified FBX at {affectedPath}");
@@ -326,8 +329,16 @@ public class VersionActions
             MCBLogger.Log("[VersionActions] Editor finished pending compilation/import work.");
             //  --- END CRITICAL FIX ---
             
-            var versionForAssets = isReset ? (editor.customBaseTarget.appliedCustomBaseVersion ?? editor.selectedVersionForAction) : version;
-            if (versionForAssets != null)
+            if (isReset)
+            {
+                ApplyDefaultAvatarImportsForReset(root, versionForAssets);
+                while (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                {
+                    yield return null;
+                }
+                MCBLogger.Log("[VersionActions] Default avatar import completed.");
+            }
+            else if (versionForAssets != null && versionForAssets != VersionListDrawer.RESET_VERSION)
             {
                 ApplyAvatarImportsForVersion(root, versionForAssets, isReset);
                 while (EditorApplication.isCompiling || EditorApplication.isUpdating)
@@ -616,6 +627,25 @@ public class VersionActions
         File.WriteAllBytes(fbxPath, transformedData);
     }
 
+    private void RestoreBackupsForVersion(CustomBaseVersion version, string fallbackFbxPath)
+    {
+        var affectedPaths = GetResetAffectedFbxPaths(version, fallbackFbxPath);
+        var pathsToRestore = affectedPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path) && fileManagerService.BackupExists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (pathsToRestore.Count == 0)
+        {
+            throw new FileNotFoundException("No original FBX backup was found for the selected custom base version.");
+        }
+
+        foreach (string path in pathsToRestore)
+        {
+            fileManagerService.ForceRestoreBackupAtPath(path);
+        }
+    }
+
     private string ResolveTargetFbxPath(CustomBaseVersion version, ModelFileData patchFile, string fallbackFbxPath)
     {
         var source = version.sourceFiles?.FirstOrDefault(file =>
@@ -690,16 +720,29 @@ public class VersionActions
         return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    private List<string> GetResetAffectedFbxPaths(CustomBaseVersion version, string fallbackFbxPath)
+    {
+        var paths = GetAffectedFbxPaths(version, null);
+        if (paths.Count == 0)
+        {
+            paths = GetCurrentFBXPaths()
+                .Where(path => fileManagerService.BackupExists(path))
+                .ToList();
+        }
+
+        if (paths.Count == 0 && !string.IsNullOrWhiteSpace(fallbackFbxPath))
+        {
+            paths.Add(fallbackFbxPath);
+        }
+
+        return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     private void ApplyAvatarImportsForVersion(Transform root, CustomBaseVersion version, bool isReset)
     {
         if (isReset)
         {
-            string defaultAvatarPath = MCBUtils.GetDefaultAvatarPath(version);
-            for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
-            {
-                var fbxGameObject = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-                fileManagerService.ApplyAvatarToModel(root, fbxGameObject, defaultAvatarPath);
-            }
+            ApplyDefaultAvatarImportsForReset(root, version);
             return;
         }
 
@@ -722,6 +765,106 @@ public class VersionActions
             MCBLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath} to {sourcePath}");
             fileManagerService.ApplyAvatarToModel(root, fbxGameObject, avatarPath);
         }
+    }
+
+    private void ApplyDefaultAvatarImportsForReset(Transform root, CustomBaseVersion resetFromVersion)
+    {
+        string defaultAvatarPath = ResolveDefaultAvatarPathForReset(resetFromVersion);
+        if (string.IsNullOrWhiteSpace(defaultAvatarPath))
+        {
+            MCBLogger.LogWarning("[VersionActions] Reset restored FBX bytes, but no default avatar.asset could be resolved for importer reset.");
+            return;
+        }
+
+        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        {
+            var fbxGameObject = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            string fbxPath = fbxGameObject != null ? AssetDatabase.GetAssetPath(fbxGameObject) : null;
+            MCBLogger.Log($"[VersionActions] Restoring default avatar import settings from {defaultAvatarPath} to {fbxPath}");
+            fileManagerService.ApplyAvatarToModel(root, fbxGameObject, defaultAvatarPath);
+        }
+    }
+
+    private string ResolveDefaultAvatarPathForReset(CustomBaseVersion resetFromVersion)
+    {
+        foreach (var version in GetDefaultAvatarCandidateVersions(resetFromVersion))
+        {
+            string path = MCBUtils.GetDefaultAvatarPath(version);
+            if (AssetExists(path))
+            {
+                return MCBUtils.ToUnityPath(path);
+            }
+        }
+
+        int selectedAssetId = editor.GetSelectedAsset()?.id ?? 0;
+        if (selectedAssetId > 0)
+        {
+            string assetVersionsRoot = MCBUtils.ToUnityPath($"{MCBUtils.ASSET_VERSIONS_FOLDER}/{selectedAssetId}/versions");
+            string fullRoot = Path.GetFullPath(assetVersionsRoot);
+            if (Directory.Exists(fullRoot))
+            {
+                string defaultAvatarName = MCBUtils.DEFAULT_AVATAR_NAME;
+                string found = Directory.GetFiles(fullRoot, defaultAvatarName, SearchOption.AllDirectories)
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Select(MCBUtils.ToUnityPath)
+                    .FirstOrDefault(AssetExists);
+                if (!string.IsNullOrWhiteSpace(found))
+                {
+                    return found;
+                }
+            }
+        }
+
+        const string packageDefaultAvatarPath = "Packages/orbiters.mcb/creator assets/default avatar.asset";
+        return AssetExists(packageDefaultAvatarPath) ? packageDefaultAvatarPath : null;
+    }
+
+    private IEnumerable<CustomBaseVersion> GetDefaultAvatarCandidateVersions(CustomBaseVersion resetFromVersion)
+    {
+        if (resetFromVersion != null && resetFromVersion != VersionListDrawer.RESET_VERSION)
+        {
+            yield return resetFromVersion;
+        }
+
+        var applied = editor.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseVersion : null;
+        if (applied != null && applied != resetFromVersion && applied != VersionListDrawer.RESET_VERSION)
+        {
+            yield return applied;
+        }
+
+        if (editor.selectedVersionForAction != null &&
+            editor.selectedVersionForAction != resetFromVersion &&
+            editor.selectedVersionForAction != VersionListDrawer.RESET_VERSION)
+        {
+            yield return editor.selectedVersionForAction;
+        }
+
+        if (editor.recommendedVersion != null &&
+            editor.recommendedVersion != resetFromVersion &&
+            editor.recommendedVersion != VersionListDrawer.RESET_VERSION)
+        {
+            yield return editor.recommendedVersion;
+        }
+
+        foreach (var version in editor.GetAllVersions() ?? new List<CustomBaseVersion>())
+        {
+            if (version != null && version != resetFromVersion && version != VersionListDrawer.RESET_VERSION)
+            {
+                yield return version;
+            }
+        }
+    }
+
+    private static bool AssetExists(string unityPath)
+    {
+        if (string.IsNullOrWhiteSpace(unityPath))
+        {
+            return false;
+        }
+
+        string normalizedPath = MCBUtils.ToUnityPath(unityPath);
+        return AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(normalizedPath) != null ||
+               File.Exists(Path.GetFullPath(normalizedPath));
     }
     
     private Dictionary<string, Dictionary<string, float>> CaptureBlendshapeState(Transform root)
