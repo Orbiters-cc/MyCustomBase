@@ -167,10 +167,11 @@ public class DynamicNormalsService
         // Try 1: Restore from our stored reference (for immediate toggling within same session)
         if (originalMeshes.TryGetValue(bodyMesh, out originalMesh))
         {
+            string currentDynamicNormalsAssetPath = AssetDatabase.GetAssetPath(bodyMesh.sharedMesh);
             bodyMesh.sharedMesh = originalMesh;
             Debug.Log($"[DynamicNormals] Restored original mesh from cached reference: {originalMesh.name}");
             
-            // Delete the dynamic normals asset file if it exists
+            DeleteMeshAssetIfDynamicNormals(currentDynamicNormalsAssetPath);
             DeleteDynamicNormalsAsset(originalMesh);
             
             // Remove from tracking dictionary since we've restored it
@@ -184,6 +185,7 @@ public class DynamicNormalsService
         if (currentMesh.name.Contains("(DynamicNormals)"))
         {
             Debug.Log($"[DynamicNormals] Detected modified mesh: {currentMesh.name}. Searching for original in assets...");
+            string currentDynamicNormalsAssetPath = AssetDatabase.GetAssetPath(currentMesh);
             
             // Extract the original mesh name
             string originalName = currentMesh.name.Replace(" (DynamicNormals)", "");
@@ -199,7 +201,7 @@ public class DynamicNormalsService
                 bodyMesh.sharedMesh = originalMesh;
                 Debug.Log($"[DynamicNormals] Successfully restored original mesh from assets: {originalMesh.name}");
                 
-                // Delete the dynamic normals asset file if it exists
+                DeleteMeshAssetIfDynamicNormals(currentDynamicNormalsAssetPath);
                 DeleteDynamicNormalsAsset(originalMesh);
                 
                 EditorUtility.SetDirty(bodyMesh);
@@ -217,6 +219,35 @@ public class DynamicNormalsService
         }
 
         activeBlendshapes.Clear();
+    }
+
+    private void DeleteMeshAssetIfDynamicNormals(string assetPath)
+    {
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return;
+        }
+
+        string normalizedPath = assetPath.Replace("\\", "/");
+        if (!normalizedPath.EndsWith("_DynamicNormals.asset", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (AssetDatabase.LoadAssetAtPath<Mesh>(normalizedPath) == null)
+        {
+            return;
+        }
+
+        if (AssetDatabase.DeleteAsset(normalizedPath))
+        {
+            Debug.Log($"[DynamicNormals] Deleted current dynamic normals asset at: {normalizedPath}");
+            AssetDatabase.SaveAssets();
+        }
+        else
+        {
+            Debug.LogWarning($"[DynamicNormals] Failed to delete current dynamic normals asset at: {normalizedPath}");
+        }
     }
 
     private string GetBaseFbxPath()

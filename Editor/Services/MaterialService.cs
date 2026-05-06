@@ -266,7 +266,7 @@ public class MaterialService
         PrepareMaterialEdit(smr, material, "MCB Apply Detail Normal Map");
         if (!TrySetDetailNormalTexture(material, texture))
         {
-            MCBLogger.LogError("[MaterialService] Unable to find detail normal texture property on material");
+            MCBLogger.LogWarning($"[MaterialService] Skipped detail normal map for '{GetRendererLabel(smr)}' because material '{material.name}' has no supported detail normal texture property.");
             return false;
         }
         EnableDetailNormalFeatures(material);

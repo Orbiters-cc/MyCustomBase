@@ -202,8 +202,8 @@ public class NetworkService
         string zipFileName = Path.GetFileName(zipFilePath);
         
         WWWForm form = new WWWForm();
-        form.AddBinaryData("packageFile", fileBytes, zipFileName, "application/zip");
         form.AddField("metadata", metadataJson);
+        form.AddBinaryData("packageFile", fileBytes, zipFileName, "application/zip");
 
         using (var req = UnityWebRequest.Post(url, form))
         {

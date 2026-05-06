@@ -12,6 +12,48 @@ using MCBEditorUtils;
 public class VersionActions
 {
     private const float BlendshapeWeightEpsilon = 0.001f;
+    private const string AdvancedMeshDeliveryMode = "UNITY_NATIVE_MESH_ASSET";
+    private const string FbxReplacementDeliveryMode = "FBX_REPLACEMENT";
+
+    private sealed class ApplyTimingProfile
+    {
+        private readonly bool enabled;
+        private readonly string operation;
+        private readonly System.Diagnostics.Stopwatch total = System.Diagnostics.Stopwatch.StartNew();
+        private readonly System.Diagnostics.Stopwatch step = System.Diagnostics.Stopwatch.StartNew();
+
+        public ApplyTimingProfile(CustomBaseVersion version, bool isReset, bool usesAdvancedMesh)
+        {
+            enabled = usesAdvancedMesh;
+            operation = $"{(isReset ? "reset" : "apply")} version={(version != null ? version.version : "null")}";
+
+            if (enabled)
+            {
+                UnityEngine.Debug.Log($"[VersionApplyProfile] START {operation}");
+            }
+        }
+
+        public void Mark(string label)
+        {
+            if (!enabled)
+            {
+                return;
+            }
+
+            UnityEngine.Debug.Log($"[VersionApplyProfile] {label}: step={step.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms");
+            step.Restart();
+        }
+
+        public void Done(string label = "DONE")
+        {
+            if (!enabled)
+            {
+                return;
+            }
+
+            UnityEngine.Debug.Log($"[VersionApplyProfile] {label} {operation}: total={total.Elapsed.TotalMilliseconds:F1} ms");
+        }
+    }
 
     private readonly MCBEditor editor;
     private readonly NetworkService networkService;
@@ -236,6 +278,17 @@ public class VersionActions
                 yield return null;
             }
             MCBLogger.Log("[VersionActions] Editor finished pending compilation/import work.");            
+            try
+            {
+                PrecacheAdvancedMeshPayloadAssets(version);
+            }
+            catch (Exception ex)
+            {
+                editor.warningsModule.AddWarning($"Advanced mesh cache preparation failed: {ex.Message}", MessageType.Error, "Download failed");
+                editor.Repaint();
+                yield break;
+            }
+
             if (applyAfter) 
             {
                 editor.selectedVersionForAction = version;
@@ -279,20 +332,39 @@ public class VersionActions
         var root = editor.customBaseTarget.transform.root;
         bool preserveBlendshapeValues = editor.customBaseTarget != null && editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch;
         var blendshapeSnapshot = preserveBlendshapeValues ? CaptureBlendshapeState(root) : null;
+        var versionForAssets = isReset ? (ResolvePersistedAppliedVersion() ?? editor.selectedVersionForAction) : version;
+        bool versionUsesAdvancedMesh = NativeMeshPayloadService.VersionUsesAdvancedMesh(versionForAssets);
+        var profile = new ApplyTimingProfile(versionForAssets, isReset, versionUsesAdvancedMesh);
+        var dynamicNormalsService = new DynamicNormalsService(editor);
+        profile.Mark("Setup target, version state, and blendshape snapshot");
+
+        dynamicNormalsService.Remove();
         fileManagerService.RemoveExistingLogic(root);
+        profile.Mark("Removed current DynamicNormals objects and existing MCB logic");
 
         MCBLogger.Log($"[VersionActions] ApplyOrReset start (reset={isReset}, version={(version != null ? version.version : "null")})");
 
         string fbxPath = GetCurrentFBXPath();
-        if (string.IsNullOrEmpty(fbxPath)) yield break;
-        var versionForAssets = isReset ? (editor.customBaseTarget.appliedCustomBaseVersion ?? editor.selectedVersionForAction) : version;
+        profile.Mark("Resolved current FBX path");
+        if (string.IsNullOrEmpty(fbxPath))
+        {
+            profile.Done("ABORT missing FBX path");
+            yield break;
+        }
         
         bool success = false;
         try
         {
             if (isReset)
             {
-                RestoreBackupsForVersion(versionForAssets, fbxPath);
+                RestoreBackupsForVersion(versionForAssets, fbxPath, !versionUsesAdvancedMesh);
+                if (versionUsesAdvancedMesh)
+                {
+                    NativeMeshPayloadService.RestoreOriginalMeshesFromFbx(
+                        root,
+                        versionForAssets,
+                        GetResetAffectedFbxPaths(versionForAssets, fbxPath));
+                }
             }
             else
             {
@@ -301,9 +373,11 @@ public class VersionActions
                 ApplyVersionModelFilePatches(version, fbxPath);
             }
             success = true;
+            profile.Mark(isReset ? "Restored base/native meshes" : "Applied model file patches");
         }
         catch(Exception e)
         {
+            profile.Mark("Model patch/reset failed");
             MCBLogger.LogError($"[MCB] Operation failed: {e.Message}");
             if(!isReset && fileManagerService.BackupExists(fbxPath)) fileManagerService.RestoreBackup(fbxPath);
         }
@@ -313,12 +387,18 @@ public class VersionActions
             var affectedFbxPaths = isReset
                 ? GetResetAffectedFbxPaths(versionForAssets, fbxPath)
                 : GetAffectedFbxPaths(version, fbxPath);
-            foreach (string affectedPath in affectedFbxPaths)
+            var fbxImportPaths = isReset
+                ? (versionUsesAdvancedMesh ? new List<string>() : affectedFbxPaths)
+                : GetFbxImportPaths(version, fbxPath);
+            profile.Mark("Resolved affected FBX/import path lists");
+            foreach (string affectedPath in fbxImportPaths)
             {
                 MCBLogger.Log($"[VersionActions] Importing modified FBX at {affectedPath}");
                 AssetDatabase.ImportAsset(affectedPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
             }
-            MCBLogger.Log("[VersionActions] FBX import completed.");
+            MCBLogger.Log(fbxImportPaths.Count > 0
+                ? "[VersionActions] FBX import completed."
+                : "[VersionActions] No FBX import required for this version operation.");
             
             // Wait until Unity has finished compiling (if any compilation was triggered).
             // This is essential to prevent race conditions.
@@ -327,25 +407,48 @@ public class VersionActions
                 yield return null;
             }
             MCBLogger.Log("[VersionActions] Editor finished pending compilation/import work.");
+            profile.Mark("FBX import and pending editor update wait");
             //  --- END CRITICAL FIX ---
             
             if (isReset)
             {
-                ApplyDefaultAvatarImportsForReset(root, versionForAssets);
+                if (versionUsesAdvancedMesh)
+                {
+                    ApplyDefaultAvatarToRootForReset(root, versionForAssets);
+                }
+                else
+                {
+                    ApplyDefaultAvatarImportsForReset(root, versionForAssets);
+                }
                 while (EditorApplication.isCompiling || EditorApplication.isUpdating)
                 {
                     yield return null;
                 }
                 MCBLogger.Log("[VersionActions] Default avatar import completed.");
+                profile.Mark("Default avatar import/reset wait");
+                if (versionUsesAdvancedMesh)
+                {
+                    NativeMeshPayloadService.RestoreOriginalAuthoringPoseFromFbx(root, GetResetAffectedFbxPaths(versionForAssets, fbxPath));
+                    profile.Mark("Restored native mesh reset authoring pose");
+                    MCBLogger.Log("[VersionActions] Restored source authoring pose after advanced mesh reset.");
+                }
             }
             else if (versionForAssets != null && versionForAssets != VersionListDrawer.RESET_VERSION)
             {
                 ApplyAvatarImportsForVersion(root, versionForAssets, isReset);
+                profile.Mark("Applied avatar import settings for version");
                 while (EditorApplication.isCompiling || EditorApplication.isUpdating)
                 {
                     yield return null;
                 }
                 MCBLogger.Log("[VersionActions] Avatar import completed.");
+                profile.Mark("Avatar import/update wait");
+                if (versionUsesAdvancedMesh)
+                {
+                    ApplyAdvancedMeshAuthoringPose(versionForAssets, fbxPath);
+                    profile.Mark("Restored advanced mesh authoring pose");
+                    MCBLogger.Log("[VersionActions] Restored payload authoring pose after advanced mesh apply.");
+                }
 
                 if (!isReset)
                 {
@@ -381,11 +484,18 @@ public class VersionActions
 
                         yield return current;
                     }
+                    profile.Mark("Imported/instantiated logic prefab");
                 }
             }
-            editor.customBaseTarget.appliedCustomBaseVersion = version;
-            SyncAppliedVersionBlendshapeLinkCache(version);
-            SyncAppliedVersionAnimationPositionOffsetCache(version);
+            if (isReset)
+            {
+                ClearAppliedVersionState();
+            }
+            else
+            {
+                PersistAppliedVersionState(version);
+            }
+            profile.Mark("Updated persisted applied-version state");
             
             // Check feature flags
             bool hasCustomVeins = !isReset && version != null && (version.extraCustomization?.Contains("customVeins") ?? false);
@@ -395,9 +505,7 @@ public class VersionActions
             
             // Apply or remove dynamic normals based on version feature flags
             // CRITICAL FIX: Execute INSIDE the coroutine (not via delayCall) with proper yield statements
-            var dynamicNormalsService = new DynamicNormalsService(editor);
-
-            if (!shouldApplyDynamicNormals)
+            if (!shouldApplyDynamicNormals && !versionUsesAdvancedMesh)
             {
                 MCBLogger.Log("[VersionActions] Removing dynamic normals.");
                 dynamicNormalsService.Remove();
@@ -409,29 +517,51 @@ public class VersionActions
                     yield return null;
                 }
                 MCBLogger.Log("[VersionActions] Dynamic normals removal completed.");
+                profile.Mark("Removed DynamicNormals and waited for editor update");
+            }
+            else if (!shouldApplyDynamicNormals && versionUsesAdvancedMesh)
+            {
+                MCBLogger.Log("[VersionActions] Native mesh payload already replaced the active mesh; dynamic normals removal is not required.");
+                profile.Mark("Skipped DynamicNormals removal for advanced native mesh");
             }
 
-            RefreshTargetMeshesFromFBXs(root, affectedFbxPaths, versionForAssets);
+            if (!versionUsesAdvancedMesh)
+            {
+                RefreshTargetMeshesFromFBXs(root, affectedFbxPaths, versionForAssets);
+                profile.Mark("Refreshed target meshes from imported FBXs");
+            }
             
             if (shouldApplyDynamicNormals)
             {
-                bool applyBody = hasDynamicNormalBody;
-                bool applyFlex = hasDynamicNormalFlexing;
-                MCBLogger.Log("[VersionActions] Applying dynamic normals.");
-                dynamicNormalsService.Apply(applyBody, applyFlex);
-                
-                // Wait for any asset processing triggered by dynamic normals
-                yield return null;
-                while (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                if (versionUsesAdvancedMesh)
                 {
-                    yield return null;
+                    MCBLogger.Log("[VersionActions] Dynamic normals are expected to be pre-baked in the advanced native mesh payload; skipping user-side regeneration.");
+                    profile.Mark("Skipped user-side DynamicNormals regeneration for advanced native mesh");
                 }
-                MCBLogger.Log("[VersionActions] Dynamic normals application completed.");
+                else
+                {
+                    bool applyBody = hasDynamicNormalBody;
+                    bool applyFlex = hasDynamicNormalFlexing;
+                    MCBLogger.Log("[VersionActions] Applying dynamic normals.");
+                    dynamicNormalsService.Apply(applyBody, applyFlex);
+                    
+                    // Wait for any asset processing triggered by dynamic normals
+                    yield return null;
+                    while (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                    {
+                        yield return null;
+                    }
+                    MCBLogger.Log("[VersionActions] Dynamic normals application completed.");
+                    profile.Mark("Applied DynamicNormals and waited for editor update");
+                }
             }
             
             // Apply or remove custom veins based on version feature flag
             var materialService = new MaterialService(root);
-            var targetMaterialRenderers = materialService.GetSkinnedMeshRenderersForFbxPaths(affectedFbxPaths);
+            var targetMaterialRenderers = versionUsesAdvancedMesh
+                ? NativeMeshPayloadService.ResolveRenderersForSourcePaths(root, versionForAssets, affectedFbxPaths)
+                : materialService.GetSkinnedMeshRenderersForFbxPaths(affectedFbxPaths);
+            profile.Mark($"Resolved material target renderers ({targetMaterialRenderers.Count})");
             
             if (hasCustomVeins)
             {
@@ -475,6 +605,7 @@ public class VersionActions
                 EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, false);
                 MCBLogger.Log("[VersionActions] Custom veins removed");
             }
+            profile.Mark(hasCustomVeins ? "Applied custom veins materials" : "Removed custom veins materials");
             
             // Restore blendshape values by name after all mesh swaps are complete.
             if (!isReset && version != null)
@@ -556,15 +687,42 @@ public class VersionActions
                     Undo.DestroyObjectImmediate(slidersTransform.gameObject);
                 }
             }
+            profile.Mark("Applied blendshape defaults/preservation and slider state");
+        }
+
+        if (!success)
+        {
+            editor.Repaint();
+            profile.Done("FAILED");
+            yield break;
         }
         
-        MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash.");
-        // Force a recalculation of the current FBX hash and applied state
-        EditorCoroutineUtility.StartCoroutineOwnerless(RecalculateCurrentFbxHashCoroutine());
+        MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating applied state.");
+        if (versionUsesAdvancedMesh)
+        {
+            MCBLogger.Log("[VersionActions] Skipping FBX hash recalculation for native mesh apply because the source FBX bytes were not changed.");
+            profile.Mark("Skipped asynchronous FBX hash/state recalculation for advanced native mesh");
+        }
+        else
+        {
+            // Force a recalculation of the current FBX hash and applied state
+            EditorCoroutineUtility.StartCoroutineOwnerless(RecalculateCurrentFbxHashCoroutine());
+            profile.Mark("Started asynchronous FBX hash/state recalculation");
+        }
 
         EditorUtility.SetDirty(editor.customBaseTarget);
-        AutoSaveProjectAfterVersionSwitch();
+        if (versionUsesAdvancedMesh)
+        {
+            MCBLogger.Log("[VersionActions] Skipping synchronous project auto-save for native mesh apply. The scene remains dirty so Unity can save it normally.");
+            profile.Mark("Skipped synchronous auto-save for advanced native mesh");
+        }
+        else
+        {
+            AutoSaveProjectAfterVersionSwitch();
+            profile.Mark("Auto-saved assets and scenes");
+        }
         editor.Repaint();
+        profile.Done();
     }
 
     private void ApplyVersionModelFilePatches(CustomBaseVersion version, string fallbackFbxPath)
@@ -581,11 +739,14 @@ public class VersionActions
 
         foreach (var patchFile in patchFiles)
         {
-            string transform = string.IsNullOrWhiteSpace(patchFile.transform)
-                ? "XOR_BIN_TO_FBX"
-                : patchFile.transform;
+            if (string.IsNullOrWhiteSpace(patchFile.transform))
+            {
+                throw new InvalidDataException("Model file patch is missing required transform metadata.");
+            }
 
-            if (string.Equals(transform, "XOR_BIN_TO_UNITY_ASSET", StringComparison.OrdinalIgnoreCase))
+            string transform = patchFile.transform;
+
+            if (string.Equals(transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
             {
                 ApplyXorBinToUnityAsset(version, patchFile);
                 continue;
@@ -629,7 +790,7 @@ public class VersionActions
         File.WriteAllBytes(fbxPath, transformedData);
     }
 
-    private void RestoreBackupsForVersion(CustomBaseVersion version, string fallbackFbxPath)
+    private void RestoreBackupsForVersion(CustomBaseVersion version, string fallbackFbxPath, bool requireBackup = true)
     {
         var affectedPaths = GetResetAffectedFbxPaths(version, fallbackFbxPath);
         var pathsToRestore = affectedPaths
@@ -639,7 +800,12 @@ public class VersionActions
 
         if (pathsToRestore.Count == 0)
         {
-            throw new FileNotFoundException("No original FBX backup was found for the selected custom base version.");
+            if (requireBackup)
+            {
+                throw new FileNotFoundException("No original FBX backup was found for the selected custom base version.");
+            }
+
+            return;
         }
 
         foreach (string path in pathsToRestore)
@@ -658,46 +824,162 @@ public class VersionActions
         string sourcePath = source?.path;
         if (string.IsNullOrWhiteSpace(sourcePath) && patchFile.metadata != null)
         {
-            if (patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue) ||
-                patchFile.metadata.TryGetValue("targetPath", out sourcePathValue))
+            if (patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue))
             {
                 sourcePath = sourcePathValue?.ToString();
             }
         }
-        if (string.IsNullOrWhiteSpace(sourcePath))
+        if (string.IsNullOrWhiteSpace(sourcePath) && !string.IsNullOrWhiteSpace(fallbackFbxPath))
         {
-            sourcePath = version.sourceFiles?.FirstOrDefault(file =>
-                file != null &&
-                string.Equals(file.path, patchFile.path, StringComparison.OrdinalIgnoreCase))?.path;
+            throw new InvalidDataException("Model file patch is missing required sourcePath metadata.");
         }
 
-        return string.IsNullOrWhiteSpace(sourcePath)
-            ? fallbackFbxPath
-            : MCBUtils.ToUnityPath(sourcePath);
+        return string.IsNullOrWhiteSpace(sourcePath) ? null : MCBUtils.ToUnityPath(sourcePath);
     }
 
     private string ResolveVersionPatchPath(CustomBaseVersion version, ModelFileData patchFile)
     {
         string versionFolder = MCBUtils.GetVersionDataPath(version);
-        if (string.IsNullOrWhiteSpace(versionFolder)) return null;
+        if (string.IsNullOrWhiteSpace(versionFolder))
+        {
+            throw new DirectoryNotFoundException("Version data folder could not be resolved.");
+        }
 
         string candidateName = string.IsNullOrWhiteSpace(patchFile.path)
             ? null
             : Path.GetFileName(patchFile.path);
-        if (!string.IsNullOrWhiteSpace(candidateName))
+        if (string.IsNullOrWhiteSpace(candidateName))
         {
-            string candidatePath = MCBUtils.CombineUnityPath(versionFolder, candidateName);
-            if (File.Exists(Path.GetFullPath(candidatePath))) return candidatePath;
+            throw new InvalidDataException("Model file patch is missing required path metadata.");
         }
 
-        return MCBUtils.GetVersionBinPath(version);
+        string candidatePath = MCBUtils.CombineUnityPath(versionFolder, candidateName);
+        if (!File.Exists(Path.GetFullPath(candidatePath)))
+        {
+            throw new FileNotFoundException("Version patch .bin file was not found.", candidatePath);
+        }
+
+        return candidatePath;
     }
 
     private void ApplyXorBinToUnityAsset(CustomBaseVersion version, ModelFileData patchFile)
     {
-        // TODO: Implement the native Unity mesh asset workflow. This must still decrypt only on the client:
-        // original FBX bytes + encrypted BIN patch -> generated Unity Mesh/Prefab assets.
-        throw new NotSupportedException("Unity .asset mesh patch delivery is not implemented yet.");
+        if (editor?.customBaseTarget == null)
+        {
+            throw new InvalidOperationException("Apply failed: no My Custom Base target is available.");
+        }
+
+        string targetFbxPath = ResolveTargetFbxPath(version, patchFile, GetCurrentFBXPath());
+        if (string.IsNullOrWhiteSpace(targetFbxPath))
+        {
+            throw new FileNotFoundException("Apply failed: target FBX path for native mesh payload could not be resolved.");
+        }
+
+        string originalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath);
+        string binPath = ResolveVersionPatchPath(version, patchFile);
+        NativeMeshPayloadService.ApplyEncryptedPayload(
+            editor.customBaseTarget.transform.root,
+            version,
+            patchFile,
+            binPath,
+            originalFbxPath,
+            fileManagerService);
+    }
+
+    private void PrecacheAdvancedMeshPayloadAssets(CustomBaseVersion version)
+    {
+        if (!NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
+        {
+            return;
+        }
+
+        var advancedPatchFiles = version.versionFiles?
+            .Where(file => file != null &&
+                           string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
+                           string.Equals(file.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (advancedPatchFiles == null || advancedPatchFiles.Length == 0)
+        {
+            throw new InvalidDataException("Advanced mesh version is missing required native mesh payload patches.");
+        }
+
+        try
+        {
+            EditorUtility.DisplayProgressBar("Preparing Advanced Mesh", $"Building cached Unity mesh assets for {version.version}...", 0.75f);
+            string fallbackFbxPath = GetCurrentFBXPath();
+            foreach (var patchFile in advancedPatchFiles)
+            {
+                string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+                if (string.IsNullOrWhiteSpace(targetFbxPath))
+                {
+                    throw new FileNotFoundException("Advanced mesh cache preparation failed: target FBX path could not be resolved.");
+                }
+
+                NativeMeshPayloadService.MaterializeEncryptedPayloadAsset(
+                    version,
+                    patchFile,
+                    ResolveVersionPatchPath(version, patchFile),
+                    ResolveOriginalFbxKeyPath(targetFbxPath),
+                    fileManagerService);
+            }
+        }
+        finally
+        {
+            EditorUtility.ClearProgressBar();
+        }
+    }
+
+    private void ApplyAdvancedMeshAuthoringPose(CustomBaseVersion version, string fallbackFbxPath)
+    {
+        if (editor?.customBaseTarget == null || !NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
+        {
+            return;
+        }
+
+        var advancedPatchFiles = version.versionFiles?
+            .Where(file => file != null &&
+                           string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
+                           string.Equals(file.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (advancedPatchFiles == null || advancedPatchFiles.Length == 0)
+        {
+            throw new InvalidDataException("Advanced mesh version is missing required native mesh payload patches.");
+        }
+
+        Transform root = editor.customBaseTarget.transform.root;
+        foreach (var patchFile in advancedPatchFiles)
+        {
+            string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+            if (string.IsNullOrWhiteSpace(targetFbxPath))
+            {
+                throw new FileNotFoundException("Advanced mesh authoring pose restore failed: target FBX path could not be resolved.");
+            }
+
+            var payload = NativeMeshPayloadService.MaterializeEncryptedPayloadAsset(
+                version,
+                patchFile,
+                ResolveVersionPatchPath(version, patchFile),
+                ResolveOriginalFbxKeyPath(targetFbxPath),
+                fileManagerService);
+            NativeMeshPayloadService.ApplyPayloadAuthoringPose(root, payload);
+        }
+    }
+
+    private static string ResolveOriginalFbxKeyPath(string targetFbxPath)
+    {
+        string originalFbxPath = targetFbxPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase)
+            ? targetFbxPath
+            : targetFbxPath + FileManagerService.OriginalSuffix;
+        if (!File.Exists(originalFbxPath))
+        {
+            originalFbxPath = targetFbxPath;
+        }
+        if (!File.Exists(originalFbxPath))
+        {
+            throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
+        }
+
+        return originalFbxPath;
     }
 
     private List<string> GetAffectedFbxPaths(CustomBaseVersion version, string fallbackFbxPath)
@@ -708,7 +990,15 @@ public class VersionActions
             foreach (var patchFile in version.versionFiles)
             {
                 if (patchFile == null) continue;
-                if (!string.Equals(patchFile.transform ?? "XOR_BIN_TO_FBX", "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.IsNullOrWhiteSpace(patchFile.transform)) continue;
+                string transform = patchFile.transform;
+                if (!string.Equals(transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(transform, "DIRECT_ASSET", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 string path = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
                 if (!string.IsNullOrWhiteSpace(path)) paths.Add(path);
             }
@@ -740,6 +1030,23 @@ public class VersionActions
         return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    private List<string> GetFbxImportPaths(CustomBaseVersion version, string fallbackFbxPath)
+    {
+        var paths = new List<string>();
+        if (version?.versionFiles != null)
+        {
+            foreach (var patchFile in version.versionFiles)
+            {
+                if (patchFile == null) continue;
+                if (!string.Equals(patchFile.transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase)) continue;
+                string path = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+                if (!string.IsNullOrWhiteSpace(path)) paths.Add(path);
+            }
+        }
+
+        return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     private void ApplyAvatarImportsForVersion(Transform root, CustomBaseVersion version, bool isReset)
     {
         if (isReset)
@@ -764,6 +1071,21 @@ public class VersionActions
 
             string sourcePath = ResolveTargetFbxPath(version, patchFile, null);
             var fbxGameObject = string.IsNullOrWhiteSpace(sourcePath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(sourcePath);
+            if (NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
+            {
+                var avatar = AssetDatabase.LoadAssetAtPath<Avatar>(MCBUtils.ToUnityPath(avatarPath));
+                if (avatar != null)
+                {
+                    MCBLogger.Log($"[VersionActions] Applying native mesh Avatar directly from {avatarPath}.");
+                    AvatarDefinitionGenerationService.SetRootAnimatorAvatar(root, avatar);
+                }
+                else
+                {
+                    MCBLogger.LogWarning($"[VersionActions] Could not load native mesh Avatar at {avatarPath}.");
+                }
+                continue;
+            }
+
             MCBLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath} to {sourcePath}");
             fileManagerService.ApplyAvatarToModel(root, fbxGameObject, avatarPath);
         }
@@ -785,6 +1107,25 @@ public class VersionActions
             MCBLogger.Log($"[VersionActions] Restoring default avatar import settings from {defaultAvatarPath} to {fbxPath}");
             fileManagerService.ApplyAvatarToModel(root, fbxGameObject, defaultAvatarPath);
         }
+    }
+
+    private void ApplyDefaultAvatarToRootForReset(Transform root, CustomBaseVersion resetFromVersion)
+    {
+        string defaultAvatarPath = ResolveDefaultAvatarPathForReset(resetFromVersion);
+        if (string.IsNullOrWhiteSpace(defaultAvatarPath))
+        {
+            MCBLogger.LogWarning("[VersionActions] Reset restored native mesh data, but no default avatar.asset could be resolved for Animator reset.");
+            return;
+        }
+
+        var avatar = AssetDatabase.LoadAssetAtPath<Avatar>(MCBUtils.ToUnityPath(defaultAvatarPath));
+        if (avatar == null)
+        {
+            MCBLogger.LogWarning($"[VersionActions] Could not load default Avatar at {defaultAvatarPath}.");
+            return;
+        }
+
+        AvatarDefinitionGenerationService.SetRootAnimatorAvatar(root, avatar);
     }
 
     private string ResolveDefaultAvatarPathForReset(CustomBaseVersion resetFromVersion)
@@ -1095,6 +1436,34 @@ public class VersionActions
             SmrPathService.RefreshTargetMeshesFromFbx(root, fbxPath, smrPaths);
         }
     }
+
+    private bool BodyRendererUsesNativeMeshPayload(Transform root, CustomBaseVersion version)
+    {
+        if (root == null || version == null)
+        {
+            return false;
+        }
+
+        var bodyRenderer = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
+        if (bodyRenderer?.sharedMesh == null)
+        {
+            return false;
+        }
+
+        string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(bodyRenderer.sharedMesh));
+        if (string.IsNullOrWhiteSpace(meshPath) ||
+            meshPath.IndexOf("Assets/MCB/generated/advancedMeshPayloads/", StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            return false;
+        }
+
+        return version.versionFiles?
+            .Where(file => file != null &&
+                           string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
+                           string.Equals(file.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
+            .Any(file => !string.IsNullOrWhiteSpace(file.outputHash) &&
+                         meshPath.IndexOf(file.outputHash, StringComparison.OrdinalIgnoreCase) >= 0) == true;
+    }
     
     public void DisplayErrors()
     {
@@ -1178,9 +1547,19 @@ public class VersionActions
     
     private IEnumerator RecalculateCurrentFbxHashCoroutine()
     {
+        var profile = new System.Diagnostics.Stopwatch();
+        var step = new System.Diagnostics.Stopwatch();
+        profile.Start();
+        step.Start();
+        UnityEngine.Debug.Log("[VersionApplyProfile] Async hash/state recalculation START");
+
         var paths = GetCurrentFBXPaths();
         string path = paths.FirstOrDefault();
-        if (string.IsNullOrEmpty(path)) yield break;
+        if (string.IsNullOrEmpty(path))
+        {
+            UnityEngine.Debug.Log($"[VersionApplyProfile] Async hash/state recalculation ABORT missing FBX path total={profile.Elapsed.TotalMilliseconds:F1} ms");
+            yield break;
+        }
 
         var hashService = AsyncHashService.Instance;
 
@@ -1195,12 +1574,16 @@ public class VersionActions
         {
             hashService.InvalidateHashCache(originalPath);
         }
+        UnityEngine.Debug.Log($"[VersionApplyProfile] Invalidated FBX hash cache: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms paths={paths.Count}");
+        step.Restart();
 
         // Ensure any imports/updates are finished
         while (EditorApplication.isCompiling || EditorApplication.isUpdating)
         {
             yield return null;
         }
+        UnityEngine.Debug.Log($"[VersionApplyProfile] Waited for editor import/update before hashing: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
+        step.Restart();
 
         // Calculate hashes
         var calcTask = hashService.CalculateFBXHashesAsync(Path.GetFullPath(path));
@@ -1209,6 +1592,8 @@ public class VersionActions
             yield return null;
         }
         var (currentHash, originalHash) = calcTask.Result;
+        UnityEngine.Debug.Log($"[VersionApplyProfile] Calculated primary FBX/current+backup hashes: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
+        step.Restart();
 
         foreach (string targetPath in paths.Skip(1))
         {
@@ -1218,11 +1603,14 @@ public class VersionActions
                 yield return null;
             }
         }
+        UnityEngine.Debug.Log($"[VersionApplyProfile] Calculated additional FBX hashes: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
+        step.Restart();
 
         // Update editor state
         editor.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
         UpdateAppliedVersionAndState(currentHash);
         editor.Repaint();
+        UnityEngine.Debug.Log($"[VersionApplyProfile] Async hash/state recalculation DONE: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
     }
     
     // FIX: Centralized and corrected state detection logic. This is the single source of truth.
@@ -1239,6 +1627,19 @@ public class VersionActions
 
             if (string.IsNullOrEmpty(currentFileHash))
             {
+                var pendingMarkerVersion = ResolvePersistedAppliedVersion();
+                if (pendingMarkerVersion != null && NativeMeshPayloadService.VersionUsesAdvancedMesh(pendingMarkerVersion))
+                {
+                    MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state before hash is ready: {pendingMarkerVersion.version}");
+                    editor.isCustomBase = true;
+                    editor.currentIsCustom = false;
+                    editor.customBaseTarget.appliedCustomBaseVersion = pendingMarkerVersion;
+                    SyncAppliedVersionBlendshapeLinkCache(pendingMarkerVersion);
+                    SyncAppliedVersionAnimationPositionOffsetCache(pendingMarkerVersion);
+                    EditorUtility.SetDirty(editor.customBaseTarget);
+                    return;
+                }
+
                 MCBLogger.Log("[VersionActions] UpdateAppliedVersionAndState deferred (hash not cached yet).");
                 return;
             }
@@ -1262,6 +1663,19 @@ public class VersionActions
 
         if (editor?.customBaseTarget == null) return;
         Undo.RecordObject(editor.customBaseTarget, "Update MCB State");
+
+        var markerVersion = ResolvePersistedAppliedVersion(candidateVersions);
+        if (markerVersion != null && NativeMeshPayloadService.VersionUsesAdvancedMesh(markerVersion))
+        {
+            MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state: {markerVersion.version}");
+            editor.isCustomBase = true;
+            editor.currentIsCustom = false;
+            editor.customBaseTarget.appliedCustomBaseVersion = markerVersion;
+            SyncAppliedVersionBlendshapeLinkCache(markerVersion);
+            SyncAppliedVersionAnimationPositionOffsetCache(markerVersion);
+            EditorUtility.SetDirty(editor.customBaseTarget);
+            return;
+        }
 
         if (matchingVersion != null)
         {
@@ -1311,6 +1725,133 @@ public class VersionActions
         }
 
         EditorUtility.SetDirty(editor.customBaseTarget);
+    }
+
+    private void PersistAppliedVersionState(CustomBaseVersion version)
+    {
+        if (editor?.customBaseTarget == null || version == null || version == VersionListDrawer.RESET_VERSION)
+        {
+            ClearAppliedVersionState();
+            return;
+        }
+
+        editor.customBaseTarget.appliedCustomBaseVersion = version;
+        editor.customBaseTarget.appliedCustomBaseAssetId = version.assetId;
+        editor.customBaseTarget.appliedCustomBaseVersionString = version.version ?? "";
+        editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = version.defaultAviVersion ?? "";
+        editor.customBaseTarget.appliedCustomBaseDeliveryMode = NativeMeshPayloadService.VersionUsesAdvancedMesh(version)
+            ? AdvancedMeshDeliveryMode
+            : FbxReplacementDeliveryMode;
+        editor.isCustomBase = true;
+        editor.currentIsCustom = false;
+        SyncAppliedVersionBlendshapeLinkCache(version);
+        SyncAppliedVersionAnimationPositionOffsetCache(version);
+        EditorUtility.SetDirty(editor.customBaseTarget);
+    }
+
+    private void ClearAppliedVersionState()
+    {
+        if (editor?.customBaseTarget == null) return;
+
+        editor.customBaseTarget.appliedCustomBaseVersion = null;
+        editor.customBaseTarget.appliedCustomBaseAssetId = 0;
+        editor.customBaseTarget.appliedCustomBaseVersionString = "";
+        editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = "";
+        editor.customBaseTarget.appliedCustomBaseDeliveryMode = "";
+        editor.isCustomBase = false;
+        editor.currentIsCustom = false;
+        SyncAppliedVersionBlendshapeLinkCache(null);
+        SyncAppliedVersionAnimationPositionOffsetCache(null);
+        EditorUtility.SetDirty(editor.customBaseTarget);
+    }
+
+    private CustomBaseVersion ResolvePersistedAppliedVersion(IReadOnlyList<CustomBaseVersion> candidateVersions = null)
+    {
+        if (editor?.customBaseTarget == null)
+        {
+            return null;
+        }
+
+        var applied = editor.customBaseTarget.appliedCustomBaseVersion;
+        if (applied != null && applied != VersionListDrawer.RESET_VERSION)
+        {
+            return applied;
+        }
+
+        string versionString = editor.customBaseTarget.appliedCustomBaseVersionString;
+        var candidates = new List<CustomBaseVersion>();
+        if (candidateVersions != null) candidates.AddRange(candidateVersions.Where(v => v != null));
+        if (editor.GetAllVersions() != null) candidates.AddRange(editor.GetAllVersions().Where(v => v != null));
+        if (editor.selectedVersionForAction != null) candidates.Add(editor.selectedVersionForAction);
+        if (editor.recommendedVersion != null) candidates.Add(editor.recommendedVersion);
+
+        candidates = candidates
+            .Where(v => v != null)
+            .GroupBy(v => $"{v.assetId}|{v.version}|{v.defaultAviVersion}", StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+
+        if (string.IsNullOrWhiteSpace(versionString))
+        {
+            return InferAdvancedVersionFromGeneratedMeshPaths(candidates)
+                   ?? candidates.FirstOrDefault(v =>
+                       v != null &&
+                       NativeMeshPayloadService.VersionUsesAdvancedMesh(v) &&
+                       NativeMeshPayloadService.HasAnyAdvancedMeshApplied(editor.customBaseTarget.transform.root, v));
+        }
+
+        int assetId = editor.customBaseTarget.appliedCustomBaseAssetId;
+        string defaultAviVersion = editor.customBaseTarget.appliedCustomBaseDefaultAviVersion;
+        return candidates.FirstOrDefault(v =>
+            v != null &&
+            string.Equals(v.version, versionString, StringComparison.Ordinal) &&
+            (assetId <= 0 || v.assetId == assetId) &&
+            (string.IsNullOrWhiteSpace(defaultAviVersion) || string.Equals(v.defaultAviVersion, defaultAviVersion, StringComparison.Ordinal)));
+    }
+
+    private CustomBaseVersion InferAdvancedVersionFromGeneratedMeshPaths(IReadOnlyList<CustomBaseVersion> candidates)
+    {
+        if (editor?.customBaseTarget == null || candidates == null || candidates.Count == 0)
+        {
+            return null;
+        }
+
+        const string prefix = "Assets/MCB/generated/advancedMeshPayloads/";
+        foreach (var renderer in editor.customBaseTarget.transform.root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (renderer?.sharedMesh == null)
+            {
+                continue;
+            }
+
+            string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
+            if (string.IsNullOrWhiteSpace(meshPath) ||
+                !meshPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string remainder = meshPath.Substring(prefix.Length);
+            string[] parts = remainder.Split('/');
+            if (parts.Length < 2 || !int.TryParse(parts[0], out int assetId))
+            {
+                continue;
+            }
+
+            string versionString = parts[1];
+            var match = candidates.FirstOrDefault(v =>
+                v != null &&
+                NativeMeshPayloadService.VersionUsesAdvancedMesh(v) &&
+                v.assetId == assetId &&
+                string.Equals(v.version, versionString, StringComparison.Ordinal));
+            if (match != null)
+            {
+                MCBLogger.Log($"[VersionActions] Inferred native mesh applied version {match.version} from generated mesh path: {meshPath}");
+                return match;
+            }
+        }
+
+        return null;
     }
 
     private void SyncAppliedVersionBlendshapeLinkCache(CustomBaseVersion version)
@@ -1447,6 +1988,21 @@ public class VersionActions
             return null;
         }
 
+        var persistedAdvanced = editor?.customBaseTarget?.appliedCustomBaseVersion;
+        if (persistedAdvanced != null && NativeMeshPayloadService.VersionUsesAdvancedMesh(persistedAdvanced))
+        {
+            var matchingPersisted = candidateVersions.FirstOrDefault(v =>
+                v != null &&
+                v.assetId == persistedAdvanced.assetId &&
+                string.Equals(v.version, persistedAdvanced.version, StringComparison.Ordinal) &&
+                string.Equals(v.defaultAviVersion, persistedAdvanced.defaultAviVersion, StringComparison.Ordinal));
+            if (matchingPersisted != null &&
+                NativeMeshPayloadService.IsVersionApplied(editor.customBaseTarget.transform.root, matchingPersisted))
+            {
+                return matchingPersisted;
+            }
+        }
+
         var directMatch = candidateVersions.FirstOrDefault(v =>
             !string.IsNullOrEmpty(v.appliedCustomAviHash) &&
             v.appliedCustomAviHash.Equals(currentFileHash, StringComparison.OrdinalIgnoreCase));
@@ -1528,10 +2084,20 @@ public class VersionActions
 
     private string ResolveExpectedHashForSource(CustomBaseVersion version, ModelFileData sourceFile)
     {
+        if (NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
+        {
+            var advancedPatch = version.versionFiles?.FirstOrDefault(file =>
+                file != null &&
+                string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
+                NativeMeshPayloadService.IsAdvancedMeshPatchTransform(file.transform) &&
+                IsPatchForSourceFile(file, sourceFile));
+            return advancedPatch?.outputHash;
+        }
+
         var patchFile = version.versionFiles?.FirstOrDefault(file =>
             file != null &&
             string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(file.transform ?? "XOR_BIN_TO_FBX", "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(file.transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) &&
             IsPatchForSourceFile(file, sourceFile));
 
         if (!string.IsNullOrWhiteSpace(patchFile?.outputHash))
@@ -1557,8 +2123,7 @@ public class VersionActions
         string sourcePath = MCBUtils.ToUnityPath(sourceFile.path);
         string patchSourcePath = null;
         if (patchFile.metadata != null &&
-            (patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue) ||
-             patchFile.metadata.TryGetValue("targetPath", out sourcePathValue)))
+            patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue))
         {
             patchSourcePath = sourcePathValue?.ToString();
         }

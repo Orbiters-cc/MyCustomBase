@@ -22,10 +22,11 @@ public class MCBEditor : UnityEditor.Editor
 
     // --- Serialized Properties ---
     public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
-                              customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
-                              modelFileBuildEntriesProp,
-                              includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
-                              includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp;
+                               customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
+                               modelFileBuildEntriesProp,
+                               useAdvancedMeshReplacementForCreatorProp, compressAdvancedMeshPayloadForCreatorProp,
+                               includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
+                               includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp;
 
     // --- Services and Modules ---
     private NetworkService networkService;
@@ -802,6 +803,8 @@ public class MCBEditor : UnityEditor.Editor
         customBaseAvatarForCreatorProp = serializedObject.FindProperty("customBaseAvatarForCreatorProp");
         modelFileBuildEntriesProp = serializedObject.FindProperty("modelFileBuildEntries");
         avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
+        useAdvancedMeshReplacementForCreatorProp = serializedObject.FindProperty("useAdvancedMeshReplacementForCreator");
+        compressAdvancedMeshPayloadForCreatorProp = serializedObject.FindProperty("compressAdvancedMeshPayloadForCreator");
         customBlendshapesForCreatorProp = serializedObject.FindProperty("customBlendshapesForCreator");
         includeCustomVeinsForCreatorProp = serializedObject.FindProperty("includeCustomVeinsForCreator");
         customVeinsNormalMapProp = serializedObject.FindProperty("customVeinsNormalMap");

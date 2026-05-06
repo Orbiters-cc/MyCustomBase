@@ -21,13 +21,19 @@ public class FileManagerService
     {
         public string sourceFbxPath;
         public GameObject customFbx;
+        public string externalCustomFbxPath;
         public Avatar customBaseAvatar;
+        public bool useAdvancedMeshReplacement;
+        public List<ModelFileSmrPathData> smrPaths;
         public string binUnityPath;
         public string avatarUnityPath;
         public string sourceHash;
         public string binHash;
         public string avatarHash;
         public string outputHash;
+        public string payloadFormat;
+        public string payloadCompression;
+        public int advancedRendererCount;
     }
 
     public string CalculateFileHash(string path)
@@ -469,7 +475,11 @@ public class FileManagerService
         GameObject logicPrefab,
         bool includeCustomVeins,
         Texture2D customVeinsTexture,
-        IEnumerable<string> additionalAnimationAssetPaths = null)
+        bool includeDynamicNormalsBody,
+        bool includeDynamicNormalsFlexing,
+        bool compressAdvancedMeshPayload,
+        IEnumerable<string> additionalAnimationAssetPaths = null,
+        Transform authoringPoseRoot = null)
     {
         string newVersionDataPath = MCBUtils.GetVersionDataPath(assetId, newVersionString, baseFbxVersion);
         if (string.IsNullOrEmpty(newVersionDataPath))
@@ -482,6 +492,11 @@ public class FileManagerService
 
         try
         {
+            if (Directory.Exists(newVersionDataFullPath))
+            {
+                Directory.Delete(newVersionDataFullPath, true);
+            }
+
             MCBUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
 
             string defaultAvatarSourcePath = "Packages/orbiters.mcb/creator assets/default avatar.asset";
@@ -493,10 +508,15 @@ public class FileManagerService
             for (int i = 0; i < entries.Count; i++)
             {
                 var entry = entries[i];
-                if (entry == null || string.IsNullOrWhiteSpace(entry.sourceFbxPath) || (entry.customFbx == null && entry.customBaseAvatar == null))
+                bool hasExternalCustomFbx = entry != null &&
+                                            !string.IsNullOrWhiteSpace(entry.externalCustomFbxPath) &&
+                                            File.Exists(Path.GetFullPath(entry.externalCustomFbxPath));
+                if (entry == null || string.IsNullOrWhiteSpace(entry.sourceFbxPath) || (entry.customFbx == null && !hasExternalCustomFbx && entry.customBaseAvatar == null))
                     throw new InvalidOperationException($"Target model file entry {i + 1} is incomplete.");
 
-                string customFbxPath = entry.customFbx != null ? AssetDatabase.GetAssetPath(entry.customFbx) : null;
+                string customFbxPath = entry.customFbx != null
+                    ? AssetDatabase.GetAssetPath(entry.customFbx)
+                    : (hasExternalCustomFbx ? Path.GetFullPath(entry.externalCustomFbxPath) : null);
                 string customAvatarSourcePath = entry.customBaseAvatar != null ? AssetDatabase.GetAssetPath(entry.customBaseAvatar) : null;
                 if (entry.customFbx != null && string.IsNullOrWhiteSpace(customFbxPath))
                     throw new InvalidOperationException($"Target model file entry {i + 1} has invalid asset references.");
@@ -506,19 +526,86 @@ public class FileManagerService
                 string safeBaseName = SanitizeFileName(Path.GetFileNameWithoutExtension(entry.sourceFbxPath));
                 entry.sourceHash = CalculateFileHash(entry.sourceFbxPath);
 
-                if (entry.customFbx != null)
+                GameObject importedExternalFbx = null;
+                string importedExternalFbxPath = null;
+                try
                 {
-                    byte[] baseData = File.ReadAllBytes(entry.sourceFbxPath);
-                    byte[] targetData = File.ReadAllBytes(customFbxPath);
-                    byte[] encryptedData = XorTransform(baseData, targetData);
+                    if ((entry.customFbx != null || hasExternalCustomFbx))
+                    {
+                        string suffix = entry.useAdvancedMeshReplacement ? "_advancedMesh" : "";
+                        string binName = $"{i + 1:00}_{safeBaseName}{suffix}.bin";
+                        string binUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, binName);
+                        if (entry.useAdvancedMeshReplacement)
+                        {
+                            GameObject payloadSource = entry.customFbx;
+                            if (payloadSource == null)
+                            {
+                                payloadSource = NativeMeshPayloadService.ImportExternalFbxForPayload(customFbxPath, out importedExternalFbxPath);
+                                importedExternalFbx = payloadSource;
+                            }
 
-                    string binName = $"{i + 1:00}_{safeBaseName}.bin";
-                    string binUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, binName);
-                    File.WriteAllBytes(Path.GetFullPath(binUnityPath), encryptedData);
+                            var payloadResult = NativeMeshPayloadService.WriteEncryptedPayload(
+                                entry.sourceFbxPath,
+                                payloadSource,
+                                entry.smrPaths,
+                                this,
+                                Path.GetFullPath(binUnityPath),
+                                includeDynamicNormalsBody || includeDynamicNormalsFlexing,
+                                includeDynamicNormalsBody,
+                                includeDynamicNormalsFlexing,
+                                compressAdvancedMeshPayload,
+                                authoringPoseRoot);
+                            entry.outputHash = payloadResult.payloadHash;
+                            entry.payloadFormat = NativeMeshPayloadService.PayloadFormat;
+                            entry.payloadCompression = payloadResult.payloadCompression;
+                            entry.advancedRendererCount = payloadResult.rendererCount;
+                            entry.binUnityPath = binUnityPath;
+                            entry.binHash = payloadResult.binHash;
 
-                    entry.binUnityPath = binUnityPath;
-                    entry.binHash = CalculateFileHash(Path.GetFullPath(binUnityPath));
-                    entry.outputHash = CalculateFileHash(customFbxPath);
+                            if (importedExternalFbx != null && entry.customBaseAvatar == null)
+                            {
+                                string sourceMappingPath = MCBUtils.ToUnityPath(entry.sourceFbxPath);
+                                if (sourceMappingPath.EndsWith(OriginalSuffix, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    sourceMappingPath = sourceMappingPath.Substring(0, sourceMappingPath.Length - OriginalSuffix.Length);
+                                }
+
+                                var sourceMappingFbx = AssetDatabase.LoadAssetAtPath<GameObject>(sourceMappingPath);
+                                string avatarName = $"{i + 1:00}_{safeBaseName} avatar.asset";
+                                string avatarUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, avatarName);
+                                var avatarResult = AvatarDefinitionGenerationService.GenerateAvatarAsset(
+                                    importedExternalFbx,
+                                    sourceMappingFbx,
+                                    avatarUnityPath,
+                                    applyGeneratedAvatarToFbx: false,
+                                    keepImporterConfiguredForEditing: false);
+                                if (avatarResult?.avatar != null)
+                                {
+                                    entry.avatarUnityPath = avatarUnityPath;
+                                    entry.avatarHash = CalculateFileHash(Path.GetFullPath(avatarUnityPath));
+                                }
+                            }
+                        }
+                        else
+                        {
+                            byte[] baseData = File.ReadAllBytes(entry.sourceFbxPath);
+                            byte[] targetData = File.ReadAllBytes(customFbxPath);
+                            byte[] encryptedData = XorTransform(baseData, targetData);
+                            entry.outputHash = CalculateFileHash(customFbxPath);
+
+                            File.WriteAllBytes(Path.GetFullPath(binUnityPath), encryptedData);
+
+                            entry.binUnityPath = binUnityPath;
+                            entry.binHash = CalculateFileHash(Path.GetFullPath(binUnityPath));
+                        }
+                    }
+                }
+                finally
+                {
+                    if (importedExternalFbx != null || !string.IsNullOrWhiteSpace(importedExternalFbxPath))
+                    {
+                        NativeMeshPayloadService.DeleteTemporaryImportedFbx(importedExternalFbxPath);
+                    }
                 }
 
                 if (entry.customBaseAvatar != null)
@@ -549,7 +636,7 @@ public class FileManagerService
         }
         catch (Exception)
         {
-            if (Directory.Exists(newVersionDataPath)) Directory.Delete(newVersionDataPath, true);
+            if (Directory.Exists(newVersionDataFullPath)) Directory.Delete(newVersionDataFullPath, true);
             if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
             throw;
         }

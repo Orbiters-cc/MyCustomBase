@@ -353,7 +353,28 @@ public static class MCBUtils
     public static string ToUnityPath(string path)
     {
         if (string.IsNullOrEmpty(path)) return path;
-        return path.Replace("\\", "/");
+        string normalized = path.Replace("\\", "/");
+        if (normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        try
+        {
+            string fullPath = Path.GetFullPath(normalized).Replace("\\", "/");
+            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace("\\", "/").TrimEnd('/');
+            if (fullPath.StartsWith(projectRoot + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath.Substring(projectRoot.Length + 1);
+            }
+        }
+        catch
+        {
+            // Keep the slash-normalized input for non-filesystem values.
+        }
+
+        return normalized;
     }
 
     public static string CombineUnityPath(params string[] segments)

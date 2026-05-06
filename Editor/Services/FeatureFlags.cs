@@ -7,6 +7,8 @@ public static class FeatureFlags
 {
     // Define flags
     public const string SUPPORT_USER_UNKNOWN_VERSION = "SUPPORT_USER_UNKNOWN_VERSION";
+    public const string ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR = "ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR";
+    public const string ALLOW_ADVANCED_MESH_ON_BLENDER_LINK = "ALLOW_ADVANCED_MESH_ON_BLENDER_LINK";
 
     private class FlagDef
     {
@@ -24,6 +26,20 @@ public static class FeatureFlags
             label = "Support custom (unknown-hash) base",
             description = "Detect and manage user-custom avatar bases when the current FBX hash is unknown but a .fbx.old exists.",
             defaultValue = false
+        },
+        new FlagDef
+        {
+            key = ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR,
+            label = "Allow advanced replacement for creator",
+            description = "Experimental: build submitted custom base model patches as encrypted native Unity mesh payloads instead of replacement FBX bytes.",
+            defaultValue = false
+        },
+        new FlagDef
+        {
+            key = ALLOW_ADVANCED_MESH_ON_BLENDER_LINK,
+            label = "Allow advanced mesh on Blender link",
+            description = "Experimental: advertise native mesh transfer support to the Blender connector. Requires advanced replacement for creator.",
+            defaultValue = false
         }
     };
 
@@ -35,6 +51,11 @@ public static class FeatureFlags
 
     public static bool IsEnabled(string key)
     {
+        if (key == ALLOW_ADVANCED_MESH_ON_BLENDER_LINK && !IsEnabled(ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR))
+        {
+            return false;
+        }
+
         var def = _defs.Find(d => d.key == key);
         bool defaultVal = def != null ? def.defaultValue : false;
         try { return EditorPrefs.GetBool(GetPrefKey(key), defaultVal); } catch { return defaultVal; }

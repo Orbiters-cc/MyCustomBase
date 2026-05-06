@@ -42,6 +42,7 @@ public class BlendShapeFactorLinkEntry
 public class CreatorModelFileBuildEntry
 {
     public GameObject customFbx;
+    public string externalCustomFbxPath;
     public Avatar customBaseAvatar;
 }
 
@@ -71,6 +72,11 @@ public class MyCustomBase : MonoBehaviour
     // --- APPLIED STATE ---
     [Tooltip("The version information of the custom base modification that is currently applied to this avatar's FBX.")]
     [HideInInspector] public CustomBaseVersion appliedCustomBaseVersion = null;
+
+    [HideInInspector] public int appliedCustomBaseAssetId = 0;
+    [HideInInspector] public string appliedCustomBaseVersionString = "";
+    [HideInInspector] public string appliedCustomBaseDefaultAviVersion = "";
+    [HideInInspector] public string appliedCustomBaseDeliveryMode = "";
 
     [Tooltip("Stores the current values of the custom blendshape sliders.")]
     [HideInInspector] public List<float> blendShapeValues = new List<float>();
@@ -122,6 +128,8 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public Avatar customBaseAvatarForCreatorProp;
     [HideInInspector] public List<CreatorModelFileBuildEntry> modelFileBuildEntries = new List<CreatorModelFileBuildEntry>();
     [HideInInspector] public GameObject avatarLogicPrefab;
+    [HideInInspector] public bool useAdvancedMeshReplacementForCreator = false;
+    [HideInInspector] public bool compressAdvancedMeshPayloadForCreator = false;
     [HideInInspector] public bool includeCustomVeinsForCreator = false;
     [HideInInspector] public Texture2D customVeinsNormalMap;
     [HideInInspector] public bool includeDynamicNormalsBodyForCreator = false;

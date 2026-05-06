@@ -21,6 +21,7 @@ public static class BlenderSyncService
     private const double BlenderHeartbeatTimeoutSeconds = 4.0;
     private const double PollIntervalSeconds = 0.5;
     private const double PersistedSessionMaxAgeDays = 2.0;
+    private const string AdvancedBlenderExportFolder = "Assets/MCB/generated/blenderAdvancedExports~";
     private static readonly List<ActiveSession> ActiveSessions = new List<ActiveSession>();
     private static bool pollingHooked;
     private static bool sessionsRestored;
@@ -58,6 +59,7 @@ public static class BlenderSyncService
         public string blenderProjectAbsolutePath;
         public string blenderExportsUnityPath;
         public string blenderExportsAbsolutePath;
+        public bool useAdvancedMeshBlenderLink;
     }
 
     private class TargetFbxInfo
@@ -85,6 +87,7 @@ public static class BlenderSyncService
         public string blenderProjectAbsolutePath;
         public string blenderExportsUnityPath;
         public string blenderExportsAbsolutePath;
+        public bool useAdvancedMeshBlenderLink;
     }
 
     public class BlenderProjectInfo
@@ -121,6 +124,7 @@ public static class BlenderSyncService
         public string token;
         public TargetInfo target;
         public List<ModelInfo> models;
+        public bool advancedMeshBlenderLink;
     }
 
     private class TargetInfo
@@ -134,6 +138,9 @@ public static class BlenderSyncService
         public string role;
         public string path;
         public string targetFbxPath;
+        public string transportFormat;
+        public string unityImportMode;
+        public string payloadSourceFormat;
         public List<string> meshNames;
         public List<string> shapeKeys;
     }
@@ -534,6 +541,12 @@ public static class BlenderSyncService
         {
             capabilities.Add("projectExports");
         }
+        if (FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK))
+        {
+            capabilities.Add("nativeMeshPayload");
+            capabilities.Add(NativeMeshPayloadService.PayloadFormat);
+        }
+        bool useAdvancedMeshBlenderLink = FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK);
 
         var payload = new
         {
@@ -560,6 +573,7 @@ public static class BlenderSyncService
             },
             blenderProject = projectInfo,
             targetFbxFiles = targetFiles,
+            advancedMeshBlenderLink = useAdvancedMeshBlenderLink,
             capabilities = capabilities.ToArray()
         };
 
@@ -579,7 +593,8 @@ public static class BlenderSyncService
             blenderProjectUnityPath = projectInfo != null ? projectInfo.projectUnityPath : null,
             blenderProjectAbsolutePath = projectInfo != null ? projectInfo.projectAbsolutePath : null,
             blenderExportsUnityPath = projectInfo != null ? projectInfo.exportsUnityPath : null,
-            blenderExportsAbsolutePath = projectInfo != null ? projectInfo.exportsAbsolutePath : null
+            blenderExportsAbsolutePath = projectInfo != null ? projectInfo.exportsAbsolutePath : null,
+            useAdvancedMeshBlenderLink = useAdvancedMeshBlenderLink
         };
 
         return new SyncSessionBuildResult
@@ -929,6 +944,7 @@ public static class BlenderSyncService
 
         var updatedTargets = new List<string>();
         int generatedAvatarCount = 0;
+        int advancedQueuedCount = 0;
         for (int modelIndex = 0; modelIndex < models.Count; modelIndex++)
         {
             var model = models[modelIndex];
@@ -950,7 +966,16 @@ public static class BlenderSyncService
                 throw new InvalidOperationException("Could not resolve the target Unity FBX path.");
             }
 
-            if (session.useProjectExports)
+            bool useAdvancedMeshForModel = ShouldUseAdvancedMeshBlenderLink(session, manifest, model);
+            if (useAdvancedMeshForModel)
+            {
+                string externalFbxPath = CopyModelToAdvancedIgnoredExports(session, sourceFbxPath, targetFbxPath, modelIndex);
+                AssignCreatorExternalCustomFbx(session, targetFbxPath, externalFbxPath);
+                updatedTargets.Add(externalFbxPath);
+                advancedQueuedCount++;
+                MCBLogger.Log($"[BlenderSync] Stored Blender export for advanced mesh submission without importing it. source={sourceFbxPath} external={externalFbxPath} target={targetFbxPath}");
+            }
+            else if (session.useProjectExports)
             {
                 string exportedUnityPath = CopyModelToProjectExports(session, sourceFbxPath, targetFbxPath, modelIndex);
                 AssetDatabase.ImportAsset(exportedUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
@@ -993,11 +1018,32 @@ public static class BlenderSyncService
             EditorUtility.SetDirty(session.customBase);
         }
 
-        string action = session.useProjectExports ? "Updated avatar from" : "Replaced";
+        bool usedAdvancedMeshBlenderLink = advancedQueuedCount > 0;
+        string action = usedAdvancedMeshBlenderLink
+            ? "Queued advanced external export from"
+            : (session.useProjectExports ? "Updated avatar from" : "Replaced");
         string avatarMessage = generatedAvatarCount > 0
             ? $"\nGenerated {generatedAvatarCount} Avatar asset(s)."
-            : "\nNo Avatar asset was generated.";
-        SetStatus($"Blender export imported for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}", MessageType.Info);
+            : (usedAdvancedMeshBlenderLink ? "\nNo immediate Unity FBX import was run." : "\nNo Avatar asset was generated.");
+        string statusVerb = usedAdvancedMeshBlenderLink ? "processed" : "imported";
+        SetStatus($"Blender export {statusVerb} for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}", MessageType.Info);
+    }
+
+    private static bool ShouldUseAdvancedMeshBlenderLink(ActiveSession session, BlenderExportManifest manifest, ModelInfo model)
+    {
+        if (!FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK))
+        {
+            return false;
+        }
+
+        if (session?.useAdvancedMeshBlenderLink == true || manifest?.advancedMeshBlenderLink == true)
+        {
+            return true;
+        }
+
+        return model != null &&
+               (string.Equals(model.unityImportMode, "nativeMeshPayload", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(model.transportFormat, NativeMeshPayloadService.PayloadFormat, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void DrawBlenderConnectionState(MCBEditor editor)
@@ -1122,6 +1168,24 @@ public static class BlenderSyncService
         return exportedUnityPath;
     }
 
+    private static string CopyModelToAdvancedIgnoredExports(ActiveSession session, string sourceFbxPath, string targetFbxPath, int modelIndex)
+    {
+        if (string.IsNullOrWhiteSpace(sourceFbxPath) || !File.Exists(sourceFbxPath))
+        {
+            throw new FileNotFoundException("Blender exported FBX was not found.", sourceFbxPath);
+        }
+
+        string exportRoot = UnityPathToAbsolute(AdvancedBlenderExportFolder);
+        string sessionFolder = Path.Combine(exportRoot, string.IsNullOrWhiteSpace(session?.sessionId) ? "manual" : session.sessionId);
+        Directory.CreateDirectory(sessionFolder);
+
+        string targetName = Path.GetFileNameWithoutExtension(targetFbxPath);
+        string fileName = $"{modelIndex + 1:00}_{BlenderProjectService.SanitizeFileName(targetName)}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.fbx";
+        string destination = Path.Combine(sessionFolder, fileName);
+        File.Copy(sourceFbxPath, destination, true);
+        return Path.GetFullPath(destination);
+    }
+
     private static string ResolveTargetFbxPath(ActiveSession session, BlenderExportManifest manifest, ModelInfo model)
     {
         string requested = !string.IsNullOrWhiteSpace(model?.targetFbxPath)
@@ -1221,14 +1285,67 @@ public static class BlenderSyncService
             entriesProp.InsertArrayElementAtIndex(entriesProp.arraySize);
             var newEntry = entriesProp.GetArrayElementAtIndex(entriesProp.arraySize - 1);
             newEntry.FindPropertyRelative("customFbx").objectReferenceValue = null;
+            var newExternalPath = newEntry.FindPropertyRelative("externalCustomFbxPath");
+            if (newExternalPath != null) newExternalPath.stringValue = "";
             newEntry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = null;
         }
 
         var entry = entriesProp.GetArrayElementAtIndex(targetIndex);
         entry.FindPropertyRelative("customFbx").objectReferenceValue = customFbx;
+        var externalPath = entry.FindPropertyRelative("externalCustomFbxPath");
+        if (externalPath != null) externalPath.stringValue = "";
         if (customBaseAvatar != null)
         {
             entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = customBaseAvatar;
+        }
+        serialized.ApplyModifiedProperties();
+        EditorUtility.SetDirty(session.customBase);
+    }
+
+    private static void AssignCreatorExternalCustomFbx(ActiveSession session, string targetFbxPath, string externalFbxPath)
+    {
+        if (session?.customBase == null || string.IsNullOrWhiteSpace(externalFbxPath))
+        {
+            return;
+        }
+
+        int targetIndex = session.targetFbxFiles.FindIndex(file =>
+            file != null &&
+            string.Equals(MCBUtils.ToUnityPath(file.unityPath), MCBUtils.ToUnityPath(targetFbxPath), StringComparison.OrdinalIgnoreCase));
+        if (targetIndex < 0)
+        {
+            targetIndex = 0;
+        }
+
+        var serialized = new SerializedObject(session.customBase);
+        var entriesProp = serialized.FindProperty("modelFileBuildEntries");
+        if (entriesProp == null)
+        {
+            return;
+        }
+
+        while (entriesProp.arraySize <= targetIndex)
+        {
+            entriesProp.InsertArrayElementAtIndex(entriesProp.arraySize);
+            var newEntry = entriesProp.GetArrayElementAtIndex(entriesProp.arraySize - 1);
+            newEntry.FindPropertyRelative("customFbx").objectReferenceValue = null;
+            var newExternalPath = newEntry.FindPropertyRelative("externalCustomFbxPath");
+            if (newExternalPath != null) newExternalPath.stringValue = "";
+            newEntry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = null;
+        }
+
+        var entry = entriesProp.GetArrayElementAtIndex(targetIndex);
+        entry.FindPropertyRelative("customFbx").objectReferenceValue = null;
+        var externalPath = entry.FindPropertyRelative("externalCustomFbxPath");
+        if (externalPath != null)
+        {
+            externalPath.stringValue = Path.GetFullPath(externalFbxPath);
+        }
+        entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = null;
+        var advancedReplacementProp = serialized.FindProperty("useAdvancedMeshReplacementForCreator");
+        if (advancedReplacementProp != null && FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR))
+        {
+            advancedReplacementProp.boolValue = true;
         }
         serialized.ApplyModifiedProperties();
         EditorUtility.SetDirty(session.customBase);
@@ -1463,7 +1580,8 @@ public static class BlenderSyncService
                 blenderProjectUnityPath = session.blenderProjectUnityPath,
                 blenderProjectAbsolutePath = session.blenderProjectAbsolutePath,
                 blenderExportsUnityPath = session.blenderExportsUnityPath,
-                blenderExportsAbsolutePath = session.blenderExportsAbsolutePath
+                blenderExportsAbsolutePath = session.blenderExportsAbsolutePath,
+                useAdvancedMeshBlenderLink = session.useAdvancedMeshBlenderLink
             };
             string path = Path.Combine(session.inboxPath, "session.json");
             File.WriteAllText(path, JsonConvert.SerializeObject(persisted, Formatting.Indented));
@@ -1523,7 +1641,8 @@ public static class BlenderSyncService
                     blenderProjectUnityPath = persisted.blenderProjectUnityPath,
                     blenderProjectAbsolutePath = persisted.blenderProjectAbsolutePath,
                     blenderExportsUnityPath = persisted.blenderExportsUnityPath,
-                    blenderExportsAbsolutePath = persisted.blenderExportsAbsolutePath
+                    blenderExportsAbsolutePath = persisted.blenderExportsAbsolutePath,
+                    useAdvancedMeshBlenderLink = persisted.useAdvancedMeshBlenderLink
                 };
                 ResolveCustomBase(active);
                 ActiveSessions.Add(active);

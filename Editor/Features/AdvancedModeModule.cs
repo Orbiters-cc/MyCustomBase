@@ -281,7 +281,7 @@ public class AdvancedModeModule
                             EditorGUI.indentLevel++;
                             foreach (var blendshape in activeBlendshapes)
                             {
-                                EditorGUILayout.LabelField("• " + blendshape);
+                                EditorGUILayout.LabelField("â€¢ " + blendshape);
                             }
                             EditorGUI.indentLevel--;
                         }
@@ -409,11 +409,24 @@ public class AdvancedModeModule
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Experimental features", EditorStyles.boldLabel);
                 EditorGUI.indentLevel++;
+                if (!FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
+                    FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK))
+                {
+                    FeatureFlags.SetEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK, false);
+                }
                 foreach (var (key, label, description) in FeatureFlags.All())
                 {
+                    bool isBlenderAdvancedMesh = key == FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK;
+                    bool dependencyEnabled = !isBlenderAdvancedMesh ||
+                                             FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR);
+
                     EditorGUI.BeginChangeCheck();
                     bool current = FeatureFlags.IsEnabled(key);
-                    bool next = EditorGUILayout.ToggleLeft(new GUIContent(label, description), current);
+                    bool next;
+                    using (new EditorGUI.DisabledScope(!dependencyEnabled))
+                    {
+                        next = EditorGUILayout.ToggleLeft(new GUIContent(label, description), dependencyEnabled && current);
+                    }
                     if (EditorGUI.EndChangeCheck())
                     {
                         FeatureFlags.SetEnabled(key, next);
@@ -425,10 +438,14 @@ public class AdvancedModeModule
                             editor.currentIsCustom = false; // hide current custom UI marks
                             editor.Repaint();
                         }
+
+                        if (key == FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR && !next)
+                        {
+                            FeatureFlags.SetEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK, false);
+                        }
                     }
                 }
                 EditorGUI.indentLevel--;
-
                 EditorGUILayout.Space();
                 blendShapeLinkTestDrawer.Draw();
 

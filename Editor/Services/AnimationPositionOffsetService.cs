@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Newtonsoft.Json;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -44,7 +45,7 @@ public class AnimationPositionOffsetService
         var dedupe = new HashSet<string>(StringComparer.Ordinal);
         foreach (var patchFile in version.versionFiles)
         {
-            if (!IsFbxPatch(patchFile)) continue;
+            if (!IsAnimationOffsetPatch(patchFile)) continue;
 
             var sourceFile = ResolveSourceFile(version, patchFile);
             string sourceMeta = GetModelImporterMeta(sourceFile, sourceFile?.path);
@@ -177,7 +178,160 @@ public class AnimationPositionOffsetService
             return offsets.Count > 0;
         }
 
+        var persistedVersion = TryResolvePersistedVersion(customBase);
+        if (persistedVersion != null)
+        {
+            var versionOffsets = BuildOffsetsForVersion(persistedVersion);
+            if (versionOffsets.Count > 0)
+            {
+                SyncOffsetCache(customBase, versionOffsets);
+                offsets = versionOffsets;
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    private static void SyncOffsetCache(MyCustomBase customBase, List<AnimationPositionOffsetEntry> offsets)
+    {
+        if (customBase == null || offsets == null || offsets.Count == 0) return;
+
+        var cache = customBase.appliedVersionAnimationPositionOffsetsCache;
+        if (cache == null)
+        {
+            cache = new List<AnimationPositionOffsetEntry>();
+            customBase.appliedVersionAnimationPositionOffsetsCache = cache;
+        }
+
+        cache.Clear();
+        foreach (var offset in offsets)
+        {
+            if (offset == null || string.IsNullOrWhiteSpace(offset.bonePath)) continue;
+            cache.Add(new AnimationPositionOffsetEntry
+            {
+                sourceFbxPath = offset.sourceFbxPath,
+                bonePath = offset.bonePath,
+                offset = offset.offset
+            });
+        }
+
+        if (!EditorApplication.isPlaying)
+        {
+            EditorUtility.SetDirty(customBase);
+        }
+    }
+
+    private static CustomBaseVersion TryResolvePersistedVersion(MyCustomBase customBase)
+    {
+        if (customBase == null || customBase.appliedCustomBaseAssetId <= 0 ||
+            string.IsNullOrWhiteSpace(customBase.appliedCustomBaseVersionString))
+        {
+            return null;
+        }
+
+        var downloadedVersion = TryLoadDownloadedVersion(customBase);
+        if (downloadedVersion != null)
+        {
+            return downloadedVersion;
+        }
+
+        foreach (string unityPath in GetBaseFbxLookupPaths(customBase))
+        {
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(unityPath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            string baseHash = PersistentCache.Instance.GetCachedHash(fullPath);
+            if (string.IsNullOrWhiteSpace(baseHash)) continue;
+
+            var cached = PersistentCache.Instance.GetCachedVersions(baseHash, null, customBase.appliedCustomBaseAssetId);
+            var match = FindMatchingVersion(cached?.serverVersions, customBase);
+            if (match != null)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static CustomBaseVersion TryLoadDownloadedVersion(MyCustomBase customBase)
+    {
+        string versionPath = MCBUtils.GetVersionDataPath(
+            customBase.appliedCustomBaseAssetId,
+            customBase.appliedCustomBaseVersionString,
+            customBase.appliedCustomBaseDefaultAviVersion);
+        if (string.IsNullOrWhiteSpace(versionPath)) return null;
+
+        string jsonPath = Path.Combine(versionPath, "version.json");
+        try
+        {
+            string fullPath = Path.GetFullPath(jsonPath);
+            if (!File.Exists(fullPath)) return null;
+
+            var version = JsonConvert.DeserializeObject<CustomBaseVersion>(File.ReadAllText(fullPath));
+            if (FindMatchingVersion(new[] { version }, customBase) == null) return null;
+            if (version.assetId <= 0) version.assetId = customBase.appliedCustomBaseAssetId;
+            return version;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static CustomBaseVersion FindMatchingVersion(IEnumerable<CustomBaseVersion> versions, MyCustomBase customBase)
+    {
+        if (versions == null || customBase == null) return null;
+
+        return versions.FirstOrDefault(version =>
+            version != null &&
+            (version.assetId <= 0 || version.assetId == customBase.appliedCustomBaseAssetId) &&
+            string.Equals(version.version, customBase.appliedCustomBaseVersionString, StringComparison.Ordinal) &&
+            (string.IsNullOrWhiteSpace(customBase.appliedCustomBaseDefaultAviVersion) ||
+             string.Equals(version.defaultAviVersion, customBase.appliedCustomBaseDefaultAviVersion, StringComparison.Ordinal)));
+    }
+
+    private static IEnumerable<string> GetBaseFbxLookupPaths(MyCustomBase customBase)
+    {
+        var baseFbxFiles = customBase?.baseFbxFiles;
+        if (baseFbxFiles == null) yield break;
+
+        foreach (var fbx in baseFbxFiles)
+        {
+            if (fbx == null) continue;
+
+            string unityPath = AssetDatabase.GetAssetPath(fbx);
+            if (string.IsNullOrWhiteSpace(unityPath)) continue;
+
+            string normalizedPath = MCBUtils.ToUnityPath(unityPath);
+            string originalPath = normalizedPath + FileManagerService.OriginalSuffix;
+            if (TryFileExists(originalPath))
+            {
+                yield return originalPath;
+            }
+
+            yield return normalizedPath;
+        }
+    }
+
+    private static bool TryFileExists(string path)
+    {
+        try
+        {
+            return !string.IsNullOrWhiteSpace(path) && File.Exists(Path.GetFullPath(path));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static Dictionary<string, Vector3> BuildOffsetLookup(IEnumerable<AnimationPositionOffsetEntry> offsets)
@@ -444,12 +598,14 @@ public class AnimationPositionOffsetService
                fullPath.EndsWith("/" + suffix, StringComparison.Ordinal);
     }
 
-    private static bool IsFbxPatch(ModelFileData file)
+    private static bool IsAnimationOffsetPatch(ModelFileData file)
     {
         if (file == null) return false;
         if (!string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase)) return false;
+
         string transform = string.IsNullOrWhiteSpace(file.transform) ? "XOR_BIN_TO_FBX" : file.transform;
-        return string.Equals(transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) ||
+               NativeMeshPayloadService.IsAdvancedMeshPatchTransform(transform);
     }
 
     private static ModelFileData ResolveSourceFile(CustomBaseVersion version, ModelFileData patchFile)
@@ -462,7 +618,12 @@ public class AnimationPositionOffsetService
             if (byId != null) return byId;
         }
 
-        string sourcePath = GetMetadataString(patchFile, "sourcePath") ?? GetMetadataString(patchFile, "targetPath");
+        string sourcePath = GetMetadataString(patchFile, "sourcePath");
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            sourcePath = GetMetadataString(patchFile, "targetPath");
+        }
+
         if (!string.IsNullOrWhiteSpace(sourcePath))
         {
             string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
@@ -472,7 +633,7 @@ public class AnimationPositionOffsetService
             if (byPath != null) return byPath;
         }
 
-        return version.sourceFiles.FirstOrDefault(file => file != null);
+        return version.sourceFiles.Length == 1 ? version.sourceFiles[0] : null;
     }
 
     private static string GetModelImporterMeta(ModelFileData file, string fallbackUnityPath)

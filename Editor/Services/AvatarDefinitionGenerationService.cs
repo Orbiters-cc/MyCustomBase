@@ -328,6 +328,77 @@ public static class AvatarDefinitionGenerationService
         return true;
     }
 
+    public static void RefreshSkinnedMeshRenderers(Transform avatarRoot)
+    {
+        if (avatarRoot == null)
+        {
+            return;
+        }
+
+        foreach (var renderer in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (renderer == null)
+            {
+                continue;
+            }
+
+            Undo.RecordObject(renderer, "Refresh Skinned Mesh Renderer");
+            Mesh mesh = renderer.sharedMesh;
+            var blendshapeWeights = CaptureBlendshapeWeights(renderer, mesh);
+            bool previousEnabled = renderer.enabled;
+            bool previousUpdateWhenOffscreen = renderer.updateWhenOffscreen;
+
+            renderer.updateWhenOffscreen = true;
+            renderer.sharedMesh = null;
+            renderer.sharedMesh = mesh;
+            RestoreBlendshapeWeights(renderer, mesh, blendshapeWeights);
+
+            if (previousEnabled)
+            {
+                renderer.enabled = false;
+                renderer.enabled = true;
+            }
+
+            renderer.updateWhenOffscreen = previousUpdateWhenOffscreen;
+            EditorUtility.SetDirty(renderer);
+        }
+
+        EditorApplication.QueuePlayerLoopUpdate();
+        SceneView.RepaintAll();
+    }
+
+    private static Dictionary<string, float> CaptureBlendshapeWeights(SkinnedMeshRenderer renderer, Mesh mesh)
+    {
+        var weights = new Dictionary<string, float>(StringComparer.Ordinal);
+        if (renderer == null || mesh == null)
+        {
+            return weights;
+        }
+
+        for (int i = 0; i < mesh.blendShapeCount; i++)
+        {
+            weights[mesh.GetBlendShapeName(i)] = renderer.GetBlendShapeWeight(i);
+        }
+
+        return weights;
+    }
+
+    private static void RestoreBlendshapeWeights(SkinnedMeshRenderer renderer, Mesh mesh, Dictionary<string, float> weights)
+    {
+        if (renderer == null || mesh == null || weights == null || weights.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < mesh.blendShapeCount; i++)
+        {
+            if (weights.TryGetValue(mesh.GetBlendShapeName(i), out float weight))
+            {
+                renderer.SetBlendShapeWeight(i, weight);
+            }
+        }
+    }
+
     private static ImporterState CaptureState(ModelImporter importer)
     {
         return new ImporterState

@@ -15,6 +15,7 @@ using AutocompleteSearchField;
 public class CreatorModeModule
 {
     private const string InitialDefaultAviVersion = "1.0.0";
+    private const long MaxVersionPackageUploadBytes = 600L * 1024L * 1024L;
     private static Dictionary<string, List<AnimationClip>> animationClipsByNameCache;
     private static double animationClipsByNameCacheTimestamp;
     private static bool animationClipProjectChangedHooked;
@@ -197,6 +198,7 @@ public class CreatorModeModule
             
             EditorGUILayout.Space();
 
+            DrawAdvancedMeshReplacementToggle();
             EditorGUILayout.LabelField("New Version Details:", EditorStyles.miniBoldLabel);
             DrawVersionFields();
             
@@ -209,10 +211,15 @@ public class CreatorModeModule
             }
 
             EditorGUILayout.LabelField("Changelog:", EditorStyles.miniBoldLabel);
+            bool requiresParentVersion = RequiresParentVersion();
             newChangelog = EditorGUILayout.TextArea(newChangelog, GUILayout.Height(80));
+            bool hasRequiredVersionMetadata = HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newChangelog, requiresParentVersion ? selectedParentVersionObject?.defaultAviVersion : InitialDefaultAviVersion, out string metadataValidationMessage);
+            if (!hasRequiredVersionMetadata)
+            {
+                EditorGUILayout.HelpBox(metadataValidationMessage, MessageType.Warning);
+            }
 
             EditorGUILayout.Space();
-            bool requiresParentVersion = RequiresParentVersion();
             bool hasCustomVeinsPayload = editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null;
             bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue || editor.includeDynamicNormalsFlexingForCreatorProp.boolValue;
             bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
@@ -221,9 +228,10 @@ public class CreatorModeModule
                                      hasDynamicNormalsPayload ||
                                      editor.customBlendshapesForCreatorProp.arraySize > 0;
             bool canSubmit = AreModelFileBuildEntriesValid() &&
-                             hasVersionPayload &&
-                             (!requiresParentVersion || selectedParentVersionObject != null) &&
-                             isVersionValid;
+                              hasVersionPayload &&
+                              (!requiresParentVersion || selectedParentVersionObject != null) &&
+                              isVersionValid &&
+                              hasRequiredVersionMetadata;
             if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
             {
                 canSubmit = false;
@@ -269,6 +277,98 @@ public class CreatorModeModule
     {
         BlenderSyncService.DrawCreatorModeSection(editor);
     }
+
+    private void DrawAdvancedMeshReplacementToggle()
+    {
+        if (!FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) ||
+            editor.useAdvancedMeshReplacementForCreatorProp == null)
+        {
+            return;
+        }
+
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            EditorGUILayout.PropertyField(
+                editor.useAdvancedMeshReplacementForCreatorProp,
+                new GUIContent(
+                    "Use Advanced Mesh Replacement",
+                    "Submit model edits as an encrypted native Unity mesh payload instead of an encrypted replacement FBX."));
+
+            if (editor.useAdvancedMeshReplacementForCreatorProp.boolValue)
+            {
+                if (editor.compressAdvancedMeshPayloadForCreatorProp != null)
+                {
+                    EditorGUILayout.PropertyField(
+                        editor.compressAdvancedMeshPayloadForCreatorProp,
+                        new GUIContent(
+                            "GZip Native Mesh Payload",
+                            "Compress the native mesh payload before XOR encryption. This reduces upload size but adds build and first-cache decode cost. Leave disabled for fastest apply."));
+                }
+
+                EditorGUILayout.HelpBox(
+                    "The uploaded file is still only an XOR .bin encrypted with the original base FBX. Users will apply the native mesh payload from version metadata, not from their local experimental flags.",
+                    MessageType.Info);
+            }
+        }
+    }
+
+    private static bool ShouldCompressAdvancedMeshPayload(CustomBaseVersion version)
+    {
+        bool foundAdvancedPayload = false;
+        bool shouldCompress = false;
+        foreach (var versionFile in version?.versionFiles ?? Array.Empty<ModelFileData>())
+        {
+            if (versionFile == null ||
+                !string.Equals(versionFile.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foundAdvancedPayload = true;
+            string compression = versionFile.compression;
+            string metadataCompression = null;
+            if (versionFile.metadata != null &&
+                versionFile.metadata.TryGetValue(NativeMeshPayloadService.PayloadCompressionMetadataKey, out object metadataCompressionValue) &&
+                metadataCompressionValue != null)
+            {
+                metadataCompression = metadataCompressionValue.ToString();
+            }
+
+            if (string.IsNullOrWhiteSpace(compression) || string.IsNullOrWhiteSpace(metadataCompression))
+            {
+                throw new InvalidDataException("Advanced mesh payload must include both compression and payloadCompression.");
+            }
+
+            string normalizedCompression = NormalizeAdvancedMeshPayloadCompression(compression);
+            string normalizedMetadataCompression = NormalizeAdvancedMeshPayloadCompression(metadataCompression);
+            if (!string.Equals(normalizedCompression, normalizedMetadataCompression, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Advanced mesh payload compression metadata is inconsistent.");
+            }
+
+            if (string.Equals(normalizedCompression, NativeMeshPayloadService.PayloadCompressionGZip, StringComparison.Ordinal))
+            {
+                shouldCompress = true;
+            }
+        }
+
+        return foundAdvancedPayload && shouldCompress;
+    }
+
+    private static string NormalizeAdvancedMeshPayloadCompression(string compression)
+    {
+        if (string.Equals(compression, NativeMeshPayloadService.PayloadCompressionNone, StringComparison.OrdinalIgnoreCase))
+        {
+            return NativeMeshPayloadService.PayloadCompressionNone;
+        }
+
+        if (string.Equals(compression, NativeMeshPayloadService.PayloadCompressionGZip, StringComparison.OrdinalIgnoreCase))
+        {
+            return NativeMeshPayloadService.PayloadCompressionGZip;
+        }
+
+        throw new InvalidDataException($"Unsupported advanced mesh payload compression: {compression}");
+    }
     
 
     private void OnBlendshapeSearchInputChanged(string searchString)
@@ -303,6 +403,7 @@ public class CreatorModeModule
             string targetLabel = targetFbx != null ? AssetDatabase.GetAssetPath(targetFbx) : $"Target FBX {i + 1}";
             var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             var customFbxProp = entry.FindPropertyRelative("customFbx");
+            var externalCustomFbxProp = entry.FindPropertyRelative("externalCustomFbxPath");
             var avatarProp = entry.FindPropertyRelative("customBaseAvatar");
 
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
@@ -318,6 +419,18 @@ public class CreatorModeModule
                         {
                             editor.serializedObject.ApplyModifiedProperties();
                             ApplyCustomFbxForModelEntry(targetFbx, customFbx);
+                        }
+                    }
+                }
+                if (externalCustomFbxProp != null && !string.IsNullOrWhiteSpace(externalCustomFbxProp.stringValue))
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        EditorGUILayout.PrefixLabel("External Blender FBX");
+                        EditorGUILayout.SelectableLabel(externalCustomFbxProp.stringValue, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight));
+                        if (GUILayout.Button("Clear", GUILayout.Width(60f)))
+                        {
+                            externalCustomFbxProp.stringValue = "";
                         }
                     }
                 }
@@ -487,6 +600,8 @@ public class CreatorModeModule
             editor.modelFileBuildEntriesProp.InsertArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize);
             var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize - 1);
             entry.FindPropertyRelative("customFbx").objectReferenceValue = null;
+            var externalCustomFbxPath = entry.FindPropertyRelative("externalCustomFbxPath");
+            if (externalCustomFbxPath != null) externalCustomFbxPath.stringValue = "";
             entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = null;
         }
 
@@ -506,11 +621,61 @@ public class CreatorModeModule
             var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             var customFbx = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            var externalCustomFbxPath = entry.FindPropertyRelative("externalCustomFbxPath")?.stringValue;
             var avatar = entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
-            if ((customFbx != null || avatar != null) && sourceFbx == null) return false;
+            bool hasExternalCustomFbx = !string.IsNullOrWhiteSpace(externalCustomFbxPath) && File.Exists(Path.GetFullPath(externalCustomFbxPath));
+            if ((customFbx != null || hasExternalCustomFbx || avatar != null) && sourceFbx == null) return false;
         }
 
         return true;
+    }
+
+    private static bool HasRequiredNewVersionMetadata(string version, Scope scope, string changelog, string defaultAviVersion, out string message)
+    {
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            missing.Add("version");
+        }
+        if (!Enum.IsDefined(typeof(Scope), scope))
+        {
+            missing.Add("scope");
+        }
+        if (string.IsNullOrWhiteSpace(changelog))
+        {
+            missing.Add("changelog");
+        }
+        if (string.IsNullOrWhiteSpace(defaultAviVersion))
+        {
+            missing.Add("default AVI version");
+        }
+
+        if (missing.Count == 0)
+        {
+            message = null;
+            return true;
+        }
+
+        message = "Required version metadata is missing: " + string.Join(", ", missing) + ".";
+        return false;
+    }
+
+    private static void ValidateVersionMetadataForUpload(CustomBaseVersion metadata)
+    {
+        if (metadata == null)
+        {
+            throw new InvalidOperationException("Version metadata is missing.");
+        }
+
+        if (metadata.assetId <= 0)
+        {
+            throw new InvalidOperationException("Version metadata is missing a valid asset id.");
+        }
+
+        if (!HasRequiredNewVersionMetadata(metadata.version, metadata.scope, metadata.changelog, metadata.defaultAviVersion, out string message))
+        {
+            throw new InvalidOperationException(message);
+        }
     }
 
     private bool HasModelFileBuildEntryPayload()
@@ -523,8 +688,10 @@ public class CreatorModeModule
             var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             var customFbx = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            var externalCustomFbxPath = entry.FindPropertyRelative("externalCustomFbxPath")?.stringValue;
             var avatar = entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
-            if (sourceFbx != null && (customFbx != null || avatar != null)) return true;
+            bool hasExternalCustomFbx = !string.IsNullOrWhiteSpace(externalCustomFbxPath) && File.Exists(Path.GetFullPath(externalCustomFbxPath));
+            if (sourceFbx != null && (customFbx != null || hasExternalCustomFbx || avatar != null)) return true;
         }
 
         return false;
@@ -1533,6 +1700,11 @@ public class CreatorModeModule
         int assetId = selectedAsset.id;
 
         string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
+        if (!HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newChangelog, defaultAviVersion, out string metadataValidationMessage))
+        {
+            throw new InvalidOperationException(metadataValidationMessage);
+        }
+
         EditorUtility.DisplayProgressBar("Preparing Build", "Creating version package...", 0.2f);
 
         SyncModelFileBuildEntryCount();
@@ -1542,10 +1714,12 @@ public class CreatorModeModule
             var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             var customFbx = entryProp.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            string externalCustomFbxPath = entryProp.FindPropertyRelative("externalCustomFbxPath")?.stringValue;
             var customAvatar = entryProp.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
             bool hasCustomFbx = customFbx != null;
+            bool hasExternalCustomFbx = !string.IsNullOrWhiteSpace(externalCustomFbxPath) && File.Exists(Path.GetFullPath(externalCustomFbxPath));
             bool hasCustomAvatar = customAvatar != null;
-            if (!hasCustomFbx && !hasCustomAvatar) continue;
+            if (!hasCustomFbx && !hasExternalCustomFbx && !hasCustomAvatar) continue;
             if (sourceFbx == null)
                 throw new Exception($"Target model file {i + 1} is missing its source FBX.");
 
@@ -1565,23 +1739,11 @@ public class CreatorModeModule
             {
                 sourceFbxPath = originalFbxPath,
                 customFbx = customFbx,
+                externalCustomFbxPath = hasExternalCustomFbx ? Path.GetFullPath(externalCustomFbxPath) : null,
                 customBaseAvatar = customAvatar
             });
         }
 
-        string tempZipPath = fileManagerService.CreateVersionPackageForUpload(
-            assetId,
-            newVersionString,
-            defaultAviVersion,
-            packageEntries,
-            logicPrefab,
-            shouldIncludeCustomVeins,
-            customVeinsTexture,
-            fixedByAnimationAssetPaths);
-
-        EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
-        var sourceFileEntries = new List<ModelFileData>();
-        var versionFileEntries = new List<ModelFileData>();
         var packageSourcePaths = packageEntries
             .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.sourceFbxPath))
             .Select(entry =>
@@ -1594,6 +1756,47 @@ public class CreatorModeModule
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var smrPathsByFbx = SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, packageSourcePaths);
+        bool useAdvancedMeshReplacement =
+            FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
+            editor.useAdvancedMeshReplacementForCreatorProp != null &&
+            editor.useAdvancedMeshReplacementForCreatorProp.boolValue;
+        bool compressAdvancedMeshPayload =
+            useAdvancedMeshReplacement &&
+            editor.compressAdvancedMeshPayloadForCreatorProp != null &&
+            editor.compressAdvancedMeshPayloadForCreatorProp.boolValue;
+        foreach (var packageEntry in packageEntries)
+        {
+            string sourceUnityPath = MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
+            if (sourceUnityPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                sourceUnityPath = sourceUnityPath.Substring(0, sourceUnityPath.Length - FileManagerService.OriginalSuffix.Length);
+            }
+
+            packageEntry.useAdvancedMeshReplacement = useAdvancedMeshReplacement &&
+                                                     (packageEntry.customFbx != null ||
+                                                      !string.IsNullOrWhiteSpace(packageEntry.externalCustomFbxPath));
+            packageEntry.smrPaths = smrPathsByFbx.TryGetValue(sourceUnityPath, out var entries)
+                ? entries
+                : new List<ModelFileSmrPathData>();
+        }
+
+        string tempZipPath = fileManagerService.CreateVersionPackageForUpload(
+            assetId,
+            newVersionString,
+            defaultAviVersion,
+            packageEntries,
+            logicPrefab,
+            shouldIncludeCustomVeins,
+            customVeinsTexture,
+            shouldIncludeDynamicNormalsBody,
+            shouldIncludeDynamicNormalsFlexing,
+            compressAdvancedMeshPayload,
+            fixedByAnimationAssetPaths,
+            editor.customBaseTarget != null ? editor.customBaseTarget.transform.root : null);
+
+        EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
+        var sourceFileEntries = new List<ModelFileData>();
+        var versionFileEntries = new List<ModelFileData>();
         foreach (var packageEntry in packageEntries)
         {
             string sourceUnityPath = MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
@@ -1603,7 +1806,9 @@ public class CreatorModeModule
             }
 
             var sourceMetas = ResolveSourceMetasForPath(sourceUnityPath);
-            string customFbxPath = packageEntry.customFbx != null ? AssetDatabase.GetAssetPath(packageEntry.customFbx) : null;
+            string customFbxPath = packageEntry.customFbx != null
+                ? AssetDatabase.GetAssetPath(packageEntry.customFbx)
+                : packageEntry.externalCustomFbxPath;
             var customMetas = CollectModelImporterMetaForUnityPath(customFbxPath);
 
             sourceFileEntries.Add(new ModelFileData
@@ -1622,9 +1827,13 @@ public class CreatorModeModule
             {
                 { "sourcePath", sourceUnityPath }
             };
-            if (packageEntry.customFbx != null)
+            if (!string.IsNullOrWhiteSpace(customFbxPath))
             {
                 modelFileMetadata["customFbxPath"] = customFbxPath;
+            }
+            if (packageEntry.useAdvancedMeshReplacement)
+            {
+                modelFileMetadata["advancedRendererCount"] = packageEntry.advancedRendererCount.ToString();
             }
             if (!string.IsNullOrWhiteSpace(packageEntry.avatarUnityPath))
             {
@@ -1633,16 +1842,28 @@ public class CreatorModeModule
 
             if (!string.IsNullOrWhiteSpace(packageEntry.binUnityPath))
             {
+                var rawModelFileMetadata = new Dictionary<string, object>(modelFileMetadata);
+                if (packageEntry.useAdvancedMeshReplacement)
+                {
+                    rawModelFileMetadata["payloadFormat"] = NativeMeshPayloadService.PayloadFormat;
+                    rawModelFileMetadata[NativeMeshPayloadService.PayloadCompressionMetadataKey] = packageEntry.payloadCompression;
+                }
+
                 versionFileEntries.Add(new ModelFileData
                 {
                     path = Path.GetFileName(packageEntry.binUnityPath),
                     hash = packageEntry.binHash,
                     type = "BIN",
                     role = "PATCH",
-                    transform = "XOR_BIN_TO_FBX",
+                    compression = packageEntry.useAdvancedMeshReplacement
+                        ? packageEntry.payloadCompression
+                        : null,
+                    transform = packageEntry.useAdvancedMeshReplacement
+                        ? NativeMeshPayloadService.TransformName
+                        : "XOR_BIN_TO_FBX",
                     outputHash = packageEntry.outputHash,
                     metas = customMetas,
-                    metadata = modelFileMetadata
+                    metadata = rawModelFileMetadata
                 });
             }
             else if (!string.IsNullOrWhiteSpace(packageEntry.avatarUnityPath))
@@ -1663,6 +1884,20 @@ public class CreatorModeModule
         if (selectedParentVersionObject?.extraCustomization != null)
         {
             extraCustomization.AddRange(selectedParentVersionObject.extraCustomization);
+        }
+
+        bool hasAdvancedMeshPayload = packageEntries.Any(entry =>
+            entry != null && entry.useAdvancedMeshReplacement && (entry.customFbx != null || !string.IsNullOrWhiteSpace(entry.externalCustomFbxPath)));
+        if (hasAdvancedMeshPayload)
+        {
+            if (!extraCustomization.Contains(NativeMeshPayloadService.ExtraCustomizationKey))
+            {
+                extraCustomization.Add(NativeMeshPayloadService.ExtraCustomizationKey);
+            }
+        }
+        else
+        {
+            extraCustomization.RemoveAll(value => value == NativeMeshPayloadService.ExtraCustomizationKey);
         }
 
         if (shouldIncludeCustomVeins)
@@ -1808,7 +2043,7 @@ public class CreatorModeModule
             var versionFilesBySourcePath = new Dictionary<string, ModelFileData>(StringComparer.OrdinalIgnoreCase);
             foreach (var versionFile in ver.versionFiles ?? Array.Empty<ModelFileData>())
             {
-                string sourcePath = GetMetadataString(versionFile, "sourcePath") ?? GetMetadataString(versionFile, "targetPath");
+                string sourcePath = GetMetadataString(versionFile, "sourcePath");
                 if (string.IsNullOrWhiteSpace(sourcePath))
                 {
                     continue;
@@ -1817,7 +2052,6 @@ public class CreatorModeModule
                 versionFilesBySourcePath[MCBUtils.ToUnityPath(sourcePath)] = versionFile;
             }
 
-            bool hasPathMappedVersionFiles = versionFilesBySourcePath.Count > 0;
             for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
             {
                 var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
@@ -1829,15 +2063,26 @@ public class CreatorModeModule
                     versionFilesBySourcePath.TryGetValue(sourcePath, out versionFile);
                 }
 
-                if (versionFile == null && !hasPathMappedVersionFiles && ver.versionFiles != null && i < ver.versionFiles.Length)
+                string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
+                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
+                var restoredCustomFbx = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
+                entryProp.FindPropertyRelative("customFbx").objectReferenceValue = restoredCustomFbx;
+                var externalCustomFbxPath = entryProp.FindPropertyRelative("externalCustomFbxPath");
+                if (externalCustomFbxPath != null)
                 {
-                    versionFile = ver.versionFiles[i];
+                    externalCustomFbxPath.stringValue = restoredCustomFbx == null && !string.IsNullOrWhiteSpace(customFbxPath)
+                        ? customFbxPath
+                        : "";
                 }
-
-                string customFbxPath = GetMetadataString(versionFile, "customFbxPath") ?? (!hasPathMappedVersionFiles && i == 0 ? ver.customFbxPath : null);
-                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath") ?? (!hasPathMappedVersionFiles && i == 0 ? ver.customBaseAvatarPath : null);
-                entryProp.FindPropertyRelative("customFbx").objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
                 entryProp.FindPropertyRelative("customBaseAvatar").objectReferenceValue = AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath);
+            }
+            if (editor.useAdvancedMeshReplacementForCreatorProp != null)
+            {
+                editor.useAdvancedMeshReplacementForCreatorProp.boolValue = NativeMeshPayloadService.VersionUsesAdvancedMesh(ver);
+            }
+            if (editor.compressAdvancedMeshPayloadForCreatorProp != null)
+            {
+                editor.compressAdvancedMeshPayloadForCreatorProp.boolValue = ShouldCompressAdvancedMeshPayload(ver);
             }
             editor.avatarLogicPrefabProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(ver.logicPrefabPath);
 
@@ -2010,6 +2255,7 @@ public class CreatorModeModule
 
             if (unsubmittedVersion.assetId <= 0)
                 throw new Exception("Unsubmitted version is missing its custom base asset id.");
+            ValidateVersionMetadataForUpload(unsubmittedVersion);
             var packageEntries = new List<FileManagerService.ModelFilePackageEntry>();
             foreach (var versionFile in (unsubmittedVersion.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => string.Equals(file?.role, "PATCH", StringComparison.OrdinalIgnoreCase)))
             {
@@ -2025,21 +2271,38 @@ public class CreatorModeModule
                     throw new Exception($"Source FBX file not found for version upload: {sourcePath}");
 
                 var customFbx = string.IsNullOrWhiteSpace(customFbxPath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
+                string externalCustomFbxPath = customFbx == null && !string.IsNullOrWhiteSpace(customFbxPath) && File.Exists(Path.GetFullPath(customFbxPath))
+                    ? Path.GetFullPath(customFbxPath)
+                    : null;
                 var customBaseAvatar = string.IsNullOrWhiteSpace(customAvatarPath) ? null : AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath);
-                if (!string.IsNullOrWhiteSpace(customFbxPath) && customFbx == null)
+                if (!string.IsNullOrWhiteSpace(customFbxPath) && customFbx == null && string.IsNullOrWhiteSpace(externalCustomFbxPath))
                     throw new Exception($"Custom FBX asset not found for version upload: {customFbxPath}");
                 if (!string.IsNullOrWhiteSpace(customAvatarPath) && customBaseAvatar == null)
                     throw new Exception($"Custom avatar asset not found for version upload: {customAvatarPath}");
+
+                string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
+                var sourceFile = unsubmittedVersion.sourceFiles?.FirstOrDefault(file =>
+                    file != null &&
+                    string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase));
+                bool useAdvancedMeshReplacement = string.Equals(
+                    versionFile.transform,
+                    NativeMeshPayloadService.TransformName,
+                    StringComparison.OrdinalIgnoreCase);
 
                 packageEntries.Add(new FileManagerService.ModelFilePackageEntry
                 {
                     sourceFbxPath = originalSourcePath,
                     customFbx = customFbx,
-                    customBaseAvatar = customBaseAvatar
+                    externalCustomFbxPath = externalCustomFbxPath,
+                    customBaseAvatar = customBaseAvatar,
+                    useAdvancedMeshReplacement = useAdvancedMeshReplacement,
+                    smrPaths = sourceFile?.smrPaths ?? new List<ModelFileSmrPathData>()
                 });
             }
 
             EditorUtility.DisplayProgressBar("Preparing Upload", "Creating version package...", 0.3f);
+
+            bool compressAdvancedMeshPayload = ShouldCompressAdvancedMeshPayload(unsubmittedVersion);
 
             // Re-create the zip from existing files
             zipPath = fileManagerService.CreateVersionPackageForUpload(
@@ -2050,11 +2313,16 @@ public class CreatorModeModule
                 logicPrefab,
                 unsubmittedVersion.includeCustomVeins ?? false,
                 customVeinsTexture,
-                CollectAnimationAssetPathsFromFixedBy(unsubmittedVersion.customBlendshapes)
+                unsubmittedVersion.includeDynamicNormalsBody ?? false,
+                unsubmittedVersion.includeDynamicNormalsFlexing ?? false,
+                compressAdvancedMeshPayload,
+                CollectAnimationAssetPathsFromFixedBy(unsubmittedVersion.customBlendshapes),
+                editor.customBaseTarget != null ? editor.customBaseTarget.transform.root : null
             );
 
             EditorUtility.DisplayProgressBar("Uploading", "Sending package to server...", 0.7f);
             string metadataJson = JsonConvert.SerializeObject(unsubmittedVersion, new StringEnumConverter());
+            MCBLogger.Log($"[CreatorMode] Uploading version metadata assetId={unsubmittedVersion.assetId}, version={unsubmittedVersion.version}, scope={unsubmittedVersion.scope}, defaultAviVersion={unsubmittedVersion.defaultAviVersion}, changelogLength={(unsubmittedVersion.changelog ?? string.Empty).Length}");
             uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
             uploadTask = networkService.SubmitNewVersionAsync(uploadUrl, editor.authToken, zipPath, metadataJson);
         }
@@ -2120,8 +2388,11 @@ public class CreatorModeModule
         try
         {
             buildResult = BuildNewVersion();
+            ValidateVersionMetadataForUpload(buildResult.metadata);
+            ValidateVersionPackageUploadSize(buildResult.zipPath);
             EditorUtility.DisplayProgressBar("Uploading", "Sending package to server...", 0.8f);
             string metadataJson = JsonConvert.SerializeObject(buildResult.metadata, new StringEnumConverter());
+            MCBLogger.Log($"[CreatorMode] Submitting version metadata assetId={buildResult.metadata.assetId}, version={buildResult.metadata.version}, scope={buildResult.metadata.scope}, defaultAviVersion={buildResult.metadata.defaultAviVersion}, changelogLength={(buildResult.metadata.changelog ?? string.Empty).Length}");
             uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
             uploadTask = networkService.SubmitNewVersionAsync(uploadUrl, editor.authToken, buildResult.zipPath, metadataJson);
         }
@@ -2170,6 +2441,28 @@ public class CreatorModeModule
         {
             EditorUtility.DisplayDialog("Upload Successful", $"New custom base version {buildResult.metadata.version} has been uploaded.", "OK");
         }
+    }
+
+    private static void ValidateVersionPackageUploadSize(string zipPath)
+    {
+        if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
+        {
+            return;
+        }
+
+        long length = new FileInfo(zipPath).Length;
+        if (length <= MaxVersionPackageUploadBytes)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Version package is too large to upload ({FormatBytes(length)}). Maximum allowed size is {FormatBytes(MaxVersionPackageUploadBytes)}.");
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        return $"{Math.Round(bytes / 1024d / 1024d, 1)} MB";
     }
 }
 #endif

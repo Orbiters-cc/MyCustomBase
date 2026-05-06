@@ -21,6 +21,7 @@ namespace MCBEditorUtils
         private readonly HashSet<string> _eraseCustomSplitBlendshapes = new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<string, Quaternion> _boneRotations = new Dictionary<string, Quaternion>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Vector3> _boneTranslations = new Dictionary<string, Vector3>(StringComparer.OrdinalIgnoreCase);
+        private bool _saveAsAsset = true;
 
         public DynamicNormals(Transform root)
         {
@@ -75,6 +76,12 @@ namespace MCBEditorUtils
         public DynamicNormals enable(bool value)
         {
             _enabled = value;
+            return this;
+        }
+
+        public DynamicNormals saveAsAsset(bool value)
+        {
+            _saveAsAsset = value;
             return this;
         }
 
@@ -156,11 +163,11 @@ namespace MCBEditorUtils
                         .Distinct()
                         .ToList();
 
-                RecalculateNormalsOf(smr, blendShapeNames, applicableBlendShapes, eraseCustom, _boneRotations, _boneTranslations);
+                RecalculateNormalsOf(smr, blendShapeNames, applicableBlendShapes, eraseCustom, _boneRotations, _boneTranslations, _saveAsAsset);
             }
         }
 
-        private static void RecalculateNormalsOf(SkinnedMeshRenderer smr, List<string> smrBlendShapes, List<string> applicableBlendShapes, List<string> eraseCustomSplitNormalsBlendShapes, Dictionary<string, Quaternion> boneRotations, Dictionary<string, Vector3> boneTranslations)
+        private static void RecalculateNormalsOf(SkinnedMeshRenderer smr, List<string> smrBlendShapes, List<string> applicableBlendShapes, List<string> eraseCustomSplitNormalsBlendShapes, Dictionary<string, Quaternion> boneRotations, Dictionary<string, Vector3> boneTranslations, bool saveAsAsset)
         {
             var originalMesh = smr.sharedMesh;
             if (originalMesh == null) return;
@@ -226,25 +233,53 @@ namespace MCBEditorUtils
                     var baseNormals = baseMesh.normals;
                     var baseTangents = baseMesh.tangents;
 
-                    var nameToFrameDeltaBakes = new Dictionary<string, DeltaMeshBake[]>(StringComparer.Ordinal);
-
                     var ignored = new Vector3[originalMesh.vertexCount];
                     var deltaVertices = new Vector3[originalMesh.vertexCount];
                     var deltaNormals = new Vector3[originalMesh.vertexCount];
                     var deltaTangents = new Vector3[originalMesh.vertexCount];
+                    var copyVertices = new Vector3[originalMesh.vertexCount];
+                    var copyNormals = new Vector3[originalMesh.vertexCount];
+                    var copyTangents = new Vector3[originalMesh.vertexCount];
 
-                    foreach (var blendShape in applicableBlendShapes)
+                    // Get the original mesh asset path to determine where to save the dynamic normals mesh
+                    string originalMeshPath = saveAsAsset ? AssetDatabase.GetAssetPath(originalMesh) : null;
+                    string assetPath = null;
+                    
+                    // Only save as asset if the original mesh is an asset (not a scene-only mesh)
+                    if (!string.IsNullOrEmpty(originalMeshPath))
                     {
-                        var shapeIndex = smrBlendShapes.IndexOf(blendShape);
-                        if (shapeIndex < 0) continue;
+                        // Create asset path: same directory as original mesh, with "_DynamicNormals.asset" suffix
+                        string directory = System.IO.Path.GetDirectoryName(originalMeshPath);
+                        string meshNameSafe = originalMesh.name.Replace(" ", "_").Replace("(", "").Replace(")", "");
+                        assetPath = System.IO.Path.Combine(directory, $"{meshNameSafe}_DynamicNormals.asset").Replace("\\", "/");
+                        
+                        // Delete existing asset if it exists
+                        if (AssetDatabase.LoadAssetAtPath<Mesh>(assetPath) != null)
+                        {
+                            AssetDatabase.DeleteAsset(assetPath);
+                        }
+                    }
+                     
+                    var newMesh = Object.Instantiate(originalMesh);
+                    newMesh.name = $"{originalMesh.name} (DynamicNormals)";
+                    newMesh.ClearBlendShapes();
 
+                    for (var shapeIndex = 0; shapeIndex < originalMesh.blendShapeCount; shapeIndex++)
+                    {
+                        var blendShape = originalMesh.GetBlendShapeName(shapeIndex);
                         var frameCount = originalMesh.GetBlendShapeFrameCount(shapeIndex);
-                        var meshBake = new DeltaMeshBake[frameCount];
-                        nameToFrameDeltaBakes[blendShape] = meshBake;
+                        bool recalculateFrame = applicableBlendShapes.Contains(blendShape);
+                        bool eraseCustomSplitNormals = eraseCustomSplitNormalsBlendShapes.Contains(blendShape);
 
                         for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
                         {
                             var frameWeight = originalMesh.GetBlendShapeFrameWeight(shapeIndex, frameIndex);
+                            if (!recalculateFrame)
+                            {
+                                originalMesh.GetBlendShapeFrameVertices(shapeIndex, frameIndex, copyVertices, copyNormals, copyTangents);
+                                newMesh.AddBlendShapeFrame(blendShape, frameWeight, copyVertices, copyNormals, copyTangents);
+                                continue;
+                            }
 
                             var bakedMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
                             try
@@ -268,7 +303,7 @@ namespace MCBEditorUtils
                                     deltaTangents[i] = (Vector3)(bakedTangents[i] - baseTangents[i]);
                                 }
 
-                                if (eraseCustomSplitNormalsBlendShapes.Contains(blendShape))
+                                if (eraseCustomSplitNormals)
                                 {
                                     var nonZero = 0;
                                     var zero = 0;
@@ -289,12 +324,7 @@ namespace MCBEditorUtils
                                     Debug.Log($"({nameof(DynamicNormals)}) Erasing custom split normals on blendshape {blendShape} in SMR {smr.name} resulted in {nonZero} non-zero vertices and {zero} zero vertices");
                                 }
 
-                                meshBake[frameIndex] = new DeltaMeshBake
-                                {
-                                    vertices = (Vector3[])deltaVertices.Clone(),
-                                    normals = (Vector3[])deltaNormals.Clone(),
-                                    tangents = (Vector3[])deltaTangents.Clone()
-                                };
+                                newMesh.AddBlendShapeFrame(blendShape, frameWeight, deltaVertices, deltaNormals, deltaTangents);
                             }
                             finally
                             {
@@ -302,30 +332,7 @@ namespace MCBEditorUtils
                             }
                         }
                     }
-
-                    // Get the original mesh asset path to determine where to save the dynamic normals mesh
-                    string originalMeshPath = AssetDatabase.GetAssetPath(originalMesh);
-                    string assetPath = null;
-                    
-                    // Only save as asset if the original mesh is an asset (not a scene-only mesh)
-                    if (!string.IsNullOrEmpty(originalMeshPath))
-                    {
-                        // Create asset path: same directory as original mesh, with "_DynamicNormals.asset" suffix
-                        string directory = System.IO.Path.GetDirectoryName(originalMeshPath);
-                        string meshNameSafe = originalMesh.name.Replace(" ", "_").Replace("(", "").Replace(")", "");
-                        assetPath = System.IO.Path.Combine(directory, $"{meshNameSafe}_DynamicNormals.asset").Replace("\\", "/");
-                        
-                        // Delete existing asset if it exists
-                        if (AssetDatabase.LoadAssetAtPath<Mesh>(assetPath) != null)
-                        {
-                            AssetDatabase.DeleteAsset(assetPath);
-                        }
-                    }
-                    
-                    var newMesh = Object.Instantiate(originalMesh);
-                    newMesh.name = $"{originalMesh.name} (DynamicNormals)";
-                    RebuildBlendshapesOnCopy(newMesh, originalMesh, nameToFrameDeltaBakes);
-                    
+                     
                     // Save as asset if we have a valid path
                     if (!string.IsNullOrEmpty(assetPath))
                     {
