@@ -30,6 +30,16 @@ public class BlendShapeLinkPostVrcfuryHook : IVRCSDKPreprocessAvatarCallback
             MCBLogger.Log("[MCB] Manual BlendShape links skipped: " + manualResult.message);
         }
 
+        var animationOffsetResult = AnimationPositionOffsetService.Instance.ApplyActiveVersionOffsets(avatarRoot);
+        if (animationOffsetResult.success)
+        {
+            MCBLogger.Log("[MCB] " + animationOffsetResult.message);
+        }
+        else
+        {
+            MCBLogger.Log("[MCB] Bone animation offset fix skipped: " + animationOffsetResult.message);
+        }
+
         return true;
     }
 }

@@ -1602,16 +1602,9 @@ public class CreatorModeModule
                 sourceUnityPath = sourceUnityPath.Substring(0, sourceUnityPath.Length - FileManagerService.OriginalSuffix.Length);
             }
 
-            var sourceMetas = new List<Dictionary<string, string>>();
-            string sourceMetaPath = sourceUnityPath + ".meta";
-            if (File.Exists(Path.GetFullPath(sourceMetaPath)))
-            {
-                sourceMetas.Add(new Dictionary<string, string>
-                {
-                    { "file", Path.GetFileName(sourceUnityPath) },
-                    { "meta", File.ReadAllText(Path.GetFullPath(sourceMetaPath)) }
-                });
-            }
+            var sourceMetas = ResolveSourceMetasForPath(sourceUnityPath);
+            string customFbxPath = packageEntry.customFbx != null ? AssetDatabase.GetAssetPath(packageEntry.customFbx) : null;
+            var customMetas = CollectModelImporterMetaForUnityPath(customFbxPath);
 
             sourceFileEntries.Add(new ModelFileData
             {
@@ -1631,7 +1624,7 @@ public class CreatorModeModule
             };
             if (packageEntry.customFbx != null)
             {
-                modelFileMetadata["customFbxPath"] = AssetDatabase.GetAssetPath(packageEntry.customFbx);
+                modelFileMetadata["customFbxPath"] = customFbxPath;
             }
             if (!string.IsNullOrWhiteSpace(packageEntry.avatarUnityPath))
             {
@@ -1648,6 +1641,7 @@ public class CreatorModeModule
                     role = "PATCH",
                     transform = "XOR_BIN_TO_FBX",
                     outputHash = packageEntry.outputHash,
+                    metas = customMetas,
                     metadata = modelFileMetadata
                 });
             }
@@ -1892,6 +1886,50 @@ public class CreatorModeModule
     {
         if (file?.metadata == null || string.IsNullOrWhiteSpace(key)) return null;
         return file.metadata.TryGetValue(key, out object value) ? value?.ToString() : null;
+    }
+
+    private List<Dictionary<string, string>> ResolveSourceMetasForPath(string sourceUnityPath)
+    {
+        string normalizedPath = MCBUtils.ToUnityPath(sourceUnityPath);
+        var selectedAsset = editor.GetSelectedAsset();
+        var sourceFile = selectedAsset?.sourceFiles?.FirstOrDefault(file =>
+            file != null &&
+            string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(file.role, "SOURCE", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(MCBUtils.ToUnityPath(file.path), normalizedPath, StringComparison.OrdinalIgnoreCase));
+
+        if (sourceFile?.metas != null && sourceFile.metas.Count > 0)
+        {
+            return CloneMetas(sourceFile.metas);
+        }
+
+        return CollectModelImporterMetaForUnityPath(normalizedPath);
+    }
+
+    private static List<Dictionary<string, string>> CollectModelImporterMetaForUnityPath(string unityPath)
+    {
+        var metas = new List<Dictionary<string, string>>();
+        if (string.IsNullOrWhiteSpace(unityPath)) return metas;
+
+        string normalizedPath = MCBUtils.ToUnityPath(unityPath);
+        string metaPath = normalizedPath + ".meta";
+        string fullMetaPath = Path.GetFullPath(metaPath);
+        if (!File.Exists(fullMetaPath)) return metas;
+
+        metas.Add(new Dictionary<string, string>
+        {
+            { "file", Path.GetFileName(normalizedPath) },
+            { "meta", File.ReadAllText(fullMetaPath) }
+        });
+        return metas;
+    }
+
+    private static List<Dictionary<string, string>> CloneMetas(IEnumerable<Dictionary<string, string>> metas)
+    {
+        return (metas ?? Enumerable.Empty<Dictionary<string, string>>())
+            .Where(entry => entry != null)
+            .Select(entry => new Dictionary<string, string>(entry, StringComparer.Ordinal))
+            .ToList();
     }
 
     private IEnumerator BuildAndApplyLocalVersionCoroutine()

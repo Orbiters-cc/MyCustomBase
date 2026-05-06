@@ -385,6 +385,7 @@ public class VersionActions
             }
             editor.customBaseTarget.appliedCustomBaseVersion = version;
             SyncAppliedVersionBlendshapeLinkCache(version);
+            SyncAppliedVersionAnimationPositionOffsetCache(version);
             
             // Check feature flags
             bool hasCustomVeins = !isReset && version != null && (version.extraCustomization?.Contains("customVeins") ?? false);
@@ -545,6 +546,7 @@ public class VersionActions
                 editor.customBaseTarget.useCustomSlidersState = false;
                 editor.customBaseTarget.customSlidersState = true;
                 SyncAppliedVersionBlendshapeLinkCache(null);
+                SyncAppliedVersionAnimationPositionOffsetCache(null);
 
                 // Delete sliders GameObject on reset
                 var slidersTransform = root.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);
@@ -1025,31 +1027,10 @@ public class VersionActions
     {
         if (root == null) yield break;
 
-        var targetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (editor.baseFbxFilesProp != null)
-        {
-            for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
-            {
-                var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-                string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
-                if (!string.IsNullOrWhiteSpace(path)) targetPaths.Add(MCBUtils.ToUnityPath(path));
-            }
-        }
-
         foreach (var renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
             if (renderer?.sharedMesh == null || renderer.sharedMesh.blendShapeCount == 0) continue;
-            if (targetPaths.Count == 0)
-            {
-                yield return renderer;
-                continue;
-            }
-
-            string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
-            if (!string.IsNullOrWhiteSpace(meshPath) && targetPaths.Contains(meshPath))
-            {
-                yield return renderer;
-            }
+            yield return renderer;
         }
     }
 
@@ -1289,11 +1270,13 @@ public class VersionActions
             editor.currentIsCustom = false;
             editor.customBaseTarget.appliedCustomBaseVersion = matchingVersion;
             SyncAppliedVersionBlendshapeLinkCache(matchingVersion);
+            SyncAppliedVersionAnimationPositionOffsetCache(matchingVersion);
         }
         else
         {
             editor.isCustomBase = false;
             editor.customBaseTarget.appliedCustomBaseVersion = null;
+            SyncAppliedVersionAnimationPositionOffsetCache(null);
             
             // Detect user-custom base only when feature is enabled and we have attempted fetching versions
             string fbxPath = GetCurrentFBXPath();
@@ -1372,6 +1355,32 @@ public class VersionActions
             }
 
             cache.Add(cached);
+        }
+    }
+
+    private void SyncAppliedVersionAnimationPositionOffsetCache(CustomBaseVersion version)
+    {
+        if (editor?.customBaseTarget == null) return;
+
+        var cache = editor.customBaseTarget.appliedVersionAnimationPositionOffsetsCache;
+        if (cache == null)
+        {
+            cache = new List<AnimationPositionOffsetEntry>();
+            editor.customBaseTarget.appliedVersionAnimationPositionOffsetsCache = cache;
+        }
+
+        cache.Clear();
+        if (version == null) return;
+
+        foreach (var offset in AnimationPositionOffsetService.BuildOffsetsForVersion(version))
+        {
+            if (offset == null || string.IsNullOrWhiteSpace(offset.bonePath)) continue;
+            cache.Add(new AnimationPositionOffsetEntry
+            {
+                sourceFbxPath = offset.sourceFbxPath,
+                bonePath = offset.bonePath,
+                offset = offset.offset
+            });
         }
     }
 
@@ -1611,6 +1620,7 @@ public class VersionActions
             editor.isCustomBase = false;
             editor.customBaseTarget.appliedCustomBaseVersion = null;
             SyncAppliedVersionBlendshapeLinkCache(null);
+            SyncAppliedVersionAnimationPositionOffsetCache(null);
             editor.currentIsCustom = true;
 
             // Recalculate hashes and update state

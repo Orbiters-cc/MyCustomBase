@@ -216,20 +216,9 @@ public class BlendshapeDrawer
     private SkinnedMeshRenderer[] GetTargetBlendshapeRenderers(Transform root)
     {
         if (root == null) return Array.Empty<SkinnedMeshRenderer>();
-        var targetPaths = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (editor.baseFbxFilesProp != null)
-        {
-            for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
-            {
-                var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-                string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
-                if (!string.IsNullOrWhiteSpace(path)) targetPaths.Add(MCBUtils.ToUnityPath(path));
-            }
-        }
 
         return root.GetComponentsInChildren<SkinnedMeshRenderer>(true)
             .Where(renderer => renderer?.sharedMesh != null && renderer.sharedMesh.blendShapeCount > 0)
-            .Where(renderer => targetPaths.Count == 0 || targetPaths.Contains(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh))))
             .ToArray();
     }
 }

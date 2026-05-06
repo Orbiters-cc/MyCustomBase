@@ -45,6 +45,14 @@ public class CreatorModelFileBuildEntry
     public Avatar customBaseAvatar;
 }
 
+[Serializable]
+public class AnimationPositionOffsetEntry
+{
+    public string sourceFbxPath;
+    public string bonePath;
+    public Vector3 offset;
+}
+
 // This component is a pure data container for an avatar that has been modified
 // by the custom base workflow. It holds only the state that needs to be saved with the scene/prefab.
 [AddComponentMenu("Orbiters/My Custom Base (MCB)")]
@@ -104,6 +112,9 @@ public class MyCustomBase : MonoBehaviour
 
     [Tooltip("Serialized cache of applied version blendshape definitions used for build-time corrective links.")]
     [HideInInspector] [SerializeField] public List<CreatorBlendshapeEntry> appliedVersionBlendshapeLinksCache = new List<CreatorBlendshapeEntry>();
+
+    [Tooltip("Serialized cache of applied version bone position offsets used to compensate animation clips at build time.")]
+    [HideInInspector] [SerializeField] public List<AnimationPositionOffsetEntry> appliedVersionAnimationPositionOffsetsCache = new List<AnimationPositionOffsetEntry>();
 
     // --- CREATOR MODE PERSISTENT DATA ---
     [HideInInspector] public bool isCreatorMode = false;
