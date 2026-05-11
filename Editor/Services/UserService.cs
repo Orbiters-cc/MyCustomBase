@@ -22,7 +22,9 @@ public class UserService
     private static Dictionary<int, UserInfo> userCache = new Dictionary<int, UserInfo>();
     private static Dictionary<int, Texture2D> avatarCache = new Dictionary<int, Texture2D>();
     private static HashSet<int> pendingRequests = new HashSet<int>();
+    private static HashSet<int> pendingAvatarDownloads = new HashSet<int>();
     private static HashSet<int> failedRequests = new HashSet<int>();
+    private static bool repaintQueued;
     
     private static readonly string AVATARS_FOLDER = Path.Combine(MCBUtils.GetMCBDataFolder(), "avatars");
     
@@ -141,48 +143,61 @@ public class UserService
     
     private static IEnumerator DownloadAvatar(int uploaderId, string avatarUrl)
     {
-        string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
-
-        // Check if avatar already exists locally
-        if (File.Exists(localPath))
+        try
         {
-            LoadLocalAvatar(uploaderId, localPath);
-            yield break;
-        }
-
-        using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(avatarUrl))
-        {
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AvatarDownload);
-            yield return request.SendWebRequest();
-
-            if (request.result == UnityWebRequest.Result.Success)
+            if (avatarCache.ContainsKey(uploaderId))
             {
-                try
+                yield break;
+            }
+
+            string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
+
+            // Check if avatar already exists locally
+            if (File.Exists(localPath))
+            {
+                LoadLocalAvatar(uploaderId, localPath);
+                yield break;
+            }
+
+            using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(avatarUrl))
+            {
+                request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AvatarDownload);
+                yield return request.SendWebRequest();
+
+                if (request.result == UnityWebRequest.Result.Success)
                 {
-                    Texture2D texture = DownloadHandlerTexture.GetContent(request);
-                    if (texture != null)
+                    try
                     {
-                        Texture2D processed = MakeCircularAvatar(texture) ?? texture;
-                        byte[] pngData = processed.EncodeToPNG();
-                        File.WriteAllBytes(localPath, pngData);
-
-                        avatarCache[uploaderId] = processed;
-
-                        if (!ReferenceEquals(processed, texture))
+                        Texture2D texture = DownloadHandlerTexture.GetContent(request);
+                        if (texture != null)
                         {
-                            Object.DestroyImmediate(texture);
+                            Texture2D processed = MakeCircularAvatar(texture) ?? texture;
+                            byte[] pngData = processed.EncodeToPNG();
+                            File.WriteAllBytes(localPath, pngData);
+
+                            avatarCache[uploaderId] = processed;
+                            QueueRepaintAllViews();
+
+                            if (!ReferenceEquals(processed, texture))
+                            {
+                                Object.DestroyImmediate(texture);
+                            }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        MCBLogger.LogError($"[MCB] Failed to process avatar for user {uploaderId}: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    MCBLogger.LogError($"[MCB] Failed to process avatar for user {uploaderId}: {ex.Message}");
+                    MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {request.error} (url: {avatarUrl})");
                 }
             }
-            else
-            {
-                MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {request.error} (url: {avatarUrl})");
-            }
+        }
+        finally
+        {
+            pendingAvatarDownloads.Remove(uploaderId);
         }
     }
 
@@ -197,12 +212,16 @@ public class UserService
             {
                 Texture2D processed = MakeCircularAvatar(texture) ?? texture;
                 avatarCache[uploaderId] = processed;
+                QueueRepaintAllViews();
                 if (!ReferenceEquals(processed, texture))
                 {
                     Object.DestroyImmediate(texture);
                 }
 
+                return;
             }
+
+            Object.DestroyImmediate(texture);
         }
         catch (Exception ex)
         {
@@ -242,22 +261,39 @@ public class UserService
         try
         {
             UserInfo info = userCache.ContainsKey(userId) ? userCache[userId] : new UserInfo();
-            if (!string.IsNullOrEmpty(username)) info.username = username;
-            if (!string.IsNullOrEmpty(avatarUrl)) info.avatarUrl = avatarUrl;
+            bool changed = !userCache.ContainsKey(userId);
+            if (!string.IsNullOrEmpty(username) && !string.Equals(info.username, username, StringComparison.Ordinal))
+            {
+                info.username = username;
+                changed = true;
+            }
+
+            if (!string.IsNullOrEmpty(avatarUrl) && !string.Equals(info.avatarUrl, avatarUrl, StringComparison.Ordinal))
+            {
+                info.avatarUrl = avatarUrl;
+                changed = true;
+            }
+
             userCache[userId] = info;
 
             failedRequests.Remove(userId);
 
-            if (!string.IsNullOrEmpty(info.avatarUrl))
+            if (!string.IsNullOrEmpty(info.avatarUrl) &&
+                !avatarCache.ContainsKey(userId) &&
+                !pendingAvatarDownloads.Contains(userId))
             {
-                EditorCoroutineUtility.StartCoroutineOwnerless(DownloadAvatar(userId, info.avatarUrl));
+                string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{userId}.png");
+                if (!File.Exists(localPath))
+                {
+                    pendingAvatarDownloads.Add(userId);
+                    EditorCoroutineUtility.StartCoroutineOwnerless(DownloadAvatar(userId, info.avatarUrl));
+                }
             }
 
-            // Refresh all editor views so UI (e.g., AccountModule) reflects the updated info
-            EditorApplication.delayCall += () =>
+            if (changed)
             {
-                try { InternalEditorUtility.RepaintAllViews(); } catch { }
-            };
+                QueueRepaintAllViews();
+            }
         }
         catch (Exception ex)
         {
@@ -342,13 +378,11 @@ public class UserService
             userCache.Clear();
             avatarCache.Clear();
             pendingRequests.Clear();
+            pendingAvatarDownloads.Clear();
             failedRequests.Clear();
 
             // Trigger UI repaint so views reflect cleared state
-            EditorApplication.delayCall += () =>
-            {
-                try { InternalEditorUtility.RepaintAllViews(); } catch { }
-            };
+            QueueRepaintAllViews();
 
             MCBLogger.Log("[MCB] Flushed user cache (user info, avatars, pending/failed requests)");
         }
@@ -365,6 +399,7 @@ public class UserService
             if (userCache.ContainsKey(userId)) userCache.Remove(userId);
             if (avatarCache.ContainsKey(userId)) avatarCache.Remove(userId);
             if (pendingRequests.Contains(userId)) pendingRequests.Remove(userId);
+            if (pendingAvatarDownloads.Contains(userId)) pendingAvatarDownloads.Remove(userId);
             if (failedRequests.Contains(userId)) failedRequests.Remove(userId);
             
             // Delete local file
@@ -379,6 +414,21 @@ public class UserService
         {
             MCBLogger.LogError($"[MCB] Failed to clear cache for user {userId}: {ex.Message}");
         }
+    }
+
+    private static void QueueRepaintAllViews()
+    {
+        if (repaintQueued)
+        {
+            return;
+        }
+
+        repaintQueued = true;
+        EditorApplication.delayCall += () =>
+        {
+            repaintQueued = false;
+            try { InternalEditorUtility.RepaintAllViews(); } catch { }
+        };
     }
     
     public static void PreloadUserInfo(List<CustomBaseVersion> versions)

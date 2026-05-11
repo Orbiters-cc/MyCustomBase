@@ -63,6 +63,7 @@ public static class AvatarAssetDiscoveryService
     private static readonly HashSet<int> LoggedMissingBannerAssets = new HashSet<int>();
     private static readonly HashSet<string> LoggedInsecureImageUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedImageDownloads = new HashSet<string>(StringComparer.Ordinal);
+    private static bool repaintQueued;
 
     static AvatarAssetDiscoveryService()
     {
@@ -75,6 +76,7 @@ public static class AvatarAssetDiscoveryService
         {
             EditorApplication.delayCall -= RepaintAllViews;
             PendingThumbnailDownloads.Clear();
+            repaintQueued = false;
         };
     }
 
@@ -250,7 +252,6 @@ public static class AvatarAssetDiscoveryService
                 UserService.UpdateUserInfo(asset.ownerId.Value, asset.ownerUsername, asset.ownerAvatarUrl);
             }
             GetThumbnail(asset);
-            PreloadBanner(asset);
         }
     }
 
@@ -303,6 +304,7 @@ public static class AvatarAssetDiscoveryService
         }
 
         url = ExpandImageUrl(url);
+        url = PrepareUnityImageUrl(url, "banner");
         url = NormalizeImageUrl(url, "banner", asset.id);
         if (string.IsNullOrWhiteSpace(url))
         {
@@ -326,6 +328,7 @@ public static class AvatarAssetDiscoveryService
         }
 
         url = ExpandImageUrl(url);
+        url = PrepareUnityImageUrl(url, kind);
         url = NormalizeImageUrl(url, kind, assetId);
         if (string.IsNullOrWhiteSpace(url))
         {
@@ -409,6 +412,7 @@ public static class AvatarAssetDiscoveryService
                 if (!texture.LoadImage(result.bytes))
                 {
                     FailedImageDownloads.Add(cacheKey);
+                    Object.DestroyImmediate(texture);
                     MCBLogger.LogWarning($"[AvatarAssetDiscovery] Downloaded {kind} request for assetId={assetId} but Unity could not decode the image bytes.");
                     yield break;
                 }
@@ -439,7 +443,7 @@ public static class AvatarAssetDiscoveryService
             PendingThumbnailDownloads.Remove(cacheKey);
         }
 
-        EditorApplication.delayCall += RepaintAllViews;
+        QueueRepaintAllViews();
     }
 
     private static async Task<(byte[] bytes, string error)> DownloadImageBytesAsync(string url)
@@ -493,6 +497,31 @@ public static class AvatarAssetDiscoveryService
         return $"{MCBUtils.getApiUrl("assets")}/{assetId}/{imageName}";
     }
 
+    private static string PrepareUnityImageUrl(string url, string kind)
+    {
+        if (string.IsNullOrWhiteSpace(url) ||
+            url.IndexOf("format=", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return url;
+        }
+
+        bool shouldRequestPng =
+            string.Equals(kind, "thumb", StringComparison.Ordinal) &&
+            uri.AbsolutePath.IndexOf("/files/serve/", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        shouldRequestPng |=
+            string.Equals(kind, "banner", StringComparison.Ordinal) &&
+            uri.AbsolutePath.EndsWith("/mcb-banner", StringComparison.OrdinalIgnoreCase);
+
+        if (!shouldRequestPng)
+        {
+            return url;
+        }
+
+        return $"{url}{(url.Contains("?") ? "&" : "?")}format=png";
+    }
+
     private static string NormalizeImageUrl(string url, string kind, int assetId)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
@@ -512,6 +541,11 @@ public static class AvatarAssetDiscoveryService
 
         if (isLocalhost)
         {
+            if (MCBUtils.isDevEnvironment)
+            {
+                return url;
+            }
+
             if (LoggedInsecureImageUrls.Add(url))
             {
                 MCBLogger.LogWarning($"[AvatarAssetDiscovery] Skipping insecure local {kind} image for assetId={assetId}: {SanitizeUrlForLogs(url)}");
@@ -675,6 +709,7 @@ public static class AvatarAssetDiscoveryService
 
     private static void RepaintAllViews()
     {
+        repaintQueued = false;
         try
         {
             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
@@ -682,6 +717,17 @@ public static class AvatarAssetDiscoveryService
         catch
         {
         }
+    }
+
+    private static void QueueRepaintAllViews()
+    {
+        if (repaintQueued)
+        {
+            return;
+        }
+
+        repaintQueued = true;
+        EditorApplication.delayCall += RepaintAllViews;
     }
 }
 #endif

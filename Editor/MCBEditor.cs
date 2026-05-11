@@ -7,6 +7,7 @@ using UnityEditor;
 using UnityEngine;
 using MCBEditorUtils;
 using Newtonsoft.Json;
+using UnityEngine.UIElements;
 
 [CustomEditor(typeof(MyCustomBase))]
 public class MCBEditor : UnityEditor.Editor
@@ -14,6 +15,12 @@ public class MCBEditor : UnityEditor.Editor
     private const string DevModeWarningEnabledPrefKey = "MCB.DevModeWarningEnabled";
     private const float ConnectivityOverrideCardHeight = 86f;
     private const float ConnectivityOverrideCardSpacing = 6f;
+    private static readonly string[] UiToolkitStyleSheets =
+    {
+        "Packages/orbiters.mcb/Editor/Styles/mcb-theme.uss",
+        "Packages/orbiters.mcb/Editor/Styles/mcb-account.uss",
+        "Packages/orbiters.mcb/Editor/Styles/mcb-gallery.uss"
+    };
 
     // --- Target & Serialized Object ---
     public MyCustomBase customBaseTarget;
@@ -39,6 +46,20 @@ public class MCBEditor : UnityEditor.Editor
     private AvatarOptionsModule avatarOptionsModule;
     private AdjustMaterialModule adjustMaterialModule;
     public WarningsModule warningsModule;
+
+    private VisualElement uiToolkitRoot;
+    private VisualElement chromeSurfaceHost;
+    private VisualElement headerHost;
+    private VisualElement bannerHost;
+    private VisualElement accountHost;
+    private VisualElement galleryHost;
+    private VisualElement selectedAssetActionsHost;
+    private VisualElement commentsHost;
+    private IMGUIContainer topImGuiContainer;
+    private IMGUIContainer middleImGuiContainer;
+    private IMGUIContainer bottomBarImGuiContainer;
+    private IVisualElementScheduledItem dynamicUiSchedule;
+    private GUIStyle assetViewImGuiPaddingStyle;
     
     // --- Async Services ---
     private AsyncTaskManager taskManager;
@@ -160,6 +181,19 @@ public class MCBEditor : UnityEditor.Editor
     {
         // Unsubscribe from play mode state changes
         EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+        accountModule?.DetachUIToolkit();
+        assetGalleryModule?.DetachUIToolkit();
+        dynamicUiSchedule?.Pause();
+        dynamicUiSchedule = null;
+        uiToolkitRoot = null;
+        chromeSurfaceHost = null;
+        headerHost = null;
+        bannerHost = null;
+        accountHost = null;
+        galleryHost = null;
+        selectedAssetActionsHost = null;
+        commentsHost = null;
+        bottomBarImGuiContainer = null;
         
         // Unsubscribe from version service events
         if (versionService != null)
@@ -172,6 +206,253 @@ public class MCBEditor : UnityEditor.Editor
         MCBPackageVersionService.StatusChanged -= RepaintFromPackageVersionStatus;
         EditorApplication.projectChanged -= OnProjectChanged;
         EditorApplication.hierarchyChanged -= OnHierarchyChanged;
+    }
+
+    public override VisualElement CreateInspectorGUI()
+    {
+        dynamicUiSchedule?.Pause();
+        dynamicUiSchedule = null;
+
+        uiToolkitRoot = new VisualElement();
+        uiToolkitRoot.AddToClassList("mcb-root");
+        LoadUiToolkitStyleSheets(uiToolkitRoot);
+
+        chromeSurfaceHost = new MCBGlowSurfaceElement(
+            new Color(0.180f, 0.180f, 0.180f, 1f),
+            new Color(0.212f, 0.212f, 0.212f, 1f),
+            254f,
+            -78f,
+            318f);
+        chromeSurfaceHost.AddToClassList("mcb-chrome-surface");
+        uiToolkitRoot.Add(chromeSurfaceHost);
+
+        headerHost = new VisualElement();
+        headerHost.AddToClassList("mcb-header");
+        uiToolkitRoot.Add(headerHost);
+
+        bannerHost = new VisualElement();
+        bannerHost.AddToClassList("mcb-banner");
+        headerHost.Add(bannerHost);
+
+        accountHost = new VisualElement();
+        headerHost.Add(accountHost);
+        chromeSurfaceHost.SendToBack();
+
+        topImGuiContainer = new IMGUIContainer(DrawToolkitTopImGui);
+        topImGuiContainer.AddToClassList("mcb-imgui-top");
+        uiToolkitRoot.Add(topImGuiContainer);
+
+        galleryHost = new VisualElement();
+        uiToolkitRoot.Add(galleryHost);
+
+        selectedAssetActionsHost = new VisualElement();
+        selectedAssetActionsHost.AddToClassList("mcb-selected-actions-host");
+        uiToolkitRoot.Add(selectedAssetActionsHost);
+
+        middleImGuiContainer = new IMGUIContainer(DrawToolkitMiddleImGui);
+        middleImGuiContainer.AddToClassList("mcb-imgui-middle");
+        uiToolkitRoot.Add(middleImGuiContainer);
+
+        commentsHost = new VisualElement();
+        commentsHost.AddToClassList("mcb-comments-host");
+        uiToolkitRoot.Add(commentsHost);
+
+        bottomBarImGuiContainer = new IMGUIContainer(DrawToolkitBottomBarImGui);
+        bottomBarImGuiContainer.AddToClassList("mcb-imgui-statusbar");
+        uiToolkitRoot.Add(bottomBarImGuiContainer);
+
+        accountModule?.AttachUIToolkit(accountHost);
+        assetGalleryModule?.AttachUIToolkit(galleryHost, selectedAssetActionsHost, commentsHost);
+        RefreshUiToolkitSections();
+        OrderUiToolkitLayers();
+        dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(1000);
+
+        return uiToolkitRoot;
+    }
+
+    public void RefreshUiToolkitSections()
+    {
+        if (uiToolkitRoot == null)
+        {
+            return;
+        }
+
+        try
+        {
+            DrawVectorBannerUIToolkit();
+            accountModule?.RefreshUIToolkit();
+            assetGalleryModule?.RefreshUIToolkit();
+            OrderUiToolkitLayers();
+            chromeSurfaceHost?.MarkDirtyRepaint();
+            topImGuiContainer?.MarkDirtyRepaint();
+            middleImGuiContainer?.MarkDirtyRepaint();
+            bottomBarImGuiContainer?.MarkDirtyRepaint();
+        }
+        catch (Exception ex)
+        {
+            RecordUiException(ex);
+            bottomBarImGuiContainer?.MarkDirtyRepaint();
+        }
+    }
+
+    private void OrderUiToolkitLayers()
+    {
+        chromeSurfaceHost?.SendToBack();
+        headerHost?.BringToFront();
+        topImGuiContainer?.BringToFront();
+        galleryHost?.BringToFront();
+        selectedAssetActionsHost?.BringToFront();
+        middleImGuiContainer?.BringToFront();
+        commentsHost?.BringToFront();
+        bottomBarImGuiContainer?.BringToFront();
+    }
+
+    private static void LoadUiToolkitStyleSheets(VisualElement root)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        foreach (var styleSheetPath in UiToolkitStyleSheets)
+        {
+            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(styleSheetPath);
+            if (styleSheet != null)
+            {
+                root.styleSheets.Add(styleSheet);
+            }
+        }
+    }
+
+    private void DrawToolkitTopImGui()
+    {
+        serializedObject.Update();
+        try
+        {
+            SafeUiCall(DrawConnectivityDiagnosticsPanel);
+
+            if (!isAuthenticated)
+            {
+                SafeUiCall(() => authModule.DrawMagicSyncAuth());
+            }
+        }
+        finally
+        {
+            serializedObject.ApplyModifiedProperties();
+        }
+    }
+
+    private void DrawToolkitMiddleImGui()
+    {
+        serializedObject.Update();
+        bool useAssetViewPadding = IsSelectedAssetView();
+        try
+        {
+            if (useAssetViewPadding)
+            {
+                EditorGUILayout.BeginVertical(GetAssetViewImGuiPaddingStyle());
+            }
+
+            bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
+            bool showOfflineSavedVersionsUi = !HasServerAccess && importedVersions != null && importedVersions.Count > 0;
+
+            if (hasMajorUpdateLockout)
+            {
+                SafeUiCall(DrawMajorUpdateRequiredInfo);
+                if (showOfflineSavedVersionsUi)
+                {
+                    SafeUiCall(DrawOfflineSavedVersionsInfo);
+                    SafeUiCall(() => versionModule.Draw());
+                    SafeUiCall(() => avatarOptionsModule?.Draw());
+                }
+            }
+            else if (HasServerAccess)
+            {
+                if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
+                {
+                    SafeUiCall(() => warningsModule?.Draw());
+                    SafeUiCall(() => creatorModule.Draw());
+                    SafeUiCall(() => versionModule.Draw());
+                    SafeUiCall(() => avatarOptionsModule?.Draw());
+                    SafeUiCall(() => adjustMaterialModule?.Draw());
+                }
+            }
+            else if (showOfflineSavedVersionsUi)
+            {
+                SafeUiCall(DrawOfflineSavedVersionsInfo);
+                SafeUiCall(() => versionModule.Draw());
+                SafeUiCall(() => avatarOptionsModule?.Draw());
+            }
+        }
+        finally
+        {
+            if (useAssetViewPadding)
+            {
+                EditorGUILayout.EndVertical();
+            }
+
+            serializedObject.ApplyModifiedProperties();
+        }
+    }
+
+    private bool IsSelectedAssetView()
+    {
+        return assetGalleryModule != null && assetGalleryModule.SelectedAsset != null;
+    }
+
+    private GUIStyle GetAssetViewImGuiPaddingStyle()
+    {
+        if (assetViewImGuiPaddingStyle == null)
+        {
+            assetViewImGuiPaddingStyle = new GUIStyle
+            {
+                padding = new RectOffset(24, 24, 18, 22)
+            };
+        }
+
+        return assetViewImGuiPaddingStyle;
+    }
+
+    private void DrawVectorBannerUIToolkit()
+    {
+        if (bannerHost == null)
+        {
+            return;
+        }
+
+        bannerHost.Clear();
+
+        var logo = new MCBLogoElement(drawLogo: true, drawGlows: false);
+        logo.AddToClassList("mcb-logo");
+        bannerHost.Add(logo);
+
+        bannerHost.Add(new MCBLoadingBarElement());
+    }
+
+    private void DrawToolkitBottomBarImGui()
+    {
+        EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+        if (GUILayout.Button("Advanced Options", EditorStyles.toolbarButton, GUILayout.Width(126f)))
+        {
+            OpenAdvancedModeWindow();
+        }
+
+        if (GUILayout.Button("Blendshape Links", EditorStyles.toolbarButton, GUILayout.Width(126f)))
+        {
+            BlendShapeLinksDebugWindow.OpenWindow();
+        }
+
+        GUILayout.FlexibleSpace();
+        if (!string.IsNullOrEmpty(uiRenderingError))
+        {
+            GUILayout.Label(new GUIContent("UI warning", uiRenderingError), EditorStyles.miniLabel);
+        }
+        EditorGUILayout.EndHorizontal();
+    }
+
+    public void OpenAdvancedModeWindow()
+    {
+        MCBAdvancedModeWindow.Open(this, advancedModule);
     }
     
     private void OnPlayModeStateChanged(PlayModeStateChange state)
@@ -372,9 +653,6 @@ public class MCBEditor : UnityEditor.Editor
             
             // Account module just under the banner
             SafeUiCall(() => accountModule?.Draw());
-            
-            // Draw progress bars for active tasks at the top
-            SafeUiCall(() => ProgressBarManager.Instance.DrawProgressBars());
 
             if (!isAuthenticated)
             {
@@ -721,6 +999,7 @@ public class MCBEditor : UnityEditor.Editor
         MCBPackageVersionService.EnsureCheckStarted(authToken, true);
         accountModule?.Refresh();
         assetGalleryModule?.OnAuthenticationChanged();
+        RefreshUiToolkitSections();
     }
 
     public void RefreshAccountAndVersions()
@@ -750,6 +1029,7 @@ public class MCBEditor : UnityEditor.Editor
         {
             assetGalleryModule?.RefreshIfNeeded(force: true);
         }
+        RefreshUiToolkitSections();
     }
 
     public void DisableDevModeOverride()
@@ -1136,11 +1416,13 @@ public class MCBEditor : UnityEditor.Editor
 
     private void RepaintFromConnectivityMonitor()
     {
+        RefreshUiToolkitSections();
         Repaint();
     }
 
     private void RepaintFromPackageVersionStatus()
     {
+        RefreshUiToolkitSections();
         Repaint();
     }
 }

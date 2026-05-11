@@ -223,6 +223,60 @@ public class ProgressBarManager
         return false;
     }
 
+    public bool TryGetAverageProgress(out float progress)
+    {
+        progress = 0f;
+        float total = 0f;
+        int count = 0;
+        int completedCount = 0;
+        var tasksToRemove = new List<string>();
+
+        foreach (var kvp in visibleTasks)
+        {
+            var task = kvp.Value;
+            if (task == null)
+            {
+                tasksToRemove.Add(kvp.Key);
+                continue;
+            }
+
+            if (task.isCancelled || task.hasError)
+            {
+                continue;
+            }
+
+            if (task.isCompleted)
+            {
+                completedCount++;
+                continue;
+            }
+
+            total += Mathf.Clamp01(task.progress);
+            count++;
+        }
+
+        foreach (var taskId in tasksToRemove)
+        {
+            visibleTasks.Remove(taskId);
+            taskStartTimes.Remove(taskId);
+            scheduledRemovalTimes.Remove(taskId);
+        }
+
+        if (count > 0)
+        {
+            progress = Mathf.Clamp01(total / count);
+            return true;
+        }
+
+        if (completedCount > 0)
+        {
+            progress = 1f;
+            return true;
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Gets the count of active tasks
     /// </summary>

@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 public class AdvancedModeModule
 {
     private readonly MCBEditor editor;
-    private bool isAdvancedMode = false;
     private bool advancedModeFoldout = true; // Opened by default when advanced mode is on
     private bool addArmatureToggle = false;
     private GameObject debugPrefabInstance;
@@ -39,21 +38,23 @@ public class AdvancedModeModule
     public void Draw()
     {
         EditorGUILayout.Space();
-        
-        // Advanced Mode checkbox
-        isAdvancedMode = EditorGUILayout.Toggle("Advanced Mode", isAdvancedMode);
-        
-        if (isAdvancedMode)
+
+        if (GUILayout.Button("Advanced Options", GUILayout.Width(140f)))
         {
-            EditorGUILayout.Space();
-            
-            // Advanced Mode foldout
-            advancedModeFoldout = EditorGUILayout.Foldout(advancedModeFoldout, "Advanced Settings", true, EditorStyles.foldoutHeader);
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            
-            if (advancedModeFoldout)
-            {
-                EditorGUI.indentLevel++;
+            MCBAdvancedModeWindow.Open(editor, this);
+        }
+    }
+
+    public void DrawWindowContents()
+    {
+        EditorGUILayout.Space();
+
+        advancedModeFoldout = EditorGUILayout.Foldout(advancedModeFoldout, "Advanced Settings", true, EditorStyles.foldoutHeader);
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+        if (advancedModeFoldout)
+        {
+            EditorGUI.indentLevel++;
                 
                 // Dev Environment checkbox + Magic Sync per environment
                 bool currentDevEnvironment = MCBUtils.isDevEnvironment;
@@ -481,9 +482,8 @@ public class AdvancedModeModule
                 
                 EditorGUI.indentLevel--;
             }
-            
-            EditorGUILayout.EndVertical();
-        }
+
+        EditorGUILayout.EndVertical();
     }
 
     private static string GetAbsolutePath(string assetPath)

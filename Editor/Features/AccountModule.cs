@@ -3,6 +3,7 @@ using System;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 // Displays account info area under the banner: avatar + username (left), logout (right), and connection state.
 public class AccountModule
@@ -19,6 +20,7 @@ public class AccountModule
     private int? accountUserId;
     private string authToken;
     private bool userInfoRequested;
+    private VisualElement accountRoot;
 
     public AccountModule(MCBEditor editor, NetworkService networkService)
     {
@@ -34,28 +36,113 @@ public class AccountModule
         _ = RefreshStateAsync();
     }
 
+    public void AttachUIToolkit(VisualElement root)
+    {
+        accountRoot = root;
+        RefreshUIToolkit();
+    }
+
+    public void DetachUIToolkit()
+    {
+        accountRoot = null;
+    }
+
+    public void RefreshUIToolkit()
+    {
+        if (accountRoot == null)
+        {
+            return;
+        }
+
+        accountRoot.Clear();
+        accountRoot.AddToClassList("mcb-account");
+
+        if (!editor.isAuthenticated)
+        {
+            accountRoot.style.display = DisplayStyle.None;
+            return;
+        }
+
+        accountRoot.style.display = DisplayStyle.Flex;
+        RefreshCachedAccountAssets();
+
+        var identity = new VisualElement();
+        identity.AddToClassList("mcb-account__identity");
+        accountRoot.Add(identity);
+
+        var avatarFrame = new VisualElement();
+        avatarFrame.AddToClassList("mcb-account__avatar");
+        if (avatarTexture != null)
+        {
+            var avatarImage = new Image { image = avatarTexture, scaleMode = ScaleMode.ScaleAndCrop };
+            avatarImage.AddToClassList("mcb-account__avatar-image");
+            avatarFrame.Add(avatarImage);
+        }
+        else
+        {
+            avatarFrame.style.backgroundColor = avatarFallbackColor;
+            var initials = new Label(GetInitials(userName));
+            initials.AddToClassList("mcb-account__avatar-initials");
+            avatarFrame.Add(initials);
+        }
+        identity.Add(avatarFrame);
+
+        var textBlock = new VisualElement();
+        textBlock.AddToClassList("mcb-account__text");
+        identity.Add(textBlock);
+
+        var caption = new Label("logged as");
+        caption.AddToClassList("mcb-account__caption");
+        textBlock.Add(caption);
+
+        var nameRow = new VisualElement();
+        nameRow.AddToClassList("mcb-account__name-row");
+        textBlock.Add(nameRow);
+
+        var name = new Label(string.IsNullOrEmpty(userName) ? "(unknown)" : userName);
+        name.AddToClassList("mcb-account__name");
+        nameRow.Add(name);
+
+        if (MCBUtils.isDevEnvironment)
+        {
+            var chip = new Label("dev");
+            chip.AddToClassList("mcb-account__dev-chip");
+            nameRow.Add(chip);
+        }
+
+        var actions = new VisualElement();
+        actions.AddToClassList("mcb-account__actions");
+        accountRoot.Add(actions);
+
+        var statusRow = new VisualElement();
+        statusRow.AddToClassList("mcb-account__status-row");
+        actions.Add(statusRow);
+
+        var statusDot = new VisualElement();
+        statusDot.AddToClassList("mcb-account__status-dot");
+        var statusClass = GetStatusDotClass(connectionState);
+        if (!string.IsNullOrEmpty(statusClass))
+        {
+            statusDot.AddToClassList(statusClass);
+        }
+        statusRow.Add(statusDot);
+
+        string displayState = string.IsNullOrEmpty(connectionState) ? (isRefreshing ? "Checking..." : "unknown") : connectionState;
+        var status = new Label(displayState);
+        status.AddToClassList("mcb-account__status-label");
+        statusRow.Add(status);
+
+        var logout = new Button(Logout) { text = "Logout" };
+        logout.AddToClassList("mcb-button");
+        logout.AddToClassList("mcb-button--flat");
+        logout.AddToClassList("mcb-account__logout");
+        actions.Add(logout);
+    }
+
     public void Draw()
     {
         if (!editor.isAuthenticated) return;
-
-        if (avatarTexture == null && accountUserId.HasValue)
-        {
-            var cachedAvatar = UserService.GetUserAvatar(accountUserId.Value);
-            if (cachedAvatar != null)
-            {
-                avatarTexture = cachedAvatar;
-            }
-        }
-
-        if (accountUserId.HasValue)
-        {
-            var cachedInfo = UserService.GetUserInfo(accountUserId.Value);
-            if (cachedInfo != null && !string.IsNullOrEmpty(cachedInfo.username) && !string.Equals(userName, cachedInfo.username, StringComparison.Ordinal))
-            {
-                userName = cachedInfo.username;
-                UpdateFallbackColor();
-            }
-        }
+        RefreshCachedAccountAssets();
 
         EditorGUILayout.Space(4);
         Rect rect = EditorGUILayout.BeginHorizontal();
@@ -133,16 +220,54 @@ public class AccountModule
 
     private void DrawLogoutButton()
     {
-        if (GUILayout.Button("Logout", EditorStyles.miniButton, GUILayout.Height(22), GUILayout.Width(90)))
+        var style = new GUIStyle(EditorStyles.miniButton)
         {
-            if (EditorUtility.DisplayDialog("Confirm Logout", "Are you sure you want to log out?", "Logout", "Cancel"))
+            normal = { textColor = Color.white },
+            hover = { textColor = Color.white },
+            active = { textColor = Color.white },
+            alignment = TextAnchor.MiddleCenter
+        };
+
+        if (GUILayout.Button("Logout", style, GUILayout.Height(18), GUILayout.Width(94)))
+        {
+            Logout();
+        }
+    }
+
+    private void Logout()
+    {
+        if (!EditorUtility.DisplayDialog("Confirm Logout", "Are you sure you want to log out?", "Logout", "Cancel"))
+        {
+            return;
+        }
+
+        if (AuthenticationService.RemoveAuth())
+        {
+            editor.CheckAuthentication();
+            ResetAccountState();
+            RefreshUIToolkit();
+            editor.Repaint();
+        }
+    }
+
+    private void RefreshCachedAccountAssets()
+    {
+        if (avatarTexture == null && accountUserId.HasValue)
+        {
+            var cachedAvatar = UserService.GetUserAvatar(accountUserId.Value);
+            if (cachedAvatar != null)
             {
-                if (AuthenticationService.RemoveAuth())
-                {
-                    editor.CheckAuthentication();
-                    ResetAccountState();
-                    editor.Repaint();
-                }
+                avatarTexture = cachedAvatar;
+            }
+        }
+
+        if (accountUserId.HasValue)
+        {
+            var cachedInfo = UserService.GetUserInfo(accountUserId.Value);
+            if (cachedInfo != null && !string.IsNullOrEmpty(cachedInfo.username) && !string.Equals(userName, cachedInfo.username, StringComparison.Ordinal))
+            {
+                userName = cachedInfo.username;
+                UpdateFallbackColor();
             }
         }
     }
@@ -179,8 +304,9 @@ public class AccountModule
     {
         LoadAuthData();
         ApplyUserInfoFromCache();
-        RequestAccountUserInfo(force: true);
+        RequestAccountUserInfo();
         _ = RefreshStateAsync();
+        RefreshUIToolkit();
         editor.Repaint();
     }
 
@@ -211,7 +337,11 @@ public class AccountModule
         finally
         {
             isRefreshing = false;
-            editor.Repaint();
+            EditorApplication.delayCall += () =>
+            {
+                RefreshUIToolkit();
+                editor.Repaint();
+            };
         }
     }
 
@@ -319,6 +449,7 @@ public class AccountModule
         {
             userInfoRequested = false;
             ApplyUserInfoFromCache(); 
+            RefreshUIToolkit();
             editor.Repaint();
         });
     }
@@ -371,6 +502,17 @@ public class AccountModule
             case "limited": return EditorUIUtils.OrangeColor;
             case "disconnected": return new Color(0.9f, 0.2f, 0.2f);
             default: return Color.gray;
+        }
+    }
+
+    private static string GetStatusDotClass(string state)
+    {
+        switch (state)
+        {
+            case "connected": return "mcb-account__status-dot--connected";
+            case "limited": return "mcb-account__status-dot--limited";
+            case "disconnected": return "mcb-account__status-dot--disconnected";
+            default: return string.Empty;
         }
     }
 }
