@@ -5,8 +5,7 @@
     "VRC.SDK3A.Editor",
     "VRC.SDKBase",
     "VRC.SDKBase.Editor",
-    "mcb",
-    "com.vrcfury.api"
+    "mcb"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

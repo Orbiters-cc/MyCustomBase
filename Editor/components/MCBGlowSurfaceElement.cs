@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using UnityEngine;
 using UnityEngine.UIElements;
+using UnityEditor;
 
 public class MCBGlowSurfaceElement : VisualElement
 {
@@ -10,6 +11,7 @@ public class MCBGlowSurfaceElement : VisualElement
     private readonly float glowTopOffset;
     private readonly float glowHeight;
     private IVisualElementScheduledItem repaintSchedule;
+    private double animateUntil;
 
     public MCBGlowSurfaceElement(Color backgroundColor, float glowTopOffset, float glowHeight)
         : this(backgroundColor, backgroundColor, 0f, glowTopOffset, glowHeight)
@@ -27,14 +29,29 @@ public class MCBGlowSurfaceElement : VisualElement
         pickingMode = PickingMode.Ignore;
         repaintSchedule = schedule.Execute(() =>
         {
-            if (panel != null)
+            if (panel == null || EditorApplication.timeSinceStartup > animateUntil)
             {
-                MarkDirtyRepaint();
+                repaintSchedule?.Pause();
+                return;
             }
+
+            MarkDirtyRepaint();
         }).Every(80);
         repaintSchedule.Pause();
-        RegisterCallback<AttachToPanelEvent>(_ => repaintSchedule?.Resume());
+        RegisterCallback<AttachToPanelEvent>(_ => WakeForSeconds(45f));
         RegisterCallback<DetachFromPanelEvent>(_ => repaintSchedule?.Pause());
+    }
+
+    public void WakeForSeconds(float seconds)
+    {
+        if (panel == null)
+        {
+            return;
+        }
+
+        animateUntil = Mathf.Max((float)animateUntil, (float)EditorApplication.timeSinceStartup + Mathf.Max(0.5f, seconds));
+        repaintSchedule?.Resume();
+        MarkDirtyRepaint();
     }
 
     private void DrawSurface(MeshGenerationContext context)

@@ -8,6 +8,7 @@ using UnityEngine;
 using MCBEditorUtils;
 using Newtonsoft.Json;
 using UnityEngine.UIElements;
+using VRC.SDKBase.Editor;
 
 [CustomEditor(typeof(MyCustomBase))]
 public class MCBEditor : UnityEditor.Editor
@@ -43,15 +44,17 @@ public class MCBEditor : UnityEditor.Editor
     private AssetGalleryModule assetGalleryModule;
     private AdvancedModeModule advancedModule;
     private AccountModule accountModule;
+    private DependencyInstallerModule dependencyInstallerModule;
     private AvatarOptionsModule avatarOptionsModule;
     private AdjustMaterialModule adjustMaterialModule;
     public WarningsModule warningsModule;
 
     private VisualElement uiToolkitRoot;
-    private VisualElement chromeSurfaceHost;
+    private MCBGlowSurfaceElement chromeSurfaceHost;
     private VisualElement headerHost;
     private VisualElement bannerHost;
     private VisualElement accountHost;
+    private VisualElement dependencyHost;
     private VisualElement galleryHost;
     private VisualElement selectedAssetActionsHost;
     private VisualElement commentsHost;
@@ -147,6 +150,8 @@ public class MCBEditor : UnityEditor.Editor
         advancedModule = new AdvancedModeModule(this);
         accountModule = new AccountModule(this, networkService);
         accountModule.Initialize();
+        dependencyInstallerModule = new DependencyInstallerModule(this);
+        dependencyInstallerModule.Initialize();
         avatarOptionsModule = new AvatarOptionsModule(this);
         adjustMaterialModule = new AdjustMaterialModule(this);
         warningsModule = new WarningsModule();
@@ -182,6 +187,8 @@ public class MCBEditor : UnityEditor.Editor
         // Unsubscribe from play mode state changes
         EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
         accountModule?.DetachUIToolkit();
+        dependencyInstallerModule?.DetachUIToolkit();
+        dependencyInstallerModule?.Dispose();
         assetGalleryModule?.DetachUIToolkit();
         dynamicUiSchedule?.Pause();
         dynamicUiSchedule = null;
@@ -190,6 +197,7 @@ public class MCBEditor : UnityEditor.Editor
         headerHost = null;
         bannerHost = null;
         accountHost = null;
+        dependencyHost = null;
         galleryHost = null;
         selectedAssetActionsHost = null;
         commentsHost = null;
@@ -238,6 +246,9 @@ public class MCBEditor : UnityEditor.Editor
         headerHost.Add(accountHost);
         chromeSurfaceHost.SendToBack();
 
+        dependencyHost = new VisualElement();
+        uiToolkitRoot.Add(dependencyHost);
+
         topImGuiContainer = new IMGUIContainer(DrawToolkitTopImGui);
         topImGuiContainer.AddToClassList("mcb-imgui-top");
         uiToolkitRoot.Add(topImGuiContainer);
@@ -262,10 +273,11 @@ public class MCBEditor : UnityEditor.Editor
         uiToolkitRoot.Add(bottomBarImGuiContainer);
 
         accountModule?.AttachUIToolkit(accountHost);
+        dependencyInstallerModule?.AttachUIToolkit(dependencyHost);
         assetGalleryModule?.AttachUIToolkit(galleryHost, selectedAssetActionsHost, commentsHost);
         RefreshUiToolkitSections();
         OrderUiToolkitLayers();
-        dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(1000);
+        dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(3000);
 
         return uiToolkitRoot;
     }
@@ -281,8 +293,11 @@ public class MCBEditor : UnityEditor.Editor
         {
             DrawVectorBannerUIToolkit();
             accountModule?.RefreshUIToolkit();
+            dependencyInstallerModule?.RefreshUIToolkit();
             assetGalleryModule?.RefreshUIToolkit();
+            ApplyDependencyBlockerState();
             OrderUiToolkitLayers();
+            chromeSurfaceHost?.WakeForSeconds(20f);
             chromeSurfaceHost?.MarkDirtyRepaint();
             topImGuiContainer?.MarkDirtyRepaint();
             middleImGuiContainer?.MarkDirtyRepaint();
@@ -299,12 +314,26 @@ public class MCBEditor : UnityEditor.Editor
     {
         chromeSurfaceHost?.SendToBack();
         headerHost?.BringToFront();
+        dependencyHost?.BringToFront();
         topImGuiContainer?.BringToFront();
         galleryHost?.BringToFront();
         selectedAssetActionsHost?.BringToFront();
         middleImGuiContainer?.BringToFront();
         commentsHost?.BringToFront();
         bottomBarImGuiContainer?.BringToFront();
+    }
+
+    private void ApplyDependencyBlockerState()
+    {
+        bool blocked = dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies;
+        DisplayStyle contentDisplay = blocked ? DisplayStyle.None : DisplayStyle.Flex;
+
+        if (topImGuiContainer != null) topImGuiContainer.style.display = contentDisplay;
+        if (galleryHost != null) galleryHost.style.display = contentDisplay;
+        if (selectedAssetActionsHost != null) selectedAssetActionsHost.style.display = contentDisplay;
+        if (middleImGuiContainer != null) middleImGuiContainer.style.display = contentDisplay;
+        if (commentsHost != null) commentsHost.style.display = contentDisplay;
+        if (bottomBarImGuiContainer != null) bottomBarImGuiContainer.style.display = contentDisplay;
     }
 
     private static void LoadUiToolkitStyleSheets(VisualElement root)
@@ -326,6 +355,11 @@ public class MCBEditor : UnityEditor.Editor
 
     private void DrawToolkitTopImGui()
     {
+        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
+        {
+            return;
+        }
+
         serializedObject.Update();
         try
         {
@@ -344,6 +378,11 @@ public class MCBEditor : UnityEditor.Editor
 
     private void DrawToolkitMiddleImGui()
     {
+        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
+        {
+            return;
+        }
+
         serializedObject.Update();
         bool useAssetViewPadding = IsSelectedAssetView();
         try
@@ -431,6 +470,11 @@ public class MCBEditor : UnityEditor.Editor
 
     private void DrawToolkitBottomBarImGui()
     {
+        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
+        {
+            return;
+        }
+
         EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
         if (GUILayout.Button("Advanced Options", EditorStyles.toolbarButton, GUILayout.Width(126f)))
         {
@@ -466,7 +510,13 @@ public class MCBEditor : UnityEditor.Editor
         InvalidateDetectedAvatarFbxCache();
         SmrPathService.InvalidateCache();
         LoadImportedVersions();
-        assetGalleryModule?.OnProjectChanged();
+        if (!ShouldDeferBackgroundNetworkRefresh())
+        {
+            assetGalleryModule?.OnProjectChanged();
+        }
+
+        dependencyInstallerModule?.RefreshUIToolkit();
+        ApplyDependencyBlockerState();
         Repaint();
     }
 
@@ -479,7 +529,7 @@ public class MCBEditor : UnityEditor.Editor
     private void StartAsyncInitialization()
     {
         // Skip async initialization if already in progress or if we're submitting/building
-        if (isFetching || isSubmitting) return;
+        if (isFetching || isSubmitting || ShouldDeferBackgroundNetworkRefresh()) return;
 
         // Auto-detect FBX immediately (synchronously) to avoid missing detection on first draw
         if (!specifyCustomBaseFbxProp.boolValue)
@@ -496,6 +546,20 @@ public class MCBEditor : UnityEditor.Editor
         }
     }
 
+    internal static bool ShouldDeferBackgroundNetworkRefresh()
+    {
+        return EditorApplication.isCompiling ||
+               EditorApplication.isUpdating ||
+               BuildPipeline.isBuildingPlayer ||
+               IsVrcSdkPanelBusy();
+    }
+
+    private static bool IsVrcSdkPanelBusy()
+    {
+        VRCSdkControlPanel panel = VRCSdkControlPanel.window;
+        return panel != null && panel.PanelState != SdkPanelState.Idle;
+    }
+
     private void ScheduleDelayedDetectAndLoadCached()
     {
         if (delayedDetectionScheduled)
@@ -507,6 +571,11 @@ public class MCBEditor : UnityEditor.Editor
         EditorApplication.delayCall += () =>
         {
             delayedDetectionScheduled = false;
+            if (ShouldDeferBackgroundNetworkRefresh())
+            {
+                return;
+            }
+
             DetectAndLoadCached();
         };
     }
@@ -653,6 +722,11 @@ public class MCBEditor : UnityEditor.Editor
             
             // Account module just under the banner
             SafeUiCall(() => accountModule?.Draw());
+
+            if (dependencyInstallerModule != null && dependencyInstallerModule.DrawFallbackIfBlocked())
+            {
+                return;
+            }
 
             if (!isAuthenticated)
             {

@@ -1582,6 +1582,11 @@ public class AssetGalleryModule
             return;
         }
 
+        if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
+        {
+            return;
+        }
+
         var currentPaths = editor.GetDetectedAvatarFbxPaths();
         string currentSignature = AvatarAssetDiscoveryService.BuildAvatarSignature(currentPaths);
 
@@ -2428,12 +2433,12 @@ public class AssetGalleryModule
 
     private void StartDiscovery(bool filterOnlyCompatible)
     {
-        if (isLoading || !editor.isAuthenticated)
+        if (isLoading || !editor.isAuthenticated || MCBEditor.ShouldDeferBackgroundNetworkRefresh())
         {
             return;
         }
 
-        var paths = editor.GetDetectedAvatarFbxPaths(); 
+        var paths = editor.GetDetectedAvatarFbxPaths();
         if (paths.Count == 0)
         {
             compatibleAssets.Clear();

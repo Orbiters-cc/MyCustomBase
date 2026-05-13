@@ -11,6 +11,33 @@
   "vpmDependencies": {
     "com.vrcfury.vrcfury": ">=1.1241.0"
   },
+  "mcb": {
+    "dependencyDisplayNames": {
+      "com.vrcfury.vrcfury": "VRCFury",
+      "com.poiyomi.toon": "Poiyomi Toon"
+    },
+    "repositories": [
+      {
+        "url": "https://vcc.vrcfury.com/",
+        "packages": [
+          "com.vrcfury.vrcfury"
+        ]
+      },
+      {
+        "url": "https://poiyomi.github.io/vpm/index.json",
+        "packages": [
+          "com.poiyomi.toon"
+        ]
+      }
+    ],
+    "optionalVpmDependencies": {
+      "com.poiyomi.toon": {
+        "version": ">=9.0.0 <10.0.0",
+        "displayName": "Poiyomi Toon",
+        "reason": "Recommended for custom veins and locked Poiyomi material workflows."
+      }
+    }
+  },
   "author": {
     "name": "blackorbit",
     "email": "blackorbit.eclaire@gmail.com",

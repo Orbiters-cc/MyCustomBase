@@ -91,11 +91,13 @@ public class CustomVeinsDrawer
         // Shader detection and compatibility display
         DrawShaderCompatibility();
 
+        var targetMaterials = GetTargetMaterials();
+        bool isLocked = targetMaterials.Any(material => materialService.IsMaterialLocked(material));
+        DrawPoiyomiInstallSuggestion(targetMaterials);
+
         // "Applied on detail normal map" label and texture preview
         DrawVeinsTexturePreview();
 
-        var targetMaterials = GetTargetMaterials();
-        bool isLocked = targetMaterials.Any(material => materialService.IsMaterialLocked(material));
         bool veinsApplied = targetMaterials.Count > 0 && targetMaterials.All(material => materialService.HasDetailNormalMap(material));
         bool shouldShowWarning = currentEnabled && !veinsApplied;
 
@@ -182,6 +184,77 @@ public class CustomVeinsDrawer
             EditorGUILayout.ObjectField(veinsTexture, typeof(Texture2D), false, GUILayout.Height(16));
         }
         EditorGUILayout.EndVertical();
+    }
+
+    private void DrawPoiyomiInstallSuggestion(IReadOnlyList<Material> targetMaterials)
+    {
+        if (!HasLockedPoiyomiMaterial(targetMaterials))
+        {
+            return;
+        }
+
+        var status = VpmDependencyService.Instance.GetOptionalDependencyStatus("com.poiyomi.toon");
+        if (status == null || status.IsInstalled)
+        {
+            return;
+        }
+
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+        EditorGUILayout.LabelField(
+            "This material was locked from a Poiyomi shader, but Poiyomi Toon is not installed in the project.",
+            EditorStyles.wordWrappedMiniLabel);
+
+        if (!string.IsNullOrWhiteSpace(status.Reason))
+        {
+            EditorGUILayout.LabelField(status.Reason, EditorStyles.wordWrappedMiniLabel);
+        }
+
+        using (new EditorGUI.DisabledScope(VpmDependencyService.Instance.IsInstalling))
+        {
+            string label = VpmDependencyService.Instance.IsInstalling ? "Installing Poiyomi Toon..." : "Install Poiyomi Toon";
+            if (GUILayout.Button(label, GUILayout.Width(180f)))
+            {
+                var result = VpmDependencyService.Instance.InstallOptionalDependency("com.poiyomi.toon");
+                if (!result.Success)
+                {
+                    EditorUtility.DisplayDialog("Install Poiyomi Toon Failed", result.ErrorMessage, "Ok");
+                }
+                else
+                {
+                    EditorUtility.DisplayDialog(
+                        "Poiyomi Toon Installed",
+                        "Poiyomi Toon was installed. Unity may reload assemblies before custom veins can continue.",
+                        "Ok");
+                }
+            }
+        }
+
+        EditorGUILayout.EndVertical();
+    }
+
+    private bool HasLockedPoiyomiMaterial(IReadOnlyList<Material> materials)
+    {
+        if (materials == null)
+        {
+            return false;
+        }
+
+        foreach (var material in materials)
+        {
+            if (material == null || !materialService.IsMaterialLocked(material))
+            {
+                continue;
+            }
+
+            string originalShader = material.GetTag("OriginalShader", false, string.Empty);
+            if (!string.IsNullOrEmpty(originalShader) &&
+                originalShader.IndexOf("poiyomi", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
 

@@ -21,7 +21,9 @@ public class ProgressBarManager
     private readonly Dictionary<string, double> taskStartTimes = new Dictionary<string, double>();
     private readonly Dictionary<string, double> scheduledRemovalTimes = new Dictionary<string, double>();
     private readonly AsyncTaskManager taskManager;
-    private bool repaintScheduled; 
+    private bool tickRegistered;
+
+    public event Action ProgressChanged;
 
     private const double LINGER_SECONDS = 1.5;         // how long a completed task stays visible
     private const double MIN_DISPLAY_SECONDS = 0.25;   // hide tasks that complete faster than this
@@ -36,8 +38,6 @@ public class ProgressBarManager
         taskManager.OnTaskProgressChanged += OnTaskProgressChanged;
         taskManager.OnTaskCompleted += OnTaskCompleted;
 
-        // Drive cleanup from editor update to avoid Task.Delay issues in editor
-        EditorApplication.update += Tick;
     }
 
     private void OnTaskStarted(TaskProgress task)
@@ -89,7 +89,11 @@ public class ProgressBarManager
 
     private void Tick()
     {
-        if (visibleTasks.Count == 0 && scheduledRemovalTimes.Count == 0) return;
+        if (visibleTasks.Count == 0 && scheduledRemovalTimes.Count == 0)
+        {
+            SetTickRegistered(false);
+            return;
+        }
 
         double now = EditorApplication.timeSinceStartup;
         var toRemove = new List<string>();
@@ -136,18 +140,26 @@ public class ProgressBarManager
 
     private void ScheduleRepaint()
     {
-        if (repaintScheduled)
+        SetTickRegistered(true);
+        ProgressChanged?.Invoke();
+    }
+
+    private void SetTickRegistered(bool shouldRegister)
+    {
+        if (tickRegistered == shouldRegister)
         {
             return;
         }
 
-        repaintScheduled = true;
-        EditorApplication.delayCall += () =>
+        tickRegistered = shouldRegister;
+        if (shouldRegister)
         {
-            repaintScheduled = false;
-            var win = EditorWindow.focusedWindow;
-            if (win != null) win.Repaint();
-        };
+            EditorApplication.update += Tick;
+        }
+        else
+        {
+            EditorApplication.update -= Tick;
+        }
     }
 
     /// <summary>

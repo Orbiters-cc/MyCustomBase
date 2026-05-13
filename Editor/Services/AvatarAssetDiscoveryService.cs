@@ -138,6 +138,13 @@ public static class AvatarAssetDiscoveryService
         string url = $"{MCBUtils.getApiUrl()}{MCBUtils.AVATAR_ASSET_DISCOVERY_ENDPOINT}?t={authToken}";
         byte[] requestBytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(requestPayload));
         string requestSummary = BuildRequestSummary(url, normalizedPaths, filterOnlyCompatible);
+
+        if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
+        {
+            onComplete?.Invoke(null, null);
+            yield break;
+        }
+
         MCBLogger.LogWarning($"[AvatarAssetDiscovery] POST {requestSummary}");
 
         using (var request = new UnityWebRequest(url, "POST"))
@@ -147,7 +154,18 @@ public static class AvatarAssetDiscoveryService
             request.SetRequestHeader("Content-Type", "application/json");
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
 
-            yield return request.SendWebRequest();
+            UnityWebRequestAsyncOperation operation = request.SendWebRequest();
+            while (!operation.isDone)
+            {
+                if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
+                {
+                    request.Abort();
+                    onComplete?.Invoke(null, null);
+                    yield break;
+                }
+
+                yield return null;
+            }
 
             if (request.result != UnityWebRequest.Result.Success)
             {

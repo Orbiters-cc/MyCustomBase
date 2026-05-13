@@ -73,6 +73,18 @@
     background-color: #6a6a6a;
 }
 
+.mcb-button--primary {
+    min-height: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background-color: #20a660;
+    -unity-font-style: bold;
+}
+
+.mcb-button--primary:hover {
+    background-color: #27bd70;
+}
+
 .mcb-button:disabled {
     opacity: 0.55;
 }
@@ -151,4 +163,84 @@
     background-color: #212121;
     border-radius: 8px;
     padding: 14px;
+}
+
+.mcb-dependencies {
+    background-color: rgba(0,0,0,0);
+    padding: 8px 24px 24px 24px;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+.mcb-dependencies__panel {
+    background-color: #191919;
+    border-radius: 8px;
+    border-left-width: 4px;
+    border-left-color: #ff8c59;
+    padding: 18px 18px 16px 18px;
+}
+
+.mcb-dependencies__eyebrow {
+    color: #ffb18c;
+    font-size: 11px;
+    -unity-font-style: bold;
+}
+
+.mcb-dependencies__title {
+    margin-top: 5px;
+    color: #ffffff;
+    font-size: 18px;
+    -unity-font-style: bold;
+    white-space: normal;
+}
+
+.mcb-dependencies__body {
+    margin-top: 8px;
+    color: #d1d1d1;
+    font-size: 12px;
+    white-space: normal;
+}
+
+.mcb-dependencies__list {
+    margin-top: 14px;
+}
+
+.mcb-dependencies__row {
+    flex-direction: row;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.mcb-dependencies__marker {
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    margin-top: 5px;
+    margin-right: 10px;
+    background-color: #ff8c59;
+}
+
+.mcb-dependencies__row-text {
+    flex-grow: 1;
+}
+
+.mcb-dependencies__name {
+    color: #ffffff;
+    font-size: 13px;
+    -unity-font-style: bold;
+}
+
+.mcb-dependencies__detail {
+    color: #999999;
+    font-size: 11px;
+    white-space: normal;
+}
+
+.mcb-dependencies__actions {
+    margin-top: 10px;
+    flex-direction: row;
+}
+
+.mcb-dependencies__install-button {
+    min-width: 180px;
 }
