@@ -88,7 +88,7 @@ public class CustomBaseVersion
     [JsonProperty] public string appliedCustomAviHash;
     [JsonProperty] public string[] defaultAviHash;
     [JsonProperty] public CustomBlendshapeEntry[] customBlendshapes;
-    [JsonProperty] public string[] extraCustomization;
+    [JsonProperty] public object[] extraCustomization;
     [JsonProperty] public Dictionary<string, string> dependencies;
     [JsonProperty] public ModelFileData[] sourceFiles;
     [JsonProperty] public ModelFileData[] versionFiles;

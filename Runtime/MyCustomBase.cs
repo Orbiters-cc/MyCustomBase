@@ -134,5 +134,7 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public Texture2D customVeinsNormalMap;
     [HideInInspector] public bool includeDynamicNormalsBodyForCreator = false;
     [HideInInspector] public bool includeDynamicNormalsFlexingForCreator = false;
+    [HideInInspector] public bool includeSuggestRealisticForCreator = false;
+    [HideInInspector] public List<string> suggestRealisticMeshPathsForCreator = new List<string>();
     [HideInInspector] public List<CreatorBlendshapeEntry> customBlendshapesForCreator = new List<CreatorBlendshapeEntry>();
 }

@@ -33,8 +33,8 @@ public class CustomVeinsDrawer
         var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
         
         // Only show if extraCustomization contains "customVeins" 
-        if (!editor.isCustomBase || appliedVersion?.extraCustomization == null || 
-            !appliedVersion.extraCustomization.Contains("customVeins"))
+        if (!editor.isCustomBase ||
+            !ExtraCustomizationUtils.HasFlag(appliedVersion?.extraCustomization, "customVeins"))
             return;
 
         if (!EnsureMaterialService())
@@ -434,9 +434,73 @@ public class CustomVeinsDrawer
 
     private List<SkinnedMeshRenderer> GetTargetRenderers()
     {
+        var targetFbxPaths = GetTargetFbxPaths();
+        var appliedVersion = editor?.customBaseTarget != null
+            ? editor.customBaseTarget.appliedCustomBaseVersion
+            : null;
+
+        if (NativeMeshPayloadService.VersionUsesAdvancedMesh(appliedVersion))
+        {
+            var advancedRenderers = ResolveAdvancedMeshTargetRenderers(appliedVersion, targetFbxPaths);
+            if (advancedRenderers.Count > 0)
+            {
+                return advancedRenderers;
+            }
+        }
+
         return materialService
-            .GetSkinnedMeshRenderersForFbxPaths(GetTargetFbxPaths())
+            .GetSkinnedMeshRenderersForFbxPaths(targetFbxPaths)
             .Where(renderer => renderer?.sharedMaterial != null)
+            .ToList();
+    }
+
+    private List<SkinnedMeshRenderer> ResolveAdvancedMeshTargetRenderers(CustomBaseVersion appliedVersion, List<string> targetFbxPaths)
+    {
+        if (cachedRoot == null || appliedVersion == null)
+        {
+            return new List<SkinnedMeshRenderer>();
+        }
+
+        var lookupPaths = targetFbxPaths != null && targetFbxPaths.Count > 0
+            ? targetFbxPaths
+            : GetVersionSourcePaths(appliedVersion);
+
+        var renderers = ResolveAdvancedMeshRenderers(appliedVersion, lookupPaths);
+        if (renderers.Count > 0)
+        {
+            return renderers;
+        }
+
+        // Advanced mesh swaps renderer.sharedMesh away from the FBX asset, so fall back to
+        // the version source mapping if the editor FBX object list is stale or path-normalized differently.
+        var sourcePaths = GetVersionSourcePaths(appliedVersion);
+        return sourcePaths.Count > 0
+            ? ResolveAdvancedMeshRenderers(appliedVersion, sourcePaths)
+            : renderers;
+    }
+
+    private List<SkinnedMeshRenderer> ResolveAdvancedMeshRenderers(CustomBaseVersion appliedVersion, IEnumerable<string> sourcePaths)
+    {
+        return NativeMeshPayloadService
+            .ResolveRenderersForSourcePaths(cachedRoot, appliedVersion, sourcePaths)
+            .Where(renderer => renderer?.sharedMaterial != null)
+            .GroupBy(renderer => renderer.GetInstanceID())
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private List<string> GetVersionSourcePaths(CustomBaseVersion appliedVersion)
+    {
+        if (appliedVersion?.sourceFiles == null)
+        {
+            return new List<string>();
+        }
+
+        return appliedVersion.sourceFiles
+            .Select(file => file?.path)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(MCBUtils.ToUnityPath)
+            .Distinct()
             .ToList();
     }
 

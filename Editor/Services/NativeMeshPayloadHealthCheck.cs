@@ -67,7 +67,7 @@ public static class NativeMeshPayloadHealthCheck
             sourceRoot = BuildRig("MCB_NativeMeshHealth_Source", CreateTriangleMesh("BodyMesh", 1f), 0f);
             avatarRoot = BuildRig("MCB_NativeMeshHealth_Avatar", CreateTriangleMesh("BodyMesh", 1f), 0f);
             customRoot = BuildRig("MCB_NativeMeshHealth_Custom", CreateQuadMesh("BodyMesh", 1.35f), 0.25f);
-            var authoringBone = avatarRoot.transform.Find("Armature/Hips");
+            var authoringBone = customRoot.transform.Find("Armature/Hips");
             if (authoringBone != null)
             {
                 authoringBone.localRotation = Quaternion.Euler(0f, 0f, 25f);
@@ -91,8 +91,7 @@ public static class NativeMeshPayloadHealthCheck
                 smrPaths,
                 fileManager,
                 binPath,
-                sourcePoseRoot: sourceRoot.transform,
-                authoringPoseRoot: avatarRoot.transform);
+                sourcePoseRoot: sourceRoot.transform);
 
             ThrowIf(buildResult.rendererCount != 1, "Expected one renderer in the generated payload.");
             ThrowIf(buildResult.payloadBytes <= 0, "Payload was empty.");
@@ -123,7 +122,7 @@ public static class NativeMeshPayloadHealthCheck
                 assetId = HealthCheckAssetId,
                 version = HealthCheckVersion,
                 defaultAviVersion = "1.0.0",
-                extraCustomization = new[] { "advancedMeshReplacement" },
+                extraCustomization = new object[] { "advancedMeshReplacement" },
                 versionFiles = new[] { patchFile }
             };
 

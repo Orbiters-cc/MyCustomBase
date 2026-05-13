@@ -31,7 +31,6 @@ public class FileManagerService
         public string binHash;
         public string avatarHash;
         public string outputHash;
-        public string payloadFormat;
         public string payloadCompression;
         public int advancedRendererCount;
     }
@@ -256,9 +255,13 @@ public class FileManagerService
 
         string unityPackagePath = MCBUtils.ToUnityPath(packagePath);
         string absolutePackagePath = Path.GetFullPath(unityPackagePath);
+        string versionDataFolderUnity = MCBUtils.ToUnityPath(Path.GetDirectoryName(unityPackagePath));
+        string prefabPath = MCBUtils.GetLogicPrefabPath(versionDataFolderUnity);
+        bool prefabReady = !string.IsNullOrEmpty(prefabPath) &&
+                           File.Exists(Path.GetFullPath(prefabPath)) &&
+                           AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) != null;
         
-        // Import the unitypackage if it exists
-        if (File.Exists(absolutePackagePath))
+        if (!prefabReady && File.Exists(absolutePackagePath))
         {
             MCBLogger.Log($"[FileManager] Importing unity package at {unityPackagePath}");
             bool packageImportFinished = false;
@@ -317,14 +320,17 @@ public class FileManagerService
 
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
             MCBLogger.Log("[FileManager] Unity package import completed.");
+            prefabPath = MCBUtils.GetLogicPrefabPath(versionDataFolderUnity);
         }
-        else
+        else if (!prefabReady)
         {
             MCBLogger.LogWarning($"[FileManager] Unity package not found at '{absolutePackagePath}'.");
         }
+        else
+        {
+            MCBLogger.Log($"[FileManager] Using existing logic prefab at {prefabPath}");
+        }
         
-        string versionDataFolderUnity = MCBUtils.ToUnityPath(Path.GetDirectoryName(unityPackagePath));
-        string prefabPath = MCBUtils.GetLogicPrefabPath(versionDataFolderUnity);
         if (string.IsNullOrEmpty(prefabPath))
         {
             MCBLogger.LogWarning($"[FileManager] No logic prefab found in '{versionDataFolderUnity}'.");
@@ -339,11 +345,15 @@ public class FileManagerService
             yield break;
         }
 
-        MCBLogger.Log($"[FileManager] Importing logic prefab at {prefabPath}");
-        AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-        MCBLogger.Log("[FileManager] Logic prefab import completed.");
-
         GameObject logicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        if (logicPrefab == null)
+        {
+            MCBLogger.Log($"[FileManager] Importing logic prefab at {prefabPath}");
+            AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            logicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            MCBLogger.Log("[FileManager] Logic prefab import completed.");
+        }
+
         if (logicPrefab != null)
         {
             var instance = (GameObject)PrefabUtility.InstantiatePrefab(logicPrefab, parent);
@@ -478,8 +488,7 @@ public class FileManagerService
         bool includeDynamicNormalsBody,
         bool includeDynamicNormalsFlexing,
         bool compressAdvancedMeshPayload,
-        IEnumerable<string> additionalAnimationAssetPaths = null,
-        Transform authoringPoseRoot = null)
+        IEnumerable<string> additionalAnimationAssetPaths = null)
     {
         string newVersionDataPath = MCBUtils.GetVersionDataPath(assetId, newVersionString, baseFbxVersion);
         if (string.IsNullOrEmpty(newVersionDataPath))
@@ -553,10 +562,8 @@ public class FileManagerService
                                 includeDynamicNormalsBody || includeDynamicNormalsFlexing,
                                 includeDynamicNormalsBody,
                                 includeDynamicNormalsFlexing,
-                                compressAdvancedMeshPayload,
-                                authoringPoseRoot);
+                                compressAdvancedMeshPayload);
                             entry.outputHash = payloadResult.payloadHash;
-                            entry.payloadFormat = NativeMeshPayloadService.PayloadFormat;
                             entry.payloadCompression = payloadResult.payloadCompression;
                             entry.advancedRendererCount = payloadResult.rendererCount;
                             entry.binUnityPath = binUnityPath;

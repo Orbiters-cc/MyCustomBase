@@ -53,6 +53,7 @@ public class CreatorModeModule
     private const string CustomVeinsKey = "customVeins";
     private const string DynamicNormalBodyKey = "dynamicNormalBody";
     private const string DynamicNormalFlexingKey = "dynamicNormalFlexing";
+    private const string SuggestRealisticKey = ExtraCustomizationUtils.SuggestRealisticKey;
     private string autoAssignedVeinsTexturePath;
     private CustomBaseVersion lastParentVersionForVeins;
     private bool isRestoringFromVersionState;
@@ -166,6 +167,7 @@ public class CreatorModeModule
             EditorGUILayout.PropertyField(editor.avatarLogicPrefabProp, new GUIContent("Avatar Logic Prefab"));
             DrawCustomVeinsSection();
             DrawDynamicNormalsSection();
+            DrawSuggestRealisticSection();
             
             EditorGUILayout.Space();
             
@@ -222,10 +224,12 @@ public class CreatorModeModule
             EditorGUILayout.Space();
             bool hasCustomVeinsPayload = editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null;
             bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue || editor.includeDynamicNormalsFlexingForCreatorProp.boolValue;
+            bool hasSuggestRealisticPayload = HasSuggestRealisticPayload();
             bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
                                      editor.avatarLogicPrefabProp.objectReferenceValue != null ||
                                      hasCustomVeinsPayload ||
                                      hasDynamicNormalsPayload ||
+                                     hasSuggestRealisticPayload ||
                                      editor.customBlendshapesForCreatorProp.arraySize > 0;
             bool canSubmit = AreModelFileBuildEntriesValid() &&
                               hasVersionPayload &&
@@ -236,7 +240,13 @@ public class CreatorModeModule
             {
                 canSubmit = false;
             }
-            
+            if (editor.includeSuggestRealisticForCreatorProp != null &&
+                editor.includeSuggestRealisticForCreatorProp.boolValue &&
+                GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count == 0)
+            {
+                canSubmit = false;
+            }
+             
             using (new EditorGUI.DisabledScope(!canSubmit))
             {
                 EditorGUILayout.BeginHorizontal();
@@ -697,6 +707,13 @@ public class CreatorModeModule
         return false;
     }
 
+    private bool HasSuggestRealisticPayload()
+    {
+        return editor.includeSuggestRealisticForCreatorProp != null &&
+               editor.includeSuggestRealisticForCreatorProp.boolValue &&
+               GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count > 0;
+    }
+
     private void SaveTemporaryInternalVersion(string reason)
     {
         if (isRestoringFromVersionState || editor?.customBaseTarget == null)
@@ -716,6 +733,7 @@ public class CreatorModeModule
                                  (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null) ||
                                  editor.includeDynamicNormalsBodyForCreatorProp.boolValue ||
                                  editor.includeDynamicNormalsFlexingForCreatorProp.boolValue ||
+                                 HasSuggestRealisticPayload() ||
                                  editor.customBlendshapesForCreatorProp.arraySize > 0;
         if (!hasVersionPayload)
         {
@@ -1340,6 +1358,258 @@ public class CreatorModeModule
         EditorGUILayout.EndVertical();
     }
 
+    private void DrawSuggestRealisticSection()
+    {
+        var includeProp = editor.includeSuggestRealisticForCreatorProp;
+        var pathsProp = editor.suggestRealisticMeshPathsForCreatorProp;
+        if (includeProp == null || pathsProp == null)
+        {
+            return;
+        }
+
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+        EditorGUI.BeginChangeCheck();
+        bool includeSuggestRealistic = EditorGUILayout.ToggleLeft(new GUIContent(
+            "Suggest realistic",
+            "Warn users when selected Poiyomi mesh materials use Texture Ramp lighting and offer to switch them to Realistic."), includeProp.boolValue);
+        if (EditorGUI.EndChangeCheck())
+        {
+            includeProp.boolValue = includeSuggestRealistic;
+            if (!includeSuggestRealistic)
+            {
+                pathsProp.ClearArray();
+            }
+        }
+
+        if (includeProp.boolValue)
+        {
+            var options = GetSuggestRealisticMeshOptions();
+            if (options.Count == 0)
+            {
+                EditorGUILayout.HelpBox("No skinned mesh renderers were found in the targeted FBXs on this avatar.", MessageType.Warning);
+            }
+            else
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("Target meshes", EditorStyles.miniBoldLabel);
+                    if (GUILayout.Button("All", GUILayout.Width(48f)))
+                    {
+                        SetSerializedStringList(pathsProp, options.Select(option => option.avatarPath));
+                    }
+                    if (GUILayout.Button("None", GUILayout.Width(56f)))
+                    {
+                        pathsProp.ClearArray();
+                    }
+                }
+
+                foreach (var option in options)
+                {
+                    bool selected = SerializedStringListContains(pathsProp, option.avatarPath);
+                    EditorGUI.BeginChangeCheck();
+                    bool nextSelected = EditorGUILayout.ToggleLeft(new GUIContent(option.Label, option.Tooltip), selected);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        SetSerializedStringListContains(pathsProp, option.avatarPath, nextSelected);
+                    }
+                }
+
+                if (GetSerializedStringList(pathsProp).Count == 0)
+                {
+                    EditorGUILayout.HelpBox("Select at least one mesh for the suggestRealistic guardrail.", MessageType.Warning);
+                }
+            }
+        }
+
+        EditorGUILayout.EndVertical();
+    }
+
+    private List<SuggestRealisticMeshOption> GetSuggestRealisticMeshOptions()
+    {
+        var options = new List<SuggestRealisticMeshOption>();
+        if (editor?.customBaseTarget == null)
+        {
+            return options;
+        }
+
+        Transform root = editor.customBaseTarget.transform != null ? editor.customBaseTarget.transform.root : null;
+        if (root == null)
+        {
+            return options;
+        }
+
+        var targetFbxPaths = GetCreatorTargetFbxPaths();
+        var pathsByFbx = SmrPathService.CollectSmrPathsByFbx(root, targetFbxPaths);
+        var selectedAsset = editor.GetSelectedAsset();
+        foreach (string targetFbxPath in targetFbxPaths)
+        {
+            bool hasLiveEntries = pathsByFbx.TryGetValue(targetFbxPath, out var liveEntries) &&
+                                  liveEntries != null &&
+                                  liveEntries.Count > 0;
+            if (hasLiveEntries)
+            {
+                continue;
+            }
+
+            var sourceFile = selectedAsset?.sourceFiles?.FirstOrDefault(file =>
+                file != null &&
+                string.Equals(MCBUtils.ToUnityPath(file.path), targetFbxPath, StringComparison.OrdinalIgnoreCase));
+            if (sourceFile?.smrPaths != null && sourceFile.smrPaths.Count > 0)
+            {
+                pathsByFbx[targetFbxPath] = sourceFile.smrPaths;
+            }
+        }
+
+        foreach (var pair in pathsByFbx.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (var entry in pair.Value ?? new List<ModelFileSmrPathData>())
+            {
+                if (entry == null || string.IsNullOrWhiteSpace(entry.avatarPath))
+                {
+                    continue;
+                }
+
+                options.Add(new SuggestRealisticMeshOption
+                {
+                    avatarPath = entry.avatarPath,
+                    sourceFbxPath = pair.Key,
+                    fbxMeshPath = entry.fbxMeshPath,
+                    meshName = entry.meshName,
+                    rendererName = entry.rendererName
+                });
+            }
+        }
+
+        return options
+            .GroupBy(option => option.avatarPath, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .OrderBy(option => option.avatarPath, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private List<string> GetCreatorTargetFbxPaths()
+    {
+        var paths = new List<string>();
+        if (editor?.baseFbxFilesProp == null)
+        {
+            return paths;
+        }
+
+        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        {
+            var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                paths.Add(MCBUtils.ToUnityPath(path));
+            }
+        }
+
+        return paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> GetSerializedStringList(SerializedProperty arrayProp)
+    {
+        var values = new List<string>();
+        if (arrayProp == null || !arrayProp.isArray)
+        {
+            return values;
+        }
+
+        for (int i = 0; i < arrayProp.arraySize; i++)
+        {
+            string value = arrayProp.GetArrayElementAtIndex(i).stringValue;
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values;
+    }
+
+    private static bool SerializedStringListContains(SerializedProperty arrayProp, string value)
+    {
+        if (arrayProp == null || string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return GetSerializedStringList(arrayProp)
+            .Any(entry => string.Equals(entry, value, StringComparison.Ordinal));
+    }
+
+    private static void SetSerializedStringListContains(SerializedProperty arrayProp, string value, bool selected)
+    {
+        if (arrayProp == null || string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var values = GetSerializedStringList(arrayProp);
+        values.RemoveAll(entry => string.Equals(entry, value, StringComparison.Ordinal));
+        if (selected)
+        {
+            values.Add(value);
+        }
+
+        SetSerializedStringList(arrayProp, values);
+    }
+
+    private static void SetSerializedStringList(SerializedProperty arrayProp, IEnumerable<string> values)
+    {
+        if (arrayProp == null)
+        {
+            return;
+        }
+
+        var normalized = (values ?? Enumerable.Empty<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        arrayProp.ClearArray();
+        for (int i = 0; i < normalized.Count; i++)
+        {
+            arrayProp.InsertArrayElementAtIndex(i);
+            arrayProp.GetArrayElementAtIndex(i).stringValue = normalized[i];
+        }
+    }
+
+    private sealed class SuggestRealisticMeshOption
+    {
+        public string avatarPath;
+        public string sourceFbxPath;
+        public string fbxMeshPath;
+        public string meshName;
+        public string rendererName;
+
+        public string Label
+        {
+            get
+            {
+                string meshLabel = !string.IsNullOrWhiteSpace(meshName) ? $" ({meshName})" : string.Empty;
+                return $"{avatarPath}{meshLabel}";
+            }
+        }
+
+        public string Tooltip
+        {
+            get
+            {
+                var parts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(sourceFbxPath)) parts.Add($"Source FBX: {sourceFbxPath}");
+                if (!string.IsNullOrWhiteSpace(fbxMeshPath)) parts.Add($"FBX mesh path: {fbxMeshPath}");
+                if (!string.IsNullOrWhiteSpace(rendererName)) parts.Add($"Renderer: {rendererName}");
+                return string.Join("\n", parts);
+            }
+        }
+    }
+
     private void DrawVeinsTextureField(SerializedProperty textureProp)
     {
         UnityEngine.Object currentTexture = textureProp.objectReferenceValue;
@@ -1443,7 +1713,7 @@ public class CreatorModeModule
 
     private bool ParentSupportsCustomVeins(CustomBaseVersion version)
     {
-        return version?.extraCustomization != null && version.extraCustomization.Contains(CustomVeinsKey);
+        return ExtraCustomizationUtils.HasFlag(version?.extraCustomization, CustomVeinsKey);
     }
 
     private void HandleParentVersionChanged(CustomBaseVersion newParent)
@@ -1493,8 +1763,8 @@ public class CreatorModeModule
         
         if (newParent?.extraCustomization != null && !isRestoringFromVersionState)
         {
-            bool parentHasBody = newParent.extraCustomization.Contains(DynamicNormalBodyKey);
-            bool parentHasFlexing = newParent.extraCustomization.Contains(DynamicNormalFlexingKey);
+            bool parentHasBody = ExtraCustomizationUtils.HasFlag(newParent.extraCustomization, DynamicNormalBodyKey);
+            bool parentHasFlexing = ExtraCustomizationUtils.HasFlag(newParent.extraCustomization, DynamicNormalFlexingKey);
             
             // Auto-check the checkboxes if parent has the features
             if (parentHasBody && !includeBodyProp.boolValue)
@@ -1504,6 +1774,18 @@ public class CreatorModeModule
             if (parentHasFlexing && !includeFlexingProp.boolValue)
             {
                 includeFlexingProp.boolValue = true;
+            }
+
+            var parentSuggestRealisticPaths = ExtraCustomizationUtils.GetStringList(newParent.extraCustomization, SuggestRealisticKey);
+            if (parentSuggestRealisticPaths.Count > 0 &&
+                editor.includeSuggestRealisticForCreatorProp != null &&
+                editor.suggestRealisticMeshPathsForCreatorProp != null)
+            {
+                editor.includeSuggestRealisticForCreatorProp.boolValue = true;
+                if (GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count == 0)
+                {
+                    SetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp, parentSuggestRealisticPaths);
+                }
             }
         }
         
@@ -1651,11 +1933,18 @@ public class CreatorModeModule
         var customVeinsTexture = editor.customVeinsNormalMapProp.objectReferenceValue as Texture2D;
         bool shouldIncludeDynamicNormalsBody = editor.includeDynamicNormalsBodyForCreatorProp.boolValue;
         bool shouldIncludeDynamicNormalsFlexing = editor.includeDynamicNormalsFlexingForCreatorProp.boolValue;
+        var suggestRealisticMeshPaths = GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp);
+        bool shouldIncludeSuggestRealistic = editor.includeSuggestRealisticForCreatorProp != null &&
+                                             editor.includeSuggestRealisticForCreatorProp.boolValue;
 
         if (shouldIncludeCustomVeins)
         {
             if (customVeinsTexture == null)
                 throw new Exception("Custom veins is enabled but no normal map texture is assigned.");
+        }
+        if (shouldIncludeSuggestRealistic && suggestRealisticMeshPaths.Count == 0)
+        {
+            throw new Exception("Suggest realistic is enabled but no target meshes are selected.");
         }
 
         bool requiresParentVersion = RequiresParentVersion();
@@ -1791,8 +2080,7 @@ public class CreatorModeModule
             shouldIncludeDynamicNormalsBody,
             shouldIncludeDynamicNormalsFlexing,
             compressAdvancedMeshPayload,
-            fixedByAnimationAssetPaths,
-            editor.customBaseTarget != null ? editor.customBaseTarget.transform.root : null);
+            fixedByAnimationAssetPaths);
 
         EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
         var sourceFileEntries = new List<ModelFileData>();
@@ -1880,63 +2168,30 @@ public class CreatorModeModule
             }
         }
 
-        var extraCustomization = new List<string>();
-        if (selectedParentVersionObject?.extraCustomization != null)
-        {
-            extraCustomization.AddRange(selectedParentVersionObject.extraCustomization);
-        }
+        var extraCustomization = ExtraCustomizationUtils.CloneEntries(selectedParentVersionObject?.extraCustomization);
 
         bool hasAdvancedMeshPayload = packageEntries.Any(entry =>
             entry != null && entry.useAdvancedMeshReplacement && (entry.customFbx != null || !string.IsNullOrWhiteSpace(entry.externalCustomFbxPath)));
         if (hasAdvancedMeshPayload)
         {
-            if (!extraCustomization.Contains(NativeMeshPayloadService.ExtraCustomizationKey))
-            {
-                extraCustomization.Add(NativeMeshPayloadService.ExtraCustomizationKey);
-            }
+            ExtraCustomizationUtils.SetFlag(extraCustomization, NativeMeshPayloadService.ExtraCustomizationKey, true);
         }
         else
         {
-            extraCustomization.RemoveAll(value => value == NativeMeshPayloadService.ExtraCustomizationKey);
+            ExtraCustomizationUtils.SetFlag(extraCustomization, NativeMeshPayloadService.ExtraCustomizationKey, false);
         }
 
-        if (shouldIncludeCustomVeins)
-        {
-            if (!extraCustomization.Contains(CustomVeinsKey))
-            {
-                extraCustomization.Add(CustomVeinsKey);
-            }
-        }
-        else
-        {
-            extraCustomization.RemoveAll(value => value == CustomVeinsKey);
-        }
+        ExtraCustomizationUtils.SetFlag(extraCustomization, CustomVeinsKey, shouldIncludeCustomVeins);
 
         // Handle dynamic normals for body
-        if (shouldIncludeDynamicNormalsBody)
-        {
-            if (!extraCustomization.Contains(DynamicNormalBodyKey))
-            {
-                extraCustomization.Add(DynamicNormalBodyKey);
-            }
-        }
-        else
-        {
-            extraCustomization.RemoveAll(value => value == DynamicNormalBodyKey);
-        }
+        ExtraCustomizationUtils.SetFlag(extraCustomization, DynamicNormalBodyKey, shouldIncludeDynamicNormalsBody);
 
         // Handle dynamic normals for flexing
-        if (shouldIncludeDynamicNormalsFlexing)
-        {
-            if (!extraCustomization.Contains(DynamicNormalFlexingKey))
-            {
-                extraCustomization.Add(DynamicNormalFlexingKey);
-            }
-        }
-        else
-        {
-            extraCustomization.RemoveAll(value => value == DynamicNormalFlexingKey);
-        }
+        ExtraCustomizationUtils.SetFlag(extraCustomization, DynamicNormalFlexingKey, shouldIncludeDynamicNormalsFlexing);
+        ExtraCustomizationUtils.SetStringList(
+            extraCustomization,
+            SuggestRealisticKey,
+            shouldIncludeSuggestRealistic ? suggestRealisticMeshPaths : null);
 
         string customVeinsAssetPath = shouldIncludeCustomVeins ? AssetDatabase.GetAssetPath(customVeinsTexture) : null;
 
@@ -1949,7 +2204,7 @@ public class CreatorModeModule
             parentVersion = selectedParentVersionObject?.version,
             dependencies = fileManagerService.FindPrefabDependencies(logicPrefab),
             customBlendshapes = customBlendshapeEntries,
-            extraCustomization = extraCustomization.Count > 0 ? extraCustomization.Distinct().ToArray() : null,
+            extraCustomization = ExtraCustomizationUtils.ToArrayOrNull(extraCustomization),
             includeCustomVeins = shouldIncludeCustomVeins ? true : (bool?)null,
             customVeinsTexturePath = customVeinsAssetPath,
             includeDynamicNormalsBody = shouldIncludeDynamicNormalsBody ? true : (bool?)null,
@@ -2101,7 +2356,7 @@ public class CreatorModeModule
                 }
             }
 
-            bool includeCustomVeins = ver.includeCustomVeins ?? (ver.extraCustomization != null && ver.extraCustomization.Contains(CustomVeinsKey));
+            bool includeCustomVeins = ver.includeCustomVeins ?? ExtraCustomizationUtils.HasFlag(ver.extraCustomization, CustomVeinsKey);
             editor.includeCustomVeinsForCreatorProp.boolValue = includeCustomVeins;
 
             if (!string.IsNullOrEmpty(ver.customVeinsTexturePath))
@@ -2117,6 +2372,13 @@ public class CreatorModeModule
             string parentPath = GetVeinsTexturePathForVersion(selectedParentVersionObject);
             autoAssignedVeinsTexturePath = (!string.IsNullOrEmpty(assignedPath) && assignedPath == parentPath) ? assignedPath : null;
             lastParentVersionForVeins = selectedParentVersionObject;
+
+            if (editor.includeSuggestRealisticForCreatorProp != null && editor.suggestRealisticMeshPathsForCreatorProp != null)
+            {
+                var suggestRealisticPaths = ExtraCustomizationUtils.GetStringList(ver.extraCustomization, SuggestRealisticKey);
+                editor.includeSuggestRealisticForCreatorProp.boolValue = suggestRealisticPaths.Count > 0;
+                SetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp, suggestRealisticPaths);
+            }
 
             editor.serializedObject.ApplyModifiedProperties();
             editor.Repaint();
@@ -2316,8 +2578,7 @@ public class CreatorModeModule
                 unsubmittedVersion.includeDynamicNormalsBody ?? false,
                 unsubmittedVersion.includeDynamicNormalsFlexing ?? false,
                 compressAdvancedMeshPayload,
-                CollectAnimationAssetPathsFromFixedBy(unsubmittedVersion.customBlendshapes),
-                editor.customBaseTarget != null ? editor.customBaseTarget.transform.root : null
+                CollectAnimationAssetPathsFromFixedBy(unsubmittedVersion.customBlendshapes)
             );
 
             EditorUtility.DisplayProgressBar("Uploading", "Sending package to server...", 0.7f);

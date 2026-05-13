@@ -226,6 +226,8 @@ public class SlidersDrawer
 
         float drawerHeight = 224f;
         float imageWidth = 115f;
+        float imageEdgeEscape = Mathf.Min(editor.GetCurrentAssetViewImGuiLeftPadding(), imageWidth);
+        float reservedImageWidth = Mathf.Max(1f, imageWidth - imageEdgeEscape);
         Rect compressionSectionBottomRect = new Rect();
         bool showPendingApplyLabel = false;
         double timeRemaining = 0;
@@ -243,7 +245,8 @@ public class SlidersDrawer
         EditorGUILayout.BeginHorizontal();
         {
             // Reserve space for the image
-            Rect imagePlaceholderRect = EditorGUILayout.GetControlRect(false, drawerHeight, GUILayout.Width(imageWidth));
+            Rect imagePlaceholderRect = EditorGUILayout.GetControlRect(false, drawerHeight, GUILayout.Width(reservedImageWidth));
+            float imageLeft = imagePlaceholderRect.x - imageEdgeEscape;
             
             // Draw the right side content
             GUILayout.BeginVertical(GUILayout.Height(drawerHeight));
@@ -340,7 +343,7 @@ public class SlidersDrawer
                 // Draw background image
                 if (sideImage != null && Event.current.type == EventType.Repaint)
                 {
-                    Rect imageRect = new Rect(0, imagePlaceholderRect.y, imageWidth, drawerHeight);
+                    Rect imageRect = new Rect(imageLeft, imagePlaceholderRect.y, imageWidth, drawerHeight);
                     GUI.DrawTexture(imageRect, sideImage, ScaleMode.StretchToFill);
                 }
 
@@ -361,7 +364,7 @@ public class SlidersDrawer
                     float totalBlockHeight = iconSize + spacing + textHeight;
                     float blockStartY = imagePlaceholderRect.y + (drawerHeight - totalBlockHeight) / 2f;
                     
-                    Rect iconRect = new Rect(paddingLeft, blockStartY, iconSize, iconSize);
+                    Rect iconRect = new Rect(imageLeft + paddingLeft, blockStartY, iconSize, iconSize);
 
                     // Draw Icon
                     if (Event.current.type == EventType.Repaint)
@@ -370,7 +373,7 @@ public class SlidersDrawer
                     }
                     
                     // Draw Text Field below icon
-                    float textX = paddingLeft + (iconSize / 2f) - (textWidth / 2f);
+                    float textX = imageLeft + paddingLeft + (iconSize / 2f) - (textWidth / 2f);
                     float textY = iconRect.yMax + spacing;
                     Rect textRect = new Rect(textX, textY, textWidth, textHeight);
 

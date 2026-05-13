@@ -32,30 +32,31 @@ public class AdjustMaterialModule
             return;
         }
 
-        if (editor?.customBaseTarget?.appliedCustomBaseVersion == null)
+        var appliedVersion = editor?.customBaseTarget?.appliedCustomBaseVersion;
+        if (appliedVersion == null)
         {
             return;
         }
 
-        List<SkinnedMeshRenderer> targetRenderers = materialService
-            .GetSkinnedMeshRenderersForFbxPaths(GetTargetFbxPaths())
+        List<SkinnedMeshRenderer> defaultTargetRenderers = GetDefaultMaterialTargetRenderers(appliedVersion)
             .Where(renderer => materialService.TryGetMaterialWithRenderer(renderer, out var material) && IsPoiyomiShader(material?.shader))
             .ToList();
 
-        if (targetRenderers.Count == 0)
-        {
-            return;
-        }
+        var suggestRealisticTargets = ResolveSuggestRealisticTargets(appliedVersion)
+            .Where(target => target?.Renderer != null &&
+                             materialService.TryGetMaterialWithRenderer(target.Renderer, out var material) &&
+                             IsPoiyomiShader(material?.shader))
+            .ToList();
 
-        var lightingInfos = targetRenderers
-            .Select(CreateLightingMaterialInfo)
+        var lightingInfos = suggestRealisticTargets
+            .Select(target => CreateLightingMaterialInfo(target.Renderer, target.AvatarPath))
             .Where(info => info != null)
             .ToList();
 
         bool shouldShowLightingWarning = lightingInfos.Any(info => info.HasLightingProperty && info.IsTextureRamp);
 
-        var normalInfos = targetRenderers
-            .Select(CreateNormalMaterialInfo)
+        var normalInfos = defaultTargetRenderers
+            .Select(renderer => CreateNormalMaterialInfo(renderer, null))
             .Where(info => info != null)
             .ToList();
 
@@ -140,9 +141,10 @@ public class AdjustMaterialModule
         bool anyLocked = lightingInfos.Any(info =>
             info.Material != null &&
             info.HasLightingProperty &&
+            info.IsTextureRamp &&
             materialService.IsMaterialLocked(info.Material));
 
-        bool canUpdateLighting = lightingInfos.Any(info => info.HasLightingProperty);
+        bool canUpdateLighting = lightingInfos.Any(info => info.HasLightingProperty && info.IsTextureRamp);
 
         using (new EditorGUI.DisabledScope(!canUpdateLighting))
         {
@@ -152,7 +154,7 @@ public class AdjustMaterialModule
             {
                 foreach (LightingMaterialInfo info in lightingInfos)
                 {
-                    if (!info.HasLightingProperty || info.Material == null)
+                    if (!info.HasLightingProperty || !info.IsTextureRamp || info.Material == null)
                     {
                         continue;
                     }
@@ -168,7 +170,7 @@ public class AdjustMaterialModule
                 }
 
                 List<SkinnedMeshRenderer> renderersToUpdate = lightingInfos
-                    .Where(info => info.HasLightingProperty)
+                    .Where(info => info.HasLightingProperty && info.IsTextureRamp)
                     .Select(info => info.Renderer)
                     .Where(renderer => renderer != null)
                     .GroupBy(renderer => renderer.GetInstanceID())
@@ -271,7 +273,7 @@ public class AdjustMaterialModule
         }
     }
 
-    private LightingMaterialInfo CreateLightingMaterialInfo(SkinnedMeshRenderer renderer)
+    private LightingMaterialInfo CreateLightingMaterialInfo(SkinnedMeshRenderer renderer, string avatarPath)
     {
         if (!materialService.TryGetMaterialWithRenderer(renderer, out Material slotMaterial))
         {
@@ -285,7 +287,7 @@ public class AdjustMaterialModule
 
         var info = new LightingMaterialInfo
         {
-            SlotName = GetRendererLabel(renderer),
+            SlotName = GetRendererLabel(renderer, avatarPath),
             Renderer = renderer,
             Material = slotMaterial
         };
@@ -355,7 +357,7 @@ public class AdjustMaterialModule
         return true;
     }
 
-    private NormalMaterialInfo CreateNormalMaterialInfo(SkinnedMeshRenderer renderer)
+    private NormalMaterialInfo CreateNormalMaterialInfo(SkinnedMeshRenderer renderer, string avatarPath)
     {
         if (!materialService.TryGetMaterialWithRenderer(renderer, out Material material))
         {
@@ -369,7 +371,7 @@ public class AdjustMaterialModule
 
         return new NormalMaterialInfo
         {
-            SlotName = GetRendererLabel(renderer),
+            SlotName = GetRendererLabel(renderer, avatarPath),
             Renderer = renderer,
             Material = material,
             NormalTexture = normalTexture,
@@ -400,9 +402,87 @@ public class AdjustMaterialModule
             .ToList();
     }
 
-    private static string GetRendererLabel(SkinnedMeshRenderer renderer)
+    private List<SkinnedMeshRenderer> GetDefaultMaterialTargetRenderers(CustomBaseVersion version)
     {
+        Transform root = cachedRoot;
+        var targetFbxPaths = GetTargetFbxPaths();
+        if (NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
+        {
+            return NativeMeshPayloadService.ResolveRenderersForSourcePaths(root, version, targetFbxPaths);
+        }
+
+        return materialService.GetSkinnedMeshRenderersForFbxPaths(targetFbxPaths);
+    }
+
+    private List<SuggestRealisticTarget> ResolveSuggestRealisticTargets(CustomBaseVersion version)
+    {
+        var result = new List<SuggestRealisticTarget>();
+        var seen = new HashSet<int>();
+        Transform root = cachedRoot;
+        if (root == null)
+        {
+            return result;
+        }
+
+        foreach (string avatarPath in ExtraCustomizationUtils.GetStringList(version?.extraCustomization, ExtraCustomizationUtils.SuggestRealisticKey))
+        {
+            var transform = FindTransformByRelativePath(root, avatarPath);
+            var renderer = transform != null ? transform.GetComponent<SkinnedMeshRenderer>() : null;
+            if (renderer == null || !seen.Add(renderer.GetInstanceID()))
+            {
+                continue;
+            }
+
+            result.Add(new SuggestRealisticTarget
+            {
+                Renderer = renderer,
+                AvatarPath = avatarPath
+            });
+        }
+
+        return result;
+    }
+
+    private static Transform FindTransformByRelativePath(Transform root, string relativePath)
+    {
+        if (root == null || string.IsNullOrWhiteSpace(relativePath))
+        {
+            return null;
+        }
+
+        Transform current = root;
+        foreach (string rawSegment in relativePath.Split('/'))
+        {
+            string segment = rawSegment.Trim();
+            if (string.IsNullOrEmpty(segment))
+            {
+                continue;
+            }
+
+            current = current.Find(segment);
+            if (current == null)
+            {
+                return null;
+            }
+        }
+
+        return current;
+    }
+
+    private static string GetRendererLabel(SkinnedMeshRenderer renderer, string avatarPath = null)
+    {
+        if (!string.IsNullOrWhiteSpace(avatarPath))
+        {
+            return avatarPath;
+        }
+
         return renderer == null ? "Unknown" : renderer.name;
+    }
+
+    private sealed class SuggestRealisticTarget
+    {
+        public SkinnedMeshRenderer Renderer;
+        public string AvatarPath;
     }
 
     private sealed class LightingMaterialInfo

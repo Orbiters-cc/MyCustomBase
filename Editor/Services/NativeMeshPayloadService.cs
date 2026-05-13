@@ -125,7 +125,6 @@ public static class NativeMeshPayloadService
         bool includeDynamicNormalsBody = true,
         bool includeDynamicNormalsFlexing = true,
         bool compressPayload = false,
-        Transform authoringPoseRoot = null,
         Transform sourcePoseRoot = null)
     {
         if (string.IsNullOrWhiteSpace(sourceFbxPath))
@@ -186,7 +185,7 @@ public static class NativeMeshPayloadService
             using (var xorStream = new XorWriteStream(binHashStream, baseData, leaveOpen: false))
             using (var payloadHashStream = new HashingWriteStream(xorStream, payloadSha, leaveOpen: false))
             {
-                CreateBinaryPayload(sourceFbxPath, payloadSource, rendererSources, payloadHashStream, metrics, compressPayload, authoringPoseRoot, sourcePoseRoot);
+                CreateBinaryPayload(sourceFbxPath, payloadSource, rendererSources, payloadHashStream, metrics, compressPayload, sourcePoseRoot);
                 payloadHashStream.CompleteHash();
                 xorStream.Flush();
                 binHashStream.CompleteHash();
@@ -610,9 +609,7 @@ public static class NativeMeshPayloadService
             return false;
         }
 
-        bool hasExtra = version.extraCustomization != null &&
-                        version.extraCustomization.Any(value =>
-                            string.Equals(value, ExtraCustomizationKey, StringComparison.OrdinalIgnoreCase));
+        bool hasExtra = ExtraCustomizationUtils.HasFlag(version.extraCustomization, ExtraCustomizationKey);
         return hasExtra || GetAdvancedPatchFiles(version).Any();
     }
 
@@ -681,20 +678,19 @@ public static class NativeMeshPayloadService
         Stream payloadOutput,
         NativeMeshPayloadBuildMetrics metrics,
         bool compressPayload,
-        Transform authoringPoseRoot,
         Transform sourcePoseRoot)
     {
         if (compressPayload)
         {
             using (var gzip = new GZipStream(payloadOutput, System.IO.Compression.CompressionLevel.Optimal, true))
             {
-                WriteBinaryPayloadContents(sourceFbxPath, customFbx, rendererSources, gzip, metrics, authoringPoseRoot, sourcePoseRoot);
+                WriteBinaryPayloadContents(sourceFbxPath, customFbx, rendererSources, gzip, metrics, sourcePoseRoot);
             }
 
             return;
         }
 
-        WriteBinaryPayloadContents(sourceFbxPath, customFbx, rendererSources, payloadOutput, metrics, authoringPoseRoot, sourcePoseRoot);
+        WriteBinaryPayloadContents(sourceFbxPath, customFbx, rendererSources, payloadOutput, metrics, sourcePoseRoot);
     }
 
     private static void WriteBinaryPayloadContents(
@@ -703,7 +699,6 @@ public static class NativeMeshPayloadService
         List<PayloadRendererSource> rendererSources,
         Stream payloadOutput,
         NativeMeshPayloadBuildMetrics metrics,
-        Transform authoringPoseRoot,
         Transform sourcePoseRoot)
     {
         Transform customRoot = customFbx.transform;
@@ -784,7 +779,7 @@ public static class NativeMeshPayloadService
                 WriteVector3(writer, bone.localScale);
             }
 
-            var authoringPoseBones = BuildAuthoringPoseDeltas(sourceFbxPath, customRoot, authoringPoseRoot, sourcePoseRoot);
+            var authoringPoseBones = BuildAuthoringPoseDeltas(sourceFbxPath, customRoot, sourcePoseRoot);
             writer.Write(authoringPoseBones.Count);
             foreach (var bone in authoringPoseBones)
             {
@@ -802,7 +797,6 @@ public static class NativeMeshPayloadService
     private static List<NativeMeshPayloadAuthoringPoseBone> BuildAuthoringPoseDeltas(
         string sourceFbxPath,
         Transform customRoot,
-        Transform authoringPoseRoot,
         Transform sourcePoseRoot)
     {
         if (customRoot == null)
@@ -811,7 +805,7 @@ public static class NativeMeshPayloadService
         }
 
         Transform sourceRoot = sourcePoseRoot ?? ResolveSourcePoseRoot(sourceFbxPath);
-        Transform authoringRoot = authoringPoseRoot ?? customRoot;
+        Transform authoringRoot = customRoot;
         if (sourceRoot == null)
         {
             throw new InvalidDataException($"Could not resolve source FBX pose root for native mesh payload: {sourceFbxPath}");
@@ -1659,7 +1653,18 @@ public static class NativeMeshPayloadService
             throw new InvalidDataException("Native mesh payload is missing required authoring pose data.");
         }
 
+        var payloadBonesByPath = (payload.bones ?? new List<NativeMeshPayloadBone>())
+            .Where(bone => bone != null && !string.IsNullOrWhiteSpace(bone.path))
+            .GroupBy(bone => bone.path, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
         ApplyPayloadStructuralBoneTransforms(avatarRoot, payload);
+        Transform sourceRoot = ResolveSourcePoseRoot(payload.sourceFbxPath);
+        if (sourceRoot == null)
+        {
+            MCBLogger.LogWarning($"[NativeMeshPayload] Could not resolve source pose root '{payload.sourceFbxPath}'. Falling back to structural native mesh pose as the authoring base.");
+        }
+
         int applied = 0;
         foreach (var poseBone in payload.authoringPoseBones)
         {
@@ -1675,10 +1680,32 @@ public static class NativeMeshPayloadService
                 continue;
             }
 
+            var source = sourceRoot != null ? FindTransformByRelativePath(sourceRoot, poseBone.path) : null;
+            Vector3 basePosition;
+            Quaternion baseRotation;
+            Vector3 baseScale;
+            if (source != null)
+            {
+                basePosition = source.localPosition;
+                baseRotation = source.localRotation;
+                baseScale = source.localScale;
+            }
+            else if (payloadBonesByPath.TryGetValue(poseBone.path, out var payloadBone))
+            {
+                basePosition = payloadBone.localPosition;
+                baseRotation = payloadBone.localRotation;
+                baseScale = payloadBone.localScale;
+            }
+            else
+            {
+                MCBLogger.LogWarning($"[NativeMeshPayload] Could not resolve authoring base transform '{poseBone.path}'.");
+                continue;
+            }
+
             Undo.RecordObject(target, "Apply Native Mesh Authoring Pose");
-            target.localPosition += poseBone.localPositionOffset;
-            target.localRotation = target.localRotation * poseBone.localRotationDelta;
-            target.localScale = Vector3.Scale(target.localScale, poseBone.localScaleMultiplier);
+            target.localPosition = basePosition + poseBone.localPositionOffset;
+            target.localRotation = baseRotation * poseBone.localRotationDelta;
+            target.localScale = Vector3.Scale(baseScale, poseBone.localScaleMultiplier);
             EditorUtility.SetDirty(target);
             applied++;
         }

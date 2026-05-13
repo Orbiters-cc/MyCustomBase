@@ -34,7 +34,8 @@ public class MCBEditor : UnityEditor.Editor
                                modelFileBuildEntriesProp,
                                useAdvancedMeshReplacementForCreatorProp, compressAdvancedMeshPayloadForCreatorProp,
                                includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
-                               includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp;
+                               includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp,
+                               includeSuggestRealisticForCreatorProp, suggestRealisticMeshPathsForCreatorProp;
 
     // --- Services and Modules ---
     private NetworkService networkService;
@@ -62,7 +63,10 @@ public class MCBEditor : UnityEditor.Editor
     private IMGUIContainer middleImGuiContainer;
     private IMGUIContainer bottomBarImGuiContainer;
     private IVisualElementScheduledItem dynamicUiSchedule;
-    private GUIStyle assetViewImGuiPaddingStyle;
+    public const float AssetViewImGuiPaddingLeft = 24f;
+    public const float AssetViewImGuiPaddingRight = 24f;
+    public const float AssetViewImGuiPaddingTop = 18f;
+    public const float AssetViewImGuiPaddingBottom = 22f;
     
     // --- Async Services ---
     private AsyncTaskManager taskManager;
@@ -389,7 +393,7 @@ public class MCBEditor : UnityEditor.Editor
         {
             if (useAssetViewPadding)
             {
-                EditorGUILayout.BeginVertical(GetAssetViewImGuiPaddingStyle());
+                BeginAssetViewImGuiPadding();
             }
 
             bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
@@ -427,7 +431,7 @@ public class MCBEditor : UnityEditor.Editor
         {
             if (useAssetViewPadding)
             {
-                EditorGUILayout.EndVertical();
+                EndAssetViewImGuiPadding();
             }
 
             serializedObject.ApplyModifiedProperties();
@@ -439,17 +443,25 @@ public class MCBEditor : UnityEditor.Editor
         return assetGalleryModule != null && assetGalleryModule.SelectedAsset != null;
     }
 
-    private GUIStyle GetAssetViewImGuiPaddingStyle()
+    public float GetCurrentAssetViewImGuiLeftPadding()
     {
-        if (assetViewImGuiPaddingStyle == null)
-        {
-            assetViewImGuiPaddingStyle = new GUIStyle
-            {
-                padding = new RectOffset(24, 24, 18, 22)
-            };
-        }
+        return IsSelectedAssetView() ? AssetViewImGuiPaddingLeft : 0f;
+    }
 
-        return assetViewImGuiPaddingStyle;
+    private static void BeginAssetViewImGuiPadding()
+    {
+        GUILayout.Space(AssetViewImGuiPaddingTop);
+        EditorGUILayout.BeginHorizontal();
+        GUILayout.Space(AssetViewImGuiPaddingLeft);
+        EditorGUILayout.BeginVertical();
+    }
+
+    private static void EndAssetViewImGuiPadding()
+    {
+        EditorGUILayout.EndVertical();
+        GUILayout.Space(AssetViewImGuiPaddingRight);
+        EditorGUILayout.EndHorizontal();
+        GUILayout.Space(AssetViewImGuiPaddingBottom);
     }
 
     private void DrawVectorBannerUIToolkit()
@@ -1164,6 +1176,8 @@ public class MCBEditor : UnityEditor.Editor
         customVeinsNormalMapProp = serializedObject.FindProperty("customVeinsNormalMap");
         includeDynamicNormalsBodyForCreatorProp = serializedObject.FindProperty("includeDynamicNormalsBodyForCreator");
         includeDynamicNormalsFlexingForCreatorProp = serializedObject.FindProperty("includeDynamicNormalsFlexingForCreator");
+        includeSuggestRealisticForCreatorProp = serializedObject.FindProperty("includeSuggestRealisticForCreator");
+        suggestRealisticMeshPathsForCreatorProp = serializedObject.FindProperty("suggestRealisticMeshPathsForCreator");
     }
 
     private void EnsureSerializedDefaults()
