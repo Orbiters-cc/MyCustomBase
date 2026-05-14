@@ -79,7 +79,9 @@ public class CustomBaseVersion : IEquatable<CustomBaseVersion>
 public class CustomBaseVersion
 #endif
 {
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int id;
     [JsonProperty] public string version;
+    [JsonProperty] public string title;
     [JsonProperty] public string defaultAviVersion;
     [JsonProperty] public Scope scope;
     [JsonProperty] public string date;

@@ -177,6 +177,15 @@
     margin-left: 12px;
 }
 
+.mcb-selected-header__create-version {
+    height: 28px;
+    min-height: 28px;
+    min-width: 142px;
+    margin-left: 12px;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
 .mcb-selected-header__count {
     margin-left: 8px;
     margin-right: 14px;

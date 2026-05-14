@@ -166,6 +166,7 @@ public static class AvatarAssetDiscoveryService
 
                 yield return null;
             }
+            MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, url, MCBRequestPolicy.Backend("Discover avatar assets"));
 
             if (request.result != UnityWebRequest.Result.Success)
             {
@@ -180,7 +181,6 @@ public static class AvatarAssetDiscoveryService
                 onComplete?.Invoke(null, errorMessage);
                 yield break;
             }
-
             AvatarAssetDiscoveryResponse response = null;
             try
             {
@@ -333,11 +333,6 @@ public static class AvatarAssetDiscoveryService
         return File.Exists(localPath) ? localPath : null;
     }
 
-    public static void PreloadBanner(AvatarDiscoveredAsset asset)
-    {
-        GetBanner(asset);
-    }
-
     private static Texture2D GetImage(string url, string kind, int assetId)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -393,7 +388,7 @@ public static class AvatarAssetDiscoveryService
 
     private static IEnumerator DownloadImageCoroutine(string url, string cacheKey, string localPath, string kind, int assetId)
     {
-        Task<(byte[] bytes, string error)> downloadTask = DownloadImageBytesAsync(url);
+        Task<(byte[] bytes, string error)> downloadTask = DownloadImageBytesAsync(url, kind, assetId);
         while (!downloadTask.IsCompleted)
         {
             yield return null;
@@ -422,6 +417,10 @@ public static class AvatarAssetDiscoveryService
                 if (result.bytes == null || result.bytes.Length == 0)
                 {
                     FailedImageDownloads.Add(cacheKey);
+                    MCBConnectivityMonitor.ReportManagedException(url, new InvalidOperationException("Image content was empty."), MCBRequestPolicy.ExternalResource(
+                        $"Download {kind} image",
+                        $"asset-image:{kind}:{assetId}",
+                        "Asset image unavailable"));
                     MCBLogger.LogWarning($"[AvatarAssetDiscovery] Downloaded {kind} request for assetId={assetId} but image content was empty.");
                     yield break;
                 }
@@ -431,6 +430,10 @@ public static class AvatarAssetDiscoveryService
                 {
                     FailedImageDownloads.Add(cacheKey);
                     Object.DestroyImmediate(texture);
+                    MCBConnectivityMonitor.ReportManagedException(url, new InvalidOperationException("Unity could not decode the image bytes."), MCBRequestPolicy.ExternalResource(
+                        $"Decode {kind} image",
+                        $"asset-image:{kind}:{assetId}",
+                        "Asset image unavailable"));
                     MCBLogger.LogWarning($"[AvatarAssetDiscovery] Downloaded {kind} request for assetId={assetId} but Unity could not decode the image bytes.");
                     yield break;
                 }
@@ -440,6 +443,7 @@ public static class AvatarAssetDiscoveryService
                 byte[] pngData = texture.EncodeToPNG();
                 File.WriteAllBytes(localPath, pngData);
                 FailedImageDownloads.Remove(cacheKey);
+                MCBConnectivityMonitor.ClearRequestWarning($"asset-image:{kind}:{assetId}");
                 ThumbnailCache[cacheKey] = texture;
                 if (string.Equals(kind, "banner", StringComparison.Ordinal))
                 {
@@ -464,8 +468,13 @@ public static class AvatarAssetDiscoveryService
         QueueRepaintAllViews();
     }
 
-    private static async Task<(byte[] bytes, string error)> DownloadImageBytesAsync(string url)
+    private static async Task<(byte[] bytes, string error)> DownloadImageBytesAsync(string url, string kind, int assetId)
     {
+        var policy = MCBManagedRequest.ResourcePolicyForUrl(
+            url,
+            $"Download {kind} image",
+            $"asset-image:{kind}:{assetId}",
+            "Asset image unavailable");
         try
         {
             using (var client = new HttpClient())
@@ -475,6 +484,7 @@ public static class AvatarAssetDiscoveryService
                 client.DefaultRequestHeaders.Accept.ParseAdd("image/*");
                 using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
                 {
+                    MCBManagedRequest.ReportHttpResponse(response, url, policy);
                     if (!response.IsSuccessStatusCode)
                     {
                         return (null, $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
@@ -486,6 +496,7 @@ public static class AvatarAssetDiscoveryService
         }
         catch (Exception ex)
         {
+            MCBManagedRequest.ReportException(url, ex, policy);
             return (null, ex.Message);
         }
     }

@@ -3,7 +3,7 @@ using UnityEditor;
 using UnityEngine;
 using System.Collections.Generic;
 
-public class AvatarOptionsModule
+public partial class AvatarOptionsModule
 {
     private readonly MCBEditor editor;
     private readonly CustomVeinsDrawer customVeinsDrawer;

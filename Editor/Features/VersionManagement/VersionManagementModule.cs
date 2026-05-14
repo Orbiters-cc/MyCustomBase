@@ -3,7 +3,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-public class VersionManagementModule
+public partial class VersionManagementModule
 {
     private readonly MCBEditor editor;
     public readonly VersionActions actions;
@@ -16,6 +16,11 @@ public class VersionManagementModule
     private bool hasShownMissingVersionWarning;
     private CustomBaseVersion lastSelectionForWarning;
     private bool lastRecommendedWasNull;
+    private float imguiDisplayedActionProgress = 1f;
+    private Color imguiDisplayedFillColor = new Color(0.125f, 0.651f, 0.376f, 1f);
+    private Color imguiDisplayedTrackColor = new Color(0.46f, 0.46f, 0.46f, 1f);
+    private bool imguiWasApplying;
+    private double imguiLastProgressUpdateTime;
 
 
     public VersionManagementModule(MCBEditor editor, NetworkService network, FileManagerService files)
@@ -31,13 +36,6 @@ public class VersionManagementModule
     {
         fileConfigDrawer.OnEnable();
         ResetMissingVersionWarning();
-    }
-
-    public void OnFBXChange()
-    {
-        ResetMissingVersionWarning();
-        actions.UpdateCurrentBaseFbxHash();
-        actions.StartVersionFetch();
     }
 
     public void ResetMissingVersionWarning()
@@ -98,7 +96,7 @@ public class VersionManagementModule
 
     private void DrawActionButtons()
     {
-        bool canInteract = !editor.isFetching && !editor.isDownloading && !editor.isDeleting;
+        bool canInteract = !editor.isFetching && !editor.isDownloading && !editor.isDeleting && !editor.isApplying;
 
         // If feature disabled, ensure no custom selection is active
         if (!FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION))
@@ -165,83 +163,66 @@ public class VersionManagementModule
                                 (selectedVersion == VersionListDrawer.RESET_VERSION || availableVersions.Exists(v => v.Equals(selectedVersion)));
         bool isResetSelected = selectedVersion == VersionListDrawer.RESET_VERSION;
         
-        using (new EditorGUI.DisabledScope(!canInteract))
-        {
-            var action = GetActionType();
+        var action = GetActionType();
 
-            // Main Apply/Update/Downgrade/Reset/SWITCH_TO_CUSTOM Button
-            bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isCustomBase;
-            bool buttonDisabled;
-            if (action == ActionType.SWITCH_TO_CUSTOM)
+        // Main Apply/Update/Downgrade/Reset/SWITCH_TO_CUSTOM Button
+        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isCustomBase;
+        bool buttonDisabled;
+        if (action == ActionType.SWITCH_TO_CUSTOM)
+        {
+            buttonDisabled = editor.selectedCustomVersionForAction == null;
+        }
+        else
+        {
+            buttonDisabled = !selectionIsValid ||
+                             (!isResetSelected && selectedVersion.Equals(editor.customBaseTarget.appliedCustomBaseVersion)) ||
+                             (isResetSelected && !canReset);
+        }
+
+        string buttonText = GetActionButtonText(action, selectedVersion);
+        Color buttonColor = GetActionButtonColor(action);
+        bool actionInProgress = editor.isApplying || actions.ApplyProgress.IsRunning;
+        bool buttonEnabled = canInteract && !buttonDisabled;
+        if (DrawMainActionProgressButton(buttonText, buttonColor, buttonEnabled, actionInProgress))
+        {
+            actions.ConfigureApplyProgressColor(buttonColor);
+            if (action == ActionType.RESET)
             {
-                buttonDisabled = editor.selectedCustomVersionForAction == null;
+                if (EditorUtility.DisplayDialog("Confirm Reset", "This will restore the original FBX from its backup and reapply the default avatar configuration.", "Reset", "Cancel"))
+                {
+                    actions.StartReset();
+                }
+            }
+            else if (action == ActionType.SWITCH_TO_CUSTOM)
+            {
+                var cv = editor.selectedCustomVersionForAction;
+                if (cv != null && EditorUtility.DisplayDialog("Apply Custom Version", $"This will replace your current FBX with your saved custom version from {cv.detectionDate}.", "Proceed", "Cancel"))
+                {
+                    actions.StartApplyCustomVersion();
+                }
             }
             else
             {
-                buttonDisabled = !selectionIsValid ||
-                                 (!isResetSelected && selectedVersion.Equals(editor.customBaseTarget.appliedCustomBaseVersion)) ||
-                                 (isResetSelected && !canReset);
-            }
-            
-            using (new EditorGUI.DisabledScope(buttonDisabled))
-            {
-                string buttonText = GetActionButtonText(action, selectedVersion);
-                
-                // Set button color based on action type
-                if (action == ActionType.DOWNGRADE)
-                {
-                    GUI.backgroundColor = EditorUIUtils.OrangeColor;
-                }
-                else if (action == ActionType.SWITCH_TO_CUSTOM)
-                {
-                    GUI.backgroundColor = new Color(1.0f, 0.5f, 0.5f); // red tint
-                }
-                else if (action != ActionType.RESET) // Keep default color for reset, green for others
-                {
-                    GUI.backgroundColor = Color.green;
-                }
-                // For RESET, use default button color (no background color change)
+                bool isDownloaded = MCBUtils.IsVersionDownloaded(selectedVersion);
+                string assetName = editor.GetSelectedAssetDisplayName();
 
-                if (GUILayout.Button(buttonText, GUILayout.Height(40)))
+                bool shouldApply = ShouldSkipApplyConfirmation(selectedVersion) ||
+                                   EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using {assetName} version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel");
+                if (shouldApply)
                 {
-                    if (action == ActionType.RESET)
+                    if (isDownloaded)
                     {
-                        if (EditorUtility.DisplayDialog("Confirm Reset", "This will restore the original FBX from its backup and reapply the default avatar configuration.", "Reset", "Cancel"))
-                        {
-                            actions.StartReset();
-                        }
-                    }
-                    else if (action == ActionType.SWITCH_TO_CUSTOM)
-                    {
-                        var cv = editor.selectedCustomVersionForAction;
-                        if (cv != null && EditorUtility.DisplayDialog("Apply Custom Version", $"This will replace your current FBX with your saved custom version from {cv.detectionDate}.", "Proceed", "Cancel"))
-                        {
-                            actions.StartApplyCustomVersion();
-                        }
+                        actions.StartApplyVersion();
                     }
                     else
                     {
-                        bool isDownloaded = MCBUtils.IsVersionDownloaded(selectedVersion);
-                        string assetName = editor.GetSelectedAssetDisplayName();
-                        
-                        if (EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using {assetName} version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel"))
-                        {
-                            if (isDownloaded)
-                            {
-                                actions.StartApplyVersion();
-                            }
-                            else
-                            {
-                                actions.StartVersionDownload(selectedVersion, true);
-                            }
-                        }
+                        actions.StartVersionDownload(selectedVersion, true);
                     }
                 }
-                GUI.backgroundColor = Color.white;
             }
-
-            // Note: Reset button has been removed - reset functionality is now handled through the version list
         }
+
+        // Note: Reset button has been removed - reset functionality is now handled through the version list
     }
 
     private ActionType GetActionType()
@@ -271,6 +252,103 @@ public class VersionManagementModule
         if (compare > 0) return ActionType.UPDATE;
         if (compare < 0) return ActionType.DOWNGRADE;
         return ActionType.UNAVAILABLE;
+    }
+
+    private static bool ShouldSkipApplyConfirmation(CustomBaseVersion version)
+    {
+        return NativeMeshPayloadService.VersionUsesAdvancedMesh(version);
+    }
+
+    private bool DrawMainActionProgressButton(string buttonText, Color fillColor, bool enabled, bool actionInProgress)
+    {
+        var progress = actions.ApplyProgress;
+        Rect rect = GUILayoutUtility.GetRect(0f, 40f, GUILayout.ExpandWidth(true), GUILayout.Height(40f));
+        string displayText = actionInProgress && progress.IsRunning && !string.IsNullOrWhiteSpace(progress.StepText)
+            ? progress.StepText
+            : buttonText;
+        float targetProgress = actionInProgress ? progress.Progress : 1f;
+        Color targetTrackColor = actionInProgress ? GetActionProgressTrackColor() : fillColor;
+
+        double now = EditorApplication.timeSinceStartup;
+        float deltaTime = imguiLastProgressUpdateTime > 0d
+            ? Mathf.Clamp((float)(now - imguiLastProgressUpdateTime), 0f, 0.1f)
+            : 0.016f;
+        imguiLastProgressUpdateTime = now;
+
+        if (actionInProgress && !imguiWasApplying)
+        {
+            imguiDisplayedActionProgress = 0f;
+            imguiDisplayedTrackColor = targetTrackColor;
+        }
+
+        float progressSmoothing = 1f - Mathf.Exp(-deltaTime * 10f);
+        float colorSmoothing = 1f - Mathf.Exp(-deltaTime * 7f);
+        imguiDisplayedActionProgress = Mathf.Lerp(imguiDisplayedActionProgress, Mathf.Clamp01(targetProgress), progressSmoothing);
+        imguiDisplayedFillColor = Color.Lerp(imguiDisplayedFillColor, fillColor, colorSmoothing);
+        imguiDisplayedTrackColor = Color.Lerp(imguiDisplayedTrackColor, targetTrackColor, colorSmoothing);
+        imguiWasApplying = actionInProgress;
+
+        if (Event.current.type == EventType.Repaint)
+        {
+            EditorGUI.DrawRect(rect, imguiDisplayedTrackColor);
+            var fillRect = new Rect(rect.x, rect.y, rect.width * Mathf.Clamp01(imguiDisplayedActionProgress), rect.height);
+            if (fillRect.width > 0.5f)
+            {
+                EditorGUI.DrawRect(fillRect, imguiDisplayedFillColor);
+            }
+
+            var textStyle = new GUIStyle(EditorStyles.boldLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = enabled || actionInProgress ? Color.white : new Color(1f, 1f, 1f, 0.55f) },
+                wordWrap = true,
+                clipping = TextClipping.Clip
+            };
+            GUI.Label(rect, displayText, textStyle);
+        }
+
+        if (actionInProgress)
+        {
+            editor.Repaint();
+            return false;
+        }
+
+        if (!enabled)
+        {
+            return false;
+        }
+
+        EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
+        if (Event.current.type == EventType.MouseDown &&
+            Event.current.button == 0 &&
+            rect.Contains(Event.current.mousePosition))
+        {
+            Event.current.Use();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Color GetActionProgressTrackColor()
+    {
+        return new Color(0.46f, 0.46f, 0.46f, 1f);
+    }
+
+    private static Color GetActionButtonColor(ActionType action)
+    {
+        switch (action)
+        {
+            case ActionType.DOWNGRADE:
+                return new Color(0.780f, 0.455f, 0.173f, 1f);
+            case ActionType.SWITCH_TO_CUSTOM:
+                return new Color(0.725f, 0.329f, 0.329f, 1f);
+            case ActionType.RESET:
+            case ActionType.UNAVAILABLE:
+                return new Color(0.349f, 0.349f, 0.349f, 1f);
+            default:
+                return new Color(0.125f, 0.651f, 0.376f, 1f);
+        }
     }
 
     private string GetActionButtonText(ActionType action, CustomBaseVersion selectedVersion)

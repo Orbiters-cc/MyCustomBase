@@ -14,13 +14,14 @@ using VRC.SDKBase.Editor;
 public class MCBEditor : UnityEditor.Editor
 {
     private const string DevModeWarningEnabledPrefKey = "MCB.DevModeWarningEnabled";
-    private const float ConnectivityOverrideCardHeight = 86f;
-    private const float ConnectivityOverrideCardSpacing = 6f;
     private static readonly string[] UiToolkitStyleSheets =
     {
         "Packages/orbiters.mcb/Editor/Styles/mcb-theme.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-account.uss",
-        "Packages/orbiters.mcb/Editor/Styles/mcb-gallery.uss"
+        "Packages/orbiters.mcb/Editor/Styles/mcb-gallery.uss",
+        "Packages/orbiters.mcb/Editor/Styles/mcb-creator.uss",
+        "Packages/orbiters.mcb/Editor/Styles/mcb-version.uss",
+        "Packages/orbiters.mcb/Editor/Styles/mcb-avatar-options.uss"
     };
 
     // --- Target & Serialized Object ---
@@ -56,11 +57,16 @@ public class MCBEditor : UnityEditor.Editor
     private VisualElement bannerHost;
     private VisualElement accountHost;
     private VisualElement dependencyHost;
+    private VisualElement connectivityHost;
     private VisualElement galleryHost;
     private VisualElement selectedAssetActionsHost;
+    private VisualElement creatorHost;
+    private VisualElement versionHost;
+    private VisualElement avatarOptionsHost;
     private VisualElement commentsHost;
     private IMGUIContainer topImGuiContainer;
     private IMGUIContainer middleImGuiContainer;
+    private IMGUIContainer postCreatorImGuiContainer;
     private IMGUIContainer bottomBarImGuiContainer;
     private IVisualElementScheduledItem dynamicUiSchedule;
     public const float AssetViewImGuiPaddingLeft = 24f;
@@ -77,8 +83,8 @@ public class MCBEditor : UnityEditor.Editor
     public bool isAuthenticated;
     public string authToken;
     public bool fetchAttempted;
-    public bool isFetching, isDownloading, isDeleting, isSubmitting;
-    public string fetchError, downloadError, deleteError, submitError;
+    public bool isFetching, isDownloading, isDeleting, isSubmitting, isApplying;
+    public string fetchError, submitError;
     public string accessDeniedAssetId;
     public string currentBaseFbxHash;
     public bool isCustomBase;
@@ -91,7 +97,6 @@ public class MCBEditor : UnityEditor.Editor
     public List<UserCustomVersionEntry> userCustomVersions = new List<UserCustomVersionEntry>();
     public UserCustomVersionEntry selectedCustomVersionForAction;
     public bool currentIsCustom;
-    private Vector2 connectivityReportScroll;
     
     public string uiRenderingError;
     private string lastUiRenderingExceptionSignature;
@@ -99,6 +104,8 @@ public class MCBEditor : UnityEditor.Editor
     private int cachedDetectedAvatarRootInstanceId;
     private bool detectedAvatarFbxCacheDirty = true;
     private bool delayedDetectionScheduled;
+    private bool lastConnectivityBlocked;
+    private bool connectivityRecoveryScheduled;
 
     // Runtime state for detection
     public string currentAppliedFbxHash;
@@ -169,8 +176,9 @@ public class MCBEditor : UnityEditor.Editor
         // Initialize modules
         creatorModule.Initialize();
         CheckAuthentication();
+        lastConnectivityBlocked = IsConnectivityBlocked();
         MCBConnectivityMonitor.StatusChanged += RepaintFromConnectivityMonitor;
-        MCBConnectivityMonitor.EnsureCheckStarted(authToken);
+        MCBConnectivityMonitor.EnsureCheckStarted(authToken, force: true);
         MCBPackageVersionService.StatusChanged += RepaintFromPackageVersionStatus;
         MCBPackageVersionService.EnsureCheckStarted(authToken);
         
@@ -193,6 +201,9 @@ public class MCBEditor : UnityEditor.Editor
         accountModule?.DetachUIToolkit();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
+        creatorModule?.DetachUIToolkit();
+        versionModule?.DetachUIToolkit();
+        avatarOptionsModule?.DetachUIToolkit();
         assetGalleryModule?.DetachUIToolkit();
         dynamicUiSchedule?.Pause();
         dynamicUiSchedule = null;
@@ -204,7 +215,11 @@ public class MCBEditor : UnityEditor.Editor
         dependencyHost = null;
         galleryHost = null;
         selectedAssetActionsHost = null;
+        creatorHost = null;
+        versionHost = null;
+        avatarOptionsHost = null;
         commentsHost = null;
+        postCreatorImGuiContainer = null;
         bottomBarImGuiContainer = null;
         
         // Unsubscribe from version service events
@@ -253,6 +268,9 @@ public class MCBEditor : UnityEditor.Editor
         dependencyHost = new VisualElement();
         uiToolkitRoot.Add(dependencyHost);
 
+        connectivityHost = new VisualElement();
+        uiToolkitRoot.Add(connectivityHost);
+
         topImGuiContainer = new IMGUIContainer(DrawToolkitTopImGui);
         topImGuiContainer.AddToClassList("mcb-imgui-top");
         uiToolkitRoot.Add(topImGuiContainer);
@@ -268,6 +286,22 @@ public class MCBEditor : UnityEditor.Editor
         middleImGuiContainer.AddToClassList("mcb-imgui-middle");
         uiToolkitRoot.Add(middleImGuiContainer);
 
+        creatorHost = new VisualElement();
+        creatorHost.AddToClassList("mcb-creator-host");
+        uiToolkitRoot.Add(creatorHost);
+
+        versionHost = new VisualElement();
+        versionHost.AddToClassList("mcb-version-host");
+        uiToolkitRoot.Add(versionHost);
+
+        avatarOptionsHost = new VisualElement();
+        avatarOptionsHost.AddToClassList("mcb-avatar-options-host");
+        uiToolkitRoot.Add(avatarOptionsHost);
+
+        postCreatorImGuiContainer = new IMGUIContainer(DrawToolkitPostCreatorImGui);
+        postCreatorImGuiContainer.AddToClassList("mcb-imgui-middle");
+        uiToolkitRoot.Add(postCreatorImGuiContainer);
+
         commentsHost = new VisualElement();
         commentsHost.AddToClassList("mcb-comments-host");
         uiToolkitRoot.Add(commentsHost);
@@ -279,6 +313,9 @@ public class MCBEditor : UnityEditor.Editor
         accountModule?.AttachUIToolkit(accountHost);
         dependencyInstallerModule?.AttachUIToolkit(dependencyHost);
         assetGalleryModule?.AttachUIToolkit(galleryHost, selectedAssetActionsHost, commentsHost);
+        creatorModule?.AttachUIToolkit(creatorHost);
+        versionModule?.AttachUIToolkit(versionHost);
+        avatarOptionsModule?.AttachUIToolkit(avatarOptionsHost);
         RefreshUiToolkitSections();
         OrderUiToolkitLayers();
         dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(3000);
@@ -298,13 +335,18 @@ public class MCBEditor : UnityEditor.Editor
             DrawVectorBannerUIToolkit();
             accountModule?.RefreshUIToolkit();
             dependencyInstallerModule?.RefreshUIToolkit();
+            RefreshConnectivityDiagnosticsUIToolkit();
             assetGalleryModule?.RefreshUIToolkit();
+            creatorModule?.RefreshUIToolkit();
+            versionModule?.RefreshUIToolkit();
+            avatarOptionsModule?.RefreshUIToolkit();
             ApplyDependencyBlockerState();
             OrderUiToolkitLayers();
             chromeSurfaceHost?.WakeForSeconds(20f);
             chromeSurfaceHost?.MarkDirtyRepaint();
             topImGuiContainer?.MarkDirtyRepaint();
             middleImGuiContainer?.MarkDirtyRepaint();
+            postCreatorImGuiContainer?.MarkDirtyRepaint();
             bottomBarImGuiContainer?.MarkDirtyRepaint();
         }
         catch (Exception ex)
@@ -319,10 +361,15 @@ public class MCBEditor : UnityEditor.Editor
         chromeSurfaceHost?.SendToBack();
         headerHost?.BringToFront();
         dependencyHost?.BringToFront();
+        connectivityHost?.BringToFront();
         topImGuiContainer?.BringToFront();
         galleryHost?.BringToFront();
         selectedAssetActionsHost?.BringToFront();
         middleImGuiContainer?.BringToFront();
+        creatorHost?.BringToFront();
+        versionHost?.BringToFront();
+        avatarOptionsHost?.BringToFront();
+        postCreatorImGuiContainer?.BringToFront();
         commentsHost?.BringToFront();
         bottomBarImGuiContainer?.BringToFront();
     }
@@ -333,9 +380,17 @@ public class MCBEditor : UnityEditor.Editor
         DisplayStyle contentDisplay = blocked ? DisplayStyle.None : DisplayStyle.Flex;
 
         if (topImGuiContainer != null) topImGuiContainer.style.display = contentDisplay;
+        if (connectivityHost != null)
+        {
+            connectivityHost.style.display = blocked || connectivityHost.childCount == 0 ? DisplayStyle.None : DisplayStyle.Flex;
+        }
         if (galleryHost != null) galleryHost.style.display = contentDisplay;
         if (selectedAssetActionsHost != null) selectedAssetActionsHost.style.display = contentDisplay;
         if (middleImGuiContainer != null) middleImGuiContainer.style.display = contentDisplay;
+        if (creatorHost != null && blocked) creatorHost.style.display = DisplayStyle.None;
+        if (versionHost != null && blocked) versionHost.style.display = DisplayStyle.None;
+        if (avatarOptionsHost != null && blocked) avatarOptionsHost.style.display = DisplayStyle.None;
+        if (postCreatorImGuiContainer != null) postCreatorImGuiContainer.style.display = contentDisplay;
         if (commentsHost != null) commentsHost.style.display = contentDisplay;
         if (bottomBarImGuiContainer != null) bottomBarImGuiContainer.style.display = contentDisplay;
     }
@@ -367,8 +422,6 @@ public class MCBEditor : UnityEditor.Editor
         serializedObject.Update();
         try
         {
-            SafeUiCall(DrawConnectivityDiagnosticsPanel);
-
             if (!isAuthenticated)
             {
                 SafeUiCall(() => authModule.DrawMagicSyncAuth());
@@ -405,8 +458,6 @@ public class MCBEditor : UnityEditor.Editor
                 if (showOfflineSavedVersionsUi)
                 {
                     SafeUiCall(DrawOfflineSavedVersionsInfo);
-                    SafeUiCall(() => versionModule.Draw());
-                    SafeUiCall(() => avatarOptionsModule?.Draw());
                 }
             }
             else if (HasServerAccess)
@@ -414,17 +465,47 @@ public class MCBEditor : UnityEditor.Editor
                 if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
                 {
                     SafeUiCall(() => warningsModule?.Draw());
-                    SafeUiCall(() => creatorModule.Draw());
-                    SafeUiCall(() => versionModule.Draw());
-                    SafeUiCall(() => avatarOptionsModule?.Draw());
-                    SafeUiCall(() => adjustMaterialModule?.Draw());
                 }
             }
             else if (showOfflineSavedVersionsUi)
             {
                 SafeUiCall(DrawOfflineSavedVersionsInfo);
-                SafeUiCall(() => versionModule.Draw());
-                SafeUiCall(() => avatarOptionsModule?.Draw());
+            }
+        }
+        finally
+        {
+            if (useAssetViewPadding)
+            {
+                EndAssetViewImGuiPadding();
+            }
+
+            serializedObject.ApplyModifiedProperties();
+        }
+    }
+
+    private void DrawToolkitPostCreatorImGui()
+    {
+        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
+        {
+            return;
+        }
+
+        serializedObject.Update();
+        bool useAssetViewPadding = IsSelectedAssetView();
+        try
+        {
+            if (useAssetViewPadding)
+            {
+                BeginAssetViewImGuiPadding();
+            }
+
+            bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
+            if (!hasMajorUpdateLockout && HasServerAccess)
+            {
+                if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
+                {
+                    SafeUiCall(() => adjustMaterialModule?.Draw());
+                }
             }
         }
         finally
@@ -446,6 +527,11 @@ public class MCBEditor : UnityEditor.Editor
     public float GetCurrentAssetViewImGuiLeftPadding()
     {
         return IsSelectedAssetView() ? AssetViewImGuiPaddingLeft : 0f;
+    }
+
+    public bool ShouldShowGalleryOnly()
+    {
+        return assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly();
     }
 
     private static void BeginAssetViewImGuiPadding()
@@ -605,6 +691,7 @@ public class MCBEditor : UnityEditor.Editor
             versionModule.actions.UpdateAppliedVersionAndState();
         }
         
+        RefreshUiToolkitSections();
         Repaint();
         MCBLogger.Log($"[MCBEditor] Updated with {versions.Count} server versions");
     }
@@ -634,6 +721,7 @@ public class MCBEditor : UnityEditor.Editor
             {
                 versionModule.actions.UpdateAppliedVersionAndState();
             }
+            RefreshUiToolkitSections();
             Repaint();
             MCBLogger.Log($"[MCBEditor] Loaded {cached.versions.Count} cached versions");
         }
@@ -664,6 +752,7 @@ public class MCBEditor : UnityEditor.Editor
     private void OnVersionFetchError(string error)
     {
         fetchError = error;
+        RefreshUiToolkitSections();
         Repaint();
         MCBLogger.LogError($"[MCBEditor] Version fetch error: {error}");
     }
@@ -730,7 +819,6 @@ public class MCBEditor : UnityEditor.Editor
         try
         {
             SafeUiCall(DrawBanner);
-            SafeUiCall(DrawConnectivityDiagnosticsPanel);
             
             // Account module just under the banner
             SafeUiCall(() => accountModule?.Draw());
@@ -802,53 +890,6 @@ public class MCBEditor : UnityEditor.Editor
             if (ex is ExitGUIException) throw;
             RecordUiException(ex);
         }
-    }
-
-    private void DrawLogoutSectionSafely()
-    {
-        if (!isAuthenticated) return;
-
-        Color originalColor = GUI.backgroundColor;
-
-        try
-        {
-            authModule.DrawLogoutButton();
-        }
-        catch (Exception ex)
-        {
-            if (ex is ExitGUIException) throw;
- 
-            GUI.backgroundColor = originalColor;
-            RecordUiException(ex);
-            DrawFallbackLogoutButton();
-        }
-        finally
-        {
-            GUI.backgroundColor = originalColor;
-        }
-    }
-
-    private void DrawFallbackLogoutButton()
-    {
-        EditorGUILayout.Space(10);
-        EditorGUILayout.BeginHorizontal();
-        GUILayout.FlexibleSpace();
-
-        if (GUILayout.Button("Logout", GUILayout.Width(100f), GUILayout.Height(25f)))
-        {
-            if (EditorUtility.DisplayDialog("Confirm Logout", "Are you sure you want to log out?", "Logout", "Cancel"))
-            {
-                if (AuthenticationService.RemoveAuth())
-                {
-                    CheckAuthentication();
-                    Repaint();
-                }
-            }
-        }
-
-        GUILayout.FlexibleSpace();
-        EditorGUILayout.EndHorizontal();
-        EditorGUILayout.Space(10);
     }
 
     private void DrawUiRenderingError()
@@ -924,88 +965,267 @@ public class MCBEditor : UnityEditor.Editor
         GUILayout.Space(5);
     }
 
-    private void DrawConnectivityDiagnosticsPanel()
+    private void RefreshConnectivityDiagnosticsUIToolkit()
     {
+        if (connectivityHost == null)
+        {
+            return;
+        }
+
+        connectivityHost.Clear();
+        connectivityHost.RemoveFromClassList("mcb-connectivity");
+
         bool isDevModeEnabled = MCBUtils.isDevEnvironment;
         bool showDevModeWarning = isDevModeEnabled && IsDevModeWarningEnabled;
         ApiSimulationMode simulationMode = MCBUtils.apiSimulationMode;
         bool isFakeNetworkErrorEnabled = simulationMode != ApiSimulationMode.Off;
         bool hasOverrideUi = showDevModeWarning || isFakeNetworkErrorEnabled;
-        bool hasFailureReport = !string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
+        string failureReport = MCBConnectivityMonitor.FailureReport;
+        bool hasFailureReport = !string.IsNullOrEmpty(failureReport);
+        List<MCBRequestWarning> requestWarnings = MCBConnectivityMonitor.GetRequestWarnings();
+        bool hasRequestWarnings = requestWarnings.Count > 0;
 
-        if (!hasFailureReport && !hasOverrideUi)
+        if (!hasFailureReport && !hasOverrideUi && !hasRequestWarnings)
         {
+            connectivityHost.style.display = DisplayStyle.None;
             return;
         }
 
-        EditorGUILayout.Space(4);
-        using (new EditorGUILayout.VerticalScope("box"))
+        connectivityHost.style.display = DisplayStyle.Flex;
+        connectivityHost.AddToClassList("mcb-connectivity");
+
+        var panel = new VisualElement();
+        panel.AddToClassList("mcb-connectivity__panel");
+        if (!hasFailureReport && hasRequestWarnings)
         {
-            if (hasFailureReport)
-            {
-                EditorGUILayout.HelpBox("The tool cannot connect to the server, copy the data bellow and send it to @blackorbit on discord", MessageType.Error);
-            }
+            panel.AddToClassList("mcb-connectivity__panel--warning");
+        }
+        connectivityHost.Add(panel);
 
-            if (hasOverrideUi)
-            {
-                EditorGUILayout.LabelField("Some advanced connectivity overrides are enabled.", EditorStyles.boldLabel);
-                DrawConnectivityOverrideBoxes(showDevModeWarning, isFakeNetworkErrorEnabled, simulationMode);
+        if (hasFailureReport)
+        {
+            BuildConnectivityFailureReportUIToolkit(panel, failureReport);
+        }
 
-                Color oldColor = GUI.backgroundColor;
-                GUI.backgroundColor = Color.green;
-                if (GUILayout.Button("Refresh with overrides off", GUILayout.Height(32f)))
-                {
-                    RefreshWithOverridesOff();
-                }
-                GUI.backgroundColor = oldColor;
-            }
+        if (hasRequestWarnings)
+        {
+            BuildRequestWarningsUIToolkit(panel, requestWarnings);
+        }
 
-            if (hasFailureReport)
-            {
-                connectivityReportScroll = EditorGUILayout.BeginScrollView(connectivityReportScroll, GUILayout.MinHeight(140f));
-                var style = new GUIStyle(EditorStyles.textArea) { wordWrap = false };
-                EditorGUILayout.TextArea(MCBConnectivityMonitor.FailureReport, style, GUILayout.ExpandHeight(true));
-                EditorGUILayout.EndScrollView();
-
-                if (GUILayout.Button("copy in the clipboard", GUILayout.Height(24f)))
-                {
-                    EditorGUIUtility.systemCopyBuffer = MCBConnectivityMonitor.FailureReport;
-                }
-            }
+        if (hasOverrideUi)
+        {
+            BuildConnectivityOverridesUIToolkit(panel, showDevModeWarning, isFakeNetworkErrorEnabled, simulationMode);
         }
     }
 
-    private void DrawConnectivityOverrideBoxes(bool isDevModeEnabled, bool isFakeNetworkErrorEnabled, ApiSimulationMode simulationMode)
+    private void BuildConnectivityFailureReportUIToolkit(VisualElement panel, string failureReport)
     {
-        int cardCount = 0;
-        if (isDevModeEnabled) cardCount++;
-        if (isFakeNetworkErrorEnabled) cardCount++;
-        if (cardCount <= 0) return;
+        var header = new VisualElement();
+        header.AddToClassList("mcb-connectivity__header");
 
-        Rect rowRect = GUILayoutUtility.GetRect(0f, ConnectivityOverrideCardHeight, GUILayout.ExpandWidth(true));
-        float cardWidth = (rowRect.width - (ConnectivityOverrideCardSpacing * (cardCount - 1))) / cardCount;
-        float currentX = rowRect.x;
+        var icon = new Label("!");
+        icon.AddToClassList("mcb-connectivity__icon");
+        header.Add(icon);
+
+        var text = new VisualElement();
+        text.AddToClassList("mcb-connectivity__header-text");
+
+        var title = new Label("The tool cannot connect to the server");
+        title.AddToClassList("mcb-connectivity__title");
+        text.Add(title);
+
+        var body = new Label("Copy the data below and send it to @blackorbit on Discord.");
+        body.AddToClassList("mcb-connectivity__body");
+        text.Add(body);
+
+        header.Add(text);
+        panel.Add(header);
+
+        if (MCBConnectivityMonitor.IsBuildingFailureReport)
+        {
+            panel.Add(CreateConnectivityReportLoadingBar());
+        }
+
+        var report = new TextField { multiline = true, value = failureReport ?? string.Empty };
+        report.isReadOnly = true;
+        report.AddToClassList("mcb-connectivity__report");
+        panel.Add(report);
+
+        var actions = new VisualElement();
+        actions.AddToClassList("mcb-connectivity__actions");
+        actions.Add(CreateConnectivityButton("Copy report", () =>
+        {
+            EditorGUIUtility.systemCopyBuffer = MCBConnectivityMonitor.FailureReport ?? string.Empty;
+        }));
+        actions.Add(CreateConnectivityButton("Retry check", () =>
+        {
+            MCBConnectivityMonitor.Retry(authToken);
+            RefreshAccountAndVersions();
+            RefreshUiToolkitSections();
+        }));
+        panel.Add(actions);
+    }
+
+    private static VisualElement CreateConnectivityReportLoadingBar()
+    {
+        var wrapper = new VisualElement();
+        wrapper.AddToClassList("mcb-connectivity-report-loading");
+
+        var label = new Label("Creating full connectivity report...");
+        label.AddToClassList("mcb-connectivity-report-loading__label");
+        wrapper.Add(label);
+
+        var bar = new VisualElement();
+        bar.AddToClassList("mcb-loading-bar");
+        bar.AddToClassList("mcb-connectivity-report-loading__bar");
+        wrapper.Add(bar);
+
+        var track = new VisualElement();
+        track.AddToClassList("mcb-loading-bar__track");
+        bar.Add(track);
+
+        var fill = new VisualElement();
+        fill.AddToClassList("mcb-loading-bar__fill");
+        track.Add(fill);
+
+        double startTime = MCBConnectivityMonitor.FailureReportBuildStartedAt;
+        if (startTime <= 0d)
+        {
+            startTime = EditorApplication.timeSinceStartup;
+        }
+        IVisualElementScheduledItem animation = null;
+        animation = wrapper.schedule.Execute(() =>
+        {
+            double elapsed = EditorApplication.timeSinceStartup - startTime;
+            float progress = Mathf.Clamp01((float)elapsed / 8f);
+            float eased = Mathf.SmoothStep(0f, 1f, progress);
+            fill.style.width = Length.Percent(Mathf.Lerp(10f, 92f, eased));
+        }).Every(16);
+
+        wrapper.RegisterCallback<DetachFromPanelEvent>(_ => animation?.Pause());
+        return wrapper;
+    }
+
+    private void BuildRequestWarningsUIToolkit(VisualElement panel, List<MCBRequestWarning> requestWarnings)
+    {
+        requestWarnings.Sort((left, right) => right.timestampUtc.CompareTo(left.timestampUtc));
+
+        var section = new VisualElement();
+        section.AddToClassList("mcb-connectivity-warnings");
+        section.EnableInClassList("mcb-connectivity-warnings--first", panel.childCount == 0);
+
+        var header = new VisualElement();
+        header.AddToClassList("mcb-connectivity-warnings__header");
+
+        var icon = new Label("!");
+        icon.AddToClassList("mcb-connectivity-warnings__icon");
+        header.Add(icon);
+
+        var text = new VisualElement();
+        text.AddToClassList("mcb-connectivity-warnings__text");
+
+        var title = new Label("Some resources could not be loaded");
+        title.AddToClassList("mcb-connectivity-warnings__title");
+        text.Add(title);
+
+        var body = new Label("The server is reachable, but one or more non-critical requests failed.");
+        body.AddToClassList("mcb-connectivity-warnings__body");
+        text.Add(body);
+
+        header.Add(text);
+        section.Add(header);
+
+        foreach (var warning in requestWarnings)
+        {
+            var item = new VisualElement();
+            item.AddToClassList("mcb-connectivity-warning");
+
+            var itemTitle = new Label(string.IsNullOrWhiteSpace(warning.title) ? "Non-critical request failed" : warning.title);
+            itemTitle.AddToClassList("mcb-connectivity-warning__title");
+            item.Add(itemTitle);
+
+            var itemBody = new Label(warning.message ?? string.Empty);
+            itemBody.AddToClassList("mcb-connectivity-warning__body");
+            item.Add(itemBody);
+
+            section.Add(item);
+        }
+
+        var actions = new VisualElement();
+        actions.AddToClassList("mcb-connectivity__actions");
+        actions.Add(CreateConnectivityButton("Clear warnings", () =>
+        {
+            MCBConnectivityMonitor.ClearAllRequestWarnings();
+            RefreshUiToolkitSections();
+        }));
+        section.Add(actions);
+
+        panel.Add(section);
+    }
+
+    private void BuildConnectivityOverridesUIToolkit(VisualElement panel, bool isDevModeEnabled, bool isFakeNetworkErrorEnabled, ApiSimulationMode simulationMode)
+    {
+        var section = new VisualElement();
+        section.AddToClassList("mcb-connectivity-overrides");
+
+        var title = new Label("Advanced connectivity overrides are enabled.");
+        title.AddToClassList("mcb-connectivity-overrides__title");
+        section.Add(title);
 
         if (isDevModeEnabled)
         {
-            Rect cardRect = new Rect(currentX, rowRect.y, cardWidth, ConnectivityOverrideCardHeight);
-            DrawConnectivityOverrideBox(
-                cardRect,
+            section.Add(CreateConnectivityOverrideRow(
                 "Dev mode",
                 "Requests are using the dev environment endpoints.",
-                DisableDevModeOverrideAndRefresh);
-            currentX += cardWidth + ConnectivityOverrideCardSpacing;
+                DisableDevModeOverrideAndRefresh));
         }
 
         if (isFakeNetworkErrorEnabled)
         {
-            Rect cardRect = new Rect(currentX, rowRect.y, cardWidth, ConnectivityOverrideCardHeight);
-            DrawConnectivityOverrideBox(
-                cardRect,
+            section.Add(CreateConnectivityOverrideRow(
                 "Fake network error",
                 GetConnectivitySimulationLabel(simulationMode),
-                DisableFakeNetworkErrorOverrideAndRefresh);
+                DisableFakeNetworkErrorOverrideAndRefresh));
         }
+
+        var refreshButton = CreateConnectivityButton("Refresh with overrides off", RefreshWithOverridesOff);
+        refreshButton.AddToClassList("mcb-button--primary");
+        refreshButton.AddToClassList("mcb-connectivity-overrides__refresh");
+        section.Add(refreshButton);
+
+        panel.Add(section);
+    }
+
+    private VisualElement CreateConnectivityOverrideRow(string titleText, string bodyText, Action onTurnOff)
+    {
+        var row = new VisualElement();
+        row.AddToClassList("mcb-connectivity-override");
+
+        var text = new VisualElement();
+        text.AddToClassList("mcb-connectivity-override__text");
+
+        var title = new Label(titleText);
+        title.AddToClassList("mcb-connectivity-override__title");
+        text.Add(title);
+
+        var body = new Label(bodyText);
+        body.AddToClassList("mcb-connectivity-override__body");
+        text.Add(body);
+
+        row.Add(text);
+
+        var button = CreateConnectivityButton("Turn off", onTurnOff);
+        button.AddToClassList("mcb-connectivity-override__button");
+        row.Add(button);
+
+        return row;
+    }
+
+    private static Button CreateConnectivityButton(string text, Action clicked)
+    {
+        var button = new Button(clicked) { text = text };
+        button.AddToClassList("mcb-button");
+        return button;
     }
 
     private static string GetConnectivitySimulationLabel(ApiSimulationMode simulationMode)
@@ -1018,29 +1238,6 @@ public class MCBEditor : UnityEditor.Editor
                 return "SSL Failure";
             default:
                 return "Off";
-        }
-    }
-
-    private void DrawConnectivityOverrideBox(Rect rect, string title, string description, Action onTurnOff)
-    {
-        GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
-
-        Rect contentRect = new Rect(rect.x + 8f, rect.y + 8f, rect.width - 16f, rect.height - 16f);
-        Rect titleRect = new Rect(contentRect.x, contentRect.y, contentRect.width, 18f);
-        GUI.Label(titleRect, title, EditorStyles.boldLabel);
-
-        float buttonHeight = 22f;
-        float buttonWidth = Mathf.Min(90f, contentRect.width);
-        Rect buttonRect = new Rect(contentRect.x, contentRect.yMax - buttonHeight, buttonWidth, buttonHeight);
-
-        float descriptionY = titleRect.yMax + 4f;
-        float descriptionHeight = Mathf.Max(16f, buttonRect.y - descriptionY - 6f);
-        Rect descriptionRect = new Rect(contentRect.x, descriptionY, contentRect.width, descriptionHeight);
-        GUI.Label(descriptionRect, description, EditorStyles.wordWrappedLabel);
-
-        if (GUI.Button(buttonRect, "Turn off"))
-        {
-            onTurnOff?.Invoke();
         }
     }
 
@@ -1496,16 +1693,91 @@ public class MCBEditor : UnityEditor.Editor
 
         if (!(AssetImporter.GetAtPath(assetPath) is ModelImporter))
         {
+            TryAddFbxPathFromNativeMeshPayload(assetPath, addPath);
             return;
         }
 
         addPath(assetPath);
     }
 
+    private static void TryAddFbxPathFromNativeMeshPayload(string meshAssetPath, Action<string> addPath)
+    {
+        if (string.IsNullOrWhiteSpace(meshAssetPath) || addPath == null)
+        {
+            return;
+        }
+
+        var payload = AssetDatabase.LoadMainAssetAtPath(meshAssetPath) as NativeMeshPayloadAsset;
+        string sourcePath = MCBUtils.ToUnityPath(payload?.sourceFbxPath);
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return;
+        }
+
+        if (!(AssetImporter.GetAtPath(sourcePath) is ModelImporter))
+        {
+            MCBLogger.LogWarning($"[MCBEditor] Advanced mesh payload points to a source FBX that is not present in this project: {sourcePath}");
+            return;
+        }
+
+        addPath(sourcePath);
+    }
+
     private void RepaintFromConnectivityMonitor()
     {
+        bool currentlyBlocked = IsConnectivityBlocked();
+        bool restored = lastConnectivityBlocked && IsConnectivityReachable();
+        if (currentlyBlocked)
+        {
+            lastConnectivityBlocked = true;
+        }
+        else if (restored)
+        {
+            lastConnectivityBlocked = false;
+            ScheduleConnectivityRecoveryRefresh();
+        }
+
         RefreshUiToolkitSections();
         Repaint();
+    }
+
+    private static bool IsConnectivityBlocked()
+    {
+        return MCBConnectivityMonitor.HasCompleted &&
+               !MCBConnectivityMonitor.CanReachServer &&
+               !string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
+    }
+
+    private static bool IsConnectivityReachable()
+    {
+        return MCBConnectivityMonitor.HasCompleted &&
+               MCBConnectivityMonitor.CanReachServer &&
+               string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
+    }
+
+    private void ScheduleConnectivityRecoveryRefresh()
+    {
+        if (connectivityRecoveryScheduled)
+        {
+            return;
+        }
+
+        connectivityRecoveryScheduled = true;
+        EditorApplication.delayCall += () =>
+        {
+            connectivityRecoveryScheduled = false;
+            if (!IsConnectivityReachable() || customBaseTarget == null || ShouldDeferBackgroundNetworkRefresh())
+            {
+                return;
+            }
+
+            MCBLogger.Log("[MCBEditor] Connectivity restored. Refreshing avatar base detection, gallery assets, and versions.");
+            UserService.ClearAllFailedRequests();
+            InvalidateDetectedAvatarFbxCache();
+            DetectAndLoadCached();
+            RefreshUiToolkitSections();
+            Repaint();
+        };
     }
 
     private void RepaintFromPackageVersionStatus()

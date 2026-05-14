@@ -38,11 +38,6 @@
     -unity-font-style: bold;
 }
 
-.mcb-label--body {
-    color: #d1d1d1;
-    font-size: 12px;
-}
-
 .mcb-label--strong {
     color: #ffffff;
     -unity-font-style: bold;
@@ -243,4 +238,232 @@
 
 .mcb-dependencies__install-button {
     min-width: 180px;
+}
+
+.mcb-connectivity {
+    background-color: rgba(0,0,0,0);
+    padding: 8px 24px 16px 24px;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+.mcb-connectivity__panel {
+    background-color: #191919;
+    border-radius: 8px;
+    border-left-width: 4px;
+    border-left-color: #ff5a5a;
+    padding: 14px;
+}
+
+.mcb-connectivity__panel--warning {
+    border-left-color: #ffae28;
+}
+
+.mcb-connectivity__header {
+    flex-direction: row;
+    align-items: flex-start;
+}
+
+.mcb-connectivity__icon {
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    margin-right: 10px;
+    border-radius: 8px;
+    background-color: #ff5a5a;
+    color: #ffffff;
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    font-size: 18px;
+}
+
+.mcb-connectivity__header-text {
+    flex-grow: 1;
+}
+
+.mcb-connectivity__title {
+    color: #ffffff;
+    -unity-font-style: bold;
+    font-size: 13px;
+    white-space: normal;
+}
+
+.mcb-connectivity__body {
+    margin-top: 3px;
+    color: #d1d1d1;
+    font-size: 12px;
+    white-space: normal;
+}
+
+.mcb-connectivity__report {
+    margin-top: 12px;
+    min-height: 140px;
+    max-height: 240px;
+}
+
+.mcb-connectivity__report .unity-base-field__input,
+.mcb-connectivity__report .unity-base-text-field__input,
+.mcb-connectivity__report .unity-text-field__input,
+.mcb-connectivity__report .unity-text-input {
+    background-color: #2b2b2b;
+    color: #d1d1d1;
+    border-width: 0;
+    border-radius: 8px;
+    padding: 8px;
+}
+
+.mcb-connectivity-report-loading {
+    margin-top: 10px;
+}
+
+.mcb-connectivity-report-loading__label {
+    color: #d1d1d1;
+    font-size: 11px;
+    white-space: normal;
+}
+
+.mcb-loading-bar.mcb-connectivity-report-loading__bar {
+    position: relative;
+    left: 0;
+    right: auto;
+    top: 0;
+    height: 4px;
+    margin-top: 6px;
+    justify-content: flex-start;
+    align-items: stretch;
+}
+
+.mcb-connectivity-report-loading__bar .mcb-loading-bar__track {
+    width: 100%;
+    max-width: none;
+    background-color: #2b2b2b;
+}
+
+.mcb-connectivity__actions {
+    margin-top: 10px;
+    flex-direction: row;
+    align-items: center;
+}
+
+.mcb-connectivity__actions .mcb-button {
+    margin-right: 8px;
+}
+
+.mcb-connectivity-warnings {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top-width: 1px;
+    border-top-color: #333333;
+}
+
+.mcb-connectivity-warnings--first {
+    margin-top: 0;
+    padding-top: 0;
+    border-top-width: 0;
+}
+
+.mcb-connectivity-warnings__header {
+    flex-direction: row;
+    align-items: flex-start;
+}
+
+.mcb-connectivity-warnings__icon {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    margin-right: 10px;
+    border-radius: 7px;
+    background-color: #ffae28;
+    color: #141414;
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    font-size: 16px;
+}
+
+.mcb-connectivity-warnings__text {
+    flex-grow: 1;
+}
+
+.mcb-connectivity-warnings__title {
+    color: #ffffff;
+    -unity-font-style: bold;
+    font-size: 13px;
+    white-space: normal;
+}
+
+.mcb-connectivity-warnings__body {
+    margin-top: 3px;
+    color: #d1d1d1;
+    font-size: 12px;
+    white-space: normal;
+}
+
+.mcb-connectivity-warning {
+    margin-top: 10px;
+    background-color: #212121;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.mcb-connectivity-warning__title {
+    color: #ffffff;
+    -unity-font-style: bold;
+    font-size: 12px;
+}
+
+.mcb-connectivity-warning__body {
+    margin-top: 3px;
+    color: #bdbdbd;
+    font-size: 11px;
+    white-space: normal;
+}
+
+.mcb-connectivity-overrides {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top-width: 1px;
+    border-top-color: #333333;
+}
+
+.mcb-connectivity-overrides__title {
+    color: #ffb18c;
+    font-size: 11px;
+    -unity-font-style: bold;
+    margin-bottom: 8px;
+}
+
+.mcb-connectivity-override {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 8px;
+    background-color: #212121;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.mcb-connectivity-override__text {
+    flex-grow: 1;
+}
+
+.mcb-connectivity-override__title {
+    color: #ffffff;
+    -unity-font-style: bold;
+    font-size: 12px;
+}
+
+.mcb-connectivity-override__body {
+    margin-top: 2px;
+    color: #999999;
+    font-size: 11px;
+    white-space: normal;
+}
+
+.mcb-connectivity-override__button {
+    width: 86px;
+    margin-left: 12px;
+}
+
+.mcb-connectivity-overrides__refresh {
+    margin-top: 2px;
+    min-width: 210px;
 }

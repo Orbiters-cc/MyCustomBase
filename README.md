@@ -1,5 +1,9 @@
 # My Custom Base (MCB) by Enzo
 
+## UI Toolkit migration
+
+MCB editor UI is transitioning to Unity UI Toolkit with the shared styled surfaces used by the gallery and account modules. New UI elements and changes to existing UI should be built with UI Toolkit and the package USS style sheets instead of adding new IMGUI blocks.
+
 ## Custom base FBX backup invariant
 
 MCB custom base versions are applied over the original/default base FBX. If the default base is `A` and custom bases are `B` or `C`, then `*.fbx.old` is always the preserved copy of `A`.

@@ -88,12 +88,6 @@ public static class EditorCoroutineUtility
         {
             var yielded = coroutine.Current;
 
-            if (yielded is IEnumerator nestedCoroutine)
-            {
-                _coroutineStack.Push(nestedCoroutine);
-                return true; // Need to process the nested one first
-            }
-
             // Handle WaitWhile - check if condition is still true
             if (yielded is WaitWhile waitWhile)
             {
@@ -109,7 +103,7 @@ public static class EditorCoroutineUtility
                     }
                 }
                 // Condition is false or we couldn't get it, move to next
-                return coroutine.MoveNext();
+                return AdvanceCoroutine(coroutine);
             }
 
             // Handle WaitUntil - check if condition is now true
@@ -127,7 +121,7 @@ public static class EditorCoroutineUtility
                     }
                 }
                 // Condition is true or we couldn't get it, move to next
-                return coroutine.MoveNext();
+                return AdvanceCoroutine(coroutine);
             }
 
             // Handle WaitForSeconds (though less useful in editor)
@@ -136,7 +130,7 @@ public static class EditorCoroutineUtility
                 // For editor, we could implement a simple time-based wait
                 // But it's generally better to use yield return null in editor
                 MCBLogger.LogWarning("WaitForSeconds is not reliably supported in editor coroutines. Consider using yield return null instead.");
-                return coroutine.MoveNext();
+                return AdvanceCoroutine(coroutine);
             }
 
             if (yielded is AsyncOperation asyncOp)
@@ -147,11 +141,28 @@ public static class EditorCoroutineUtility
                 }
             }
 
-            if (yielded is not Coroutine) return coroutine.MoveNext();
-            MCBLogger.LogWarning(
-                "EditorCoroutineUtility: Yielding on 'UnityEngine.Coroutine' is not supported in the editor. Use 'yield return null' or another IEnumerator.");
-            // Treat it like yield return null for basic cases
-            return coroutine.MoveNext();
+            if (yielded is Coroutine)
+            {
+                MCBLogger.LogWarning(
+                    "EditorCoroutineUtility: Yielding on 'UnityEngine.Coroutine' is not supported in the editor. Use 'yield return null' or another IEnumerator.");
+            }
+
+            return AdvanceCoroutine(coroutine);
+        }
+
+        private bool AdvanceCoroutine(IEnumerator coroutine)
+        {
+            if (!coroutine.MoveNext())
+            {
+                return false;
+            }
+
+            if (coroutine.Current is IEnumerator nestedCoroutine)
+            {
+                _coroutineStack.Push(nestedCoroutine);
+            }
+
+            return true;
         }
     }
 

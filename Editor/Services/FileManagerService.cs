@@ -366,24 +366,6 @@ public class FileManagerService
         }
     }
 
-    private void SetRootAnimatorAvatar(Transform root, string avatarAssetPath)
-    {
-        if (root == null) return;
-
-        Animator animator = root.GetComponent<Animator>();
-        if (animator == null)
-        {
-            animator = Undo.AddComponent<Animator>(root.gameObject);
-        }
-
-        Avatar avatar = AssetDatabase.LoadAssetAtPath<Avatar>(avatarAssetPath);
-        if (animator.avatar != avatar)
-        {
-            Undo.RecordObject(animator, "Set Root Animator Avatar");
-            animator.avatar = avatar;
-        }
-    }
-
     public Dictionary<string, string> FindPrefabDependencies(GameObject prefab)
     {
         var dependencies = new Dictionary<string, string>();

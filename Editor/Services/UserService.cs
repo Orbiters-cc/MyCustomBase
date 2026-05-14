@@ -112,7 +112,7 @@ public class UserService
         using (UnityWebRequest request = UnityWebRequest.Get(url))
         {
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.UserInfo);
-            yield return request.SendWebRequest();
+            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Fetch user info"));
             
             pendingRequests.Remove(userId);
             
@@ -162,7 +162,12 @@ public class UserService
             using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(avatarUrl))
             {
                 request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AvatarDownload);
-                yield return request.SendWebRequest();
+                var policy = MCBManagedRequest.ResourcePolicyForUrl(
+                    avatarUrl,
+                    $"Download user avatar for {uploaderId}",
+                    GetAvatarWarningKey(uploaderId),
+                    "Profile picture unavailable");
+                yield return MCBManagedRequest.SendUnityWebRequest(request, avatarUrl, policy);
 
                 if (request.result == UnityWebRequest.Result.Success)
                 {
@@ -176,6 +181,7 @@ public class UserService
                             File.WriteAllBytes(localPath, pngData);
 
                             avatarCache[uploaderId] = processed;
+                            MCBConnectivityMonitor.ClearRequestWarning(GetAvatarWarningKey(uploaderId));
                             QueueRepaintAllViews();
 
                             if (!ReferenceEquals(processed, texture))
@@ -186,6 +192,10 @@ public class UserService
                     }
                     catch (Exception ex)
                     {
+                        MCBConnectivityMonitor.ReportManagedException(avatarUrl, ex, MCBRequestPolicy.ExternalResource(
+                            $"Process user avatar for {uploaderId}",
+                            GetAvatarWarningKey(uploaderId),
+                            "Profile picture unavailable"));
                         MCBLogger.LogError($"[MCB] Failed to process avatar for user {uploaderId}: {ex.Message}");
                     }
                 }
@@ -254,6 +264,16 @@ public class UserService
     {
         string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
         return File.Exists(localPath) ? localPath : null;
+    }
+
+    public static string GetAvatarWarningKey(int uploaderId)
+    {
+        return $"user-avatar:{uploaderId}";
+    }
+
+    public static bool HasAvatarWarning(int uploaderId)
+    {
+        return MCBConnectivityMonitor.HasRequestWarning(GetAvatarWarningKey(uploaderId));
     }
     
     public static void UpdateUserInfo(int userId, string username, string avatarUrl)
@@ -356,12 +376,6 @@ public class UserService
     public static bool IsUserInfoAvailable(int uploaderId)
     {
         return userCache.ContainsKey(uploaderId);
-    }
-    
-    // Clear failed requests to allow retry (e.g., when user clicks refresh)
-    public static void ClearFailedRequest(int uploaderId)
-    {
-        failedRequests.Remove(uploaderId);
     }
     
     // Clear all failed requests (e.g., on component reload or manual refresh all)

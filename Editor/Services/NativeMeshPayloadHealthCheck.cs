@@ -27,30 +27,6 @@ public static class NativeMeshPayloadHealthCheck
         }
     }
 
-    public static void RunFromCommandLine()
-    {
-        try
-        {
-            RunOrThrow();
-            Debug.Log("[NativeMeshPayloadHealthCheck] Passed.");
-            if (Application.isBatchMode)
-            {
-                EditorApplication.Exit(0);
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError("[NativeMeshPayloadHealthCheck] Failed: " + ex);
-            if (Application.isBatchMode)
-            {
-                EditorApplication.Exit(1);
-                return;
-            }
-
-            throw;
-        }
-    }
-
     public static void RunOrThrow()
     {
         string sourceKeyPath = Path.Combine(Path.GetTempPath(), "mcb_native_mesh_health_source.fbx");

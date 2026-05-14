@@ -12,7 +12,7 @@ using Newtonsoft.Json.Converters;
 using AutocompleteSearchField;
 
 // Handles all UI and logic for the Creator Mode feature.
-public class CreatorModeModule
+public partial class CreatorModeModule
 {
     private const string InitialDefaultAviVersion = "1.0.0";
     private const long MaxVersionPackageUploadBytes = 600L * 1024L * 1024L;
@@ -38,6 +38,7 @@ public class CreatorModeModule
     private bool creatorBlendshapeEditorFoldout;
     private int newVersionMajor = 0, newVersionMinor = 1, newVersionPatch = 0;
     private Scope newVersionScope = Scope.BETA;
+    private string newVersionTitle = "";
     private string newChangelog = "";
 
     private List<CustomBaseVersion> compatibleParentVersions;
@@ -212,10 +213,13 @@ public class CreatorModeModule
                 EditorGUILayout.HelpBox($"New version must be higher than the selected parent version (v{baseVer}).", MessageType.Warning);
             }
 
-            EditorGUILayout.LabelField("Changelog:", EditorStyles.miniBoldLabel);
+            EditorGUILayout.LabelField("Version Title:", EditorStyles.miniBoldLabel);
+            newVersionTitle = EditorGUILayout.TextField(newVersionTitle);
+
+            EditorGUILayout.LabelField("Changelog (optional):", EditorStyles.miniBoldLabel);
             bool requiresParentVersion = RequiresParentVersion();
             newChangelog = EditorGUILayout.TextArea(newChangelog, GUILayout.Height(80));
-            bool hasRequiredVersionMetadata = HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newChangelog, requiresParentVersion ? selectedParentVersionObject?.defaultAviVersion : InitialDefaultAviVersion, out string metadataValidationMessage);
+            bool hasRequiredVersionMetadata = HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newVersionTitle, requiresParentVersion ? selectedParentVersionObject?.defaultAviVersion : InitialDefaultAviVersion, out string metadataValidationMessage);
             if (!hasRequiredVersionMetadata)
             {
                 EditorGUILayout.HelpBox(metadataValidationMessage, MessageType.Warning);
@@ -640,7 +644,7 @@ public class CreatorModeModule
         return true;
     }
 
-    private static bool HasRequiredNewVersionMetadata(string version, Scope scope, string changelog, string defaultAviVersion, out string message)
+    private static bool HasRequiredNewVersionMetadata(string version, Scope scope, string title, string defaultAviVersion, out string message)
     {
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(version))
@@ -651,9 +655,9 @@ public class CreatorModeModule
         {
             missing.Add("scope");
         }
-        if (string.IsNullOrWhiteSpace(changelog))
+        if (string.IsNullOrWhiteSpace(title))
         {
-            missing.Add("changelog");
+            missing.Add("version title");
         }
         if (string.IsNullOrWhiteSpace(defaultAviVersion))
         {
@@ -682,7 +686,7 @@ public class CreatorModeModule
             throw new InvalidOperationException("Version metadata is missing a valid asset id.");
         }
 
-        if (!HasRequiredNewVersionMetadata(metadata.version, metadata.scope, metadata.changelog, metadata.defaultAviVersion, out string message))
+        if (!HasRequiredNewVersionMetadata(metadata.version, metadata.scope, metadata.title, metadata.defaultAviVersion, out string message))
         {
             throw new InvalidOperationException(message);
         }
@@ -1140,6 +1144,10 @@ public class CreatorModeModule
         {
             var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
             var fbxObject = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            if (fbxObject == null && editor.baseFbxFilesProp != null && entryIndex < editor.baseFbxFilesProp.arraySize)
+            {
+                fbxObject = editor.baseFbxFilesProp.GetArrayElementAtIndex(entryIndex).objectReferenceValue as GameObject;
+            }
             if (fbxObject == null) continue;
 
             string path = AssetDatabase.GetAssetPath(fbxObject);
@@ -1160,6 +1168,10 @@ public class CreatorModeModule
         {
             var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
             var fbxObject = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            if (fbxObject == null && editor.baseFbxFilesProp != null && entryIndex < editor.baseFbxFilesProp.arraySize)
+            {
+                fbxObject = editor.baseFbxFilesProp.GetArrayElementAtIndex(entryIndex).objectReferenceValue as GameObject;
+            }
             if (fbxObject == null) continue;
 
             foreach (var smr in fbxObject.GetComponentsInChildren<SkinnedMeshRenderer>(true))
@@ -1989,7 +2001,7 @@ public class CreatorModeModule
         int assetId = selectedAsset.id;
 
         string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
-        if (!HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newChangelog, defaultAviVersion, out string metadataValidationMessage))
+        if (!HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newVersionTitle, defaultAviVersion, out string metadataValidationMessage))
         {
             throw new InvalidOperationException(metadataValidationMessage);
         }
@@ -2198,6 +2210,7 @@ public class CreatorModeModule
         var metadata = new CustomBaseVersion {
             assetId = assetId,
             version = newVersionString,
+            title = newVersionTitle,
             scope = newVersionScope,
             changelog = newChangelog,
             defaultAviVersion = defaultAviVersion,
@@ -2269,7 +2282,8 @@ public class CreatorModeModule
             newVersionMinor = parsedVersion.Minor;
             newVersionPatch = parsedVersion.Build;
             newVersionScope = ver.scope;
-            newChangelog = ver.changelog;
+            newVersionTitle = ver.title ?? "";
+            newChangelog = ver.changelog ?? "";
 
             if (!string.IsNullOrEmpty(ver.parentVersion))
             {

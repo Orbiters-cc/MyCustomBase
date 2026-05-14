@@ -46,7 +46,7 @@ public class NetworkService
         {
             MCBLogger.Log($"[NetworkService] FetchVersionsAsync GET {SanitizeUrlForLogs(url)}");
             req.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
-            await req.SendWebRequest();
+            await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Fetch versions"));
 
             // Special handling: access denied for asset (backend may return 203 or 204 with JSON { error, assetId })
             long code = req.responseCode;
@@ -160,6 +160,7 @@ public class NetworkService
                 {
                     if (!response.IsSuccessStatusCode)
                     {
+                        MCBManagedRequest.ReportHttpResponse(response, url, MCBRequestPolicy.Backend("Download file"));
                         string errorBody = await response.Content.ReadAsStringAsync();
                         string errorMsg = $"Download failed: {(int)response.StatusCode} {response.ReasonPhrase}";
 
@@ -178,18 +179,82 @@ public class NetworkService
                         return (false, errorMsg);
                     }
 
-                    using (var fs = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                    using (var stream = await response.Content.ReadAsStreamAsync())
+                    MCBManagedRequest.ReportHttpResponse(response, url, MCBRequestPolicy.Backend("Download file"));
+
+                    Stream stream;
+                    try
                     {
-                        await stream.CopyToAsync(fs);
+                        stream = await response.Content.ReadAsStreamAsync();
                     }
-                    
+                    catch (Exception ex)
+                    {
+                        MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download file"));
+                        MCBLogger.LogError($"[NetworkService] Download stream exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
+                        return (false, $"Download exception: {ex.Message}");
+                    }
+
+                    using (stream)
+                    {
+                        FileStream fs;
+                        try
+                        {
+                            fs = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                        }
+                        catch (Exception ex)
+                        {
+                            MCBLogger.LogError($"[NetworkService] Download file write exception: {ex.Message}, path = {destinationPath}, url = {SanitizeUrlForLogs(url)}");
+                            return (false, $"Download file write exception: {ex.Message}");
+                        }
+
+                        try
+                        {
+                            using (fs)
+                            {
+                                byte[] buffer = new byte[81920];
+                                while (true)
+                                {
+                                    int bytesRead;
+                                    try
+                                    {
+                                        bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download file"));
+                                        MCBLogger.LogError($"[NetworkService] Download stream exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
+                                        return (false, $"Download exception: {ex.Message}");
+                                    }
+
+                                    if (bytesRead == 0)
+                                    {
+                                        break;
+                                    }
+
+                                    try
+                                    {
+                                        await fs.WriteAsync(buffer, 0, bytesRead);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        MCBLogger.LogError($"[NetworkService] Download file write exception: {ex.Message}, path = {destinationPath}, url = {SanitizeUrlForLogs(url)}");
+                                        return (false, $"Download file write exception: {ex.Message}");
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            MCBLogger.LogError($"[NetworkService] Download file write exception: {ex.Message}, path = {destinationPath}, url = {SanitizeUrlForLogs(url)}");
+                            return (false, $"Download file write exception: {ex.Message}");
+                        }
+                    }
                     return (true, null);
                 }
             }
         }
         catch (Exception ex)
         {
+             MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download file"));
              MCBLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
              return (false, $"Download exception: {ex.Message}");
         }
@@ -210,7 +275,7 @@ public class NetworkService
             req.SetRequestHeader("Authorization", $"Bearer {authToken}");
             req.timeout = 300; // 5 minute timeout for uploads
 
-            await req.SendWebRequest();
+            await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Upload version"));
             
             if (req.result != UnityWebRequest.Result.Success)
             {
@@ -224,9 +289,72 @@ public class NetworkService
                 }
                 return (false, body, error);
             }
-
             return (true, req.downloadHandler.text, null);
         }
+    }
+
+    public async Task<(bool success, CustomBaseVersion version, string error)> UpdateCreatorVersionMetadataAsync(string url, string authToken, string title, string changelog)
+    {
+        var payload = new CreatorVersionMetadataUpdateRequest
+        {
+            title = title,
+            changelog = changelog ?? string.Empty
+        };
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload));
+
+        using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPUT))
+        {
+            req.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            if (!string.IsNullOrEmpty(authToken))
+            {
+                req.SetRequestHeader("Authorization", $"Bearer {authToken}");
+            }
+            req.timeout = GetTimeoutSeconds(NetworkRequestType.Upload);
+
+            await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Update version metadata"));
+
+            string body = null;
+            try { body = req.downloadHandler?.text; } catch { }
+
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                string serverMessage = CreateBodySnippet(body, 500);
+                string error = $"Update failed: [{req.responseCode}] {req.error}";
+                if (!string.IsNullOrWhiteSpace(serverMessage))
+                {
+                    error += $" | {serverMessage}";
+                }
+                return (false, null, error);
+            }
+
+            try
+            {
+                var response = JsonConvert.DeserializeObject<CreatorVersionMetadataUpdateResponse>(body);
+                if (response?.version == null)
+                {
+                    return (false, null, "The server did not return the updated version.");
+                }
+
+                return (true, response.version, null);
+            }
+            catch (Exception ex)
+            {
+                return (false, null, $"Failed to parse update response: {ex.Message}");
+            }
+        }
+    }
+
+    private class CreatorVersionMetadataUpdateRequest
+    {
+        public string title;
+        public string changelog;
+    }
+
+    private class CreatorVersionMetadataUpdateResponse
+    {
+        public CustomBaseVersion version;
     }
 
     public class CheckConnectionResponse
@@ -248,7 +376,7 @@ public class NetworkService
             try
             {
                 req.timeout = GetTimeoutSeconds(NetworkRequestType.ConnectionCheck);
-                await req.SendWebRequest();
+                await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Check connection"));
                 if (req.result != UnityWebRequest.Result.Success)
                 {
                     long code = req.responseCode;
@@ -263,10 +391,10 @@ public class NetworkService
                 try { resp = JsonConvert.DeserializeObject<CheckConnectionResponse>(text); }
                 catch (Exception jex)
                 {
-                MCBLogger.LogWarning($"[MCB] Invalid connection check response JSON: {jex.Message}");
-                return new CheckConnectionResponse { state = "disconnected" };
-            }
-            if (resp == null || string.IsNullOrEmpty(resp.state))
+                    MCBLogger.LogWarning($"[MCB] Invalid connection check response JSON: {jex.Message}");
+                    return new CheckConnectionResponse { state = "disconnected" };
+                }
+                if (resp == null || string.IsNullOrEmpty(resp.state))
                 {
                     MCBLogger.LogWarning("[MCB] Connection check response missing 'state'.");
                     return new CheckConnectionResponse { state = "disconnected" };

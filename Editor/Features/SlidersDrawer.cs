@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-public class SlidersDrawer
+public partial class SlidersDrawer
 {
     private readonly MCBEditor editor;
     private readonly SelectableChipGroup selectableChipGroup;

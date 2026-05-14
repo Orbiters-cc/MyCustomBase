@@ -1,11 +1,13 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using MCBEditorUtils;
 using UnityEditor;
 using UnityEngine;
@@ -372,6 +374,76 @@ public static class NativeMeshPayloadService
         return payload;
     }
 
+    public static IEnumerator ApplyEncryptedPayloadCoroutine(
+        Transform avatarRoot,
+        CustomBaseVersion version,
+        ModelFileData patchFile,
+        string binPath,
+        string originalFbxPath,
+        FileManagerService fileManagerService,
+        Action<float, string> reportProgress)
+    {
+        if (avatarRoot == null)
+        {
+            throw new ArgumentNullException(nameof(avatarRoot));
+        }
+
+        if (version == null)
+        {
+            throw new ArgumentNullException(nameof(version));
+        }
+
+        if (patchFile == null)
+        {
+            throw new ArgumentNullException(nameof(patchFile));
+        }
+
+        if (fileManagerService == null)
+        {
+            throw new ArgumentNullException(nameof(fileManagerService));
+        }
+
+        if (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath))
+        {
+            throw new FileNotFoundException("Apply failed: native mesh .bin file not found.", binPath);
+        }
+
+        if (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath))
+        {
+            throw new FileNotFoundException("Apply failed: original FBX key file not found.", originalFbxPath);
+        }
+
+        var total = System.Diagnostics.Stopwatch.StartNew();
+        var step = System.Diagnostics.Stopwatch.StartNew();
+        UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] START async apply payload version={version.version}");
+
+        NativeMeshPayloadAsset payload = null;
+        var materialize = MaterializeEncryptedPayloadAssetCoroutine(
+            version,
+            patchFile,
+            binPath,
+            originalFbxPath,
+            fileManagerService,
+            (progress, label) => reportProgress?.Invoke(Mathf.Lerp(0.02f, 0.72f, progress), label),
+            result => payload = result);
+        while (materialize.MoveNext())
+        {
+            yield return materialize.Current;
+        }
+
+        LogApplyProfile("Loaded/materialized native mesh payload asset", step, total, $"renderers={payload.renderers.Count} bones={payload.bones.Count}");
+        reportProgress?.Invoke(0.76f, "Assigning advanced mesh to avatar...");
+        ApplyPayloadToAvatar(avatarRoot, payload);
+        LogApplyProfile("Applied native mesh payload to avatar", step, total);
+        yield return null;
+
+        reportProgress?.Invoke(0.90f, "Applying advanced mesh authoring pose...");
+        ApplyPayloadAuthoringPose(avatarRoot, payload);
+        LogApplyProfile("Applied native mesh authoring pose to avatar", step, total, $"bones={payload.authoringPoseBones.Count}");
+        reportProgress?.Invoke(1f, "Advanced mesh applied...");
+        UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] DONE async apply payload total={total.Elapsed.TotalMilliseconds:F1} ms");
+    }
+
     public static NativeMeshPayloadAsset MaterializeEncryptedPayloadAsset(
         CustomBaseVersion version,
         ModelFileData patchFile,
@@ -441,6 +513,106 @@ public static class NativeMeshPayloadService
         NativeMeshPayloadAsset payload = WriteBinaryPayloadAsset(payloadAssetPath, payloadBytes, payloadHash, payloadCompression);
         LogApplyProfile("Wrote native mesh payload asset cache", step, total, $"path={payloadAssetPath} renderers={payload.renderers.Count} bones={payload.bones.Count}");
         return payload;
+    }
+
+    public static IEnumerator MaterializeEncryptedPayloadAssetCoroutine(
+        CustomBaseVersion version,
+        ModelFileData patchFile,
+        string binPath,
+        string originalFbxPath,
+        FileManagerService fileManagerService,
+        Action<float, string> reportProgress,
+        Action<NativeMeshPayloadAsset> completed)
+    {
+        if (version == null)
+        {
+            throw new ArgumentNullException(nameof(version));
+        }
+
+        if (patchFile == null)
+        {
+            throw new ArgumentNullException(nameof(patchFile));
+        }
+
+        if (fileManagerService == null)
+        {
+            throw new ArgumentNullException(nameof(fileManagerService));
+        }
+
+        if (!string.Equals(patchFile.transform, TransformName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(patchFile.outputHash))
+        {
+            throw new InvalidDataException("Native mesh payload metadata is missing outputHash.");
+        }
+
+        if (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath))
+        {
+            throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
+        }
+
+        if (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath))
+        {
+            throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
+        }
+
+        string payloadHash = patchFile.outputHash;
+        string payloadCompression = ResolvePayloadCompression(patchFile);
+        string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
+        var existing = LoadPayloadAsset(payloadAssetPath);
+        if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
+        {
+            UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Using cached native mesh payload asset: {payloadAssetPath}");
+            reportProgress?.Invoke(1f, "Loaded cached advanced mesh...");
+            completed?.Invoke(existing);
+            yield break;
+        }
+
+        var status = new NativeMeshPayloadPreparationStatus();
+        long originalBytes = new FileInfo(originalFbxPath).Length;
+        long binBytes = new FileInfo(binPath).Length;
+        UnityEngine.Debug.Log(
+            $"[NativeMeshPayloadProfile] Async materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} originalFbxKey={FormatByteSize(originalBytes)}");
+
+        string assetName = Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(payloadAssetPath));
+        var prepareTask = Task.Run(() => PrepareNativeMeshPayloadData(
+            binPath,
+            originalFbxPath,
+            assetName,
+            payloadHash,
+            payloadCompression,
+            status));
+
+        while (!prepareTask.IsCompleted)
+        {
+            status.Snapshot(out float progress, out string label);
+            reportProgress?.Invoke(Mathf.Lerp(0.02f, 0.68f, progress), label);
+            yield return null;
+        }
+
+        if (prepareTask.IsFaulted)
+        {
+            throw prepareTask.Exception?.GetBaseException() ?? new InvalidOperationException("Advanced mesh payload preparation failed.");
+        }
+
+        var prepared = prepareTask.Result;
+        NativeMeshPayloadAsset payload = null;
+        var commit = CommitPreparedPayloadAssetCoroutine(
+            payloadAssetPath,
+            prepared,
+            payloadHash,
+            payloadCompression,
+            (progress, label) => reportProgress?.Invoke(Mathf.Lerp(0.68f, 1f, progress), label),
+            result => payload = result);
+        while (commit.MoveNext())
+        {
+            yield return commit.Current;
+        }
+
+        completed?.Invoke(payload);
     }
 
     public static void RestoreOriginalMeshesFromFbx(Transform avatarRoot, CustomBaseVersion version, IEnumerable<string> sourceFbxPaths)
@@ -1187,6 +1359,443 @@ public static class NativeMeshPayloadService
             $"blendShapes={blendShapeCount} frames={blendShapeFrameCount}");
 
         return mesh;
+    }
+
+    private static PreparedPayloadAssetData PrepareNativeMeshPayloadData(
+        string binPath,
+        string originalFbxPath,
+        string assetName,
+        string payloadHash,
+        string payloadCompression,
+        NativeMeshPayloadPreparationStatus status)
+    {
+        status.Report(0.02f, "Reading original FBX key...");
+        byte[] baseData = File.ReadAllBytes(originalFbxPath);
+        status.Report(0.12f, "Reading advanced mesh payload...");
+        byte[] binData = File.ReadAllBytes(binPath);
+        status.Report(0.24f, "Decrypting advanced mesh payload...");
+        byte[] payloadBytes = XorTransformWithProgress(baseData, binData, status, 0.24f, 0.48f);
+        status.Report(0.50f, PayloadUsesGZip(payloadCompression) ? "Decompressing advanced mesh payload..." : "Parsing advanced mesh payload...");
+        var payload = ReadPreparedPayloadAsset(payloadBytes, assetName, payloadHash, payloadCompression, status, 0.50f, 1f);
+        status.Report(1f, "Advanced mesh payload prepared...");
+        return payload;
+    }
+
+    private static byte[] XorTransformWithProgress(
+        byte[] baseData,
+        byte[] keyData,
+        NativeMeshPayloadPreparationStatus status,
+        float startProgress,
+        float endProgress)
+    {
+        if (baseData == null || baseData.Length == 0)
+        {
+            throw new InvalidDataException("Original FBX key data is empty.");
+        }
+
+        byte[] transformedData = new byte[keyData.Length];
+        const int progressStride = 4 * 1024 * 1024;
+        for (int i = 0; i < keyData.Length; i++)
+        {
+            transformedData[i] = (byte)(keyData[i] ^ baseData[i % baseData.Length]);
+            if (i > 0 && i % progressStride == 0)
+            {
+                float local = keyData.Length > 0 ? i / (float)keyData.Length : 1f;
+                status.Report(Lerp(startProgress, endProgress, local), "Decrypting advanced mesh payload...");
+            }
+        }
+
+        return transformedData;
+    }
+
+    private static PreparedPayloadAssetData ReadPreparedPayloadAsset(
+        byte[] payloadBytes,
+        string assetName,
+        string payloadHash,
+        string payloadCompression,
+        NativeMeshPayloadPreparationStatus status,
+        float startProgress,
+        float endProgress)
+    {
+        if (payloadBytes == null || payloadBytes.Length == 0)
+        {
+            throw new InvalidDataException("Native mesh payload is empty.");
+        }
+
+        try
+        {
+            using (var stream = new MemoryStream(payloadBytes, false))
+            {
+                if (PayloadUsesGZip(payloadCompression))
+                {
+                    using (var gzip = new GZipStream(stream, System.IO.Compression.CompressionMode.Decompress))
+                    using (var reader = new BinaryReader(gzip, Encoding.UTF8))
+                    {
+                        return ReadPreparedPayloadAssetContents(reader, assetName, payloadHash, status, startProgress, endProgress);
+                    }
+                }
+
+                using (var reader = new BinaryReader(stream, Encoding.UTF8))
+                {
+                    return ReadPreparedPayloadAssetContents(reader, assetName, payloadHash, status, startProgress, endProgress);
+                }
+            }
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new InvalidDataException("Native mesh payload could not be read with the expected MCB payload format.", ex);
+        }
+    }
+
+    private static PreparedPayloadAssetData ReadPreparedPayloadAssetContents(
+        BinaryReader reader,
+        string assetName,
+        string payloadHash,
+        NativeMeshPayloadPreparationStatus status,
+        float startProgress,
+        float endProgress)
+    {
+        string magic = reader.ReadString();
+        if (!string.Equals(magic, BinaryPayloadMagic, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Native mesh payload is not an MCB binary payload.");
+        }
+
+        int version = reader.ReadInt32();
+        if (version != PayloadVersion)
+        {
+            throw new InvalidDataException($"Unsupported native mesh payload version: {version}");
+        }
+
+        var payload = new PreparedPayloadAssetData
+        {
+            assetName = assetName,
+            payloadVersion = version,
+            sourceFbxPath = reader.ReadString(),
+            sourceFbxHash = reader.ReadString(),
+            payloadHash = payloadHash
+        };
+
+        int rendererCount = reader.ReadInt32();
+        status.Report(startProgress, $"Parsing advanced mesh header ({rendererCount} renderer{(rendererCount == 1 ? "" : "s")})...");
+        var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < rendererCount; i++)
+        {
+            var record = new PreparedPayloadRendererData
+            {
+                avatarPath = reader.ReadString(),
+                fbxMeshPath = reader.ReadString(),
+                meshName = reader.ReadString(),
+                rendererName = reader.ReadString(),
+                localPosition = ReadVector3(reader),
+                localRotation = ReadQuaternion(reader),
+                localScale = ReadVector3(reader),
+                rootBonePath = reader.ReadString(),
+                bonePaths = ReadStringList(reader)
+            };
+
+            record.mesh = ReadPreparedMesh(reader);
+            record.mesh.name = BuildUniqueSubAssetName($"{record.mesh.name}_{ShortHash(payloadHash)}", usedMeshNames);
+            payload.renderers.Add(record);
+            float local = rendererCount > 0 ? (i + 1f) / rendererCount : 1f;
+            status.Report(Lerp(startProgress, Lerp(startProgress, endProgress, 0.82f), local), $"Parsing advanced mesh {i + 1}/{rendererCount}...");
+        }
+
+        int boneCount = reader.ReadInt32();
+        for (int i = 0; i < boneCount; i++)
+        {
+            payload.bones.Add(new NativeMeshPayloadBone
+            {
+                path = reader.ReadString(),
+                localPosition = ReadVector3(reader),
+                localRotation = ReadQuaternion(reader),
+                localScale = ReadVector3(reader)
+            });
+        }
+
+        status.Report(Lerp(startProgress, endProgress, 0.88f), $"Parsing advanced mesh bone table ({boneCount})...");
+        int authoringPoseBoneCount = reader.ReadInt32();
+        for (int i = 0; i < authoringPoseBoneCount; i++)
+        {
+            payload.authoringPoseBones.Add(new NativeMeshPayloadAuthoringPoseBone
+            {
+                path = reader.ReadString(),
+                localPositionOffset = ReadVector3(reader),
+                localRotationDelta = ReadQuaternion(reader),
+                localScaleMultiplier = ReadVector3(reader)
+            });
+        }
+
+        status.Report(endProgress, $"Parsed advanced mesh authoring pose ({authoringPoseBoneCount})...");
+        return payload;
+    }
+
+    private static PreparedMeshData ReadPreparedMesh(BinaryReader reader)
+    {
+        var mesh = new PreparedMeshData
+        {
+            name = reader.ReadString(),
+            indexFormat = (IndexFormat)reader.ReadInt32(),
+            vertices = ReadVector3Array(reader),
+            normals = ReadVector3Array(reader),
+            tangents = ReadVector4Array(reader),
+            colors = ReadColor32Array(reader),
+            uvs = new List<Vector4>[8]
+        };
+
+        for (int channel = 0; channel < 8; channel++)
+        {
+            mesh.uvs[channel] = ReadVector4List(reader);
+        }
+
+        mesh.boneWeights = ReadBoneWeightArray(reader);
+        mesh.bindposes = ReadMatrixArray(reader);
+
+        int subMeshCount = reader.ReadInt32();
+        for (int i = 0; i < subMeshCount; i++)
+        {
+            mesh.subMeshes.Add(new PreparedSubMeshData
+            {
+                topology = (MeshTopology)reader.ReadInt32(),
+                indices = ReadIntArray(reader)
+            });
+        }
+
+        mesh.bounds = ReadBounds(reader);
+        int blendShapeCount = reader.ReadInt32();
+        for (int shape = 0; shape < blendShapeCount; shape++)
+        {
+            var blendShape = new PreparedBlendShapeData
+            {
+                name = reader.ReadString()
+            };
+            int frameCount = reader.ReadInt32();
+            for (int frame = 0; frame < frameCount; frame++)
+            {
+                blendShape.frames.Add(new PreparedBlendShapeFrameData
+                {
+                    weight = reader.ReadSingle(),
+                    deltaVertices = ReadSparseVector3Array(reader),
+                    deltaNormals = reader.ReadBoolean() ? ReadSparseVector3Array(reader) : null,
+                    deltaTangents = reader.ReadBoolean() ? ReadSparseVector3Array(reader) : null
+                });
+            }
+
+            mesh.blendShapes.Add(blendShape);
+        }
+
+        return mesh;
+    }
+
+    private static IEnumerator CommitPreparedPayloadAssetCoroutine(
+        string assetPath,
+        PreparedPayloadAssetData prepared,
+        string payloadHash,
+        string payloadCompression,
+        Action<float, string> reportProgress,
+        Action<NativeMeshPayloadAsset> completed)
+    {
+        string normalizedPath = MCBUtils.ToUnityPath(assetPath);
+        EnsureAssetFolder(Path.GetDirectoryName(normalizedPath)?.Replace('\\', '/'));
+
+        var existing = LoadPayloadAsset(normalizedPath);
+        if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
+        {
+            reportProgress?.Invoke(1f, "Loaded cached advanced mesh...");
+            completed?.Invoke(existing);
+            yield break;
+        }
+
+        DeleteAssetFile(normalizedPath);
+
+        var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
+        payload.name = prepared.assetName;
+        payload.payloadVersion = prepared.payloadVersion;
+        payload.sourceFbxPath = prepared.sourceFbxPath;
+        payload.sourceFbxHash = prepared.sourceFbxHash;
+        payload.payloadHash = prepared.payloadHash;
+        payload.payloadCompression = NormalizePayloadCompression(payloadCompression);
+        payload.bones.AddRange(prepared.bones);
+        payload.authoringPoseBones.AddRange(prepared.authoringPoseBones);
+
+        int rendererCount = prepared.renderers.Count;
+        for (int i = 0; i < rendererCount; i++)
+        {
+            var preparedRenderer = prepared.renderers[i];
+            var renderer = new NativeMeshPayloadRenderer
+            {
+                avatarPath = preparedRenderer.avatarPath,
+                fbxMeshPath = preparedRenderer.fbxMeshPath,
+                meshName = preparedRenderer.meshName,
+                rendererName = preparedRenderer.rendererName,
+                localPosition = preparedRenderer.localPosition,
+                localRotation = preparedRenderer.localRotation,
+                localScale = preparedRenderer.localScale,
+                rootBonePath = preparedRenderer.rootBonePath,
+                bonePaths = preparedRenderer.bonePaths ?? new List<string>(),
+                mesh = CreateMeshFromPreparedData(preparedRenderer.mesh)
+            };
+            payload.renderers.Add(renderer);
+            reportProgress?.Invoke(rendererCount > 0 ? (i + 1f) / rendererCount * 0.72f : 0.72f, $"Creating Unity mesh {i + 1}/{rendererCount}...");
+            yield return null;
+        }
+
+        reportProgress?.Invoke(0.78f, "Creating advanced mesh cache asset...");
+        AssetDatabase.CreateAsset(payload, normalizedPath);
+        for (int i = 0; i < payload.renderers.Count; i++)
+        {
+            var renderer = payload.renderers[i];
+            if (renderer?.mesh != null)
+            {
+                AssetDatabase.AddObjectToAsset(renderer.mesh, payload);
+            }
+            reportProgress?.Invoke(Mathf.Lerp(0.78f, 0.90f, payload.renderers.Count > 0 ? (i + 1f) / payload.renderers.Count : 1f), $"Registering cached mesh {i + 1}/{payload.renderers.Count}...");
+            yield return null;
+        }
+
+        reportProgress?.Invoke(0.94f, "Saving advanced mesh cache...");
+        EditorUtility.SetDirty(payload);
+        AssetDatabase.SaveAssets();
+        reportProgress?.Invoke(1f, "Advanced mesh cache ready...");
+        completed?.Invoke(payload);
+    }
+
+    private static Mesh CreateMeshFromPreparedData(PreparedMeshData data)
+    {
+        var mesh = new Mesh();
+        mesh.name = data.name;
+        mesh.indexFormat = data.indexFormat;
+        mesh.vertices = data.vertices ?? Array.Empty<Vector3>();
+
+        int vertexCount = mesh.vertexCount;
+        if (data.normals != null && data.normals.Length == vertexCount) mesh.normals = data.normals;
+        if (data.tangents != null && data.tangents.Length == vertexCount) mesh.tangents = data.tangents;
+        if (data.colors != null && data.colors.Length == vertexCount) mesh.colors32 = data.colors;
+
+        for (int channel = 0; channel < 8; channel++)
+        {
+            var uvs = data.uvs != null && channel < data.uvs.Length ? data.uvs[channel] : null;
+            if (uvs != null && uvs.Count == vertexCount)
+            {
+                mesh.SetUVs(channel, uvs);
+            }
+        }
+
+        if (data.boneWeights != null && data.boneWeights.Length == vertexCount) mesh.boneWeights = data.boneWeights;
+        if (data.bindposes != null && data.bindposes.Length > 0) mesh.bindposes = data.bindposes;
+
+        mesh.subMeshCount = data.subMeshes?.Count ?? 0;
+        for (int i = 0; i < mesh.subMeshCount; i++)
+        {
+            var subMesh = data.subMeshes[i];
+            mesh.SetIndices(subMesh.indices ?? Array.Empty<int>(), subMesh.topology, i, false);
+        }
+
+        mesh.bounds = data.bounds;
+        foreach (var blendShape in data.blendShapes ?? new List<PreparedBlendShapeData>())
+        {
+            foreach (var frame in blendShape.frames ?? new List<PreparedBlendShapeFrameData>())
+            {
+                mesh.AddBlendShapeFrame(blendShape.name, frame.weight, frame.deltaVertices, frame.deltaNormals, frame.deltaTangents);
+            }
+        }
+
+        return mesh;
+    }
+
+    private static float Lerp(float from, float to, float value)
+    {
+        return from + (to - from) * Math.Max(0f, Math.Min(1f, value));
+    }
+
+    private sealed class NativeMeshPayloadPreparationStatus
+    {
+        private readonly object gate = new object();
+        private float progress;
+        private string label = "Preparing advanced mesh payload...";
+
+        public void Report(float progress, string label)
+        {
+            lock (gate)
+            {
+                this.progress = Math.Max(0f, Math.Min(1f, progress));
+                if (!string.IsNullOrWhiteSpace(label))
+                {
+                    this.label = label;
+                }
+            }
+        }
+
+        public void Snapshot(out float progress, out string label)
+        {
+            lock (gate)
+            {
+                progress = this.progress;
+                label = this.label;
+            }
+        }
+    }
+
+    private sealed class PreparedPayloadAssetData
+    {
+        public string assetName;
+        public int payloadVersion;
+        public string sourceFbxPath;
+        public string sourceFbxHash;
+        public string payloadHash;
+        public readonly List<PreparedPayloadRendererData> renderers = new List<PreparedPayloadRendererData>();
+        public readonly List<NativeMeshPayloadBone> bones = new List<NativeMeshPayloadBone>();
+        public readonly List<NativeMeshPayloadAuthoringPoseBone> authoringPoseBones = new List<NativeMeshPayloadAuthoringPoseBone>();
+    }
+
+    private sealed class PreparedPayloadRendererData
+    {
+        public string avatarPath;
+        public string fbxMeshPath;
+        public string meshName;
+        public string rendererName;
+        public PreparedMeshData mesh;
+        public Vector3 localPosition;
+        public Quaternion localRotation = Quaternion.identity;
+        public Vector3 localScale = Vector3.one;
+        public string rootBonePath;
+        public List<string> bonePaths = new List<string>();
+    }
+
+    private sealed class PreparedMeshData
+    {
+        public string name;
+        public IndexFormat indexFormat;
+        public Vector3[] vertices;
+        public Vector3[] normals;
+        public Vector4[] tangents;
+        public Color32[] colors;
+        public List<Vector4>[] uvs;
+        public BoneWeight[] boneWeights;
+        public Matrix4x4[] bindposes;
+        public readonly List<PreparedSubMeshData> subMeshes = new List<PreparedSubMeshData>();
+        public Bounds bounds;
+        public readonly List<PreparedBlendShapeData> blendShapes = new List<PreparedBlendShapeData>();
+    }
+
+    private sealed class PreparedSubMeshData
+    {
+        public MeshTopology topology;
+        public int[] indices;
+    }
+
+    private sealed class PreparedBlendShapeData
+    {
+        public string name;
+        public readonly List<PreparedBlendShapeFrameData> frames = new List<PreparedBlendShapeFrameData>();
+    }
+
+    private sealed class PreparedBlendShapeFrameData
+    {
+        public float weight;
+        public Vector3[] deltaVertices;
+        public Vector3[] deltaNormals;
+        public Vector3[] deltaTangents;
     }
 
     private static void WriteStringList(BinaryWriter writer, List<string> values)
@@ -2215,15 +2824,6 @@ public static class NativeMeshPayloadService
         if (!AssetDatabase.IsValidFolder(folderPath))
         {
             AssetDatabase.CreateFolder(parentFolder, folderName);
-        }
-    }
-
-    private static string CalculateHash(byte[] data)
-    {
-        using (var sha256 = SHA256.Create())
-        {
-            byte[] hash = sha256.ComputeHash(data ?? Array.Empty<byte>());
-            return BytesToHex(hash);
         }
     }
 

@@ -7,7 +7,8 @@ public enum MCBInteractionIconKind
     Like,
     Comment,
     Edit,
-    Delete
+    Delete,
+    Save
 }
 
 public class MCBInteractionIconElement : VisualElement
@@ -47,6 +48,9 @@ public class MCBInteractionIconElement : VisualElement
                 break;
             case MCBInteractionIconKind.Delete:
                 DrawDelete(painter, rect);
+                break;
+            case MCBInteractionIconKind.Save:
+                DrawSave(painter, rect);
                 break;
         }
     }
@@ -160,6 +164,30 @@ public class MCBInteractionIconElement : VisualElement
             new Vector2(5.76f, 20.28f)
         };
         DrawPolygon(painter, rect, 24f, 24f, body);
+    }
+
+    private static void DrawSave(Painter2D painter, Rect rect)
+    {
+        Vector2[] outer =
+        {
+            new Vector2(4f, 3f),
+            new Vector2(15.6f, 3f),
+            new Vector2(21f, 8.4f),
+            new Vector2(21f, 20f),
+            new Vector2(20f, 21f),
+            new Vector2(4f, 21f),
+            new Vector2(3f, 20f),
+            new Vector2(3f, 4f)
+        };
+        DrawPolygon(painter, rect, 24f, 24f, outer);
+
+        var cutoutColor = new Color(0.06f, 0.06f, 0.06f, 1f);
+        painter.fillColor = cutoutColor;
+        DrawBox(painter, rect, 24f, 24f, 8f, 14f, 8f, 5f);
+        DrawBox(painter, rect, 24f, 24f, 8f, 7f, 7f, 4f);
+
+        painter.fillColor = Color.white;
+        DrawBox(painter, rect, 24f, 24f, 9f, 8f, 4f, 2f);
     }
 
     private static void DrawBox(Painter2D painter, Rect rect, float viewWidth, float viewHeight, float x, float y, float width, float height)

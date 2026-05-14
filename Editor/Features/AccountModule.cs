@@ -85,6 +85,13 @@ public class AccountModule
             initials.AddToClassList("mcb-account__avatar-initials");
             avatarFrame.Add(initials);
         }
+        if (HasAvatarLoadWarning())
+        {
+            var warning = new Label("!");
+            warning.tooltip = "Profile picture could not be loaded.";
+            warning.AddToClassList("mcb-account__avatar-warning");
+            avatarFrame.Add(warning);
+        }
         identity.Add(avatarFrame);
 
         var textBlock = new VisualElement();
@@ -191,6 +198,19 @@ public class AccountModule
             GUI.Label(avatarRect, initials, labelStyle);
         }
 
+        if (HasAvatarLoadWarning())
+        {
+            Rect badgeRect = new Rect(avatarRect.xMax - 11f, avatarRect.yMin - 2f, 14f, 14f);
+            EditorGUI.DrawRect(badgeRect, new Color(1f, 0.66f, 0.12f));
+            var badgeStyle = new GUIStyle(EditorStyles.boldLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 10,
+                normal = { textColor = new Color(0.08f, 0.08f, 0.08f) }
+            };
+            GUI.Label(badgeRect, new GUIContent("!", "Profile picture could not be loaded."), badgeStyle);
+        }
+
         GUILayout.Space(8);
 
         // Text block vertically centered to the avatar
@@ -216,6 +236,11 @@ public class AccountModule
 
         GUILayout.FlexibleSpace();
         EditorGUILayout.EndHorizontal();
+    }
+
+    private bool HasAvatarLoadWarning()
+    {
+        return accountUserId.HasValue && UserService.HasAvatarWarning(accountUserId.Value);
     }
 
     private void DrawLogoutButton()

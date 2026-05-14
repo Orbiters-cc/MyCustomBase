@@ -114,20 +114,6 @@ public class MaterialService
     }
 
     /// <summary>
-    /// Gets the shader name from the specified material slot (e.g., "Body")
-    /// </summary>
-    public string GetShader(string materialSlot)
-    {
-        var material = GetMaterialForSlot(materialSlot);
-        if (material == null || material.shader == null)
-        {
-            return null;
-        }
-        
-        return material.shader.name;
-    }
-
-    /// <summary>
     /// Checks if a shader is supported
     /// </summary>
     public bool IsShaderSupported(string shaderName)
@@ -155,14 +141,6 @@ public class MaterialService
             return true;
         
         return false;
-    }
-
-    /// <summary>
-    /// Returns the list of supported shaders
-    /// </summary>
-    public List<string> GetSupportedShadersList()
-    {
-        return new List<string>(SupportedShaders);
     }
 
     /// <summary>
@@ -237,7 +215,7 @@ public class MaterialService
         return SetDetailNormalMap(smr, filePath);
     }
 
-    public bool SetDetailNormalMap(SkinnedMeshRenderer smr, string filePath)
+    public bool SetDetailNormalMap(SkinnedMeshRenderer smr, string filePath, bool saveImmediately = true)
     {
         if (smr == null) return false;
 
@@ -271,8 +249,11 @@ public class MaterialService
         }
         EnableDetailNormalFeatures(material);
         FinalizeMaterialEdit(smr, material);
-        AssetDatabase.SaveAssets(); // Force save to disk
-        AssetDatabase.Refresh(); // Force asset refresh
+        if (saveImmediately)
+        {
+            AssetDatabase.SaveAssets(); // Force save to disk
+            AssetDatabase.Refresh(); // Force asset refresh
+        }
         
         MCBLogger.Log($"[MaterialService] Set detail normal map on {GetRendererLabel(smr)} material to: {filePath}");
         return true;
@@ -287,7 +268,7 @@ public class MaterialService
         return SetDetailNormalOpacity(smr, opacity);
     }
 
-    public bool SetDetailNormalOpacity(SkinnedMeshRenderer smr, float opacity)
+    public bool SetDetailNormalOpacity(SkinnedMeshRenderer smr, float opacity, bool saveImmediately = true)
     {
         if (smr == null) return false;
 
@@ -309,8 +290,11 @@ public class MaterialService
         EnableDetailNormalFeatures(material);
         ApplyDetailNormalOpacity(material, opacity);
         FinalizeMaterialEdit(smr, material);
-        AssetDatabase.SaveAssets(); // Force save to disk
-        AssetDatabase.Refresh(); // Force asset refresh
+        if (saveImmediately)
+        {
+            AssetDatabase.SaveAssets(); // Force save to disk
+            AssetDatabase.Refresh(); // Force asset refresh
+        }
         
         MCBLogger.Log($"[MaterialService] Set detail normal map opacity on {GetRendererLabel(smr)} material to: {opacity}");
         return true;
@@ -325,7 +309,7 @@ public class MaterialService
         return RemoveDetailNormalMap(smr);
     }
 
-    public bool RemoveDetailNormalMap(SkinnedMeshRenderer smr)
+    public bool RemoveDetailNormalMap(SkinnedMeshRenderer smr, bool saveImmediately = true)
     {
         if (smr == null) return false;
 
@@ -352,8 +336,11 @@ public class MaterialService
         ApplyDetailNormalOpacity(material, 0f);
         DisableDetailNormalFeatures(material);
         FinalizeMaterialEdit(smr, material);
-        AssetDatabase.SaveAssets(); // Force save to disk
-        AssetDatabase.Refresh(); // Force asset refresh
+        if (saveImmediately)
+        {
+            AssetDatabase.SaveAssets(); // Force save to disk
+            AssetDatabase.Refresh(); // Force asset refresh
+        }
         
         MCBLogger.Log($"[MaterialService] Removed detail normal map from {GetRendererLabel(smr)} material");
         return true;

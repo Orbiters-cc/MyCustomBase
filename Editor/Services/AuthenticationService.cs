@@ -67,6 +67,7 @@ public static class AuthenticationService
                 try
                 {
                     var response = await MCBUtils.client.GetAsync(req);
+                    MCBManagedRequest.ReportHttpResponse(response, req, MCBRequestPolicy.Backend("Magic Sync authentication"));
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -89,6 +90,7 @@ public static class AuthenticationService
                 }
                 catch (System.Exception e)
                 {
+                    MCBManagedRequest.ReportException(req, e, MCBRequestPolicy.Backend("Magic Sync authentication"));
                     MCBLogger.LogError($"[MCBUtils] Error during authentication attempt {retryCount + 1}: {e.Message} (url: {req})");
                     retryCount++;
                     await Task.Delay(1000);
@@ -147,7 +149,7 @@ public static class AuthenticationService
 
     public static AuthData GetAuthForEnv(bool isDev)
     {
-        return GetAuthInternal(isDev);
+        return GetAuthInternal(isDev); 
     }
 
     private static AuthData GetAuthInternal(bool? forceIsDev)
@@ -176,26 +178,9 @@ public static class AuthenticationService
         }
     }
 
-    public static bool HasAuth()
-    {
-        var auth = GetAuth();
-        return auth != null && !string.IsNullOrEmpty(auth.token);
-    }
-
-    public static bool HasAuthForEnv(bool isDev)
-    {
-        var auth = GetAuthForEnv(isDev);
-        return auth != null && !string.IsNullOrEmpty(auth.token);
-    }
-
     public static bool RemoveAuth()
     {
         return RemoveAuthInternal(null);
-    }
-
-    public static bool RemoveAuthForEnv(bool isDev)
-    {
-        return RemoveAuthInternal(isDev);
     }
 
     private static bool RemoveAuthInternal(bool? forceIsDev)

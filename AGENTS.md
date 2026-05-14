@@ -4,6 +4,11 @@
 - Unity compiles this package with `/langversion:9.0`.
 - Do not introduce C# 10+ features (including global using) or compiler override changes.
 
+## Editor UI Direction
+- MCB editor UI is transitioning to Unity UI Toolkit with the shared styled surfaces used by the gallery and account modules.
+- Build every new UI element and every changed UI surface with UI Toolkit and the package USS style sheets.
+- Do not add new IMGUI UI unless the user explicitly asks for it or the touched surface has not been migrated yet and cannot be safely migrated in the requested change.
+
 ## BlendShape Link System
 
 ### Goal

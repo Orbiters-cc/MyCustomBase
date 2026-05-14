@@ -38,7 +38,10 @@ public static class MCBPackageVersionService
 
     public static bool HasServerAccess(string authToken)
     {
-        return !string.IsNullOrEmpty(authToken) && !RequiresMajorUpdate;
+        bool connectivityBlocked = MCBConnectivityMonitor.HasCompleted &&
+                                   !MCBConnectivityMonitor.CanReachServer &&
+                                   !string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
+        return !string.IsNullOrEmpty(authToken) && !RequiresMajorUpdate && !connectivityBlocked;
     }
 
     public static bool IsMockEnabled

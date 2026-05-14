@@ -30,6 +30,9 @@ public class CreatorAssetCreateResponseAsset
 {
     [JsonProperty] public int id;
     [JsonProperty] public string name;
+    [JsonProperty] public int? ownerId;
+    [JsonProperty] public string ownerUsername;
+    [JsonProperty] public string ownerAvatarUrl;
     [JsonProperty] public string thumbnail;
     [JsonProperty] public string mcbBanner;
     [JsonProperty] public CreatorAvatarBaseOption selectedAvatarBase;
@@ -278,6 +281,12 @@ public class AssetGalleryModule
             return;
         }
 
+        if (!string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport) ||
+            (MCBConnectivityMonitor.HasCompleted && !MCBConnectivityMonitor.CanReachServer))
+        {
+            return;
+        }
+
         var filteredMatchingAssets = ApplyAvatarBaseFilter(matchingAssets);
         if (filteredMatchingAssets.Count == 0)
         {
@@ -515,6 +524,14 @@ public class AssetGalleryModule
         title.AddToClassList("mcb-selected-header__title");
         row.Add(title);
 
+        if (ShouldShowCreateNewVersionButton(selectedAsset))
+        {
+            var createVersionButton = CreateTextButton("Create New Version", StartCreateNewVersion);
+            createVersionButton.AddToClassList("mcb-button--primary");
+            createVersionButton.AddToClassList("mcb-selected-header__create-version");
+            row.Add(createVersionButton);
+        }
+
         var actions = CreateRow();
         actions.AddToClassList("mcb-selected-header__actions");
 
@@ -541,6 +558,43 @@ public class AssetGalleryModule
 
         row.Add(actions);
         root.Add(row);
+    }
+
+    private bool ShouldShowCreateNewVersionButton(AvatarDiscoveredAsset selectedAsset)
+    {
+        if (selectedAsset == null ||
+            editor == null ||
+            !editor.isAuthenticated ||
+            !editor.HasServerAccess ||
+            MCBPackageVersionService.RequiresMajorUpdate ||
+            editor.isCreatorModeProp == null ||
+            editor.isCreatorModeProp.boolValue ||
+            !selectedAsset.ownerId.HasValue)
+        {
+            return false;
+        }
+
+        int currentUserId = GetCurrentUserId();
+        return currentUserId > 0 && selectedAsset.ownerId.Value == currentUserId;
+    }
+
+    private void StartCreateNewVersion()
+    {
+        if (editor == null || editor.isCreatorModeProp == null)
+        {
+            return;
+        }
+
+        editor.serializedObject.Update();
+        editor.isCreatorModeProp.boolValue = true;
+        editor.serializedObject.ApplyModifiedProperties();
+        if (editor.customBaseTarget != null)
+        {
+            EditorUtility.SetDirty(editor.customBaseTarget);
+        }
+
+        editor.RefreshUiToolkitSections();
+        editor.Repaint();
     }
 
     private void BuildSelectedAssetBannerUIToolkit(VisualElement root, AvatarDiscoveredAsset selectedAsset)
@@ -621,7 +675,12 @@ public class AssetGalleryModule
         using (var request = UnityWebRequestTexture.GetTexture(bannerUrl))
         {
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetImageDownload);
-            yield return request.SendWebRequest();
+            var policy = MCBManagedRequest.ResourcePolicyForUrl(
+                bannerUrl,
+                "Load selected asset banner",
+                $"asset-banner:{assetId}",
+                "Asset banner unavailable");
+            yield return MCBManagedRequest.SendUnityWebRequest(request, bannerUrl, policy);
 
             selectedAssetBannerLoads.Remove(assetId);
 
@@ -643,6 +702,10 @@ public class AssetGalleryModule
             catch (Exception ex)
             {
                 selectedAssetBannerErrors[assetId] = $"Banner decode failed: {ex.Message}";
+                MCBConnectivityMonitor.ReportManagedException(bannerUrl, ex, MCBRequestPolicy.ExternalResource(
+                    "Decode selected asset banner",
+                    $"asset-banner:{assetId}",
+                    "Asset banner unavailable"));
             }
 
             if (texture == null)
@@ -1661,6 +1724,12 @@ public class AssetGalleryModule
             }
 
             var matchingAssets = GetMatchingAssets();
+            if (!string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport) ||
+                (MCBConnectivityMonitor.HasCompleted && !MCBConnectivityMonitor.CanReachServer))
+            {
+                return;
+            }
+
             if (matchingAssets.Count == 0)
             {
                 EditorGUILayout.HelpBox("No matching avatar assets were found for this avatar.", MessageType.Info);
@@ -2210,7 +2279,7 @@ public class AssetGalleryModule
         using (var request = UnityWebRequest.Get(url))
         {
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return request.SendWebRequest();
+            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Load avatar bases"));
 
             if (request.result != UnityWebRequest.Result.Success)
             {
@@ -2276,7 +2345,7 @@ public class AssetGalleryModule
         using (var request = UnityWebRequest.Post(url, form))
         {
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload);
-            yield return request.SendWebRequest();
+            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Create custom base"));
 
             if (request.result != UnityWebRequest.Result.Success)
             {
@@ -2296,6 +2365,9 @@ public class AssetGalleryModule
                     {
                         id = response.asset.id,
                         name = response.asset.name,
+                        ownerId = response.asset.ownerId ?? GetCurrentUserId(),
+                        ownerUsername = response.asset.ownerUsername,
+                        ownerAvatarUrl = response.asset.ownerAvatarUrl,
                         thumbnailUrl = response.asset.thumbnail,
                         bannerUrl = response.asset.mcbBanner,
                         avatarBase = response.asset.selectedAvatarBase != null

@@ -9,6 +9,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 public static class BlenderSyncService
 {
@@ -249,6 +250,196 @@ public static class BlenderSyncService
             {
                 EditorGUILayout.HelpBox(lastStatus, lastStatusType);
             }
+        }
+    }
+
+    public static void BuildCreatorModeSectionUIToolkit(VisualElement root, MCBEditor editor, Action refresh)
+    {
+        if (root == null || editor == null || editor.customBaseTarget == null)
+        {
+            return;
+        }
+
+        var panel = new VisualElement();
+        panel.AddToClassList("mcb-form-card");
+        panel.AddToClassList("mcb-creator-panel");
+        panel.AddToClassList("mcb-blender");
+        root.Add(panel);
+
+        BuildConnectorHeaderUIToolkit(panel);
+        panel.Add(CreateHelpBox(
+            "Connects Unity MCB with the Blender MCB addon. You can click this first or start Magic Sync in Blender first; the tools exchange target FBX and renderer path data so Blender exports the right meshes and Unity refreshes the intended renderers.",
+            HelpBoxMessageType.Info));
+
+        var targetFbxPaths = GetTargetFbxPaths(editor);
+        if (targetFbxPaths.Count == 0)
+        {
+            panel.Add(CreateHelpBox("No target FBX was detected for this avatar. Assign or detect the base FBX before syncing.", HelpBoxMessageType.Warning));
+        }
+
+        string blenderPath = BuildBlenderInstallationSelectorUIToolkit(panel, refresh);
+        if (string.IsNullOrWhiteSpace(blenderPath))
+        {
+            panel.Add(CreateHelpBox("Blender was not detected. Use Advanced Mode to browse to the Blender executable.", HelpBoxMessageType.Warning));
+        }
+
+        var session = GetSessionForEditor(editor);
+        if (session != null)
+        {
+            UpdateConnectionState(session);
+        }
+
+        bool isConnected = session != null && string.Equals(session.connectionState, "connected", StringComparison.Ordinal);
+        bool isPreparing = IsEditorProjectPreparing(editor);
+        var buttonRow = CreateRow();
+        buttonRow.AddToClassList("mcb-blender__actions");
+
+        var modifyButton = CreateButton("Modify with Blender", () =>
+        {
+            OpenWithBlender(editor, targetFbxPaths);
+            refresh?.Invoke();
+        });
+        modifyButton.SetEnabled(targetFbxPaths.Count > 0 && !string.IsNullOrWhiteSpace(blenderPath) && !isConnected && !isPreparing);
+        buttonRow.Add(modifyButton);
+
+        var syncButton = CreateButton("Sync with Blender", () =>
+        {
+            StartSync(editor, targetFbxPaths);
+            refresh?.Invoke();
+        });
+        syncButton.SetEnabled(targetFbxPaths.Count > 0);
+        buttonRow.Add(syncButton);
+        panel.Add(buttonRow);
+
+        BuildBlenderConnectionStateUIToolkit(panel, editor);
+
+        if (!string.IsNullOrEmpty(lastStatus))
+        {
+            panel.Add(CreateHelpBox(lastStatus, ToHelpBoxMessageType(lastStatusType)));
+        }
+    }
+
+    private static void BuildConnectorHeaderUIToolkit(VisualElement root)
+    {
+        if (blenderIcon == null)
+        {
+            blenderIcon = LoadBlenderIcon();
+        }
+
+        var row = CreateRow();
+        row.AddToClassList("mcb-blender__header");
+        if (blenderIcon != null)
+        {
+            var icon = new Image { image = blenderIcon, scaleMode = ScaleMode.ScaleToFit };
+            icon.AddToClassList("mcb-blender__icon");
+            row.Add(icon);
+        }
+
+        var label = CreateLabel("Blender connector", 13, FontStyle.Bold, Color.white);
+        row.Add(label);
+        root.Add(row);
+    }
+
+    private static string BuildBlenderInstallationSelectorUIToolkit(VisualElement root, Action refresh)
+    {
+        var installations = BlenderInstallService.GetInstallations();
+        if (installations.Count == 0)
+        {
+            return "";
+        }
+
+        string selectedPath = BlenderInstallService.GetSelectedExecutablePath();
+        int selectedIndex = installations.FindIndex(item =>
+            string.Equals(item.executablePath, selectedPath, StringComparison.OrdinalIgnoreCase));
+        if (selectedIndex < 0)
+        {
+            selectedIndex = 0;
+            selectedPath = installations[0].executablePath;
+        }
+
+        var options = installations.Select(item => item.DisplayLabel).ToList();
+        var dropdown = new DropdownField("Blender installation", options, selectedIndex);
+        dropdown.AddToClassList("mcb-dropdown");
+        dropdown.AddToClassList("mcb-blender__dropdown");
+        dropdown.RegisterValueChangedCallback(evt =>
+        {
+            int nextIndex = options.IndexOf(evt.newValue);
+            if (nextIndex >= 0 && nextIndex < installations.Count)
+            {
+                BlenderInstallService.SetSelectedExecutablePath(installations[nextIndex].executablePath);
+                refresh?.Invoke();
+            }
+        });
+        root.Add(dropdown);
+        return selectedPath;
+    }
+
+    private static void BuildBlenderConnectionStateUIToolkit(VisualElement root, MCBEditor editor)
+    {
+        var session = GetSessionForEditor(editor);
+        if (session == null)
+        {
+            return;
+        }
+
+        UpdateConnectionState(session);
+        string displayState = string.IsNullOrWhiteSpace(session.connectionState) ? "waiting for Blender" : session.connectionState;
+        var row = CreateRow();
+        row.AddToClassList("mcb-blender__state");
+
+        var dot = new VisualElement();
+        dot.AddToClassList("mcb-blender__state-dot");
+        dot.style.backgroundColor = GetConnectionStateColor(displayState);
+        row.Add(dot);
+
+        row.Add(CreateLabel(displayState, 11, FontStyle.Normal, new Color(0.82f, 0.82f, 0.82f)));
+        root.Add(row);
+    }
+
+    private static VisualElement CreateRow()
+    {
+        var row = new VisualElement();
+        row.AddToClassList("mcb-row");
+        return row;
+    }
+
+    private static Label CreateLabel(string text, int fontSize, FontStyle fontStyle, Color color)
+    {
+        var label = new Label(text ?? string.Empty);
+        label.AddToClassList("mcb-label");
+        label.style.fontSize = fontSize;
+        label.style.unityFontStyleAndWeight = fontStyle;
+        label.style.color = color;
+        label.style.unityTextAlign = TextAnchor.MiddleLeft;
+        return label;
+    }
+
+    private static Button CreateButton(string text, Action onClick)
+    {
+        var button = new Button(onClick) { text = text ?? string.Empty };
+        button.AddToClassList("mcb-button");
+        return button;
+    }
+
+    private static HelpBox CreateHelpBox(string message, HelpBoxMessageType messageType)
+    {
+        var helpBox = new HelpBox(message ?? string.Empty, messageType);
+        helpBox.AddToClassList("mcb-creator-helpbox");
+        return helpBox;
+    }
+
+    private static HelpBoxMessageType ToHelpBoxMessageType(MessageType messageType)
+    {
+        switch (messageType)
+        {
+            case MessageType.Error:
+                return HelpBoxMessageType.Error;
+            case MessageType.Warning:
+                return HelpBoxMessageType.Warning;
+            case MessageType.Info:
+                return HelpBoxMessageType.Info;
+            default:
+                return HelpBoxMessageType.None;
         }
     }
 

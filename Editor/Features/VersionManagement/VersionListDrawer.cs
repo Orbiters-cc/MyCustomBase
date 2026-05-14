@@ -7,15 +7,21 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-public class VersionListDrawer
+public partial class VersionListDrawer
 {
     private readonly MCBEditor editor;
     private readonly VersionActions actions;
+    private readonly NetworkService networkService = new NetworkService();
     
     // UI State
     private static bool displayAllChangelogs = false;
     private static Dictionary<string, bool> individualChangelogStates = new Dictionary<string, bool>();
-    private static bool isListCollapsed = true;
+    private static bool isListCollapsed = false;
+    private static string editingVersionKey;
+    private static string editingVersionTitleDraft = "";
+    private static string editingVersionChangelogDraft = "";
+    private static bool isUpdatingVersionMetadata;
+    private static string versionMetadataUpdateError;
     
     // Special reset version identifier
     public static readonly CustomBaseVersion RESET_VERSION = new CustomBaseVersion
@@ -346,87 +352,6 @@ public class VersionListDrawer
         }
     }
 
-    private void DrawCustomItemInternal(UserCustomVersionEntry entry, bool isSelected, bool isApplied)
-    {
-        // Similar visuals to versions, but simpler
-        EditorGUILayout.BeginHorizontal();
-        Rect timelineRect = GUILayoutUtility.GetRect(20f, 20f, GUILayout.Width(20f));
-        EditorGUILayout.BeginVertical();
-
-        GUIStyle helpBoxStyle = new GUIStyle(EditorStyles.helpBox);
-        if (isSelected)
-        {
-            Color originalBg = GUI.backgroundColor;
-            GUI.backgroundColor = new Color(1.0f, 0.85f, 0.85f); // light red
-        }
-
-        EditorGUILayout.BeginVertical(helpBoxStyle);
-        EditorGUILayout.BeginHorizontal();
-
-        // Left content: label
-        EditorGUILayout.BeginVertical();
-        GUILayout.FlexibleSpace();
-        GUILayout.Label($"Custom {entry.detectionDate}", GUILayout.Width(160));
-        GUILayout.FlexibleSpace();
-        EditorGUILayout.EndVertical();
-
-        GUILayout.FlexibleSpace();
-
-        // Middle: status labels
-        EditorGUILayout.BeginVertical();
-        GUILayout.FlexibleSpace();
-        EditorGUILayout.BeginHorizontal();
-        if (isApplied)
-        {
-            DrawScopeLabel("Installed", new Color(0.9f, 0.2f, 0.2f));
-            GUILayout.Space(5);
-            DrawScopeLabel("Current", new Color(0.33f, 0.79f, 0f));
-            GUILayout.Space(10);
-        }
-        DrawScopeLabel("Custom", Color.red);
-        EditorGUILayout.EndHorizontal();
-        GUILayout.FlexibleSpace();
-        EditorGUILayout.EndVertical();
-
-        // Right: none
-        EditorGUILayout.EndHorizontal();
-        EditorGUILayout.EndVertical();
-
-        GUI.backgroundColor = Color.white;
-
-        EditorGUILayout.EndVertical();
-        EditorGUILayout.EndHorizontal();
-
-        // Interaction: select on click anywhere in the item
-        Rect itemEnd = GUILayoutUtility.GetRect(0, 0);
-        Rect fullRect = new Rect(timelineRect.x, timelineRect.y, timelineRect.width + (itemEnd.y - timelineRect.y), itemEnd.y - timelineRect.y);
-        Rect clickableRect = GUILayoutUtility.GetLastRect();
-        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && clickableRect.Contains(Event.current.mousePosition))
-        {
-            if (isSelected)
-            {
-                editor.selectedCustomVersionForAction = null;
-            }
-            else
-            {
-                editor.selectedCustomVersionForAction = entry;
-                editor.selectedVersionForAction = null;
-            }
-            Event.current.Use();
-            editor.Repaint();
-        }
-
-        // Draw the timeline dot
-        Handles.BeginGUI();
-        Color timelineColor = isApplied ? new Color(0.9f, 0.2f, 0.2f) : Color.gray;
-        Handles.color = timelineColor;
-        Vector2 center = new Vector2(timelineRect.center.x, timelineRect.center.y + (clickableRect.height - timelineRect.height) / 2f);
-        float dotRadius = 4f;
-        Handles.DrawSolidDisc(center, Vector3.forward, dotRadius);
-        Handles.color = Color.white;
-        Handles.EndGUI();
-    }
-    
     private void DrawDottedLine(Vector3 start, Vector3 end, float lineWidth)
     {
         float distance = Vector3.Distance(start, end);

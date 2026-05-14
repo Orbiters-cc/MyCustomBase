@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-public class CustomVeinsDrawer
+public partial class CustomVeinsDrawer
 {
     private readonly MCBEditor editor;
     private Texture2D customVeinsTexture;

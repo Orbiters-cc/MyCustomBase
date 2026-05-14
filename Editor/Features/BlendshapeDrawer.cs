@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using MCBEditorUtils;
 
-public class BlendshapeDrawer
+public partial class BlendshapeDrawer
 {
     private const float WeightEpsilon = 0.001f;
 
@@ -132,20 +132,6 @@ public class BlendshapeDrawer
         }
         
         EditorGUILayout.EndVertical();
-    }
-    
-    private float GetCustomOverrideValue(string blendshapeName, float defaultValue)
-    {
-        var overrideNames = editor.customBaseTarget.customBlendshapeOverrideNames;
-        var overrideValues = editor.customBaseTarget.customBlendshapeOverrideValues;
-        
-        int index = overrideNames.IndexOf(blendshapeName);
-        if (index >= 0 && index < overrideValues.Count)
-        {
-            return overrideValues[index];
-        }
-        
-        return defaultValue;
     }
     
     private void SetCustomOverrideValue(string blendshapeName, float value)

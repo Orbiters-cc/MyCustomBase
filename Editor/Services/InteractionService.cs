@@ -119,7 +119,7 @@ public static class InteractionService
         using (var request = UnityWebRequest.Get(url))
         {
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return request.SendWebRequest();
+            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Load interactions"));
 
             if (request.result != UnityWebRequest.Result.Success)
             {
@@ -162,7 +162,7 @@ public static class InteractionService
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return request.SendWebRequest();
+            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Create interaction"));
 
             if (request.result != UnityWebRequest.Result.Success)
             {
@@ -199,7 +199,7 @@ public static class InteractionService
         using (var request = UnityWebRequest.Delete(url))
         {
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return request.SendWebRequest();
+            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Delete interaction"));
 
             if (request.result != UnityWebRequest.Result.Success)
             {
@@ -239,7 +239,7 @@ public static class InteractionService
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return request.SendWebRequest();
+            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Update interaction"));
 
             if (request.result != UnityWebRequest.Result.Success)
             {

@@ -74,6 +74,7 @@ public static class EditorIssueReporter
     private static void OnLogMessageReceived(string condition, string stackTrace, LogType type)
     {
         if (!ShareIssueLogs) return;
+        if (ShouldSuppressIssueSendForConnectivity()) return;
 
         var (level, severityText) = MapSeverity(type);
         if ((int)level < MinSeverityLevel) return;
@@ -117,6 +118,12 @@ public static class EditorIssueReporter
         EditorApplication.delayCall += () => SendIssueAsync(message, severityText, errorType, tool, url, trimmedStack, userAgent, browserInfoJson);
     }
 
+    private static bool ShouldSuppressIssueSendForConnectivity()
+    {
+        return MCBConnectivityMonitor.HasCompleted &&
+               !MCBConnectivityMonitor.CanReachServer;
+    }
+
     private static (SeverityLevel, string) MapSeverity(LogType type)
     {
         switch (type)
@@ -156,6 +163,11 @@ public static class EditorIssueReporter
 
     private static async void SendIssueAsync(string message, string severity, string errorType, string tool, string url, string stackTrace, string userAgent, string browserInfoJson)
     {
+        if (ShouldSuppressIssueSendForConnectivity())
+        {
+            return;
+        }
+
         try
         {
             // Build JSON body manually to avoid dependency on Newtonsoft in this assembly
@@ -187,7 +199,7 @@ public static class EditorIssueReporter
                     req.SetRequestHeader("Authorization", $"Bearer {auth.token}");
                 }
 
-                await req.SendWebRequest();
+                await MCBManagedRequest.SendUnityWebRequestAsync(req, endpoint, MCBRequestPolicy.LocalOnly("Send issue report"));
                 // Swallow errors; this is best-effort reporting
                 if (req.result != UnityWebRequest.Result.Success)
                 {
