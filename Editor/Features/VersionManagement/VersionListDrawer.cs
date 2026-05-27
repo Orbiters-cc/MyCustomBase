@@ -14,9 +14,10 @@ public partial class VersionListDrawer
     private readonly NetworkService networkService = new NetworkService();
     
     // UI State
+    private static readonly Color AccentGreen = new Color32(0, 218, 109, 255);
     private static bool displayAllChangelogs = false;
     private static Dictionary<string, bool> individualChangelogStates = new Dictionary<string, bool>();
-    private static bool isListCollapsed = false;
+    private static bool isListCollapsed = true;
     private static string editingVersionKey;
     private static string editingVersionTitleDraft = "";
     private static string editingVersionChangelogDraft = "";
@@ -208,7 +209,7 @@ public partial class VersionListDrawer
         // Draw the timeline graphics
         if (Event.current.type == EventType.Repaint)
         {
-            Color timelineColor = Color.green;
+            Color timelineColor = AccentGreen;
             float centerX = timelineRect.center.x;
             float lineWidth = 2f;
             
@@ -287,9 +288,9 @@ public partial class VersionListDrawer
                     EditorGUILayout.BeginHorizontal();
                     if (isApplied)
                     {
-                        DrawScopeLabel("Installed", new Color(0.33f, 0.79f, 0f));
+                        DrawScopeLabel("Installed", AccentGreen);
                         GUILayout.Space(5);
-                        DrawScopeLabel("Current", new Color(0.33f, 0.79f, 0f));
+                        DrawScopeLabel("Current", AccentGreen);
                         GUILayout.Space(10);
                     }
                     DrawScopeLabel("Custom", Color.red);
@@ -416,7 +417,7 @@ public partial class VersionListDrawer
             }
             if (isApplied)
             {
-                DrawScopeLabel("Installed", new Color(0.33f, 0.79f, 0f));
+                DrawScopeLabel("Installed", AccentGreen);
                 GUILayout.Space(5);
             }
             DrawScopeLabel(ver.isImported ? "Imported" : ver.scope.ToString(), ver.isImported ? new Color(0.45f, 0.85f, 1f) : GetColorForScope(ver.scope));
@@ -635,7 +636,7 @@ public partial class VersionListDrawer
             {
                 EditorGUILayout.BeginVertical();
                 GUILayout.FlexibleSpace();
-                DrawScopeLabel("Current", new Color(0.33f, 0.79f, 0f));
+                DrawScopeLabel("Current", AccentGreen);
                 GUILayout.FlexibleSpace();
                 EditorGUILayout.EndVertical();
                 GUILayout.Space(10);
@@ -803,7 +804,7 @@ public partial class VersionListDrawer
         // Draw the timeline graphics
         if (Event.current.type == EventType.Repaint)
         {
-            Color timelineColor = isDisabled ? Color.gray : Color.green;
+            Color timelineColor = isDisabled ? Color.gray : AccentGreen;
             float centerX = timelineRect.center.x;
             float centerY = fullVersionItemRect.center.y;
             
@@ -838,7 +839,7 @@ public partial class VersionListDrawer
 
     private Color GetColorForScope(Scope scope) => scope switch
     {
-        Scope.PUBLIC => Color.green,
+        Scope.PUBLIC => AccentGreen,
         Scope.BETA => Color.yellow,
         Scope.ALPHA => Color.red,
         _ => Color.magenta
@@ -851,7 +852,7 @@ public partial class VersionListDrawer
 
         if (recommended != null && applied != null && editor.CompareVersions(recommended.version, applied.version) > 0)
         {
-            GUI.contentColor = Color.green;
+            GUI.contentColor = AccentGreen;
             EditorGUILayout.LabelField($"New version released: v{recommended.version}!", EditorStyles.boldLabel);
             GUI.contentColor = Color.white;
             if (!string.IsNullOrEmpty(recommended.changelog))

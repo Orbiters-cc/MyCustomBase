@@ -55,6 +55,7 @@ public partial class AssetGalleryModule
 
     private Vector2 scrollPosition;
     private string lastAvatarSignature;
+    private string loadingAvatarSignature;
     private bool hasFetchedCompatibleAssets;
     private bool hasFetchedAllAssets;
     private bool isLoading;
@@ -113,7 +114,6 @@ public partial class AssetGalleryModule
     private string selectedAvatarBaseFilter;
     private string commentDraft = "";
     private bool isPostingComment;
-    private bool isTogglingLike;
     private int editingCommentId;
     private string editingCommentDraft = "";
     private bool isUpdatingComment;
@@ -122,6 +122,8 @@ public partial class AssetGalleryModule
     private Image selectedAssetBannerImage;
     private Label selectedAssetBannerMessage;
     private int selectedAssetBannerAssetId;
+    private Button selectedAssetLikeButton;
+    private Label selectedAssetLikeCountLabel;
     private readonly Dictionary<int, AssetInteractionState> interactionStates = new Dictionary<int, AssetInteractionState>();
     private readonly Dictionary<int, Image> thumbnailImages = new Dictionary<int, Image>();
     private readonly Dictionary<int, Image> ownerAvatarImages = new Dictionary<int, Image>();
@@ -146,6 +148,9 @@ public partial class AssetGalleryModule
         public int commentCount;
         public bool likedByCurrentUser;
         public int currentUserLikeId;
+        public bool desiredLikedByCurrentUser;
+        public bool pendingLikeSync;
+        public bool isLikeSyncRunning;
         public List<InteractionRecord> comments = new List<InteractionRecord>();
     }
 
@@ -171,11 +176,6 @@ public partial class AssetGalleryModule
         public SelectedAssetPanel(AssetGalleryModule module)
         {
             this.module = module;
-        }
-
-        public void BuildHeaderUIToolkit(VisualElement root, AvatarDiscoveredAsset selectedAsset)
-        {
-            module.BuildSelectedAssetHeaderUIToolkit(root, selectedAsset);
         }
 
         public void BuildBannerUIToolkit(VisualElement root, AvatarDiscoveredAsset selectedAsset)
@@ -270,6 +270,8 @@ public partial class AssetGalleryModule
         selectedAssetBannerImage = null;
         selectedAssetBannerMessage = null;
         selectedAssetBannerAssetId = 0;
+        selectedAssetLikeButton = null;
+        selectedAssetLikeCountLabel = null;
         ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
         ReleasePhotoshootPreviewTexture();
     }
@@ -331,6 +333,11 @@ public partial class AssetGalleryModule
             }
         }
 
+        if (SelectedAsset != null)
+        {
+            UpdateSelectedAssetLikeVisual(SelectedAsset.id, GetInteractionState(SelectedAsset.id, false));
+        }
+
         foreach (var pair in commentCountLabels.ToList())
         {
             var state = GetInteractionState(pair.Key, false);
@@ -350,13 +357,55 @@ public partial class AssetGalleryModule
 
     private static Label CreateLabel(string text, int fontSize, FontStyle fontStyle, Color color)
     {
-        var label = new Label(text ?? string.Empty);
+        var label = new Label(CreateDisplayText(text));
         label.AddToClassList("mcb-label");
         label.style.fontSize = fontSize;
         label.style.unityFontStyleAndWeight = fontStyle;
         label.style.color = color;
         label.style.unityTextAlign = TextAnchor.MiddleLeft;
         return label;
+    }
+
+    private static string CreateDisplayText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        StringBuilder builder = null;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (char.IsHighSurrogate(c))
+            {
+                if (builder == null)
+                {
+                    builder = new StringBuilder(text.Length);
+                    builder.Append(text, 0, i);
+                }
+
+                if (i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    i++;
+                }
+                continue;
+            }
+
+            if (char.IsLowSurrogate(c))
+            {
+                if (builder == null)
+                {
+                    builder = new StringBuilder(text.Length);
+                    builder.Append(text, 0, i);
+                }
+                continue;
+            }
+
+            builder?.Append(c);
+        }
+
+        return builder != null ? builder.ToString().Trim() : text;
     }
 
     private static Label CreateMessageLabel(string text, Color color)
@@ -383,9 +432,81 @@ public partial class AssetGalleryModule
 
     private static Button CreateTextButton(string text, Action onClick)
     {
-        var button = new Button(onClick) { text = text };
+        var button = new Button { text = text };
         button.AddToClassList("mcb-button");
+        RegisterImmediateClick(button, onClick);
         return button;
+    }
+
+    private static void RegisterImmediateClick(Button button, Action onClick)
+    {
+        if (button == null || onClick == null)
+        {
+            return;
+        }
+
+        bool suppressNextClicked = false;
+        long lastImmediateTicks = 0L;
+
+        void activateImmediate(EventBase evt)
+        {
+            long now = DateTime.UtcNow.Ticks;
+            if (!button.enabledInHierarchy ||
+                now - lastImmediateTicks < TimeSpan.TicksPerMillisecond * 25L)
+            {
+                evt.StopImmediatePropagation();
+                evt.PreventDefault();
+                return;
+            }
+
+            lastImmediateTicks = now;
+            suppressNextClicked = true;
+            button.schedule.Execute(() => suppressNextClicked = false).StartingIn(1000);
+            evt.StopImmediatePropagation();
+            evt.PreventDefault();
+            onClick();
+        }
+
+        button.clicked += () =>
+        {
+            if (suppressNextClicked)
+            {
+                suppressNextClicked = false;
+                return;
+            }
+
+            onClick();
+        };
+
+        button.RegisterCallback<PointerDownEvent>(evt =>
+        {
+            if (evt.button != 0)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
+        button.RegisterCallback<MouseDownEvent>(evt =>
+        {
+            if (evt.button != 0)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
+        button.RegisterCallback<KeyDownEvent>(evt =>
+        {
+            if (evt.keyCode != KeyCode.Return &&
+                evt.keyCode != KeyCode.KeypadEnter &&
+                evt.keyCode != KeyCode.Space)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
     }
 
     private static Button CreateIconButton(MCBInteractionIconKind iconKind, string text, Action onClick)
@@ -439,6 +560,7 @@ public partial class AssetGalleryModule
         hasFetchedCompatibleAssets = false;
         hasFetchedAllAssets = false;
         isLoading = false;
+        loadingAvatarSignature = null;
         lastError = null;
         showNonMatchingAssets = false;
         isCreatingCustomBase = false;
@@ -453,6 +575,8 @@ public partial class AssetGalleryModule
         selectedAssetBannerImage = null;
         selectedAssetBannerMessage = null;
         selectedAssetBannerAssetId = 0;
+        selectedAssetLikeButton = null;
+        selectedAssetLikeCountLabel = null;
         ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
         if (clearSelection)
         {

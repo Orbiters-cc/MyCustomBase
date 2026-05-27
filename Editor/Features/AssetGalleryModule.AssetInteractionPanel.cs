@@ -204,10 +204,19 @@ public partial class AssetGalleryModule
                     state.error = error;
                     if (response != null)
                     {
-                        state.likeCount = response.likeCount;
+                        if (!HasActiveLikeSync(state))
+                        {
+                            state.likeCount = response.likeCount;
+                            state.likedByCurrentUser = response.likedByCurrentUser;
+                            state.desiredLikedByCurrentUser = response.likedByCurrentUser;
+                            state.currentUserLikeId = response.currentUserLikeId ?? 0;
+                        }
+                        else if (response.currentUserLikeId.HasValue && response.currentUserLikeId.Value > 0)
+                        {
+                            state.currentUserLikeId = response.currentUserLikeId.Value;
+                        }
+
                         state.commentCount = response.commentCount;
-                        state.likedByCurrentUser = response.likedByCurrentUser;
-                        state.currentUserLikeId = response.currentUserLikeId ?? 0;
                         state.comments = response.interactions
                             .Where(item => item != null && string.Equals(item.type, InteractionTypes.COMMENT, StringComparison.OrdinalIgnoreCase))
                             .ToList();
@@ -237,72 +246,170 @@ public partial class AssetGalleryModule
 
     private void ToggleSelectedAssetLike()
     {
-        if (SelectedAsset == null || isTogglingLike)
+        if (SelectedAsset == null)
         {
             return;
         }
 
+        int assetId = SelectedAsset.id;
         var state = EnsureInteractionLoad(SelectedAsset.id);
         if (state == null || state.isLoading)
         {
             return;
         }
 
-        isTogglingLike = true;
+        bool nextLiked = !state.likedByCurrentUser;
+        ApplyOptimisticLikeState(state, nextLiked);
+        state.desiredLikedByCurrentUser = nextLiked;
+        state.pendingLikeSync = true;
         state.error = null;
-        editor.RefreshUiToolkitSections();
+        UpdateSelectedAssetLikeVisual(assetId, state);
+        UpdateLikeCountLabels(assetId, state.likeCount);
+        editor.Repaint();
 
-        if (state.likedByCurrentUser && state.currentUserLikeId > 0)
+        if (!state.isLikeSyncRunning)
         {
-            EditorCoroutineUtility.StartCoroutineOwnerless(
-                InteractionService.DeleteInteractionCoroutine(
-                    state.currentUserLikeId,
-                    editor.authToken,
-                    error =>
-                    {
-                        isTogglingLike = false;
-                        if (!string.IsNullOrWhiteSpace(error))
-                        {
-                            state.error = error;
-                        }
-                        else
-                        {
-                            state.likedByCurrentUser = false;
-                            state.currentUserLikeId = 0;
-                            state.likeCount = Mathf.Max(0, state.likeCount - 1);
-                        }
-                        editor.RefreshUiToolkitSections();
-                        editor.Repaint();
-                    }));
-            return;
+            EditorCoroutineUtility.StartCoroutineOwnerless(SyncLikeQueueCoroutine(assetId, state));
+        }
+    }
+
+    private IEnumerator SyncLikeQueueCoroutine(int assetId, AssetInteractionState state)
+    {
+        if (state == null || state.isLikeSyncRunning)
+        {
+            yield break;
         }
 
-        var payload = new CreateInteractionRequest
+        state.isLikeSyncRunning = true;
+        while (state.pendingLikeSync)
         {
-            toAsset = SelectedAsset.id,
-            type = InteractionTypes.LIKE
-        };
+            state.pendingLikeSync = false;
+            bool targetLiked = state.desiredLikedByCurrentUser;
 
-        EditorCoroutineUtility.StartCoroutineOwnerless(
-            InteractionService.CreateInteractionCoroutine(
-                payload,
-                editor.authToken,
-                (interaction, error) =>
+            if (targetLiked)
+            {
+                if (state.currentUserLikeId <= 0)
                 {
-                    isTogglingLike = false;
+                    InteractionRecord createdInteraction = null;
+                    string error = null;
+                    var payload = new CreateInteractionRequest
+                    {
+                        toAsset = assetId,
+                        type = InteractionTypes.LIKE
+                    };
+
+                    yield return InteractionService.CreateInteractionCoroutine(
+                        payload,
+                        editor.authToken,
+                        (interaction, createError) =>
+                        {
+                            createdInteraction = interaction;
+                            error = createError;
+                        });
+
                     if (!string.IsNullOrWhiteSpace(error))
                     {
                         state.error = error;
+                        ReconcileLikeStateWithServer(state);
+                        break;
                     }
-                    else
-                    {
-                        state.likedByCurrentUser = true;
-                        state.currentUserLikeId = interaction != null ? interaction.id : 0;
-                        state.likeCount += 1;
-                    }
-                    editor.RefreshUiToolkitSections();
-                    editor.Repaint();
-                }));
+
+                    state.currentUserLikeId = createdInteraction != null ? createdInteraction.id : 0;
+                }
+            }
+            else if (state.currentUserLikeId > 0)
+            {
+                int interactionId = state.currentUserLikeId;
+                string error = null;
+                yield return InteractionService.DeleteInteractionCoroutine(
+                    interactionId,
+                    editor.authToken,
+                    deleteError => error = deleteError);
+
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    state.error = error;
+                    ReconcileLikeStateWithServer(state);
+                    break;
+                }
+
+                if (state.currentUserLikeId == interactionId)
+                {
+                    state.currentUserLikeId = 0;
+                }
+            }
+
+            if (state.desiredLikedByCurrentUser != (state.currentUserLikeId > 0))
+            {
+                state.pendingLikeSync = true;
+            }
+        }
+
+        state.isLikeSyncRunning = false;
+        UpdateSelectedAssetLikeVisual(assetId, state);
+        UpdateLikeCountLabels(assetId, state.likeCount);
+        if (!string.IsNullOrWhiteSpace(state.error))
+        {
+            editor.RefreshUiToolkitSections();
+        }
+        else
+        {
+            editor.Repaint();
+        }
+    }
+
+    private void UpdateSelectedAssetLikeVisual(int assetId, AssetInteractionState state)
+    {
+        if (SelectedAsset == null ||
+            SelectedAsset.id != assetId ||
+            selectedAssetLikeButton == null ||
+            selectedAssetLikeCountLabel == null)
+        {
+            return;
+        }
+
+        bool liked = state != null && state.likedByCurrentUser;
+        selectedAssetLikeCountLabel.text = state != null ? state.likeCount.ToString() : "0";
+        selectedAssetLikeButton.tooltip = liked ? "Unlike asset" : "Like asset";
+        selectedAssetLikeButton.EnableInClassList("mcb-selected-banner__like-button--liked", liked);
+        selectedAssetLikeButton.SetEnabled(state != null && !state.isLoading);
+    }
+
+    private void UpdateLikeCountLabels(int assetId, int likeCount)
+    {
+        if (likeCountLabels.TryGetValue(assetId, out var label) && label != null)
+        {
+            label.text = likeCount.ToString();
+        }
+    }
+
+    private static bool HasActiveLikeSync(AssetInteractionState state)
+    {
+        return state != null && (state.pendingLikeSync || state.isLikeSyncRunning);
+    }
+
+    private static void ApplyOptimisticLikeState(AssetInteractionState state, bool liked)
+    {
+        if (state == null || state.likedByCurrentUser == liked)
+        {
+            return;
+        }
+
+        state.likeCount = Mathf.Max(0, state.likeCount + (liked ? 1 : -1));
+        state.likedByCurrentUser = liked;
+    }
+
+    private static void ReconcileLikeStateWithServer(AssetInteractionState state)
+    {
+        if (state == null)
+        {
+            return;
+        }
+
+        bool serverLiked = state.currentUserLikeId > 0;
+        ApplyOptimisticLikeState(state, serverLiked);
+        state.desiredLikedByCurrentUser = serverLiked;
+        state.pendingLikeSync = false;
     }
 
     private void PostSelectedAssetComment()

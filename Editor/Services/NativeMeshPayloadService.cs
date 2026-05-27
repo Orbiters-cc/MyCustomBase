@@ -2290,20 +2290,20 @@ public static class NativeMeshPayloadService
             }
 
             var source = sourceRoot != null ? FindTransformByRelativePath(sourceRoot, poseBone.path) : null;
-            Vector3 basePosition;
-            Quaternion baseRotation;
-            Vector3 baseScale;
+            Vector3 targetPosition;
+            Quaternion targetRotation;
+            Vector3 targetScale;
             if (source != null)
             {
-                basePosition = source.localPosition;
-                baseRotation = source.localRotation;
-                baseScale = source.localScale;
+                targetPosition = source.localPosition + poseBone.localPositionOffset;
+                targetRotation = source.localRotation * poseBone.localRotationDelta;
+                targetScale = Vector3.Scale(source.localScale, poseBone.localScaleMultiplier);
             }
             else if (payloadBonesByPath.TryGetValue(poseBone.path, out var payloadBone))
             {
-                basePosition = payloadBone.localPosition;
-                baseRotation = payloadBone.localRotation;
-                baseScale = payloadBone.localScale;
+                targetPosition = payloadBone.localPosition;
+                targetRotation = payloadBone.localRotation;
+                targetScale = payloadBone.localScale;
             }
             else
             {
@@ -2312,9 +2312,9 @@ public static class NativeMeshPayloadService
             }
 
             Undo.RecordObject(target, "Apply Native Mesh Authoring Pose");
-            target.localPosition = basePosition + poseBone.localPositionOffset;
-            target.localRotation = baseRotation * poseBone.localRotationDelta;
-            target.localScale = Vector3.Scale(baseScale, poseBone.localScaleMultiplier);
+            target.localPosition = targetPosition;
+            target.localRotation = targetRotation;
+            target.localScale = targetScale;
             EditorUtility.SetDirty(target);
             applied++;
         }

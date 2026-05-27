@@ -153,64 +153,17 @@
 
 .mcb-selected-title-band {
     background-color: rgba(0,0,0,0);
-    padding: 20px 24px 18px 24px;
+    padding: 20px 24px 0 24px;
     position: relative;
     overflow: visible;
 }
 
-.mcb-selected-header {
-    flex-direction: row;
-    align-items: center;
-}
-
-.mcb-selected-header__title {
-    margin-left: 12px;
-    flex-grow: 1;
-    font-size: 15px;
-    color: #ffffff;
-    -unity-font-style: bold;
-}
-
-.mcb-selected-header__actions {
-    flex-direction: row;
-    align-items: center;
-    margin-left: 12px;
-}
-
-.mcb-selected-header__create-version {
-    height: 28px;
-    min-height: 28px;
-    min-width: 142px;
-    margin-left: 12px;
-    padding-left: 12px;
-    padding-right: 12px;
-}
-
-.mcb-selected-header__count {
-    margin-left: 8px;
-    margin-right: 14px;
-    color: #ffffff;
-    font-size: 12px;
-    -unity-font-style: bold;
-}
-
-.mcb-selected-header__comment-icon {
-    width: 16px;
-    height: 16px;
-}
-
-.mcb-selected-header__error {
-    margin-left: 8px;
-    color: #ff8c59;
-    font-size: 11px;
-}
-
 .mcb-selected-banner {
-    min-height: 96px;
+    min-height: 220px;
     margin-top: -20px;
     margin-left: -24px;
     margin-right: -24px;
-    margin-bottom: 14px;
+    margin-bottom: 0;
     background-color: #303030;
     border-radius: 0;
     overflow: hidden;
@@ -235,13 +188,155 @@
 
 .mcb-selected-banner__edit-button {
     position: absolute;
-    top: 10px;
-    right: 10px;
-    min-width: 58px;
+    left: 28px;
+    bottom: 50px;
+    min-width: 52px;
     height: 26px;
     background-color: rgba(30, 30, 30, 0.88);
     border-width: 1px;
-    border-color: rgba(255, 255, 255, 0.32);
+    border-color: rgba(255, 255, 255, 0.72);
+    border-radius: 13px;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+.mcb-selected-banner__edit-button:hover {
+    background-color: rgba(48, 48, 48, 0.92);
+}
+
+.mcb-selected-banner__breadcrumb {
+    position: absolute;
+    left: 27px;
+    top: 17px;
+    right: 102px;
+    height: 24px;
+    flex-direction: row;
+    align-items: center;
+    min-width: 0;
+}
+
+.mcb-selected-banner__breadcrumb-step {
+    height: 22px;
+    min-height: 22px;
+    background-color: rgba(0,0,0,0);
+    border-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    color: #ffffff;
+    -unity-font-style: normal;
+}
+
+.mcb-selected-banner__breadcrumb-step:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.mcb-selected-banner__breadcrumb-step Label {
+    color: #ffffff;
+    font-size: 12px;
+}
+
+.mcb-selected-banner__breadcrumb-separator {
+    margin-left: 9px;
+    margin-right: 9px;
+    color: #ffffff;
+}
+
+.mcb-selected-banner__breadcrumb-current {
+    flex-shrink: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    color: #ffffff;
+    -unity-font-style: bold;
+}
+
+.mcb-selected-banner__like-button {
+    position: absolute;
+    top: 13px;
+    right: 13px;
+    height: 26px;
+    min-height: 26px;
+    min-width: 51px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(28, 28, 28, 0.90);
+    border-width: 0;
+    border-radius: 13px;
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
+.mcb-selected-banner__like-button:hover {
+    background-color: rgba(48, 48, 48, 0.94);
+}
+
+.mcb-selected-banner__like-button--liked {
+    background-color: rgba(35, 54, 40, 0.92);
+}
+
+.mcb-selected-banner__like-icon {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    margin-right: 6px;
+}
+
+.mcb-selected-banner__like-count {
+    color: #ffffff;
+    font-size: 12px;
+    -unity-font-style: bold;
+}
+
+.mcb-selected-banner__author {
+    position: absolute;
+    right: 27px;
+    bottom: 52px;
+    height: 24px;
+    flex-direction: row;
+    align-items: center;
+    max-width: 230px;
+    min-width: 0;
+}
+
+.mcb-selected-banner__author-avatar {
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.36);
+    background-color: #3d3d3d;
+    overflow: hidden;
+}
+
+.mcb-selected-banner__author-avatar-image {
+    flex-grow: 1;
+}
+
+.mcb-selected-banner__author-by {
+    margin-left: 10px;
+    margin-right: 5px;
+    color: #ffffff;
+}
+
+.mcb-selected-banner__author-name {
+    color: #ffffff;
+    -unity-font-style: bold;
+    flex-shrink: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.mcb-selected-banner__error {
+    position: absolute;
+    top: 44px;
+    right: 14px;
+    max-width: 240px;
+    color: #ff8c59;
+    font-size: 11px;
+    white-space: normal;
 }
 
 .mcb-selected-actions-host,

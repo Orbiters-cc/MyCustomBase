@@ -14,6 +14,7 @@ using VRC.SDKBase.Editor;
 public class MCBEditor : UnityEditor.Editor
 {
     private const string DevModeWarningEnabledPrefKey = "MCB.DevModeWarningEnabled";
+    private static readonly TimeSpan LocalVersionCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly string[] UiToolkitStyleSheets =
     {
         "Packages/orbiters.mcb/Editor/Styles/mcb-theme.uss",
@@ -23,6 +24,12 @@ public class MCBEditor : UnityEditor.Editor
         "Packages/orbiters.mcb/Editor/Styles/mcb-version.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-avatar-options.uss"
     };
+    private static List<CustomBaseVersion> cachedImportedVersions;
+    private static DateTime cachedImportedVersionsAtUtc = DateTime.MinValue;
+    private static List<CustomBaseVersion> cachedUnsubmittedVersions;
+    private static DateTime cachedUnsubmittedVersionsAtUtc = DateTime.MinValue;
+    private static readonly Dictionary<string, List<string>> SharedDetectedAvatarFbxPathCache =
+        new Dictionary<string, List<string>>(StringComparer.Ordinal);
 
     // --- Target & Serialized Object ---
     public MyCustomBase customBaseTarget;
@@ -104,6 +111,8 @@ public class MCBEditor : UnityEditor.Editor
     private int cachedDetectedAvatarRootInstanceId;
     private bool detectedAvatarFbxCacheDirty = true;
     private bool delayedDetectionScheduled;
+    private bool asyncInitializationScheduled;
+    private bool initialBackgroundRefreshStarted;
     private bool lastConnectivityBlocked;
     private bool connectivityRecoveryScheduled;
 
@@ -178,15 +187,14 @@ public class MCBEditor : UnityEditor.Editor
         CheckAuthentication();
         lastConnectivityBlocked = IsConnectivityBlocked();
         MCBConnectivityMonitor.StatusChanged += RepaintFromConnectivityMonitor;
-        MCBConnectivityMonitor.EnsureCheckStarted(authToken, force: true);
+        MCBConnectivityMonitor.EnsureCheckStarted(authToken);
         MCBPackageVersionService.StatusChanged += RepaintFromPackageVersionStatus;
         MCBPackageVersionService.EnsureCheckStarted(authToken);
         
         // Ensure modules are enabled
         versionModule.OnEnable();
         
-        // Start async initialization
-        StartAsyncInitialization();
+        ScheduleAsyncInitialization();
         
         // Subscribe to play mode state changes
         EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
@@ -198,6 +206,8 @@ public class MCBEditor : UnityEditor.Editor
     {
         // Unsubscribe from play mode state changes
         EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+        EditorApplication.delayCall -= RunScheduledAsyncInitialization;
+        asyncInitializationScheduled = false;
         accountModule?.DetachUIToolkit();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
@@ -534,6 +544,25 @@ public class MCBEditor : UnityEditor.Editor
         return assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly();
     }
 
+    public void StartCreateNewVersion()
+    {
+        if (isCreatorModeProp == null)
+        {
+            return;
+        }
+
+        serializedObject.Update();
+        isCreatorModeProp.boolValue = true;
+        serializedObject.ApplyModifiedProperties();
+        if (customBaseTarget != null)
+        {
+            EditorUtility.SetDirty(customBaseTarget);
+        }
+
+        RefreshUiToolkitSections();
+        Repaint();
+    }
+
     private static void BeginAssetViewImGuiPadding()
     {
         GUILayout.Space(AssetViewImGuiPaddingTop);
@@ -605,9 +634,9 @@ public class MCBEditor : UnityEditor.Editor
 
     private void OnProjectChanged()
     {
-        InvalidateDetectedAvatarFbxCache();
+        InvalidateDetectedAvatarFbxCache(true);
         SmrPathService.InvalidateCache();
-        LoadImportedVersions();
+        LoadImportedVersions(true);
         if (!ShouldDeferBackgroundNetworkRefresh())
         {
             assetGalleryModule?.OnProjectChanged();
@@ -620,8 +649,46 @@ public class MCBEditor : UnityEditor.Editor
 
     private void OnHierarchyChanged()
     {
-        InvalidateDetectedAvatarFbxCache();
+        InvalidateDetectedAvatarFbxCache(true);
         SmrPathService.InvalidateCache();
+    }
+
+    internal bool CanStartBackgroundRefreshes
+    {
+        get { return initialBackgroundRefreshStarted && !ShouldDeferBackgroundNetworkRefresh(); }
+    }
+
+    private void ScheduleAsyncInitialization()
+    {
+        if (asyncInitializationScheduled)
+        {
+            return;
+        }
+
+        asyncInitializationScheduled = true;
+        EditorApplication.delayCall += RunScheduledAsyncInitialization;
+    }
+
+    private void RunScheduledAsyncInitialization()
+    {
+        asyncInitializationScheduled = false;
+        EditorApplication.delayCall -= RunScheduledAsyncInitialization;
+
+        if (customBaseTarget == null)
+        {
+            return;
+        }
+
+        if (ShouldDeferBackgroundNetworkRefresh())
+        {
+            ScheduleAsyncInitialization();
+            return;
+        }
+
+        initialBackgroundRefreshStarted = true;
+        StartAsyncInitialization();
+        RefreshUiToolkitSections();
+        Repaint();
     }
 
     private void StartAsyncInitialization()
@@ -640,7 +707,7 @@ public class MCBEditor : UnityEditor.Editor
         }
         else
         {
-            TryLoadCachedVersionsAndRefetch();
+            TryLoadCachedVersionsAndRefetch(false);
         }
     }
 
@@ -696,7 +763,12 @@ public class MCBEditor : UnityEditor.Editor
         MCBLogger.Log($"[MCBEditor] Updated with {versions.Count} server versions");
     }
 
-    private void TryLoadCachedVersionsAndRefetch()
+    public void LoadCachedVersionsForCurrentSelection()
+    {
+        TryLoadCachedVersionsAndRefetch(false);
+    }
+
+    private void TryLoadCachedVersionsAndRefetch(bool forceRefetch)
     {
         string fbxPath = GetCurrentFBXPath();
         if (string.IsNullOrEmpty(fbxPath))
@@ -726,11 +798,10 @@ public class MCBEditor : UnityEditor.Editor
             MCBLogger.Log($"[MCBEditor] Loaded {cached.versions.Count} cached versions");
         }
 
-        // Start background version fetch (will update UI when complete)
-        if (HasServerAccess)
+        if (HasServerAccess && (forceRefetch || cached.versions.Count == 0))
         {
             fetchAttempted = true;
-            versionService.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false);
+            versionService.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: !forceRefetch);
         }
     }
 
@@ -745,7 +816,7 @@ public class MCBEditor : UnityEditor.Editor
         {
             versionModule.actions.UpdateCurrentBaseFbxHash();
         }
-        TryLoadCachedVersionsAndRefetch();
+        TryLoadCachedVersionsAndRefetch(false);
         assetGalleryModule?.RefreshIfNeeded(force: true);
     }
 
@@ -1279,7 +1350,7 @@ public class MCBEditor : UnityEditor.Editor
             accessDeniedAssetId = null;
             fetchError = null;
         }
-        MCBPackageVersionService.EnsureCheckStarted(authToken, true);
+        MCBPackageVersionService.EnsureCheckStarted(authToken);
         accountModule?.Refresh();
         assetGalleryModule?.OnAuthenticationChanged();
         RefreshUiToolkitSections();
@@ -1389,9 +1460,15 @@ public class MCBEditor : UnityEditor.Editor
         }
     }
 
-    public void LoadUnsubmittedVersions()
+    public void LoadUnsubmittedVersions(bool forceRefresh = false)
     {
         unsubmittedVersions.Clear();
+        if (!forceRefresh && IsLocalVersionCacheFresh(cachedUnsubmittedVersionsAtUtc) && cachedUnsubmittedVersions != null)
+        {
+            unsubmittedVersions.AddRange(cachedUnsubmittedVersions);
+            return;
+        }
+
         string path = MCBUtils.UNSUBMITTED_VERSIONS_FILE;
         if (File.Exists(path))
         {
@@ -1413,15 +1490,25 @@ public class MCBEditor : UnityEditor.Editor
                 MCBLogger.LogError($"[MCB] Failed to load unsubmitted versions from {path}: {ex.Message}");
             }
         }
+
+        cachedUnsubmittedVersions = new List<CustomBaseVersion>(unsubmittedVersions);
+        cachedUnsubmittedVersionsAtUtc = DateTime.UtcNow;
     }
 
-    public void LoadImportedVersions()
+    public void LoadImportedVersions(bool forceRefresh = false)
     {
         importedVersions.Clear();
+        if (!forceRefresh && IsLocalVersionCacheFresh(cachedImportedVersionsAtUtc) && cachedImportedVersions != null)
+        {
+            importedVersions.AddRange(cachedImportedVersions);
+            return;
+        }
 
         string versionsRoot = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
         if (!Directory.Exists(versionsRoot))
         {
+            cachedImportedVersions = new List<CustomBaseVersion>();
+            cachedImportedVersionsAtUtc = DateTime.UtcNow;
             return;
         }
 
@@ -1452,6 +1539,14 @@ public class MCBEditor : UnityEditor.Editor
         {
             MCBLogger.LogError($"[MCB] Failed to scan imported versions: {ex.Message}");
         }
+
+        cachedImportedVersions = new List<CustomBaseVersion>(importedVersions);
+        cachedImportedVersionsAtUtc = DateTime.UtcNow;
+    }
+
+    private static bool IsLocalVersionCacheFresh(DateTime cachedAtUtc)
+    {
+        return cachedAtUtc != DateTime.MinValue && DateTime.UtcNow - cachedAtUtc < LocalVersionCacheDuration;
     }
 
     public List<CustomBaseVersion> GetAllVersions()
@@ -1592,10 +1687,19 @@ public class MCBEditor : UnityEditor.Editor
 
         Transform root = customBaseTarget.transform.root;
         int rootInstanceId = root != null ? root.GetInstanceID() : 0;
+        string sharedCacheKey = BuildDetectedAvatarFbxCacheKey(rootInstanceId);
         if (!detectedAvatarFbxCacheDirty &&
             cachedDetectedAvatarFbxPaths != null &&
             cachedDetectedAvatarRootInstanceId == rootInstanceId)
         {
+            return new List<string>(cachedDetectedAvatarFbxPaths);
+        }
+
+        if (!string.IsNullOrEmpty(sharedCacheKey) && SharedDetectedAvatarFbxPathCache.TryGetValue(sharedCacheKey, out var sharedPaths))
+        {
+            cachedDetectedAvatarRootInstanceId = rootInstanceId;
+            cachedDetectedAvatarFbxPaths = new List<string>(sharedPaths);
+            detectedAvatarFbxCacheDirty = false;
             return new List<string>(cachedDetectedAvatarFbxPaths);
         }
 
@@ -1644,7 +1748,42 @@ public class MCBEditor : UnityEditor.Editor
         cachedDetectedAvatarRootInstanceId = rootInstanceId;
         cachedDetectedAvatarFbxPaths = uniquePaths;
         detectedAvatarFbxCacheDirty = false;
+        if (!string.IsNullOrEmpty(sharedCacheKey))
+        {
+            SharedDetectedAvatarFbxPathCache[sharedCacheKey] = new List<string>(uniquePaths);
+        }
+
         return new List<string>(uniquePaths);
+    }
+
+    private string BuildDetectedAvatarFbxCacheKey(int rootInstanceId)
+    {
+        if (rootInstanceId == 0)
+        {
+            return null;
+        }
+
+        var basePaths = new List<string>();
+        if (baseFbxFilesProp != null)
+        {
+            for (int i = 0; i < baseFbxFilesProp.arraySize; i++)
+            {
+                var fbx = baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+                if (fbx == null)
+                {
+                    continue;
+                }
+
+                string path = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(fbx));
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    basePaths.Add(path);
+                }
+            }
+        }
+
+        basePaths.Sort(StringComparer.OrdinalIgnoreCase);
+        return rootInstanceId + "|" + string.Join("|", basePaths);
     }
 
     private bool AreBaseFbxReferencesEqual(List<GameObject> fbxAssets)
@@ -1671,11 +1810,44 @@ public class MCBEditor : UnityEditor.Editor
         return true;
     }
 
-    private void InvalidateDetectedAvatarFbxCache()
+    private void InvalidateDetectedAvatarFbxCache(bool clearSharedCache = false)
     {
+        int rootInstanceId = 0;
+        try
+        {
+            rootInstanceId = customBaseTarget != null && customBaseTarget.transform != null && customBaseTarget.transform.root != null
+                ? customBaseTarget.transform.root.GetInstanceID()
+                : 0;
+        }
+        catch
+        {
+            rootInstanceId = 0;
+        }
+
         detectedAvatarFbxCacheDirty = true;
         cachedDetectedAvatarFbxPaths = null;
         cachedDetectedAvatarRootInstanceId = 0;
+
+        if (!clearSharedCache)
+        {
+            return;
+        }
+
+        if (rootInstanceId != 0)
+        {
+            string prefix = rootInstanceId + "|";
+            var keysToRemove = SharedDetectedAvatarFbxPathCache.Keys
+                .Where(key => key != null && key.StartsWith(prefix, StringComparison.Ordinal))
+                .ToList();
+            foreach (string key in keysToRemove)
+            {
+                SharedDetectedAvatarFbxPathCache.Remove(key);
+            }
+        }
+        else
+        {
+            SharedDetectedAvatarFbxPathCache.Clear();
+        }
     }
 
     private static void TryAddFbxPathFromObject(UnityEngine.Object obj, Action<string> addPath)
@@ -1773,7 +1945,7 @@ public class MCBEditor : UnityEditor.Editor
 
             MCBLogger.Log("[MCBEditor] Connectivity restored. Refreshing avatar base detection, gallery assets, and versions.");
             UserService.ClearAllFailedRequests();
-            InvalidateDetectedAvatarFbxCache();
+            InvalidateDetectedAvatarFbxCache(true);
             DetectAndLoadCached();
             RefreshUiToolkitSections();
             Repaint();

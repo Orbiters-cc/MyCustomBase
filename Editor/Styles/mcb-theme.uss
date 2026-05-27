@@ -72,12 +72,12 @@
     min-height: 36px;
     height: 36px;
     border-radius: 8px;
-    background-color: #20a660;
+    background-color: #00DA6D;
     -unity-font-style: bold;
 }
 
 .mcb-button--primary:hover {
-    background-color: #27bd70;
+    background-color: #00DA6D;
 }
 
 .mcb-button:disabled {

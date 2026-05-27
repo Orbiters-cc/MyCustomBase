@@ -16,88 +16,6 @@ using UnityEngine.UIElements;
 
 public partial class AssetGalleryModule
 {
-    private void BuildSelectedAssetHeaderUIToolkit(VisualElement root, AvatarDiscoveredAsset selectedAsset)
-    {
-        var state = EnsureInteractionLoad(selectedAsset.id);
-        var row = CreateRow();
-        row.AddToClassList("mcb-selected-header");
-
-        var backButton = CreateTextButton("< Back to custom bases", () =>
-        {
-            ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
-            SelectedAsset = null;
-            commentDraft = "";
-            editingCommentId = 0;
-            editingCommentDraft = "";
-            selectedAssetBannerFrame = null;
-            selectedAssetBannerImage = null;
-            selectedAssetBannerMessage = null;
-            selectedAssetBannerAssetId = 0;
-            EditorPrefs.DeleteKey(SelectedAssetIdPrefKey);
-            editor.RefreshUiToolkitSections();
-            editor.Repaint();
-        });
-        backButton.style.width = 165f;
-        row.Add(backButton);
-
-        var title = CreateLabel(selectedAsset.name ?? "Unnamed asset", 15, FontStyle.Bold, Color.white);
-        title.AddToClassList("mcb-selected-header__title");
-        row.Add(title);
-
-        if (ShouldShowCreateNewVersionButton(selectedAsset))
-        {
-            var createVersionButton = CreateTextButton("Create New Version", StartCreateNewVersion);
-            createVersionButton.AddToClassList("mcb-button--primary");
-            createVersionButton.AddToClassList("mcb-selected-header__create-version");
-            row.Add(createVersionButton);
-        }
-
-        var actions = CreateRow();
-        actions.AddToClassList("mcb-selected-header__actions");
-
-        var likeButton = CreateIconButton(MCBInteractionIconKind.Like, state != null && state.likedByCurrentUser ? "Liked" : "Like", () => ToggleSelectedAssetLike());
-        likeButton.SetEnabled(!isTogglingLike && state != null && !state.isLoading);
-        actions.Add(likeButton);
-
-        var likeCount = CreateLabel(state != null ? state.likeCount.ToString() : "0", 12, FontStyle.Bold, Color.white);
-        likeCount.AddToClassList("mcb-selected-header__count");
-        actions.Add(likeCount);
-
-        var commentImage = new MCBInteractionIconElement(MCBInteractionIconKind.Comment);
-        commentImage.AddToClassList("mcb-selected-header__comment-icon");
-        actions.Add(commentImage);
-
-        actions.Add(CreateLabel(state != null ? state.commentCount.ToString() : "0", 12, FontStyle.Bold, Color.white));
-
-        if (state != null && !string.IsNullOrWhiteSpace(state.error))
-        {
-            var error = CreateLabel(state.error, 11, FontStyle.Normal, new Color(1f, 0.55f, 0.35f));
-            error.AddToClassList("mcb-selected-header__error");
-            actions.Add(error);
-        }
-
-        row.Add(actions);
-        root.Add(row);
-    }
-
-    private bool ShouldShowCreateNewVersionButton(AvatarDiscoveredAsset selectedAsset)
-    {
-        if (selectedAsset == null ||
-            editor == null ||
-            !editor.isAuthenticated ||
-            !editor.HasServerAccess ||
-            MCBPackageVersionService.RequiresMajorUpdate ||
-            editor.isCreatorModeProp == null ||
-            editor.isCreatorModeProp.boolValue ||
-            !selectedAsset.ownerId.HasValue)
-        {
-            return false;
-        }
-
-        int currentUserId = GetCurrentUserId();
-        return currentUserId > 0 && selectedAsset.ownerId.Value == currentUserId;
-    }
-
     private bool CanEditSelectedAssetMedia(AvatarDiscoveredAsset selectedAsset)
     {
         if (selectedAsset == null ||
@@ -114,25 +32,6 @@ public partial class AssetGalleryModule
         return currentUserId > 0 && selectedAsset.ownerId.Value == currentUserId;
     }
 
-    private void StartCreateNewVersion()
-    {
-        if (editor == null || editor.isCreatorModeProp == null)
-        {
-            return;
-        }
-
-        editor.serializedObject.Update();
-        editor.isCreatorModeProp.boolValue = true;
-        editor.serializedObject.ApplyModifiedProperties();
-        if (editor.customBaseTarget != null)
-        {
-            EditorUtility.SetDirty(editor.customBaseTarget);
-        }
-
-        editor.RefreshUiToolkitSections();
-        editor.Repaint();
-    }
-
     private void BuildSelectedAssetBannerUIToolkit(VisualElement root, AvatarDiscoveredAsset selectedAsset)
     {
         if (selectedAsset == null || selectedAsset.id <= 0)
@@ -141,11 +40,8 @@ public partial class AssetGalleryModule
         }
 
         bool canEditMedia = CanEditSelectedAssetMedia(selectedAsset);
+        var state = EnsureInteractionLoad(selectedAsset.id);
         string bannerUrl = ResolveSelectedAssetBannerUrl(selectedAsset);
-        if (string.IsNullOrWhiteSpace(bannerUrl) && !canEditMedia)
-        {
-            return;
-        }
 
         var frame = new VisualElement();
         frame.AddToClassList("mcb-selected-banner");
@@ -154,7 +50,7 @@ public partial class AssetGalleryModule
 
         selectedAssetBannerFrame = frame;
         selectedAssetBannerAssetId = selectedAsset.id;
-        selectedAssetBannerImage = new Image { scaleMode = ScaleMode.ScaleToFit };
+        selectedAssetBannerImage = new Image { scaleMode = ScaleMode.ScaleAndCrop };
         selectedAssetBannerImage.AddToClassList("mcb-selected-banner__image");
         frame.Add(selectedAssetBannerImage);
 
@@ -162,12 +58,24 @@ public partial class AssetGalleryModule
         selectedAssetBannerMessage.AddToClassList("mcb-selected-banner__message");
         frame.Add(selectedAssetBannerMessage);
 
+        frame.Add(CreateSelectedAssetBreadcrumb(selectedAsset));
+        frame.Add(CreateSelectedAssetLikeButton(state));
+
         if (canEditMedia)
         {
             var editButton = CreateTextButton("Edit", () => BeginEditSelectedAssetMedia(selectedAsset));
             editButton.AddToClassList("mcb-selected-banner__edit-button");
             editButton.SetEnabled(!isSavingSelectedAssetMedia && !isGeneratingPhotoshootImage);
             frame.Add(editButton);
+        }
+
+        frame.Add(CreateSelectedAssetAuthorBadge(selectedAsset));
+
+        if (state != null && !string.IsNullOrWhiteSpace(state.error))
+        {
+            var interactionError = CreateLabel(state.error, 11, FontStyle.Normal, new Color(1f, 0.55f, 0.35f));
+            interactionError.AddToClassList("mcb-selected-banner__error");
+            frame.Add(interactionError);
         }
 
         if (string.IsNullOrWhiteSpace(bannerUrl))
@@ -331,7 +239,7 @@ public partial class AssetGalleryModule
         var texture = selectedAssetBannerImage.image;
         if (texture == null || texture.width <= 0 || texture.height <= 0)
         {
-            selectedAssetBannerFrame.style.height = 96f;
+            selectedAssetBannerFrame.style.height = 220f;
             return;
         }
 
@@ -343,6 +251,118 @@ public partial class AssetGalleryModule
 
         float height = Mathf.Max(72f, width * texture.height / texture.width);
         selectedAssetBannerFrame.style.height = height;
+    }
+
+    private VisualElement CreateSelectedAssetBreadcrumb(AvatarDiscoveredAsset selectedAsset)
+    {
+        var row = CreateRow();
+        row.AddToClassList("mcb-selected-banner__breadcrumb");
+
+        var galleryStep = new Button { text = "Gallery" };
+        RegisterImmediateClick(galleryStep, ReturnToGallery);
+        galleryStep.AddToClassList("mcb-selected-banner__breadcrumb-step");
+        row.Add(galleryStep);
+
+        var separator = CreateLabel(">", 12, FontStyle.Normal, Color.white);
+        separator.AddToClassList("mcb-selected-banner__breadcrumb-separator");
+        row.Add(separator);
+
+        var title = CreateLabel(selectedAsset?.name ?? "Unnamed asset", 12, FontStyle.Bold, Color.white);
+        title.AddToClassList("mcb-selected-banner__breadcrumb-current");
+        row.Add(title);
+
+        return row;
+    }
+
+    private Button CreateSelectedAssetLikeButton(AssetInteractionState state)
+    {
+        var button = new Button
+        {
+            tooltip = state != null && state.likedByCurrentUser ? "Unlike asset" : "Like asset"
+        };
+        RegisterImmediateClick(button, ToggleSelectedAssetLike);
+        button.AddToClassList("mcb-selected-banner__like-button");
+        button.EnableInClassList("mcb-selected-banner__like-button--liked", state != null && state.likedByCurrentUser);
+        button.SetEnabled(state != null && !state.isLoading);
+
+        var icon = new MCBInteractionIconElement(MCBInteractionIconKind.Like);
+        icon.AddToClassList("mcb-selected-banner__like-icon");
+        button.Add(icon);
+
+        var count = CreateLabel(state != null ? state.likeCount.ToString() : "0", 12, FontStyle.Bold, Color.white);
+        count.AddToClassList("mcb-selected-banner__like-count");
+        button.Add(count);
+        selectedAssetLikeButton = button;
+        selectedAssetLikeCountLabel = count;
+        return button;
+    }
+
+    private VisualElement CreateSelectedAssetAuthorBadge(AvatarDiscoveredAsset selectedAsset)
+    {
+        var row = CreateRow();
+        row.AddToClassList("mcb-selected-banner__author");
+
+        var avatarFrame = new VisualElement();
+        avatarFrame.AddToClassList("mcb-selected-banner__author-avatar");
+        var avatarImage = new Image { scaleMode = ScaleMode.ScaleAndCrop };
+        avatarImage.AddToClassList("mcb-selected-banner__author-avatar-image");
+
+        if (selectedAsset != null && selectedAsset.ownerId.HasValue && selectedAsset.ownerId.Value > 0)
+        {
+            UserService.UpdateUserInfo(selectedAsset.ownerId.Value, selectedAsset.ownerUsername, selectedAsset.ownerAvatarUrl);
+            avatarImage.image = UserService.GetUserAvatar(selectedAsset.ownerId.Value);
+            ownerAvatarImages[selectedAsset.id] = avatarImage;
+        }
+        avatarFrame.Add(avatarImage);
+        row.Add(avatarFrame);
+
+        var by = CreateLabel("by", 11, FontStyle.Normal, Color.white);
+        by.AddToClassList("mcb-selected-banner__author-by");
+        row.Add(by);
+
+        string ownerName = ResolveSelectedAssetOwnerName(selectedAsset);
+        var name = CreateLabel(string.IsNullOrWhiteSpace(ownerName) ? "Unknown author" : ownerName, 11, FontStyle.Bold, Color.white);
+        name.AddToClassList("mcb-selected-banner__author-name");
+        row.Add(name);
+        return row;
+    }
+
+    private static string ResolveSelectedAssetOwnerName(AvatarDiscoveredAsset selectedAsset)
+    {
+        if (selectedAsset == null)
+        {
+            return null;
+        }
+
+        string ownerName = selectedAsset.ownerUsername;
+        if (selectedAsset.ownerId.HasValue && selectedAsset.ownerId.Value > 0)
+        {
+            var info = UserService.GetUserInfo(selectedAsset.ownerId.Value);
+            if (info != null && !string.IsNullOrWhiteSpace(info.username))
+            {
+                ownerName = info.username;
+            }
+        }
+
+        return ownerName;
+    }
+
+    private void ReturnToGallery()
+    {
+        ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
+        SelectedAsset = null;
+        commentDraft = "";
+        editingCommentId = 0;
+        editingCommentDraft = "";
+        selectedAssetBannerFrame = null;
+        selectedAssetBannerImage = null;
+        selectedAssetBannerMessage = null;
+        selectedAssetBannerAssetId = 0;
+        selectedAssetLikeButton = null;
+        selectedAssetLikeCountLabel = null;
+        EditorPrefs.DeleteKey(SelectedAssetIdPrefKey);
+        editor.RefreshUiToolkitSections();
+        editor.Repaint();
     }
 
     private static string ResolveSelectedAssetBannerUrl(AvatarDiscoveredAsset selectedAsset)
@@ -425,13 +445,36 @@ public partial class AssetGalleryModule
             return;
         }
 
+        Texture2D cachedThumbnail = null;
+        Texture2D cachedBanner = null;
+        if (editThumbnail != null && !string.IsNullOrWhiteSpace(updatedAsset.thumbnail))
+        {
+            cachedThumbnail = AvatarAssetDiscoveryService.CacheThumbnail(updatedAsset.id, updatedAsset.thumbnail, editThumbnail);
+        }
+        if (editBanner != null && !string.IsNullOrWhiteSpace(updatedAsset.mcbBanner))
+        {
+            cachedBanner = AvatarAssetDiscoveryService.CacheBanner(updatedAsset.id, updatedAsset.mcbBanner, editBanner);
+        }
+
         ApplyAssetMediaFields(SelectedAsset, updatedAsset);
         foreach (var asset in compatibleAssets.Concat(allAssets).Where(asset => asset != null && asset.id == updatedAsset.id))
         {
             ApplyAssetMediaFields(asset, updatedAsset);
         }
 
-        selectedAssetBannerTextures.Remove(updatedAsset.id);
+        if (cachedThumbnail != null && thumbnailImages.TryGetValue(updatedAsset.id, out var thumbnailImage) && thumbnailImage != null)
+        {
+            thumbnailImage.image = cachedThumbnail;
+        }
+
+        if (cachedBanner != null)
+        {
+            selectedAssetBannerTextures[updatedAsset.id] = cachedBanner;
+        }
+        else
+        {
+            selectedAssetBannerTextures.Remove(updatedAsset.id);
+        }
         selectedAssetBannerErrors.Remove(updatedAsset.id);
         selectedAssetBannerLoads.Remove(updatedAsset.id);
     }
@@ -494,6 +537,8 @@ public partial class AssetGalleryModule
             selectedAssetBannerImage = null;
             selectedAssetBannerMessage = null;
             selectedAssetBannerAssetId = 0;
+            selectedAssetLikeButton = null;
+            selectedAssetLikeCountLabel = null;
         }
 
         if (persist)
@@ -539,7 +584,8 @@ public partial class AssetGalleryModule
             return;
         }
 
-        SelectAsset(asset, persist: true, refreshVersions: true);
+        SelectAsset(asset, persist: true, refreshVersions: false);
+        editor.LoadCachedVersionsForCurrentSelection();
     }
 }
 #endif

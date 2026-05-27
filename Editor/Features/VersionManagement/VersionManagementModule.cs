@@ -17,7 +17,8 @@ public partial class VersionManagementModule
     private CustomBaseVersion lastSelectionForWarning;
     private bool lastRecommendedWasNull;
     private float imguiDisplayedActionProgress = 1f;
-    private Color imguiDisplayedFillColor = new Color(0.125f, 0.651f, 0.376f, 1f);
+    private static readonly Color AccentGreen = new Color32(0, 218, 109, 255);
+    private Color imguiDisplayedFillColor = AccentGreen;
     private Color imguiDisplayedTrackColor = new Color(0.46f, 0.46f, 0.46f, 1f);
     private bool imguiWasApplying;
     private double imguiLastProgressUpdateTime;
@@ -144,7 +145,7 @@ public partial class VersionManagementModule
                     {
                         if (!hasShownMissingVersionWarning)
                         {
-                            MCBLogger.LogWarning("[MCBEditor] No recommended version available. Please select a version from the list.");
+                            MCBLogger.Log("[MCBEditor] No recommended version available. Please select a version from the list.");
                             hasShownMissingVersionWarning = true;
                         }
                         return;
@@ -347,7 +348,7 @@ public partial class VersionManagementModule
             case ActionType.UNAVAILABLE:
                 return new Color(0.349f, 0.349f, 0.349f, 1f);
             default:
-                return new Color(0.125f, 0.651f, 0.376f, 1f);
+                return AccentGreen;
         }
     }
 

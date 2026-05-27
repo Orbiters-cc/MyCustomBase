@@ -46,7 +46,7 @@
     width: 0;
     height: 4px;
     border-radius: 2px;
-    background-color: #22e20f;
+    background-color: #00DA6D;
 }
 
 .mcb-account {
@@ -154,7 +154,7 @@
 }
 
 .mcb-account__status-dot--connected {
-    background-color: #55ff1f;
+    background-color: #00DA6D;
 }
 
 .mcb-account__status-dot--limited {

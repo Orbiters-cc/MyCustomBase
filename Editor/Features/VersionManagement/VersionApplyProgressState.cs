@@ -8,7 +8,7 @@ public sealed class VersionApplyProgressState
     public bool IsRunning { get; private set; }
     public float Progress { get; private set; } = 1f;
     public string StepText { get; private set; } = DefaultStepText;
-    public Color FillColor { get; private set; } = new Color(0.125f, 0.651f, 0.376f, 1f);
+    public Color FillColor { get; private set; } = new Color32(0, 218, 109, 255);
 
     public void SetFillColor(Color color)
     {

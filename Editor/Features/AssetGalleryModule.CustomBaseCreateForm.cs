@@ -517,6 +517,19 @@ public partial class AssetGalleryModule
                         isCompatible = true
                     };
 
+                    if (createThumbnail != null && !string.IsNullOrWhiteSpace(discoveredAsset.thumbnailUrl))
+                    {
+                        AvatarAssetDiscoveryService.CacheThumbnail(discoveredAsset.id, discoveredAsset.thumbnailUrl, createThumbnail);
+                    }
+                    if (createBanner != null && !string.IsNullOrWhiteSpace(discoveredAsset.bannerUrl))
+                    {
+                        var cachedBanner = AvatarAssetDiscoveryService.CacheBanner(discoveredAsset.id, discoveredAsset.bannerUrl, createBanner);
+                        if (cachedBanner != null)
+                        {
+                            selectedAssetBannerTextures[discoveredAsset.id] = cachedBanner;
+                        }
+                    }
+
                     compatibleAssets.RemoveAll(asset => asset != null && asset.id == discoveredAsset.id);
                     compatibleAssets.Add(discoveredAsset);
                     hasFetchedCompatibleAssets = true;

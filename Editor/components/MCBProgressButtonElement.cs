@@ -53,6 +53,7 @@ public sealed class MCBProgressButtonElement : Button
             displayedFillColor = data.fillColor;
             displayedTrackColor = data.isRunning ? data.trackColor : data.fillColor;
             displayedProgress = data.isRunning ? Mathf.Clamp01(data.progress) : 1f;
+            wasRunning = data.isRunning;
             UpdateVisuals();
             animation = schedule.Execute(UpdateVisuals).Every(16);
         });

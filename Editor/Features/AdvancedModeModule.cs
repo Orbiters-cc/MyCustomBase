@@ -23,6 +23,8 @@ public class AdvancedModeModule
     private string connectionMockJsonDraft;
     private string connectionMockError;
     private bool connectionMockBusy;
+    private string healthCheckStatus;
+    private MessageType healthCheckStatusType = MessageType.None;
     
     public AdvancedModeModule(MCBEditor editor)
     {
@@ -155,6 +157,7 @@ public class AdvancedModeModule
                 }
                 EditorGUILayout.EndHorizontal();
 
+                DrawHealthCheckControls();
 
                 // Flush user cache button
                 EditorGUILayout.BeginHorizontal();  
@@ -510,6 +513,76 @@ public class AdvancedModeModule
             return candidate;
         }
         return assetPath;
+    }
+
+    private void DrawHealthCheckControls()
+    {
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Health Checks", EditorStyles.boldLabel);
+
+        bool canRunHealthChecks = !EditorApplication.isCompiling && !EditorApplication.isPlayingOrWillChangePlaymode;
+        using (new EditorGUI.DisabledScope(!canRunHealthChecks))
+        {
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(EditorGUI.indentLevel * 15);
+
+            if (GUILayout.Button(new GUIContent("Run All", "Run all deterministic MCB editor health checks."), GUILayout.Width(100f)))
+            {
+                RunHealthCheck("All deterministic health checks", MCBEditorHealthChecks.RunAllOrThrow);
+            }
+
+            if (GUILayout.Button(new GUIContent("Native Mesh Payload", "Validate native mesh payload build, materialization, mesh assignment, and authoring pose application."), GUILayout.Width(170f)))
+            {
+                RunHealthCheck("Native Mesh Payload health check", NativeMeshPayloadHealthCheck.RunOrThrow);
+            }
+
+            if (GUILayout.Button(new GUIContent("Version Apply/Reset", "Validate version apply/reset FBX backup and advanced mesh source-path invariants."), GUILayout.Width(170f)))
+            {
+                RunHealthCheck("Version Apply/Reset invariant health check", VersionApplyResetInvariantHealthCheck.RunOrThrow);
+            }
+
+            EditorGUILayout.EndHorizontal();
+        }
+
+        if (!canRunHealthChecks)
+        {
+            EditorGUILayout.HelpBox("Health checks are disabled while Unity is compiling or entering play mode.", MessageType.Info);
+        }
+
+        if (!string.IsNullOrWhiteSpace(healthCheckStatus))
+        {
+            EditorGUILayout.HelpBox(healthCheckStatus, healthCheckStatusType);
+        }
+    }
+
+    private void RunHealthCheck(string label, System.Action run)
+    {
+        if (run == null)
+        {
+            return;
+        }
+
+        try
+        {
+            EditorUtility.DisplayProgressBar("MCB Health Checks", "Running " + label + "...", 0.5f);
+            run();
+            healthCheckStatus = label + " passed.";
+            healthCheckStatusType = MessageType.Info;
+            MCBLogger.Log("[AdvancedMode] " + healthCheckStatus);
+            EditorUtility.DisplayDialog("MCB Health Checks", healthCheckStatus, "OK");
+        }
+        catch (System.Exception ex)
+        {
+            healthCheckStatus = label + " failed. See Console for details.";
+            healthCheckStatusType = MessageType.Error;
+            Debug.LogError("[AdvancedMode] " + label + " failed: " + ex);
+            EditorUtility.DisplayDialog("MCB Health Checks", healthCheckStatus, "OK");
+        }
+        finally
+        {
+            EditorUtility.ClearProgressBar();
+            editor.Repaint();
+        }
     }
     
     private void OnArmatureToggleChanged()

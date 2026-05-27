@@ -1,3 +1,4 @@
 *.meta
-ci/
+ci/*
+!ci/*.py
 data/

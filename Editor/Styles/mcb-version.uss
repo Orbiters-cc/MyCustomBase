@@ -8,6 +8,12 @@
     overflow: visible;
 }
 
+.mcb-version--asset-view {
+    margin-top: -68px;
+    padding-top: 0;
+    position: relative;
+}
+
 .mcb-version-fetch {
     align-self: flex-start;
     min-width: 150px;
@@ -59,6 +65,44 @@
     margin-bottom: 8px;
 }
 
+.mcb-version-create {
+    flex-direction: row;
+    align-items: stretch;
+    min-width: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.mcb-version-create__body {
+    flex-grow: 1;
+    min-width: 0;
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+
+.mcb-version-create__button {
+    width: 100%;
+    height: 22px;
+    min-height: 22px;
+    background-color: #00DA6D;
+    border-width: 0;
+    border-radius: 11px;
+    color: #ffffff;
+    -unity-font-style: bold;
+}
+
+.mcb-version-create__button:hover {
+    background-color: #00DA6D;
+}
+
+.mcb-version-create__button Label {
+    color: #ffffff;
+    font-size: 12px;
+    -unity-font-style: bold;
+}
+
 .mcb-version-item {
     flex-direction: row;
     align-items: stretch;
@@ -89,7 +133,7 @@
 
 .mcb-version-item--selected .mcb-version-item__card {
     background-color: rgba(0,0,0,0);
-    border-color: #18e51a;
+    border-color: #00DA6D;
 }
 
 .mcb-version-item--disabled .mcb-version-item__card {
@@ -400,7 +444,7 @@
 .mcb-version-timeline__line {
     width: 2px;
     flex-grow: 1;
-    background-color: #22e20f;
+    background-color: #00DA6D;
 }
 
 .mcb-version-timeline__line--hidden {
@@ -414,7 +458,7 @@
     min-height: 20px;
     border-radius: 10px;
     border-width: 0;
-    border-color: #22e20f;
+    border-color: #00DA6D;
     justify-content: center;
     align-items: center;
 }
@@ -427,7 +471,7 @@
     width: 8px;
     height: 8px;
     border-radius: 4px;
-    background-color: #22e20f;
+    background-color: #00DA6D;
 }
 
 .mcb-version-timeline--disabled .mcb-version-timeline__line,
@@ -490,7 +534,7 @@
 .mcb-version-timeline__connector-line {
     width: 2px;
     flex-grow: 1;
-    background-color: #22e20f;
+    background-color: #00DA6D;
 }
 
 .mcb-version-timeline__connector-dots {
@@ -505,7 +549,7 @@
     min-height: 6px;
     margin-top: 2px;
     margin-bottom: 2px;
-    background-color: #22e20f;
+    background-color: #00DA6D;
 }
 
 .mcb-version-user {
@@ -611,14 +655,14 @@
     background-color: #191919;
     border-radius: 8px;
     border-left-width: 4px;
-    border-left-color: #22e20f;
+    border-left-color: #00DA6D;
     padding: 10px 12px;
     margin-top: 10px;
     margin-bottom: 10px;
 }
 
 .mcb-version-update__title {
-    color: #55ff1f;
+    color: #00DA6D;
 }
 
 .mcb-version-update__body {

@@ -17,7 +17,8 @@ public partial class VersionManagementModule
         versionRefreshSchedule?.Pause();
         versionRefreshSchedule = versionRoot?.schedule.Execute(() =>
         {
-            if (editor.isFetching || editor.isDownloading || editor.isDeleting)
+            bool downloadOnlyRefresh = editor.isDownloading && !editor.isApplying && !actions.ApplyProgress.IsRunning;
+            if (editor.isFetching || editor.isDeleting || downloadOnlyRefresh)
             {
                 RefreshUIToolkit();
             }
@@ -40,6 +41,7 @@ public partial class VersionManagementModule
 
         versionRoot.Clear();
         versionRoot.AddToClassList("mcb-version");
+        versionRoot.EnableInClassList("mcb-version--asset-view", editor.GetSelectedAsset() != null);
 
         if (!ShouldShowVersionUIToolkit())
         {
@@ -81,7 +83,7 @@ public partial class VersionManagementModule
 
     private void BuildUIToolkit(VisualElement root)
     {
-        if (editor.HasServerAccess)
+        if (editor.HasServerAccess && editor.GetSelectedAsset() == null)
         {
             BuildFetchUpdatesButtonUIToolkit(root);
         }
@@ -173,7 +175,7 @@ public partial class VersionManagementModule
                 {
                     if (!hasShownMissingVersionWarning)
                     {
-                        MCBLogger.LogWarning("[MCBEditor] No recommended version available. Please select a version from the list.");
+                        MCBLogger.Log("[MCBEditor] No recommended version available. Please select a version from the list.");
                         hasShownMissingVersionWarning = true;
                     }
 

@@ -30,7 +30,8 @@ public partial class VersionListDrawer
         }
 
         var allVersions = editor.GetAllVersions() ?? new List<CustomBaseVersion>();
-        if (allVersions.Any() || editor.isFetching)
+        bool showCreateVersionItem = ShouldShowCreateNewVersionItem();
+        if (showCreateVersionItem || allVersions.Any() || editor.isFetching)
         {
             if (editor.isFetching)
             {
@@ -42,9 +43,17 @@ public partial class VersionListDrawer
 
             UserService.PreloadUserInfo(allVersions);
 
+            bool hasPreviousTimelineItem = false;
+            if (showCreateVersionItem)
+            {
+                root.Add(CreateCreateNewVersionItemUIToolkit(true));
+                hasPreviousTimelineItem = true;
+            }
+
             if (allVersions.Count > 0)
             {
-                root.Add(CreateVersionListItemUIToolkit(allVersions[0], true, false));
+                root.Add(CreateVersionListItemUIToolkit(allVersions[0], !hasPreviousTimelineItem, false));
+                hasPreviousTimelineItem = true;
 
                 if (allVersions.Count > 1)
                 {
@@ -56,6 +65,7 @@ public partial class VersionListDrawer
                     for (int i = 1; i < allVersions.Count; i++)
                     {
                         root.Add(CreateVersionListItemUIToolkit(allVersions[i], false, false));
+                        hasPreviousTimelineItem = true;
                     }
                 }
             }
@@ -65,10 +75,11 @@ public partial class VersionListDrawer
                                  editor.userCustomVersions.Count > 0;
             if (hasCustomRows)
             {
-                BuildUserCustomRowsUIToolkit(root);
+                BuildUserCustomRowsUIToolkit(root, hasPreviousTimelineItem);
+                hasPreviousTimelineItem = true;
             }
 
-            bool resetIsFirst = allVersions.Count == 0 && !hasCustomRows;
+            bool resetIsFirst = !hasPreviousTimelineItem;
             root.Add(CreateResetVersionItemUIToolkit(resetIsFirst));
             return;
         }
@@ -117,6 +128,43 @@ public partial class VersionListDrawer
         root.Add(panel);
     }
 
+    private VisualElement CreateCreateNewVersionItemUIToolkit(bool isFirst)
+    {
+        var item = new VisualElement();
+        item.AddToClassList("mcb-version-create");
+
+        item.Add(CreateTimeline(isFirst, false, false, false));
+
+        var body = new VisualElement();
+        body.AddToClassList("mcb-version-create__body");
+
+        var button = CreateTextButton("Create new version", () => editor.StartCreateNewVersion());
+        button.AddToClassList("mcb-version-create__button");
+        button.SetEnabled(!editor.isDownloading && !editor.isDeleting && !editor.isApplying && !editor.isSubmitting);
+        body.Add(button);
+
+        item.Add(body);
+        return item;
+    }
+
+    private bool ShouldShowCreateNewVersionItem()
+    {
+        var selectedAsset = editor.GetSelectedAsset();
+        if (selectedAsset == null ||
+            !editor.isAuthenticated ||
+            !editor.HasServerAccess ||
+            MCBPackageVersionService.RequiresMajorUpdate ||
+            editor.isCreatorModeProp == null ||
+            editor.isCreatorModeProp.boolValue ||
+            !selectedAsset.ownerId.HasValue)
+        {
+            return false;
+        }
+
+        int currentUserId = GetCurrentUserId();
+        return currentUserId > 0 && selectedAsset.ownerId.Value == currentUserId;
+    }
+
     private void BuildHeaderUIToolkit(VisualElement root)
     {
         var header = new VisualElement();
@@ -147,7 +195,8 @@ public partial class VersionListDrawer
 
         item.Add(CreateConnectorTimeline(isListCollapsed));
 
-        var button = new Button(() =>
+        var button = new Button();
+        RegisterImmediateClick(button, () =>
         {
             isListCollapsed = !isListCollapsed;
             RefreshVersionUi();
@@ -175,7 +224,7 @@ public partial class VersionListDrawer
         return item;
     }
 
-    private void BuildUserCustomRowsUIToolkit(VisualElement root)
+    private void BuildUserCustomRowsUIToolkit(VisualElement root, bool hasPreviousTimelineItem)
     {
         var entries = editor.userCustomVersions;
         var allVersions = editor.GetAllVersions();
@@ -186,7 +235,7 @@ public partial class VersionListDrawer
                              !string.IsNullOrEmpty(editor.currentAppliedFbxHash) &&
                              string.Equals(editor.currentAppliedFbxHash, entry.appliedUserAviHash, StringComparison.OrdinalIgnoreCase);
             bool isSelected = editor.selectedCustomVersionForAction == entry;
-            bool isFirst = (allVersions == null || allVersions.Count == 0) && i == 0;
+            bool isFirst = !hasPreviousTimelineItem && (allVersions == null || allVersions.Count == 0) && i == 0;
 
             Action onSelected = () =>
             {
@@ -219,8 +268,8 @@ public partial class VersionListDrawer
                     var chips = CreateChipRow();
                     if (isApplied)
                     {
-                        chips.Add(CreateChip("Installed", new Color(0.33f, 0.79f, 0f)));
-                        chips.Add(CreateChip("Current", new Color(0.33f, 0.79f, 0f)));
+                        chips.Add(CreateChip("Installed", AccentGreen));
+                        chips.Add(CreateChip("Current", AccentGreen));
                     }
                     chips.Add(CreateChip("Custom", Color.red));
                     row.Add(chips);
@@ -331,7 +380,7 @@ public partial class VersionListDrawer
         }
         if (isApplied)
         {
-            chips.Add(CreateChip("Installed", new Color(0.33f, 0.79f, 0f)));
+            chips.Add(CreateChip("Installed", AccentGreen));
         }
         chips.Add(CreateChip(ver.isImported ? "Imported" : ver.scope.ToString(), ver.isImported ? new Color(0.45f, 0.85f, 1f) : GetColorForScope(ver.scope)));
         titleRow.Add(chips);
@@ -401,7 +450,7 @@ public partial class VersionListDrawer
                 var chips = CreateChipRow();
                 if (isApplied)
                 {
-                    chips.Add(CreateChip("Current", new Color(0.33f, 0.79f, 0f)));
+                    chips.Add(CreateChip("Current", AccentGreen));
                 }
                 row.Add(chips);
 
@@ -604,11 +653,12 @@ public partial class VersionListDrawer
 
     private Button CreateDetailsToggleButton(bool detailsExpanded, Action onClick)
     {
-        var button = new Button(onClick)
+        var button = new Button
         {
             text = detailsExpanded ? "-" : "+",
             tooltip = detailsExpanded ? "Collapse version details" : "Expand version details"
         };
+        RegisterImmediateClick(button, onClick);
         button.AddToClassList("mcb-version-details-toggle");
         return button;
     }
@@ -1047,10 +1097,11 @@ public partial class VersionListDrawer
 
     private static Button CreateIconButton(string iconName, string tooltip, Action onClick)
     {
-        var button = new Button(onClick) { tooltip = tooltip ?? string.Empty };
+        var button = new Button { tooltip = tooltip ?? string.Empty };
         button.AddToClassList("mcb-button");
         button.AddToClassList("mcb-button--icon-only");
         button.AddToClassList("mcb-version-action-button");
+        RegisterImmediateClick(button, onClick);
 
         var iconContent = EditorGUIUtility.IconContent(iconName);
         if (iconContent?.image != null)
@@ -1069,10 +1120,11 @@ public partial class VersionListDrawer
 
     private static Button CreateInteractionIconButton(MCBInteractionIconKind iconKind, string tooltip, Action onClick)
     {
-        var button = new Button(onClick) { tooltip = tooltip ?? string.Empty };
+        var button = new Button { tooltip = tooltip ?? string.Empty };
         button.AddToClassList("mcb-button");
         button.AddToClassList("mcb-button--icon-only");
         button.AddToClassList("mcb-version-action-button");
+        RegisterImmediateClick(button, onClick);
 
         var icon = new MCBInteractionIconElement(iconKind);
         icon.AddToClassList("mcb-button-icon");
@@ -1082,9 +1134,81 @@ public partial class VersionListDrawer
 
     private static Button CreateTextButton(string text, Action onClick)
     {
-        var button = new Button(onClick) { text = text ?? string.Empty };
+        var button = new Button { text = text ?? string.Empty };
         button.AddToClassList("mcb-button");
+        RegisterImmediateClick(button, onClick);
         return button;
+    }
+
+    private static void RegisterImmediateClick(Button button, Action onClick)
+    {
+        if (button == null || onClick == null)
+        {
+            return;
+        }
+
+        bool suppressNextClicked = false;
+        long lastImmediateTicks = 0L;
+
+        void activateImmediate(EventBase evt)
+        {
+            long now = DateTime.UtcNow.Ticks;
+            if (!button.enabledInHierarchy ||
+                now - lastImmediateTicks < TimeSpan.TicksPerMillisecond * 25L)
+            {
+                evt.StopImmediatePropagation();
+                evt.PreventDefault();
+                return;
+            }
+
+            lastImmediateTicks = now;
+            suppressNextClicked = true;
+            button.schedule.Execute(() => suppressNextClicked = false).StartingIn(1000);
+            evt.StopImmediatePropagation();
+            evt.PreventDefault();
+            onClick();
+        }
+
+        button.clicked += () =>
+        {
+            if (suppressNextClicked)
+            {
+                suppressNextClicked = false;
+                return;
+            }
+
+            onClick();
+        };
+
+        button.RegisterCallback<PointerDownEvent>(evt =>
+        {
+            if (evt.button != 0)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
+        button.RegisterCallback<MouseDownEvent>(evt =>
+        {
+            if (evt.button != 0)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
+        button.RegisterCallback<KeyDownEvent>(evt =>
+        {
+            if (evt.keyCode != KeyCode.Return &&
+                evt.keyCode != KeyCode.KeypadEnter &&
+                evt.keyCode != KeyCode.Space)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
     }
 
     private static VisualElement CreateSpacer()

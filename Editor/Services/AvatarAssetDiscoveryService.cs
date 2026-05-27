@@ -57,9 +57,12 @@ public static class AvatarAssetDiscoveryService
 {
     private static readonly string THUMBNAILS_FOLDER = Path.Combine(MCBUtils.GetMCBDataFolder(), "asset-images");
     private static readonly TimeSpan PendingDownloadTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DiscoveryCacheMaxAge = TimeSpan.FromMinutes(15);
 
     private static readonly Dictionary<string, Texture2D> ThumbnailCache = new Dictionary<string, Texture2D>(StringComparer.Ordinal);
     private static readonly Dictionary<string, DateTime> PendingThumbnailDownloads = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+    private static readonly Dictionary<string, DiscoveryCacheEntry> DiscoveryCache = new Dictionary<string, DiscoveryCacheEntry>(StringComparer.Ordinal);
+    private static readonly Dictionary<string, PendingDiscoveryRequest> PendingDiscoveryRequests = new Dictionary<string, PendingDiscoveryRequest>(StringComparer.Ordinal);
     private static readonly HashSet<int> LoggedMissingBannerAssets = new HashSet<int>();
     private static readonly HashSet<string> LoggedInsecureImageUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedImageDownloads = new HashSet<string>(StringComparer.Ordinal);
@@ -76,8 +79,20 @@ public static class AvatarAssetDiscoveryService
         {
             EditorApplication.delayCall -= RepaintAllViews;
             PendingThumbnailDownloads.Clear();
+            PendingDiscoveryRequests.Clear();
             repaintQueued = false;
         };
+    }
+
+    private sealed class DiscoveryCacheEntry
+    {
+        public AvatarAssetDiscoveryResponse Response;
+        public DateTime CachedAtUtc;
+    }
+
+    private sealed class PendingDiscoveryRequest
+    {
+        public readonly List<Action<AvatarAssetDiscoveryResponse, string>> Callbacks = new List<Action<AvatarAssetDiscoveryResponse, string>>();
     }
 
     public static string BuildAvatarSignature(IEnumerable<string> paths)
@@ -92,6 +107,43 @@ public static class AvatarAssetDiscoveryService
             .Select(NormalizeUnityPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
+    }
+
+    public static bool TryGetCachedDiscoveryResponse(
+        string authToken,
+        IEnumerable<string> paths,
+        bool filterOnlyCompatible,
+        out AvatarAssetDiscoveryResponse response)
+    {
+        response = null;
+        string cacheKey = BuildDiscoveryCacheKey(authToken, paths, filterOnlyCompatible);
+        if (string.IsNullOrEmpty(cacheKey))
+        {
+            return false;
+        }
+
+        DiscoveryCacheEntry entry;
+        if (!DiscoveryCache.TryGetValue(cacheKey, out entry) || entry == null || entry.Response == null)
+        {
+            return false;
+        }
+
+        if (DateTime.UtcNow - entry.CachedAtUtc > DiscoveryCacheMaxAge)
+        {
+            DiscoveryCache.Remove(cacheKey);
+            return false;
+        }
+
+        response = entry.Response;
+        if (filterOnlyCompatible && (response.assets == null || response.assets.Count == 0))
+        {
+            DiscoveryCache.Remove(cacheKey);
+            response = null;
+            return false;
+        }
+
+        PreloadThumbnails(response.assets);
+        return true;
     }
 
     public static IEnumerator DiscoverAssetsCoroutine(
@@ -112,6 +164,19 @@ public static class AvatarAssetDiscoveryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        string cacheKey = BuildDiscoveryCacheKey(authToken, normalizedPaths, filterOnlyCompatible);
+        AvatarAssetDiscoveryResponse cachedResponse;
+        if (TryGetCachedDiscoveryResponse(authToken, normalizedPaths, filterOnlyCompatible, out cachedResponse))
+        {
+            onComplete?.Invoke(cachedResponse, null);
+            yield break;
+        }
+
+        if (TryJoinPendingDiscovery(cacheKey, onComplete))
+        {
+            yield break;
+        }
+
         var inventoryTask = BuildProjectFileInventoryAsync(normalizedPaths);
         while (!inventoryTask.IsCompleted)
         {
@@ -122,7 +187,7 @@ public static class AvatarAssetDiscoveryService
         {
             string error = inventoryTask.Exception?.GetBaseException().Message ?? "Unknown inventory error.";
             MCBLogger.LogError($"[AvatarAssetDiscovery] Failed to build project file inventory: {error}");
-            onComplete?.Invoke(null, $"Failed to prepare avatar asset discovery: {error}");
+            CompleteDiscoveryRequest(cacheKey, null, $"Failed to prepare avatar asset discovery: {error}", onComplete);
             yield break;
         }
 
@@ -141,11 +206,11 @@ public static class AvatarAssetDiscoveryService
 
         if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
         {
-            onComplete?.Invoke(null, null);
+            CompleteDiscoveryRequest(cacheKey, null, null, onComplete);
             yield break;
         }
 
-        MCBLogger.LogWarning($"[AvatarAssetDiscovery] POST {requestSummary}");
+        MCBLogger.Log($"[AvatarAssetDiscovery] POST {requestSummary}");
 
         using (var request = new UnityWebRequest(url, "POST"))
         {
@@ -160,7 +225,7 @@ public static class AvatarAssetDiscoveryService
                 if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
                 {
                     request.Abort();
-                    onComplete?.Invoke(null, null);
+                    CompleteDiscoveryRequest(cacheKey, null, null, onComplete);
                     yield break;
                 }
 
@@ -178,7 +243,7 @@ public static class AvatarAssetDiscoveryService
                 string errorMessage = !string.IsNullOrEmpty(serverError)
                     ? $"{serverError}\n{httpContext}"
                     : $"Asset discovery request failed.\n{httpContext}";
-                onComplete?.Invoke(null, errorMessage);
+                CompleteDiscoveryRequest(cacheKey, null, errorMessage, onComplete);
                 yield break;
             }
             AvatarAssetDiscoveryResponse response = null;
@@ -192,19 +257,122 @@ public static class AvatarAssetDiscoveryService
                 try { responseBody = request.downloadHandler?.text; } catch { }
                 string httpContext = BuildResponseContext(request, url, responseBody);
                 MCBLogger.LogError($"[AvatarAssetDiscovery] Parse failure: {ex.Message}. {httpContext}");
-                onComplete?.Invoke(null, $"Failed to parse asset discovery response: {ex.Message}\n{httpContext}");
+                CompleteDiscoveryRequest(cacheKey, null, $"Failed to parse asset discovery response: {ex.Message}\n{httpContext}", onComplete);
                 yield break;
             }
 
             if (response == null)
             {
-                onComplete?.Invoke(null, "Asset discovery returned an empty response.");
+                CompleteDiscoveryRequest(cacheKey, null, "Asset discovery returned an empty response.", onComplete);
                 yield break;
             }
 
             response.assets = response.assets ?? new List<AvatarDiscoveredAsset>();
             PreloadThumbnails(response.assets);
-            onComplete?.Invoke(response, null);
+            CacheDiscoveryResponse(authToken, normalizedPaths, filterOnlyCompatible, response);
+            CompleteDiscoveryRequest(cacheKey, response, null, onComplete);
+        }
+    }
+
+    private static bool TryJoinPendingDiscovery(
+        string cacheKey,
+        Action<AvatarAssetDiscoveryResponse, string> onComplete)
+    {
+        if (string.IsNullOrEmpty(cacheKey))
+        {
+            return false;
+        }
+
+        PendingDiscoveryRequest pendingRequest;
+        if (!PendingDiscoveryRequests.TryGetValue(cacheKey, out pendingRequest) || pendingRequest == null)
+        {
+            pendingRequest = new PendingDiscoveryRequest();
+            PendingDiscoveryRequests[cacheKey] = pendingRequest;
+            pendingRequest.Callbacks.Add(onComplete);
+            return false;
+        }
+
+        pendingRequest.Callbacks.Add(onComplete);
+        return true;
+    }
+
+    private static void CompleteDiscoveryRequest(
+        string cacheKey,
+        AvatarAssetDiscoveryResponse response,
+        string error,
+        Action<AvatarAssetDiscoveryResponse, string> fallback)
+    {
+        if (string.IsNullOrEmpty(cacheKey))
+        {
+            fallback?.Invoke(response, error);
+            return;
+        }
+
+        PendingDiscoveryRequest pendingRequest;
+        if (!PendingDiscoveryRequests.TryGetValue(cacheKey, out pendingRequest) || pendingRequest == null)
+        {
+            fallback?.Invoke(response, error);
+            return;
+        }
+
+        PendingDiscoveryRequests.Remove(cacheKey);
+        var callbacks = pendingRequest.Callbacks.ToList();
+        foreach (var callback in callbacks)
+        {
+            try
+            {
+                callback?.Invoke(response, error);
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogError($"[AvatarAssetDiscovery] Discovery callback failed: {ex}");
+            }
+        }
+    }
+
+    private static void CacheDiscoveryResponse(
+        string authToken,
+        IEnumerable<string> paths,
+        bool filterOnlyCompatible,
+        AvatarAssetDiscoveryResponse response)
+    {
+        string cacheKey = BuildDiscoveryCacheKey(authToken, paths, filterOnlyCompatible);
+        if (string.IsNullOrEmpty(cacheKey) || response == null)
+        {
+            return;
+        }
+
+        DiscoveryCache[cacheKey] = new DiscoveryCacheEntry
+        {
+            Response = response,
+            CachedAtUtc = DateTime.UtcNow
+        };
+    }
+
+    private static string BuildDiscoveryCacheKey(string authToken, IEnumerable<string> paths, bool filterOnlyCompatible)
+    {
+        string signature = BuildAvatarSignature(paths);
+        if (string.IsNullOrWhiteSpace(signature))
+        {
+            return null;
+        }
+
+        return HashForCache(authToken ?? string.Empty) + "|" + (filterOnlyCompatible ? "compatible" : "all") + "|" + signature;
+    }
+
+    private static string HashForCache(string value)
+    {
+        using (var sha1 = SHA1.Create())
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
+            byte[] hash = sha1.ComputeHash(bytes);
+            var builder = new StringBuilder(hash.Length * 2);
+            for (int i = 0; i < hash.Length; i++)
+            {
+                builder.Append(hash[i].ToString("x2"));
+            }
+
+            return builder.ToString();
         }
     }
 
@@ -303,6 +471,16 @@ public static class AvatarAssetDiscoveryService
         return GetImage(asset.bannerUrl, "banner", asset.id);
     }
 
+    public static Texture2D CacheThumbnail(int assetId, string url, Texture2D texture)
+    {
+        return CacheImage(url, "thumb", assetId, texture);
+    }
+
+    public static Texture2D CacheBanner(int assetId, string url, Texture2D texture)
+    {
+        return CacheImage(url, "banner", assetId, texture);
+    }
+
     public static string GetBannerLocalPath(AvatarDiscoveredAsset asset)
     {
         if (asset == null)
@@ -343,7 +521,7 @@ public static class AvatarAssetDiscoveryService
         url = ExpandImageUrl(url);
         url = PrepareUnityImageUrl(url, kind);
         url = NormalizeImageUrl(url, kind, assetId);
-        if (string.IsNullOrWhiteSpace(url))
+        if (string.IsNullOrWhiteSpace(url) || IsDefaultPlaceholderImageUrl(url))
         {
             return null;
         }
@@ -590,6 +768,16 @@ public static class AvatarAssetDiscoveryService
         return builder.Uri.ToString();
     }
 
+    private static bool IsDefaultPlaceholderImageUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.AbsolutePath.EndsWith("/uploads/default.png", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void ClearStalePendingDownload(string cacheKey, string kind, int assetId, string url)
     {
         DateTime pendingSince;
@@ -628,6 +816,120 @@ public static class AvatarAssetDiscoveryService
         }
 
         return null;
+    }
+
+    private static Texture2D CacheImage(string url, string kind, int assetId, Texture2D texture)
+    {
+        if (texture == null || assetId <= 0 || string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        url = ExpandImageUrl(url);
+        url = PrepareUnityImageUrl(url, kind);
+        url = NormalizeImageUrl(url, kind, assetId);
+        if (string.IsNullOrWhiteSpace(url) || IsDefaultPlaceholderImageUrl(url))
+        {
+            return null;
+        }
+
+        byte[] pngBytes = EncodeTextureToPng(texture);
+        if (pngBytes == null || pngBytes.Length == 0)
+        {
+            return null;
+        }
+
+        var cachedTexture = LoadTextureFromBytes(pngBytes, $"mcb-{kind}-{assetId}-cached");
+        if (cachedTexture == null)
+        {
+            return null;
+        }
+
+        string cacheKey = GetImageCacheKey(kind, assetId, url);
+        string localPath = GetImageLocalPath(kind, assetId, url);
+        if (ThumbnailCache.TryGetValue(cacheKey, out var previousTexture) && previousTexture != null && previousTexture != cachedTexture)
+        {
+            Object.DestroyImmediate(previousTexture);
+        }
+
+        try
+        {
+            File.WriteAllBytes(localPath, pngBytes);
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogWarning($"[AvatarAssetDiscovery] Failed to persist updated {kind} for assetId={assetId}: {ex.Message}");
+        }
+
+        PendingThumbnailDownloads.Remove(cacheKey);
+        FailedImageDownloads.Remove(cacheKey);
+        ThumbnailCache[cacheKey] = cachedTexture;
+        QueueRepaintAllViews();
+        return cachedTexture;
+    }
+
+    private static Texture2D LoadTextureFromBytes(byte[] pngBytes, string name)
+    {
+        var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+        if (!texture.LoadImage(pngBytes))
+        {
+            Object.DestroyImmediate(texture);
+            return null;
+        }
+
+        texture.name = name;
+        texture.wrapMode = TextureWrapMode.Clamp;
+        texture.filterMode = FilterMode.Bilinear;
+        return texture;
+    }
+
+    private static byte[] EncodeTextureToPng(Texture2D texture)
+    {
+        if (texture == null || texture.width <= 0 || texture.height <= 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return texture.EncodeToPNG();
+        }
+        catch (Exception)
+        {
+            // Non-readable textures need a GPU readback path before PNG encoding.
+        }
+
+        RenderTexture previous = RenderTexture.active;
+        RenderTexture temporary = null;
+        Texture2D readable = null;
+        try
+        {
+            temporary = RenderTexture.GetTemporary(texture.width, texture.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+            Graphics.Blit(texture, temporary);
+            RenderTexture.active = temporary;
+
+            readable = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
+            readable.ReadPixels(new Rect(0, 0, texture.width, texture.height), 0, 0);
+            readable.Apply();
+            return readable.EncodeToPNG();
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogWarning($"[AvatarAssetDiscovery] Failed to encode refreshed asset image: {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            RenderTexture.active = previous;
+            if (temporary != null)
+            {
+                RenderTexture.ReleaseTemporary(temporary);
+            }
+            if (readable != null)
+            {
+                Object.DestroyImmediate(readable);
+            }
+        }
     }
 
     private static string GetImageCacheKey(string kind, int assetId, string url)

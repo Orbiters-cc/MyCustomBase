@@ -55,7 +55,6 @@ public partial class AssetGalleryModule
         {
             galleryRoot.AddToClassList("mcb-selected-title-band");
             selectedAssetPanel.BuildBannerUIToolkit(galleryRoot, SelectedAsset);
-            selectedAssetPanel.BuildHeaderUIToolkit(galleryRoot, SelectedAsset);
             assetInteractionPanel.EnsureInteractionLoad(SelectedAsset.id);
             return;
         }
@@ -408,7 +407,7 @@ public partial class AssetGalleryModule
             return;
         }
 
-        if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
+        if (!editor.CanStartBackgroundRefreshes)
         {
             return;
         }
@@ -417,6 +416,11 @@ public partial class AssetGalleryModule
         string currentSignature = AvatarAssetDiscoveryService.BuildAvatarSignature(currentPaths);
 
         bool signatureChanged = !string.Equals(currentSignature, lastAvatarSignature, StringComparison.Ordinal);
+        if (isLoading && string.Equals(currentSignature, loadingAvatarSignature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         if (!force && !signatureChanged)
         {
             return;
@@ -424,6 +428,17 @@ public partial class AssetGalleryModule
 
         lastAvatarSignature = currentSignature;
         ResetState(clearSelection: signatureChanged);
+        AvatarAssetDiscoveryResponse cachedResponse;
+        if (AvatarAssetDiscoveryService.TryGetCachedDiscoveryResponse(
+                editor.authToken,
+                currentPaths,
+                true,
+                out cachedResponse))
+        {
+            ApplyDiscoveryResponse(cachedResponse, true);
+            return;
+        }
+
         StartDiscovery(filterOnlyCompatible: true);
     }
 
@@ -764,23 +779,26 @@ public partial class AssetGalleryModule
 
     private void StartDiscovery(bool filterOnlyCompatible)
     {
-        if (isLoading || !editor.isAuthenticated || MCBEditor.ShouldDeferBackgroundNetworkRefresh())
+        if (isLoading || !editor.isAuthenticated || !editor.CanStartBackgroundRefreshes)
         {
             return;
         }
 
         var paths = editor.GetDetectedAvatarFbxPaths();
+        string requestSignature = AvatarAssetDiscoveryService.BuildAvatarSignature(paths);
         if (paths.Count == 0)
         {
             compatibleAssets.Clear();
             allAssets.Clear();
             hasFetchedCompatibleAssets = filterOnlyCompatible;
             hasFetchedAllAssets = !filterOnlyCompatible;
+            loadingAvatarSignature = null;
             lastError = null;
             return;
         }
 
         isLoading = true;
+        loadingAvatarSignature = requestSignature;
         lastError = null;
 
         EditorCoroutineUtility.StartCoroutineOwnerless(
@@ -790,28 +808,49 @@ public partial class AssetGalleryModule
                 filterOnlyCompatible,
                 (response, error) =>
                 {
+                    if (!string.Equals(requestSignature, lastAvatarSignature, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
                     isLoading = false;
+                    loadingAvatarSignature = null;
                     lastError = error;
 
-                    if (response != null)
-                    {
-                        if (filterOnlyCompatible)
-                        {
-                            compatibleAssets = response.assets ?? new List<AvatarDiscoveredAsset>();
-                            hasFetchedCompatibleAssets = true;
-                        }
-                        else
-                        {
-                            allAssets = response.assets ?? new List<AvatarDiscoveredAsset>();
-                            hasFetchedAllAssets = true;
-                        }
-
-                        TryRestoreSelectedAsset();
-                    }
+                    ApplyDiscoveryResponse(response, filterOnlyCompatible);
 
                     editor.RefreshUiToolkitSections();
                     editor.Repaint();
                 }));
+    }
+
+    private void ApplyDiscoveryResponse(AvatarAssetDiscoveryResponse response, bool filterOnlyCompatible)
+    {
+        if (response == null)
+        {
+            return;
+        }
+
+        if (filterOnlyCompatible)
+        {
+            compatibleAssets = response.assets ?? new List<AvatarDiscoveredAsset>();
+            hasFetchedCompatibleAssets = true;
+        }
+        else
+        {
+            allAssets = response.assets ?? new List<AvatarDiscoveredAsset>();
+            hasFetchedAllAssets = true;
+            var compatibleFromAll = allAssets
+                .Where(asset => asset != null && asset.isCompatible)
+                .ToList();
+            if (compatibleFromAll.Count > 0)
+            {
+                compatibleAssets = compatibleFromAll;
+                hasFetchedCompatibleAssets = true;
+            }
+        }
+
+        TryRestoreSelectedAsset();
     }
 }
 #endif

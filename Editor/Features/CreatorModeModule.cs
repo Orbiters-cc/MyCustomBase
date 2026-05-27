@@ -2253,7 +2253,7 @@ public partial class CreatorModeModule
         MCBUtils.EnsureDirectoryExists(path);
         File.WriteAllText(path, JsonConvert.SerializeObject(unsubmitted, Formatting.Indented, new StringEnumConverter()));
         
-        editor.LoadUnsubmittedVersions();
+        editor.LoadUnsubmittedVersions(true);
         editor.Repaint();
     }
 
@@ -2268,7 +2268,7 @@ public partial class CreatorModeModule
 
         File.WriteAllText(path, JsonConvert.SerializeObject(unsubmitted, Formatting.Indented, new StringEnumConverter()));
         
-        editor.LoadUnsubmittedVersions();
+        editor.LoadUnsubmittedVersions(true);
         editor.Repaint();
     }
 

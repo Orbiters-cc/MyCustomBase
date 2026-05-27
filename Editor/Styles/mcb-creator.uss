@@ -10,6 +10,8 @@
 
 .mcb-creator--asset-view {
     padding-top: 0;
+    padding-bottom: 78px;
+    margin-top: -8px;
 }
 
 .mcb-creator-host {

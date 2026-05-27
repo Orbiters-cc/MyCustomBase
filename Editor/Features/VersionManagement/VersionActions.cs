@@ -16,6 +16,12 @@ public class VersionActions
     private const string FbxReplacementDeliveryMode = "FBX_REPLACEMENT";
     private const double ApplyProgressIntroSeconds = 0.08d;
     private const double ApplyProgressCompletionHoldSeconds = 0.6d;
+    private const float DownloadApplyProgressStart = 0.02f;
+    private const float DownloadApplyProgressComplete = 0.66f;
+    private const float DownloadApplySyntheticProgressPerSecond = 0.10f;
+    private const float DownloadApplySyntheticProgressMax = DownloadApplyProgressComplete - 0.04f;
+    private const float DownloadApplyExtractionComplete = 0.68f;
+    private const float DownloadApplyImportComplete = 0.70f;
 
     private sealed class ApplyTimingProfile
     {
@@ -61,6 +67,8 @@ public class VersionActions
     private readonly NetworkService networkService;
     private readonly FileManagerService fileManagerService;
     private int applyProgressGeneration;
+    private float applyProgressBase;
+    private float applyProgressScale = 1f;
     public VersionApplyProgressState ApplyProgress { get; } = new VersionApplyProgressState();
 
     public VersionActions(MCBEditor editor, NetworkService network, FileManagerService files)
@@ -76,6 +84,7 @@ public class VersionActions
     {
         if (apply && !editor.isDownloading)
         {
+            ResetApplyProgressRange();
             StartApplyProgress("Starting download...", 0f);
         }
 
@@ -125,7 +134,7 @@ public class VersionActions
         finally
         {
             EditorUtility.ClearProgressBar();
-            editor.LoadImportedVersions();
+            editor.LoadImportedVersions(true);
             editor.Repaint();
         }
     }
@@ -156,7 +165,7 @@ public class VersionActions
         var selectedAsset = editor.GetSelectedAsset();
         if (selectedAsset == null)
         {
-            MCBLogger.LogWarning("[VersionActions] Version fetch aborted because no asset is selected in the gallery.");
+            MCBLogger.Log("[VersionActions] Version fetch skipped because no asset is selected in the gallery.");
             editor.serverVersions.Clear();
             editor.recommendedVersion = null;
             editor.isFetching = false;
@@ -234,7 +243,17 @@ public class VersionActions
         string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={editor.currentBaseFbxHash}&t={editor.authToken}";
         
         // --- Setup phase (no yield returns) ---
-        var downloadTask = networkService.DownloadFileAsync(url, tempZipPath);
+        float downloadProgress = 0f;
+        ulong downloadedBytes = 0;
+        double downloadStartedAt = EditorApplication.timeSinceStartup;
+        float visibleDownloadProgress = DownloadApplyProgressStart;
+        var downloadTask = networkService.DownloadFileAsync(url, tempZipPath, progress =>
+        {
+            downloadProgress = Mathf.Clamp01(progress);
+        }, bytes =>
+        {
+            downloadedBytes = bytes;
+        });
         bool setupSucceeded = downloadTask != null;
         
         if (!setupSucceeded)
@@ -251,13 +270,34 @@ public class VersionActions
         {
             if (applyAfter)
             {
-                ReportApplyProgress(0.08f, "Downloading version...");
+                visibleDownloadProgress = GetVisibleDownloadApplyProgress(downloadStartedAt, downloadProgress, visibleDownloadProgress);
+                string stepText = "Preparing download...";
+                if (downloadProgress > 0.001f)
+                {
+                    stepText = $"Downloading version... {Mathf.RoundToInt(downloadProgress * 100f)}%";
+                }
+                else if (downloadedBytes > 0)
+                {
+                    stepText = "Downloading version...";
+                }
+                ReportApplyProgress(visibleDownloadProgress, stepText);
             }
             yield return null;
         }
         
         // --- Process result and cleanup ---
-        var (success, error) = downloadTask.Result;
+        bool success;
+        string error;
+        try
+        {
+            (success, error) = downloadTask.Result;
+        }
+        catch (Exception ex)
+        {
+            success = false;
+            error = $"Download failed: {ex.GetBaseException().Message}";
+            MCBLogger.LogError($"[VersionActions] Download task failed unexpectedly: {ex}");
+        }
         bool extractionSucceeded = false;
         string tempExtractPath = null;
         
@@ -272,7 +312,8 @@ public class VersionActions
             {
                 if (applyAfter)
                 {
-                    ReportApplyProgress(0.12f, "Extracting version files...");
+                    ReportApplyProgress(DownloadApplyProgressComplete, "Download complete...");
+                    ReportApplyProgress(DownloadApplyExtractionComplete, "Extracting version files...");
                 }
                 string finalDest = MCBUtils.GetVersionDataPath(version);
                 tempExtractPath = Path.Combine(Path.GetTempPath(), $"mcb_extract_{Guid.NewGuid()}");
@@ -296,6 +337,10 @@ public class VersionActions
                 Directory.Delete(tempExtractPath, true);
             
             editor.isDownloading = false;
+            if (!applyAfter)
+            {
+                editor.RefreshUiToolkitSections();
+            }
             editor.Repaint();
         }
         
@@ -306,7 +351,7 @@ public class VersionActions
             {
                 if (applyAfter)
                 {
-                    ReportApplyProgress(0.16f, "Waiting for Unity to finish importing downloaded files...");
+                    ReportApplyProgress(DownloadApplyImportComplete, "Waiting for Unity to finish importing downloaded files...");
                 }
                 yield return null;
             }
@@ -315,6 +360,7 @@ public class VersionActions
             if (applyAfter) 
             {
                 editor.selectedVersionForAction = version;
+                SetApplyProgressRange(DownloadApplyImportComplete, 1f - DownloadApplyImportComplete);
                 yield return ApplyOrResetCoroutine(version, false);
             }
         }
@@ -343,7 +389,7 @@ public class VersionActions
                 editor.creatorModule.RemoveUnsubmittedVersion(version);
             }
             AssetDatabase.Refresh();
-            editor.LoadImportedVersions();
+            editor.LoadImportedVersions(true);
         }
 
         editor.isDeleting = false;
@@ -359,7 +405,7 @@ public class VersionActions
             ApplyProgress.Begin(stepText);
         }
 
-        ApplyProgress.Report(Mathf.Clamp01(progress), stepText);
+        ApplyProgress.Report(MapApplyProgress(progress), stepText);
         editor.Repaint();
     }
 
@@ -372,7 +418,7 @@ public class VersionActions
             ApplyProgress.Begin(stepText);
         }
 
-        ApplyProgress.Report(progress, stepText);
+        ApplyProgress.Report(MapApplyProgress(progress), stepText);
         editor.Repaint();
     }
 
@@ -382,6 +428,7 @@ public class VersionActions
         {
             int generation = ++applyProgressGeneration;
             ApplyProgress.Report(1f, "Apply complete...");
+            ResetApplyProgressRange();
             editor.Repaint();
             EditorCoroutineUtility.StartCoroutineOwnerless(CompleteApplyProgressAfterVisualHold(generation));
         }
@@ -389,6 +436,7 @@ public class VersionActions
         {
             applyProgressGeneration++;
             editor.isApplying = false;
+            ResetApplyProgressRange();
             ApplyProgress.Fail();
             editor.Repaint();
             editor.RefreshUiToolkitSections();
@@ -397,12 +445,40 @@ public class VersionActions
 
     private int StartApplyProgress(string stepText, float progress)
     {
+        ResetApplyProgressRange();
         applyProgressGeneration++;
         editor.isApplying = true;
         ApplyProgress.Begin(stepText);
-        ApplyProgress.Report(Mathf.Clamp01(progress), stepText);
+        ApplyProgress.Report(MapApplyProgress(progress), stepText);
         editor.Repaint();
         return applyProgressGeneration;
+    }
+
+    private void SetApplyProgressRange(float progressBase, float progressScale)
+    {
+        applyProgressBase = Mathf.Clamp01(progressBase);
+        applyProgressScale = Mathf.Clamp01(progressScale);
+    }
+
+    private void ResetApplyProgressRange()
+    {
+        applyProgressBase = 0f;
+        applyProgressScale = 1f;
+    }
+
+    private float MapApplyProgress(float progress)
+    {
+        return Mathf.Clamp01(applyProgressBase + Mathf.Clamp01(progress) * applyProgressScale);
+    }
+
+    private static float GetVisibleDownloadApplyProgress(double downloadStartedAt, float downloadProgress, float previousProgress)
+    {
+        float realProgress = Mathf.Lerp(DownloadApplyProgressStart, DownloadApplyProgressComplete, Mathf.Clamp01(downloadProgress));
+        float syntheticProgress = DownloadApplyProgressStart +
+            (float)(EditorApplication.timeSinceStartup - downloadStartedAt) * DownloadApplySyntheticProgressPerSecond;
+        syntheticProgress = Mathf.Min(syntheticProgress, DownloadApplySyntheticProgressMax);
+
+        return Mathf.Clamp01(Mathf.Max(previousProgress, Mathf.Max(realProgress, syntheticProgress)));
     }
 
     private void StartApplyOrResetWithIntro(CustomBaseVersion version, bool isReset, string stepText)
@@ -459,7 +535,63 @@ public class VersionActions
 
     internal IEnumerator ApplyOrResetCoroutine(CustomBaseVersion version, bool isReset)
     {
-        BeginApplyProgress(isReset ? "Preparing reset..." : "Preparing version switch...", ApplyProgress.IsRunning ? Mathf.Max(ApplyProgress.Progress, 0.18f) : 0f);
+        IEnumerator routine = null;
+        try
+        {
+            routine = ApplyOrResetCoreCoroutine(version, isReset);
+        }
+        catch (Exception ex)
+        {
+            HandleApplyOrResetException(ex, version, isReset);
+            yield break;
+        }
+
+        while (routine != null)
+        {
+            object current = null;
+            bool moved = false;
+            try
+            {
+                moved = routine.MoveNext();
+                if (moved)
+                {
+                    current = routine.Current;
+                }
+            }
+            catch (Exception ex)
+            {
+                HandleApplyOrResetException(ex, version, isReset);
+                yield break;
+            }
+
+            if (!moved)
+            {
+                yield break;
+            }
+
+            yield return current;
+        }
+    }
+
+    private void HandleApplyOrResetException(Exception ex, CustomBaseVersion version, bool isReset)
+    {
+        string operation = isReset ? "Reset" : "Apply";
+        string versionLabel = version != null ? version.version : "null";
+        string message = $"{operation} failed: {ex.GetBaseException().Message}";
+        MCBLogger.LogError($"[VersionActions] {operation} failed unexpectedly. version={versionLabel} reset={isReset}: {ex}");
+        editor.warningsModule?.AddWarning(message, MessageType.Error, $"{operation} failed");
+        editor.isDownloading = false;
+        FinishApplyProgress(false);
+        editor.RefreshUiToolkitSections();
+        editor.Repaint();
+    }
+
+    private IEnumerator ApplyOrResetCoreCoroutine(CustomBaseVersion version, bool isReset)
+    {
+        float startingProgress = applyProgressBase > 0f
+            ? 0f
+            : (ApplyProgress.IsRunning ? Mathf.Max(ApplyProgress.Progress, 0.18f) : 0f);
+        BeginApplyProgress(isReset ? "Preparing reset..." : "Preparing version switch...", startingProgress);
         var root = editor.customBaseTarget.transform.root;
         bool preserveBlendshapeValues = editor.customBaseTarget != null && editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch;
         var blendshapeSnapshot = preserveBlendshapeValues ? CaptureBlendshapeState(root) : null;

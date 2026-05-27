@@ -64,7 +64,10 @@ public class VpmDependencyService
         var manifest = LoadPackageManifest();
         var dependencies = manifest.vpmDependencies ?? new Dictionary<string, string>();
         return dependencies
-            .Select(pair => BuildStatus(pair.Key, pair.Value, true, null))
+            .Select(pair => GetCachedStatus(
+                "required:" + pair.Key + ":" + (pair.Value ?? string.Empty),
+                false,
+                () => BuildStatus(pair.Key, pair.Value, true, null)))
             .ToList();
     }
 
@@ -313,8 +316,7 @@ public class VpmDependencyService
         try
         {
             var project = new UnityProject(GetProjectPath());
-            var installedPackage = GetInstalledPackage(project, packageId, null);
-            var matchingInstalledPackage = GetInstalledPackage(project, packageId, versionRange);
+            var installedPackage = GetInstalledPackage(project, packageId, versionRange, out var matchingInstalledPackage);
 
             status.InstalledVersion = installedPackage != null ? installedPackage.Version : null;
             status.IsInstalled = matchingInstalledPackage != null;
@@ -327,6 +329,16 @@ public class VpmDependencyService
         catch (Exception ex)
         {
             status.Error = ex.Message;
+        }
+
+        if (status.IsInstalled)
+        {
+            if (string.IsNullOrWhiteSpace(status.DisplayName))
+            {
+                status.DisplayName = HumanizePackageId(packageId);
+            }
+
+            return status;
         }
 
         try
@@ -358,21 +370,25 @@ public class VpmDependencyService
         return status;
     }
 
-    private static IVRCPackage GetInstalledPackage(UnityProject project, string packageId, string versionRange)
+    private static IVRCPackage GetInstalledPackage(UnityProject project, string packageId, string versionRange, out IVRCPackage matchingPackage)
     {
+        matchingPackage = null;
         if (project == null || project.VPMProvider == null || string.IsNullOrWhiteSpace(packageId))
         {
             return null;
         }
 
         project.VPMProvider.Refresh();
+        var installedPackage = project.VPMProvider.GetPackage(packageId);
 
         if (string.IsNullOrWhiteSpace(versionRange))
         {
-            return project.VPMProvider.GetPackage(packageId);
+            matchingPackage = installedPackage;
+            return installedPackage;
         }
 
-        return project.VPMProvider.GetPackageWithRange(packageId, versionRange);
+        matchingPackage = project.VPMProvider.GetPackageWithRange(packageId, versionRange);
+        return installedPackage;
     }
 
     private static IVRCPackage GetAvailablePackage(string packageId, string versionRange)

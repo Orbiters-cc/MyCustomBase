@@ -97,6 +97,7 @@ public static class PhotoshootGenerationService
         private GameObject fillLightObject;
         private GameObject rimLightObject;
         private AnimationClip lastBodyPose;
+        private readonly Dictionary<Light, bool> externalSceneLightStates = new Dictionary<Light, bool>();
         private readonly PreviewRenderTarget thumbnailTarget = new PreviewRenderTarget();
         private readonly PreviewRenderTarget bannerTarget = new PreviewRenderTarget();
         private Camera camera;
@@ -121,35 +122,43 @@ public static class PhotoshootGenerationService
             PreviewRenderTarget target = GetRenderTarget(request.shotKind);
             EnsureRenderTexture(target, request.width, request.height, request.shotKind);
             EnsureCamera();
-            bool avatarChanged = EnsureAvatarCopy(request.avatarRoot, request.bodyPose);
-
-            string faceBlendshapeKey = CreateFaceBlendshapeKey(request.selectedFaceBlendshapeNames);
-            bool faceBlendshapesChanged =
-                request.forceFaceBlendshapeApply ||
-                avatarChanged ||
-                !string.Equals(lastFaceBlendshapeKey, faceBlendshapeKey, StringComparison.Ordinal);
-            if (faceBlendshapesChanged)
+            try
             {
-                ResetAndApplyFaceBlendshapes(avatarCopy, request.selectedFaceBlendshapeNames);
-                lastFaceBlendshapeKey = faceBlendshapeKey;
-            }
-            Bounds bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
-            ApplyAvatarRotation(avatarCopy, request.avatarYawDegrees);
-            bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
+                DisableExternalSceneLights();
+                bool avatarChanged = EnsureAvatarCopy(request.avatarRoot, request.bodyPose);
 
-            ConfigureCamera(camera, bounds, request.shotKind, request.width, request.height, request.zoom, request.placement);
-            RebuildBackground(camera, bounds, request.background);
-            ApplyLiveLightPreset(request.lightPreset ?? CreateLightPresets()[0]);
+                string faceBlendshapeKey = CreateFaceBlendshapeKey(request.selectedFaceBlendshapeNames);
+                bool faceBlendshapesChanged =
+                    request.forceFaceBlendshapeApply ||
+                    avatarChanged ||
+                    !string.Equals(lastFaceBlendshapeKey, faceBlendshapeKey, StringComparison.Ordinal);
+                if (faceBlendshapesChanged)
+                {
+                    ResetAndApplyFaceBlendshapes(avatarCopy, request.selectedFaceBlendshapeNames);
+                    lastFaceBlendshapeKey = faceBlendshapeKey;
+                }
+                Bounds bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
+                ApplyAvatarRotation(avatarCopy, request.avatarYawDegrees);
+                bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
 
-            camera.targetTexture = target.sceneRenderTexture;
-            if (faceBlendshapesChanged)
-            {
+                ConfigureCamera(camera, bounds, request.shotKind, request.width, request.height, request.zoom, request.placement);
+                RebuildBackground(camera, bounds, request.background);
+                ApplyLiveLightPreset(request.lightPreset ?? CreateLightPresets()[0]);
+
+                camera.targetTexture = target.sceneRenderTexture;
+                if (faceBlendshapesChanged)
+                {
+                    camera.Render();
+                }
                 camera.Render();
+                ApplyShotPostProcess(request.shotKind, target);
+                MarkRenderTargetUpdated(target);
+                lastPreviewShotKind = request.shotKind;
             }
-            camera.Render();
-            ApplyShotPostProcess(request.shotKind, target);
-            MarkRenderTargetUpdated(target);
-            lastPreviewShotKind = request.shotKind;
+            finally
+            {
+                RestoreExternalSceneLights();
+            }
         }
 
         public Texture2D Capture(RenderRequest request)
@@ -203,6 +212,8 @@ public static class PhotoshootGenerationService
                 scene = default(Scene);
             }
 
+            RestoreExternalSceneLights();
+
             if (previousActiveScene.IsValid() && previousActiveScene.isLoaded)
             {
                 SceneManager.SetActiveScene(previousActiveScene);
@@ -232,6 +243,54 @@ public static class PhotoshootGenerationService
             {
                 SceneManager.SetActiveScene(previousActiveScene);
             }
+        }
+
+        private void DisableExternalSceneLights()
+        {
+            if (!scene.IsValid())
+            {
+                return;
+            }
+
+            for (int sceneIndex = 0; sceneIndex < SceneManager.sceneCount; sceneIndex++)
+            {
+                var loadedScene = SceneManager.GetSceneAt(sceneIndex);
+                if (!loadedScene.IsValid() || !loadedScene.isLoaded || loadedScene == scene)
+                {
+                    continue;
+                }
+
+                foreach (var root in loadedScene.GetRootGameObjects())
+                {
+                    foreach (var light in root.GetComponentsInChildren<Light>(true))
+                    {
+                        if (light == null || light.gameObject.scene == scene)
+                        {
+                            continue;
+                        }
+
+                        if (!externalSceneLightStates.ContainsKey(light))
+                        {
+                            externalSceneLightStates[light] = light.enabled;
+                        }
+
+                        light.enabled = false;
+                    }
+                }
+            }
+        }
+
+        private void RestoreExternalSceneLights()
+        {
+            foreach (var pair in externalSceneLightStates.ToList())
+            {
+                if (pair.Key != null)
+                {
+                    pair.Key.enabled = pair.Value;
+                }
+            }
+
+            externalSceneLightStates.Clear();
         }
 
         private PreviewRenderTarget GetRenderTarget(ShotKind shotKind)
