@@ -2,6 +2,7 @@
   "name": "orbiters.mcb",
   "displayName": "My Custom Base (MCB)",
   "version": "1.5.2",
+  "license": "LicenseRef-MCB-Proprietary",
   "unity" : "2022.3",
   "description": "Wizard to apply a custom base with the MCB tool",
   "type": "tool",

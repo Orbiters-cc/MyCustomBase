@@ -53,21 +53,27 @@ jobs:
           echo "unityPackage=${{ vars.PACKAGE_NAME }}-${{ steps.version.outputs.value }}.unitypackage" >> $GITHUB_ENV
           echo "version=${{ steps.version.outputs.value }}" >> $GITHUB_ENV
 
-      # Zip the Package for release
+      # Build the explicit package file list for release artifacts
+      - name: Build Package File List
+        working-directory: "${{ env.packagePath }}"
+        run: python3 ci/build-package-file-list.py --output packageFiles
+
+      # Zip only package files for release
       - name: Create Package Zip
         working-directory: "${{ env.packagePath }}"
-        run: zip -r "${{ github.workspace }}/${{ env.zipFile }}" .
-      
-      # Build a list of .meta files for future use
-      - name: Track Package Meta Files
-        run: find "${{ env.packagePath }}/" -name \*.meta >> metaList
+        run: zip -q "${{ github.workspace }}/${{ env.zipFile }}" -@ < packageFiles
+
+      # Validate the release zip does not contain repository or editor-local files
+      - name: Validate Package Zip Contents
+        working-directory: "${{ env.packagePath }}"
+        run: python3 ci/validate-package-archive.py "${{ github.workspace }}/${{ env.zipFile }}"
       
       # Make a UnityPackage version of the Package for release
       - name: Create UnityPackage
         uses: pCYSl5EDgo/create-unitypackage@v1.2.3
         with:
           package-path: ${{ env.unityPackage }}
-          include-files: metaList
+          include-files: ${{ env.packagePath }}/packageFiles
       
       # Make a release tag of the version from the package.json file 
       - name: Create Tag

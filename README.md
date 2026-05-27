@@ -14,6 +14,34 @@ MCB custom base versions are applied over the original/default base FBX. If the 
 - The only valid state without `*.fbx.old` is the untouched default-base state where `*.fbx` is already `A`.
 - XOR `.bin` patches are computed against `A`, so version switching depends on `*.fbx.old` remaining the original default source.
 
+## Editor health checks
+
+MCB includes deterministic editor health checks for risky apply/reset behavior. They are menu-driven checks, not Unity Test Runner edit-mode tests, so they are meant to stay fast enough to run during local development.
+
+Run all deterministic checks from Unity:
+
+1. Open `Tools > My Custom Base (MCB) > Health Checks`.
+2. Click `All Deterministic`.
+3. Check the Console if the dialog reports a failure.
+
+Individual checks are also available in the same menu:
+
+- `Native Mesh Payload`
+- `Version Apply Reset Invariants`
+
+For batch-mode validation, run Unity with `MCBEditorHealthChecks.RunAllOrThrow`:
+
+```powershell
+& "C:\Program Files\Unity\Hub\Editor\2022.3.22f1\Editor\Unity.exe" `
+  -batchmode `
+  -quit `
+  -projectPath "H:\metaverse\unity projects\MCB Test" `
+  -executeMethod MCBEditorHealthChecks.RunAllOrThrow `
+  -logFile "Logs\mcb-health-checks.log"
+```
+
+Run these checks when touching version apply/reset code, FBX backup handling, native mesh payloads, advanced mesh paths, dynamic normals, material mutations, slider creation, blendshape preservation, or applied-version caches.
+
 ## Testing SSL failures on Windows
 
 The easiest way to test MCB's connectivity failure UI is now built into the package.
