@@ -41,6 +41,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build the explicit MCB package release file list.")
     parser.add_argument("--root", default=".", help="Package root to scan.")
     parser.add_argument("--output", default="packageFiles", help="Output file path.")
+    parser.add_argument("--meta-output", help="Optional output path for the .meta file list used by create-unitypackage.")
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -54,6 +55,18 @@ def main():
 
     output.write_text("\n".join(files) + "\n", encoding="utf-8")
     print(f"Wrote {len(files)} package file entries to {output}")
+
+    if args.meta_output:
+        meta_output = Path(args.meta_output)
+        if not meta_output.is_absolute():
+            meta_output = root / meta_output
+
+        meta_files = [path for path in files if path.endswith(".meta")]
+        if not meta_files:
+            raise SystemExit("Package allowlist produced no .meta files.")
+
+        meta_output.write_text("\n".join(meta_files) + "\n", encoding="utf-8")
+        print(f"Wrote {len(meta_files)} package .meta file entries to {meta_output}")
 
 
 if __name__ == "__main__":
