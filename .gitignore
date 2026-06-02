@@ -1,4 +1,15 @@
 *.meta
+!Editor.meta
+!Editor/**/*.meta
+!Runtime.meta
+!Runtime/**/*.meta
+!creator assets.meta
+!creator assets/**/*.meta
+!debug.meta
+!debug/**/*.meta
+!LICENSE.md.meta
+!README.md.meta
+!package.json.meta
 .agents/
 .codex/
 .graphifyignore
