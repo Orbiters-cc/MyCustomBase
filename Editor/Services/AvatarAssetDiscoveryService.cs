@@ -682,7 +682,9 @@ public static class AvatarAssetDiscoveryService
                         return (null, $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
                     }
 
-                    return (await response.Content.ReadAsByteArrayAsync(), null);
+                    var bytes = await response.Content.ReadAsByteArrayAsync();
+                    MCBUtils.ReportFileUsage(url, bytes != null ? bytes.LongLength : 0L, $"mcb-asset-{kind}");
+                    return (bytes, null);
                 }
             }
         }

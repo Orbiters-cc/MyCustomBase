@@ -514,6 +514,11 @@ public partial class AssetGalleryModule
 
         if (changed)
         {
+            if (refreshVersions)
+            {
+                SceneMeshDotEffectService.PlayAvatarSweep(editor.customBaseTarget != null ? editor.customBaseTarget.transform.root : null, 1);
+            }
+
             commentDraft = "";
             editingCommentId = 0;
             editingCommentDraft = "";

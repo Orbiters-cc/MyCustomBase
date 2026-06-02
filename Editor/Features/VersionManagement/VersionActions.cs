@@ -2811,10 +2811,14 @@ public class VersionActions
         if (entry == null) yield break;
         if (!FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION)) yield break;
         var root = editor.customBaseTarget.transform.root;
+
         fileManagerService.RemoveExistingLogic(root);
 
         string fbxPath = GetCurrentFBXPath();
-        if (string.IsNullOrEmpty(fbxPath)) yield break;
+        if (string.IsNullOrEmpty(fbxPath))
+        {
+            yield break;
+        }
 
         bool success = false;
         try

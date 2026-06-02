@@ -9,6 +9,7 @@ using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Collections.Generic;
 using UnityEditorInternal;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
@@ -84,6 +85,7 @@ public static class MCBUtils
     public static readonly string PACKAGE_BASE_FOLDER_FULL_PATH = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Packages", "orbiters.mcb");
 
     public static HttpClient client = new HttpClient() { Timeout = System.TimeSpan.FromSeconds(30) };
+    private static readonly HashSet<string> ReportedFileUsageKeys = new HashSet<string>();
     
     public static string getApiUrl(string scope = "mcb")
     {
@@ -159,6 +161,56 @@ public static class MCBUtils
             return "https://dev." + SERVER_BASE_URL;
         }
         return "https://" + SERVER_BASE_URL;
+    }
+
+    public static void ReportFileUsage(string url, long bytes, string purpose)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !url.Contains("/public/files/"))
+        {
+            return;
+        }
+
+        string key = $"{purpose}:{url}";
+        lock (ReportedFileUsageKeys)
+        {
+            if (ReportedFileUsageKeys.Contains(key))
+            {
+                return;
+            }
+            ReportedFileUsageKeys.Add(key);
+        }
+
+        _ = ReportFileUsageAsync(url, bytes, purpose);
+    }
+
+    private static async Task ReportFileUsageAsync(string url, long bytes, string purpose)
+    {
+        try
+        {
+            string endpoint = $"{getApiUrl("files")}/usage-report";
+            var payload = new
+            {
+                url,
+                bytes = Math.Max(0L, bytes),
+                delivery = "r2-public",
+                purpose = string.IsNullOrWhiteSpace(purpose) ? "mcb" : purpose
+            };
+            string json = JsonConvert.SerializeObject(payload);
+            using (var content = new StringContent(json, Encoding.UTF8, "application/json"))
+            {
+                using (var response = await client.PostAsync(endpoint, content))
+                {
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        MCBLogger.LogWarning($"[MCBUtils] File usage report failed: HTTP {(int)response.StatusCode}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogWarning($"[MCBUtils] File usage report failed: {ex.Message}");
+        }
     }
 
     public static string GetAssetVersionEndpoint(int assetId)

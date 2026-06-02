@@ -200,6 +200,8 @@ public class MCBEditor : UnityEditor.Editor
         EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
         EditorApplication.projectChanged += OnProjectChanged;
         EditorApplication.hierarchyChanged += OnHierarchyChanged;
+
+        PlayPendingComponentAddedMeshEffect();
     }
     
     private void OnDisable()
@@ -1458,6 +1460,19 @@ public class MCBEditor : UnityEditor.Editor
             customBaseTarget.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
             EditorUtility.SetDirty(customBaseTarget);
         }
+    }
+
+    private void PlayPendingComponentAddedMeshEffect()
+    {
+        if (customBaseTarget == null || customBaseTarget.pendingSceneMeshDotEffectLoops <= 0)
+        {
+            return;
+        }
+
+        int loops = Mathf.Clamp(customBaseTarget.pendingSceneMeshDotEffectLoops, 1, 8);
+        customBaseTarget.pendingSceneMeshDotEffectLoops = 0;
+        EditorUtility.SetDirty(customBaseTarget);
+        SceneMeshDotEffectService.PlayAvatarSweep(customBaseTarget.transform != null ? customBaseTarget.transform.root : null, loops);
     }
 
     public void LoadUnsubmittedVersions(bool forceRefresh = false)

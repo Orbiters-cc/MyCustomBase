@@ -62,6 +62,8 @@ public class MyCustomBase : MonoBehaviour
     , IEditorOnly
 #endif
 {
+    private const int ComponentAddedSceneMeshEffectLoops = 1;
+
     // --- USER CONFIGURATION ---
     [Tooltip("If checked, you must manually assign the FBX file below. If unchecked, the tool will try to find it automatically.")]
     public bool specifyCustomBaseFbx = false;
@@ -122,6 +124,8 @@ public class MyCustomBase : MonoBehaviour
     [Tooltip("Serialized cache of applied version bone position offsets used to compensate animation clips at build time.")]
     [HideInInspector] [SerializeField] public List<AnimationPositionOffsetEntry> appliedVersionAnimationPositionOffsetsCache = new List<AnimationPositionOffsetEntry>();
 
+    [HideInInspector] [SerializeField] public int pendingSceneMeshDotEffectLoops = 0;
+
     // --- CREATOR MODE PERSISTENT DATA ---
     [HideInInspector] public bool isCreatorMode = false;
     [HideInInspector] public GameObject customFbxForCreator;
@@ -137,4 +141,9 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public bool includeSuggestRealisticForCreator = false;
     [HideInInspector] public List<string> suggestRealisticMeshPathsForCreator = new List<string>();
     [HideInInspector] public List<CreatorBlendshapeEntry> customBlendshapesForCreator = new List<CreatorBlendshapeEntry>();
+
+    private void Reset()
+    {
+        pendingSceneMeshDotEffectLoops = ComponentAddedSceneMeshEffectLoops;
+    }
 }
