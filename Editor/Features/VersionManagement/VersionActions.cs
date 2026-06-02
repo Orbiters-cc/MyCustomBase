@@ -4,6 +4,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -22,6 +24,8 @@ public class VersionActions
     private const float DownloadApplySyntheticProgressMax = DownloadApplyProgressComplete - 0.04f;
     private const float DownloadApplyExtractionComplete = 0.68f;
     private const float DownloadApplyImportComplete = 0.70f;
+    private const long InMemoryVersionPackageHardCapBytes = 10L * 1024L * 1024L * 1024L;
+    private const long InMemoryVersionPackageEstimatedMultiplier = 5L;
 
     private sealed class ApplyTimingProfile
     {
@@ -69,6 +73,8 @@ public class VersionActions
     private int applyProgressGeneration;
     private float applyProgressBase;
     private float applyProgressScale = 1f;
+    private readonly Dictionary<string, NativeMeshPayloadService.NativeMeshPayloadPreparationPreload> advancedMeshPreparationPreloads =
+        new Dictionary<string, NativeMeshPayloadService.NativeMeshPayloadPreparationPreload>(StringComparer.OrdinalIgnoreCase);
     public VersionApplyProgressState ApplyProgress { get; } = new VersionApplyProgressState();
 
     public VersionActions(MCBEditor editor, NetworkService network, FileManagerService files)
@@ -96,6 +102,33 @@ public class VersionActions
     public void StartRecalculateCurrentFbxHash() => EditorCoroutineUtility.StartCoroutineOwnerless(RecalculateCurrentFbxHashCoroutine());
     public void StartApplyCustomVersion() => EditorCoroutineUtility.StartCoroutineOwnerless(ApplyCustomVersionCoroutine(editor.selectedCustomVersionForAction));
     public void ConfigureApplyProgressColor(Color color) => ApplyProgress.SetFillColor(color);
+
+    public bool CanResetToDefaultBaseWithoutFbxImport()
+    {
+        if (editor?.customBaseTarget == null || fileManagerService == null)
+        {
+            return false;
+        }
+
+        var versionForAssets = ResolvePersistedAppliedVersion() ?? editor.selectedVersionForAction;
+        if (!NativeMeshPayloadService.VersionUsesAdvancedMesh(versionForAssets))
+        {
+            return false;
+        }
+
+        string fbxPath = GetCurrentFBXPath();
+        if (string.IsNullOrWhiteSpace(fbxPath))
+        {
+            return false;
+        }
+
+        var pathsToRestore = GetResetAffectedFbxPaths(versionForAssets, fbxPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path) && fileManagerService.BackupExists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return pathsToRestore.Count > 0 && pathsToRestore.All(fileManagerService.FbxMatchesBackupAtPath);
+    }
+
     public void ExportOfflineVersion(CustomBaseVersion version)
     {
         if (version == null) return;
@@ -241,20 +274,88 @@ public class VersionActions
         
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
         string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        bool advancedMeshApply = applyAfter && NativeMeshPayloadService.VersionUsesAdvancedMesh(version);
+        advancedMeshPreparationPreloads.Clear();
+        var originalFbxPreloadTasks = advancedMeshApply
+            ? StartAdvancedMeshOriginalFbxPreloads(version)
+            : new Dictionary<string, Task<byte[]>>(StringComparer.OrdinalIgnoreCase);
+
+        bool useInMemoryPackage = false;
+        string advancedMeshPipelineDecision = null;
+        if (advancedMeshApply)
+        {
+            var sizeTask = networkService.GetDownloadContentLengthAsync(url);
+            while (!sizeTask.IsCompleted)
+            {
+                if (applyAfter)
+                {
+                    ReportApplyProgress(DownloadApplyProgressStart, "Preparing download...");
+                }
+                yield return null;
+            }
+
+            try
+            {
+                var sizeResult = sizeTask.Result;
+                string memoryDecision;
+                if (sizeResult.success)
+                {
+                    useInMemoryPackage = CanUseInMemoryVersionPackage(sizeResult.contentLength, out memoryDecision);
+                }
+                else
+                {
+                    memoryDecision = $"using disk because ZIP size metadata failed: {sizeResult.error}";
+                }
+                advancedMeshPipelineDecision = memoryDecision;
+                MCBLogger.Log($"[VersionActions] Advanced mesh RAM download decision: {memoryDecision}");
+            }
+            catch (Exception ex)
+            {
+                advancedMeshPipelineDecision = $"using disk because RAM download path evaluation failed: {ex.GetBaseException().Message}";
+                MCBLogger.LogWarning($"[VersionActions] Could not evaluate RAM download path. Falling back to disk. {ex.GetBaseException().Message}");
+            }
+        }
         
         // --- Setup phase (no yield returns) ---
         float downloadProgress = 0f;
         ulong downloadedBytes = 0;
         double downloadStartedAt = EditorApplication.timeSinceStartup;
         float visibleDownloadProgress = DownloadApplyProgressStart;
-        var downloadTask = networkService.DownloadFileAsync(url, tempZipPath, progress =>
+        Task<(bool success, string error)> diskDownloadTask = null;
+        Task<(bool success, byte[] data, string error)> memoryDownloadTask = null;
+        if (useInMemoryPackage)
         {
-            downloadProgress = Mathf.Clamp01(progress);
-        }, bytes =>
+            MCBLogger.Log(
+                "[VersionActions] Advanced mesh reconstruction preparation path: RAM. " +
+                "The ZIP and advanced mesh .bin stay in memory through payload preparation; version files and the final Unity .asset are still persisted to disk. " +
+                advancedMeshPipelineDecision);
+            memoryDownloadTask = networkService.DownloadBytesAsync(url, progress =>
+            {
+                downloadProgress = Mathf.Clamp01(progress);
+            }, bytes =>
+            {
+                downloadedBytes = bytes;
+            });
+        }
+        else
         {
-            downloadedBytes = bytes;
-        });
-        bool setupSucceeded = downloadTask != null;
+            if (advancedMeshApply)
+            {
+                MCBLogger.Log(
+                    "[VersionActions] Advanced mesh reconstruction preparation path: DISK fallback. " +
+                    "The ZIP and extracted advanced mesh .bin are processed from disk. " +
+                    (advancedMeshPipelineDecision ?? "No RAM-path decision was available."));
+            }
+
+            diskDownloadTask = networkService.DownloadFileAsync(url, tempZipPath, progress =>
+            {
+                downloadProgress = Mathf.Clamp01(progress);
+            }, bytes =>
+            {
+                downloadedBytes = bytes;
+            });
+        }
+        bool setupSucceeded = memoryDownloadTask != null || diskDownloadTask != null;
         
         if (!setupSucceeded)
         {
@@ -266,7 +367,8 @@ public class VersionActions
         }
         
         // --- Download phase (with yield returns, NOT in try/catch) ---
-        while (!downloadTask.IsCompleted)
+        while ((memoryDownloadTask != null && !memoryDownloadTask.IsCompleted) ||
+               (diskDownloadTask != null && !diskDownloadTask.IsCompleted))
         {
             if (applyAfter)
             {
@@ -288,9 +390,20 @@ public class VersionActions
         // --- Process result and cleanup ---
         bool success;
         string error;
+        byte[] downloadedZipBytes = null;
         try
         {
-            (success, error) = downloadTask.Result;
+            if (memoryDownloadTask != null)
+            {
+                var result = memoryDownloadTask.Result;
+                success = result.success;
+                error = result.error;
+                downloadedZipBytes = result.data;
+            }
+            else
+            {
+                (success, error) = diskDownloadTask.Result;
+            }
         }
         catch (Exception ex)
         {
@@ -316,11 +429,27 @@ public class VersionActions
                     ReportApplyProgress(DownloadApplyExtractionComplete, "Extracting version files...");
                 }
                 string finalDest = MCBUtils.GetVersionDataPath(version);
-                tempExtractPath = Path.Combine(Path.GetTempPath(), $"mcb_extract_{Guid.NewGuid()}");
-                
-                fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest);
+                Dictionary<string, byte[]> inMemoryPatchBytes = null;
+                if (downloadedZipBytes != null)
+                {
+                    inMemoryPatchBytes = fileManagerService.UnzipAndMoveFromMemory(
+                        downloadedZipBytes,
+                        finalDest,
+                        GetAdvancedMeshPatchFileNames(version));
+                    downloadedZipBytes = null;
+                }
+                else
+                {
+                    tempExtractPath = Path.Combine(Path.GetTempPath(), $"mcb_extract_{Guid.NewGuid()}");
+                    fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest);
+                }
+
                 extractionSucceeded = true;
-                
+                if (advancedMeshApply)
+                {
+                    StartAdvancedMeshPayloadPreparations(version, inMemoryPatchBytes, originalFbxPreloadTasks);
+                }
+
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
             }
         }
@@ -362,9 +491,246 @@ public class VersionActions
                 editor.selectedVersionForAction = version;
                 SetApplyProgressRange(DownloadApplyImportComplete, 1f - DownloadApplyImportComplete);
                 yield return ApplyOrResetCoroutine(version, false);
+                advancedMeshPreparationPreloads.Clear();
             }
         }
     }
+
+    private bool CanUseInMemoryVersionPackage(long zipSizeBytes, out string decision)
+    {
+        if (zipSizeBytes <= 0L)
+        {
+            decision = "using disk because the ZIP size is unknown.";
+            return false;
+        }
+
+        long estimatedBytes;
+        try
+        {
+            checked
+            {
+                estimatedBytes = zipSizeBytes * InMemoryVersionPackageEstimatedMultiplier;
+            }
+        }
+        catch (OverflowException)
+        {
+            decision = $"using disk because ZIP size {FormatByteSize(zipSizeBytes)} overflows the RAM estimate.";
+            return false;
+        }
+
+        if (estimatedBytes > InMemoryVersionPackageHardCapBytes)
+        {
+            decision = $"using disk because estimated RAM {FormatByteSize(estimatedBytes)} exceeds hard cap {FormatByteSize(InMemoryVersionPackageHardCapBytes)}.";
+            return false;
+        }
+
+        if (!TryGetAvailablePhysicalMemory(out long availableBytes))
+        {
+            decision = $"using disk because available physical RAM could not be measured for ZIP size {FormatByteSize(zipSizeBytes)}.";
+            return false;
+        }
+
+        if (estimatedBytes > availableBytes)
+        {
+            decision = $"using disk because estimated RAM {FormatByteSize(estimatedBytes)} exceeds available RAM {FormatByteSize(availableBytes)}.";
+            return false;
+        }
+
+        decision = $"using RAM because ZIP size {FormatByteSize(zipSizeBytes)} estimates to {FormatByteSize(estimatedBytes)} with {FormatByteSize(availableBytes)} available.";
+        return true;
+    }
+
+    private Dictionary<string, Task<byte[]>> StartAdvancedMeshOriginalFbxPreloads(CustomBaseVersion version)
+    {
+        var tasks = new Dictionary<string, Task<byte[]>>(StringComparer.OrdinalIgnoreCase);
+        string fallbackFbxPath = GetCurrentFBXPath();
+        foreach (var patchFile in GetAdvancedMeshPatchFiles(version))
+        {
+            try
+            {
+                string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+                if (string.IsNullOrWhiteSpace(targetFbxPath))
+                {
+                    continue;
+                }
+
+                string originalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath);
+                string absolutePath = Path.GetFullPath(originalFbxPath);
+                if (tasks.ContainsKey(absolutePath))
+                {
+                    continue;
+                }
+
+                tasks[absolutePath] = Task.Run(() => File.ReadAllBytes(absolutePath));
+                MCBLogger.Log($"[VersionActions] Preloading original FBX key for advanced mesh: {MCBUtils.ToUnityPath(originalFbxPath)}");
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogWarning($"[VersionActions] Could not preload original FBX key for advanced mesh: {ex.GetBaseException().Message}");
+            }
+        }
+
+        return tasks;
+    }
+
+    private void StartAdvancedMeshPayloadPreparations(
+        CustomBaseVersion version,
+        Dictionary<string, byte[]> inMemoryPatchBytes,
+        Dictionary<string, Task<byte[]>> originalFbxPreloadTasks)
+    {
+        advancedMeshPreparationPreloads.Clear();
+        string fallbackFbxPath = GetCurrentFBXPath();
+        foreach (var patchFile in GetAdvancedMeshPatchFiles(version))
+        {
+            try
+            {
+                string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+                if (string.IsNullOrWhiteSpace(targetFbxPath))
+                {
+                    continue;
+                }
+
+                string binPath = ResolveVersionPatchPath(version, patchFile);
+                string originalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath);
+                string patchFileName = Path.GetFileName(patchFile.path);
+                Task<byte[]> binDataTask = null;
+                if (!string.IsNullOrWhiteSpace(patchFileName) &&
+                    inMemoryPatchBytes != null &&
+                    inMemoryPatchBytes.TryGetValue(patchFileName, out byte[] binBytes) &&
+                    binBytes != null &&
+                    binBytes.Length > 0)
+                {
+                    binDataTask = Task.FromResult(binBytes);
+                }
+
+                Task<byte[]> originalFbxDataTask = null;
+                string originalAbsolutePath = Path.GetFullPath(originalFbxPath);
+                if (originalFbxPreloadTasks != null)
+                {
+                    originalFbxPreloadTasks.TryGetValue(originalAbsolutePath, out originalFbxDataTask);
+                }
+
+                var preload = NativeMeshPayloadService.StartEncryptedPayloadPreparation(
+                    version,
+                    patchFile,
+                    binPath,
+                    originalFbxPath,
+                    binDataTask,
+                    originalFbxDataTask);
+                if (preload != null)
+                {
+                    advancedMeshPreparationPreloads[BuildAdvancedMeshPreparationKey(version, patchFile)] = preload;
+                }
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogWarning($"[VersionActions] Could not start advanced mesh payload preload: {ex.GetBaseException().Message}");
+            }
+        }
+    }
+
+    private NativeMeshPayloadService.NativeMeshPayloadPreparationPreload GetAdvancedMeshPreparationPreload(
+        CustomBaseVersion version,
+        ModelFileData patchFile)
+    {
+        if (advancedMeshPreparationPreloads.TryGetValue(BuildAdvancedMeshPreparationKey(version, patchFile), out var preload))
+        {
+            return preload;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<ModelFileData> GetAdvancedMeshPatchFiles(CustomBaseVersion version)
+    {
+        return version?.versionFiles?
+                   .Where(file => file != null &&
+                                  string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
+                                  string.Equals(file.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase)) ??
+               Enumerable.Empty<ModelFileData>();
+    }
+
+    private static HashSet<string> GetAdvancedMeshPatchFileNames(CustomBaseVersion version)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var patchFile in GetAdvancedMeshPatchFiles(version))
+        {
+            string name = string.IsNullOrWhiteSpace(patchFile.path)
+                ? null
+                : Path.GetFileName(patchFile.path);
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(name);
+            }
+        }
+
+        return names;
+    }
+
+    private static string BuildAdvancedMeshPreparationKey(CustomBaseVersion version, ModelFileData patchFile)
+    {
+        string path = string.IsNullOrWhiteSpace(patchFile?.path) ? "" : Path.GetFileName(patchFile.path);
+        return $"{version?.assetId ?? 0}:{version?.version ?? ""}:{path}:{patchFile?.outputHash ?? ""}";
+    }
+
+    private static bool TryGetAvailablePhysicalMemory(out long availableBytes)
+    {
+        availableBytes = 0L;
+        if (Application.platform != RuntimePlatform.WindowsEditor)
+        {
+            return false;
+        }
+
+        var status = new MemoryStatusEx();
+        status.dwLength = (uint)Marshal.SizeOf(typeof(MemoryStatusEx));
+        if (!GlobalMemoryStatusEx(ref status) || status.ullAvailPhys > long.MaxValue)
+        {
+            return false;
+        }
+
+        availableBytes = (long)status.ullAvailPhys;
+        return availableBytes > 0L;
+    }
+
+    private static string FormatByteSize(long bytes)
+    {
+        const double gb = 1024d * 1024d * 1024d;
+        const double mb = 1024d * 1024d;
+        const double kb = 1024d;
+        if (bytes >= gb)
+        {
+            return $"{bytes / gb:F2} GB";
+        }
+
+        if (bytes >= mb)
+        {
+            return $"{bytes / mb:F1} MB";
+        }
+
+        if (bytes >= kb)
+        {
+            return $"{bytes / kb:F1} KB";
+        }
+
+        return $"{bytes} B";
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct MemoryStatusEx
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx lpBuffer);
 
     private IEnumerator DeleteVersionCoroutine(CustomBaseVersion version)
     {
@@ -598,6 +964,7 @@ public class VersionActions
         MCBLogger.LogError($"[VersionActions] {operation} failed unexpectedly. version={versionLabel} reset={isReset}: {ex}");
         editor.warningsModule?.AddWarning(message, MessageType.Error, $"{operation} failed");
         editor.isDownloading = false;
+        advancedMeshPreparationPreloads.Clear();
         FinishApplyProgress(false);
         editor.RefreshUiToolkitSections();
         editor.Repaint();
@@ -641,6 +1008,11 @@ public class VersionActions
             try
             {
                 ReportApplyProgress(0.10f, "Restoring base mesh state...");
+                if (versionUsesAdvancedMesh)
+                {
+                    MCBLogger.Log("[VersionActions] Advanced mesh reset will restore renderer meshes from the imported default FBX asset and skip FBX reimport when the source file already matches its backup.");
+                }
+
                 RestoreBackupsForVersion(versionForAssets, fbxPath, !versionUsesAdvancedMesh);
                 if (versionUsesAdvancedMesh)
                 {
@@ -699,12 +1071,17 @@ public class VersionActions
         {
             success = true;
             profile.Mark(isReset ? "Restored base/native meshes" : "Applied model file patches");
+            if (!isReset && versionUsesAdvancedMesh)
+            {
+                advancedMeshPreparationPreloads.Clear();
+            }
         }
         else
         {
             profile.Mark("Model patch/reset failed");
             MCBLogger.LogError($"[MCB] Operation failed: {operationException.Message}");
             if(!isReset && fileManagerService.BackupExists(fbxPath)) fileManagerService.RestoreBackup(fbxPath);
+            advancedMeshPreparationPreloads.Clear();
             FinishApplyProgress(false);
         }
         
@@ -1177,7 +1554,8 @@ public class VersionActions
             binPath,
             originalFbxPath,
             fileManagerService,
-            (progress, label) => ReportApplyProgress(Mathf.Lerp(0.12f, 0.72f, Mathf.Clamp01(progress)), label));
+            (progress, label) => ReportApplyProgress(Mathf.Lerp(0.12f, 0.72f, Mathf.Clamp01(progress)), label),
+            GetAdvancedMeshPreparationPreload(version, patchFile));
 
         while (routine.MoveNext())
         {

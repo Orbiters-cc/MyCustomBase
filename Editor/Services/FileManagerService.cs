@@ -61,6 +61,21 @@ public class FileManagerService
         return !string.IsNullOrEmpty(fbxPath) && File.Exists(fbxPath + OriginalSuffix);
     }
 
+    public bool FbxMatchesBackupAtPath(string unityFbxPath)
+    {
+        if (string.IsNullOrEmpty(unityFbxPath))
+        {
+            return false;
+        }
+
+        string unityPath = MCBUtils.ToUnityPath(unityFbxPath);
+        string fullFbxPath = Path.GetFullPath(unityPath);
+        string fullBackupPath = fullFbxPath + OriginalSuffix;
+        return File.Exists(fullFbxPath) &&
+               File.Exists(fullBackupPath) &&
+               FilesAreEqual(fullFbxPath, fullBackupPath);
+    }
+
     public bool ReplaceFbxWithCustomCopy(string targetFbxPath, string customFbxPath)
     {
         if (string.IsNullOrWhiteSpace(targetFbxPath)) throw new ArgumentNullException(nameof(targetFbxPath));
@@ -145,7 +160,6 @@ public class FileManagerService
     }
 
     // Force-restore a specific FBX regardless of current selection/state.
-    // Always overwrite the .fbx from .fbx.old, then force re-import.
     // The .old file is the immutable default-base source and must remain in place.
     public void ForceRestoreBackupAtPath(string unityFbxPath)
     {
@@ -159,7 +173,14 @@ public class FileManagerService
             throw new FileNotFoundException($"Backup FBX not found: {fullBackupPath}");
         }
 
+        if (FbxMatchesBackupAtPath(unityPath))
+        {
+            MCBLogger.Log($"[FileManager] Skipped original FBX restore; target already matches backup: {unityPath}");
+            return;
+        }
+
         File.Copy(fullBackupPath, fullFbxPath, true);
+        MCBLogger.Log($"[FileManager] Restored original FBX backup and reimporting: {unityPath}");
 
         // Force Unity to reimport the restored FBX
         AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
@@ -202,6 +223,104 @@ public class FileManagerService
         CopyDirectory(contentSourcePath, finalDestinationPath);
     }
 
+    public Dictionary<string, byte[]> UnzipAndMoveFromMemory(
+        byte[] zipBytes,
+        string finalDestinationPath,
+        ISet<string> captureRelativePaths = null)
+    {
+        if (zipBytes == null || zipBytes.Length == 0)
+        {
+            throw new InvalidDataException("Version ZIP data is empty.");
+        }
+
+        if (string.IsNullOrWhiteSpace(finalDestinationPath))
+        {
+            throw new ArgumentNullException(nameof(finalDestinationPath));
+        }
+
+        var captured = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        var normalizedCapturePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string path in captureRelativePaths ?? new HashSet<string>())
+        {
+            string normalized = NormalizeZipRelativePath(path);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                normalizedCapturePaths.Add(normalized);
+            }
+        }
+
+        if (Directory.Exists(finalDestinationPath)) Directory.Delete(finalDestinationPath, true);
+        Directory.CreateDirectory(finalDestinationPath);
+
+        string destinationRoot = Path.GetFullPath(finalDestinationPath);
+        using (var zipStream = new MemoryStream(zipBytes, false))
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, false))
+        {
+            var fileEntries = archive.Entries
+                .Where(entry => entry != null && !IsZipDirectory(entry))
+                .ToList();
+            string rootPrefix = ResolveSingleZipRootPrefix(fileEntries);
+
+            foreach (var entry in fileEntries)
+            {
+                string relativePath = NormalizeZipRelativePath(entry.FullName);
+                if (string.IsNullOrWhiteSpace(relativePath))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(rootPrefix) &&
+                    relativePath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    relativePath = relativePath.Substring(rootPrefix.Length);
+                }
+
+                relativePath = NormalizeZipRelativePath(relativePath);
+                if (string.IsNullOrWhiteSpace(relativePath))
+                {
+                    continue;
+                }
+
+                string outputPath = Path.GetFullPath(Path.Combine(
+                    finalDestinationPath,
+                    relativePath.Replace('/', Path.DirectorySeparatorChar)));
+                if (!IsSameOrChildPath(outputPath, destinationRoot))
+                {
+                    throw new InvalidDataException($"ZIP entry resolves outside the version folder: {entry.FullName}");
+                }
+
+                string outputDirectory = Path.GetDirectoryName(outputPath);
+                if (!string.IsNullOrWhiteSpace(outputDirectory))
+                {
+                    Directory.CreateDirectory(outputDirectory);
+                }
+
+                bool shouldCapture = normalizedCapturePaths.Contains(relativePath);
+                if (shouldCapture)
+                {
+                    using (var entryStream = entry.Open())
+                    using (var memory = new MemoryStream())
+                    {
+                        entryStream.CopyTo(memory);
+                        byte[] bytes = memory.ToArray();
+                        File.WriteAllBytes(outputPath, bytes);
+                        captured[relativePath] = bytes;
+                    }
+                }
+                else
+                {
+                    using (var entryStream = entry.Open())
+                    using (var fileStream = File.Create(outputPath))
+                    {
+                        entryStream.CopyTo(fileStream);
+                    }
+                }
+            }
+        }
+
+        return captured;
+    }
+
     private void CopyDirectory(string sourceDir, string destDir)
     {
         Directory.CreateDirectory(destDir);
@@ -213,6 +332,65 @@ public class FileManagerService
         {
             CopyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
         }
+    }
+
+    private static bool IsZipDirectory(ZipArchiveEntry entry)
+    {
+        return entry == null ||
+               string.IsNullOrEmpty(entry.Name) ||
+               entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
+               entry.FullName.EndsWith("\\", StringComparison.Ordinal);
+    }
+
+    private static string ResolveSingleZipRootPrefix(IEnumerable<ZipArchiveEntry> entries)
+    {
+        string root = null;
+        foreach (var entry in entries ?? Enumerable.Empty<ZipArchiveEntry>())
+        {
+            string path = NormalizeZipRelativePath(entry.FullName);
+            int slashIndex = path.IndexOf('/');
+            if (slashIndex <= 0)
+            {
+                return null;
+            }
+
+            string candidate = path.Substring(0, slashIndex);
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                root = candidate;
+            }
+            else if (!string.Equals(root, candidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(root) ? null : root + "/";
+    }
+
+    private static string NormalizeZipRelativePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        string normalized = path.Replace('\\', '/').TrimStart('/');
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
+        {
+            normalized = normalized.Substring(2);
+        }
+
+        return normalized;
+    }
+
+    private static bool IsSameOrChildPath(string candidatePath, string rootPath)
+    {
+        string candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase) ||
+               candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+               candidate.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
     
     public void RemoveExistingLogic(Transform root)

@@ -18,6 +18,7 @@ public partial class VersionManagementModule
     private bool lastRecommendedWasNull;
     private float imguiDisplayedActionProgress = 1f;
     private static readonly Color AccentGreen = new Color32(0, 218, 109, 255);
+    private static readonly Color DisabledAccentGreen = new Color32(0, 120, 60, 255);
     private Color imguiDisplayedFillColor = AccentGreen;
     private Color imguiDisplayedTrackColor = new Color(0.46f, 0.46f, 0.46f, 1f);
     private bool imguiWasApplying;
@@ -180,8 +181,9 @@ public partial class VersionManagementModule
                              (isResetSelected && !canReset);
         }
 
+        bool isInstalledAction = IsInstalledActionState(action, selectedVersion);
         string buttonText = GetActionButtonText(action, selectedVersion);
-        Color buttonColor = GetActionButtonColor(action);
+        Color buttonColor = GetActionButtonColor(action, isInstalledAction);
         bool actionInProgress = editor.isApplying || actions.ApplyProgress.IsRunning;
         bool buttonEnabled = canInteract && !buttonDisabled;
         if (DrawMainActionProgressButton(buttonText, buttonColor, buttonEnabled, actionInProgress))
@@ -189,7 +191,7 @@ public partial class VersionManagementModule
             actions.ConfigureApplyProgressColor(buttonColor);
             if (action == ActionType.RESET)
             {
-                if (EditorUtility.DisplayDialog("Confirm Reset", "This will restore the original FBX from its backup and reapply the default avatar configuration.", "Reset", "Cancel"))
+                if (ShouldResetWithoutConfirmation() || EditorUtility.DisplayDialog("Confirm Reset", "This will restore the original FBX from its backup and reapply the default avatar configuration.", "Reset", "Cancel"))
                 {
                     actions.StartReset();
                 }
@@ -258,6 +260,17 @@ public partial class VersionManagementModule
     private static bool ShouldSkipApplyConfirmation(CustomBaseVersion version)
     {
         return NativeMeshPayloadService.VersionUsesAdvancedMesh(version);
+    }
+
+    private bool ShouldResetWithoutConfirmation()
+    {
+        bool canSkipConfirmation = actions.CanResetToDefaultBaseWithoutFbxImport();
+        if (canSkipConfirmation)
+        {
+            MCBLogger.Log("[VersionManagement] Skipping reset confirmation for fast advanced mesh default-base swap.");
+        }
+
+        return canSkipConfirmation;
     }
 
     private bool DrawMainActionProgressButton(string buttonText, Color fillColor, bool enabled, bool actionInProgress)
@@ -336,8 +349,21 @@ public partial class VersionManagementModule
         return new Color(0.46f, 0.46f, 0.46f, 1f);
     }
 
-    private static Color GetActionButtonColor(ActionType action)
+    private bool IsInstalledActionState(ActionType action, CustomBaseVersion selectedVersion)
     {
+        return action == ActionType.UNAVAILABLE &&
+               selectedVersion != null &&
+               editor?.customBaseTarget?.appliedCustomBaseVersion != null &&
+               selectedVersion.Equals(editor.customBaseTarget.appliedCustomBaseVersion);
+    }
+
+    private static Color GetActionButtonColor(ActionType action, bool isInstalledAction)
+    {
+        if (isInstalledAction)
+        {
+            return DisabledAccentGreen;
+        }
+
         switch (action)
         {
             case ActionType.DOWNGRADE:

@@ -745,6 +745,10 @@
     background-color: #6a6a6a;
 }
 
+.mcb-version-main-action--installed:disabled {
+    opacity: 1;
+}
+
 .mcb-version-access__button {
     align-self: flex-start;
     min-width: 120px;

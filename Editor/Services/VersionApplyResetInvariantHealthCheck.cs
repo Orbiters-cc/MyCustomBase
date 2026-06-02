@@ -15,12 +15,11 @@ public static class VersionApplyResetInvariantHealthCheck
         try
         {
             RunOrThrow();
-            EditorUtility.DisplayDialog("Version Apply Reset Invariants", "Health check passed.", "OK");
+            Debug.Log("[VersionApplyResetInvariantHealthCheck] Passed.");
         }
         catch (Exception ex)
         {
             Debug.LogError("[VersionApplyResetInvariantHealthCheck] Failed: " + ex);
-            EditorUtility.DisplayDialog("Version Apply Reset Invariants", "Health check failed. See Console for details.", "OK");
         }
     }
 
@@ -111,14 +110,18 @@ public static class VersionApplyResetInvariantHealthCheck
             File.WriteAllBytes(targetPath, applied);
             File.WriteAllBytes(backupPath, original);
 
+            ThrowIf(fileManager.FbxMatchesBackupAtPath(targetPath), "Fast reset predicate should be false while target FBX differs from backup.");
+
             fileManager.RestoreBackup(targetPath);
             AssertFileBytes(targetPath, original, "Reset restore did not copy the backup over the target FBX.");
             AssertFileBytes(backupPath, original, "Reset restore removed or modified the original backup.");
+            ThrowIf(!fileManager.FbxMatchesBackupAtPath(targetPath), "Fast reset predicate should be true after target FBX matches backup.");
 
             File.WriteAllBytes(targetPath, applied);
             fileManager.RestoreBackup(targetPath);
             AssertFileBytes(targetPath, original, "Repeated reset restore did not remain deterministic.");
             AssertFileBytes(backupPath, original, "Repeated reset restore modified the original backup.");
+            ThrowIf(!fileManager.FbxMatchesBackupAtPath(targetPath), "Fast reset predicate should remain true after repeated reset restore.");
         }
         finally
         {

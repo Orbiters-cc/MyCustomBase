@@ -18,12 +18,11 @@ public static class NativeMeshPayloadHealthCheck
         try
         {
             RunOrThrow();
-            EditorUtility.DisplayDialog("Native Mesh Payload", "Health check passed.", "OK");
+            Debug.Log("[NativeMeshPayloadHealthCheck] Passed.");
         }
         catch (Exception ex)
         {
             Debug.LogError("[NativeMeshPayloadHealthCheck] Failed: " + ex);
-            EditorUtility.DisplayDialog("Native Mesh Payload", "Health check failed. See Console for details.", "OK");
         }
     }
 

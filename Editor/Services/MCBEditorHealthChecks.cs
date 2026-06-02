@@ -11,12 +11,11 @@ public static class MCBEditorHealthChecks
         try
         {
             RunAllOrThrow();
-            EditorUtility.DisplayDialog("MCB Health Checks", "All deterministic health checks passed.", "OK");
+            Debug.Log("[MCBEditorHealthChecks] All deterministic health checks passed.");
         }
         catch (Exception ex)
         {
             Debug.LogError("[MCBEditorHealthChecks] Failed: " + ex);
-            EditorUtility.DisplayDialog("MCB Health Checks", "Health checks failed. See Console for details.", "OK");
         }
     }
 

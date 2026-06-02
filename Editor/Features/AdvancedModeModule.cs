@@ -651,14 +651,12 @@ public class AdvancedModeModule
             healthCheckStatus = label + " passed.";
             healthCheckStatusType = MessageType.Info;
             MCBLogger.Log("[AdvancedMode] " + healthCheckStatus);
-            EditorUtility.DisplayDialog("MCB Health Checks", healthCheckStatus, "OK");
         }
         catch (System.Exception ex)
         {
             healthCheckStatus = label + " failed. See Console for details.";
             healthCheckStatusType = MessageType.Error;
             Debug.LogError("[AdvancedMode] " + label + " failed: " + ex);
-            EditorUtility.DisplayDialog("MCB Health Checks", healthCheckStatus, "OK");
         }
         finally
         {

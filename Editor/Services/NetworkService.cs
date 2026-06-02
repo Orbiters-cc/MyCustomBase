@@ -228,6 +228,121 @@ public class NetworkService
         }
     }
 
+    public async Task<(bool success, long contentLength, string error)> GetDownloadContentLengthAsync(string url)
+    {
+        int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
+        try
+        {
+            using (var request = new UnityWebRequest(url, "HEAD"))
+            {
+                request.timeout = timeoutSeconds;
+                UnityWebRequestAsyncOperation operation;
+                try
+                {
+                    operation = request.SendWebRequest();
+                }
+                catch (Exception ex)
+                {
+                    MCBConnectivityMonitor.ReportManagedException(url, ex, MCBRequestPolicy.Backend("Download metadata"));
+                    throw;
+                }
+
+                while (!operation.isDone)
+                {
+                    await Task.Yield();
+                }
+
+                MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, url, MCBRequestPolicy.Backend("Download metadata"));
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    string errorMsg = $"Download metadata failed: HTTP {request.responseCode} {request.error}";
+                    MCBLogger.LogWarning($"[NetworkService] {errorMsg}, url = {SanitizeUrlForLogs(url)}");
+                    return (false, -1L, errorMsg);
+                }
+
+                string header = request.GetResponseHeader("Content-Length");
+                if (!long.TryParse(header, out long length) || length < 0L)
+                {
+                    return (false, -1L, "Download metadata did not include a valid Content-Length header.");
+                }
+
+                return (true, length, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download metadata"));
+            MCBLogger.LogWarning($"[NetworkService] Download metadata exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
+            return (false, -1L, $"Download metadata exception: {ex.Message}");
+        }
+    }
+
+    public async Task<(bool success, byte[] data, string error)> DownloadBytesAsync(
+        string url,
+        Action<float> onProgress = null,
+        Action<ulong> onDownloadedBytes = null)
+    {
+        int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
+        try
+        {
+            using (var request = new UnityWebRequest(url, UnityWebRequest.kHttpVerbGET))
+            {
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.timeout = timeoutSeconds;
+                UnityWebRequestAsyncOperation operation;
+                try
+                {
+                    operation = request.SendWebRequest();
+                }
+                catch (Exception ex)
+                {
+                    MCBConnectivityMonitor.ReportManagedException(url, ex, MCBRequestPolicy.Backend("Download bytes"));
+                    throw;
+                }
+
+                while (!operation.isDone)
+                {
+                    onProgress?.Invoke(NormalizeDownloadProgress(request.downloadProgress));
+                    onDownloadedBytes?.Invoke(request.downloadedBytes);
+                    await Task.Yield();
+                }
+
+                onProgress?.Invoke(1f);
+                onDownloadedBytes?.Invoke(request.downloadedBytes);
+                MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, url, MCBRequestPolicy.Backend("Download bytes"));
+
+                if (request.result == UnityWebRequest.Result.Success)
+                {
+                    return (true, request.downloadHandler.data, null);
+                }
+
+                string errorBody = null;
+                try { errorBody = request.downloadHandler?.text; } catch { }
+
+                string errorMsg = $"Download failed: HTTP {request.responseCode} {request.error}";
+                if (!string.IsNullOrEmpty(errorBody))
+                {
+                    try
+                    {
+                        var errorObj = JsonConvert.DeserializeObject<AccessDeniedPayload>(errorBody);
+                        if (!string.IsNullOrEmpty(errorObj.errorMessage)) errorMsg = errorObj.errorMessage;
+                        else if (!string.IsNullOrEmpty(errorObj.error)) errorMsg = errorObj.error;
+                    }
+                    catch { /* ignore JSON parse error */ }
+                }
+
+                MCBLogger.LogError($"[NetworkService] {errorMsg}, url = {SanitizeUrlForLogs(url)}");
+                return (false, null, errorMsg);
+            }
+        }
+        catch (Exception ex)
+        {
+            MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download bytes"));
+            MCBLogger.LogError($"[NetworkService] Download bytes exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
+            return (false, null, $"Download exception: {ex.Message}");
+        }
+    }
+
     private static float NormalizeDownloadProgress(float progress)
     {
         if (float.IsNaN(progress) || progress < 0f)

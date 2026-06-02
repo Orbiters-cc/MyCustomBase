@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using MCBEditorUtils;
 using UnityEditor;
@@ -27,6 +28,8 @@ public static class NativeMeshPayloadService
     private const float SparseVectorEpsilon = 0.00001f;
     private const string GeneratedFolder = "Assets/MCB/generated/advancedMeshPayloads";
     private const string BuildTempFolder = "Assets/MCB/generated/advancedMeshBuildTemp";
+    private const int ParallelXorThresholdBytes = 16 * 1024 * 1024;
+    private const int ParallelXorChunkBytes = 1024 * 1024;
 
     public sealed class GeneratedPayloadStorageInfo
     {
@@ -137,6 +140,39 @@ public static class NativeMeshPayloadService
         public long blendShapeTangentBytes;
         public long skippedBlendShapeNormalBytes;
         public long skippedBlendShapeTangentBytes;
+    }
+
+    public sealed class NativeMeshPayloadPreparationPreload
+    {
+        internal readonly Task<PreparedPayloadAssetData> task;
+        internal readonly NativeMeshPayloadPreparationStatus status;
+        private readonly string payloadAssetPath;
+        private readonly string payloadHash;
+        private readonly string payloadCompression;
+
+        internal NativeMeshPayloadPreparationPreload(
+            string payloadAssetPath,
+            string payloadHash,
+            string payloadCompression,
+            NativeMeshPayloadPreparationStatus status,
+            Task<PreparedPayloadAssetData> task)
+        {
+            this.payloadAssetPath = payloadAssetPath;
+            this.payloadHash = payloadHash;
+            this.payloadCompression = payloadCompression;
+            this.status = status;
+            this.task = task;
+        }
+
+        internal bool Matches(string assetPath, string hash, string compression)
+        {
+            return string.Equals(MCBUtils.ToUnityPath(payloadAssetPath), MCBUtils.ToUnityPath(assetPath), StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(payloadHash, hash, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(
+                       NormalizePayloadCompression(payloadCompression),
+                       NormalizePayloadCompression(compression),
+                       StringComparison.Ordinal);
+        }
     }
 
     public static NativeMeshPayloadBuildResult WriteEncryptedPayload(
@@ -403,7 +439,8 @@ public static class NativeMeshPayloadService
         string binPath,
         string originalFbxPath,
         FileManagerService fileManagerService,
-        Action<float, string> reportProgress)
+        Action<float, string> reportProgress,
+        NativeMeshPayloadPreparationPreload preparationPreload = null)
     {
         if (avatarRoot == null)
         {
@@ -447,7 +484,8 @@ public static class NativeMeshPayloadService
             originalFbxPath,
             fileManagerService,
             (progress, label) => reportProgress?.Invoke(Mathf.Lerp(0.02f, 0.72f, progress), label),
-            result => payload = result);
+            result => payload = result,
+            preparationPreload);
         while (materialize.MoveNext())
         {
             yield return materialize.Current;
@@ -537,6 +575,74 @@ public static class NativeMeshPayloadService
         return payload;
     }
 
+    public static NativeMeshPayloadPreparationPreload StartEncryptedPayloadPreparation(
+        CustomBaseVersion version,
+        ModelFileData patchFile,
+        string binPath,
+        string originalFbxPath,
+        Task<byte[]> binDataTask = null,
+        Task<byte[]> originalFbxDataTask = null)
+    {
+        if (version == null)
+        {
+            throw new ArgumentNullException(nameof(version));
+        }
+
+        if (patchFile == null)
+        {
+            throw new ArgumentNullException(nameof(patchFile));
+        }
+
+        if (!string.Equals(patchFile.transform, TransformName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(patchFile.outputHash))
+        {
+            throw new InvalidDataException("Native mesh payload metadata is missing outputHash.");
+        }
+
+        if (binDataTask == null && (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath)))
+        {
+            throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
+        }
+
+        if (originalFbxDataTask == null && (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath)))
+        {
+            throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
+        }
+
+        string payloadHash = patchFile.outputHash;
+        string payloadCompression = ResolvePayloadCompression(patchFile);
+        string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
+        var existing = LoadPayloadAsset(payloadAssetPath);
+        if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
+        {
+            return null;
+        }
+
+        var status = new NativeMeshPayloadPreparationStatus();
+        string assetName = Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(payloadAssetPath));
+        var task = Task.Run(() =>
+        {
+            byte[] binData = binDataTask != null ? binDataTask.GetAwaiter().GetResult() : null;
+            byte[] originalFbxData = originalFbxDataTask != null ? originalFbxDataTask.GetAwaiter().GetResult() : null;
+            return PrepareNativeMeshPayloadData(
+                binPath,
+                originalFbxPath,
+                binData,
+                originalFbxData,
+                assetName,
+                payloadHash,
+                payloadCompression,
+                status);
+        });
+
+        UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Started advanced mesh payload preparation preload: {payloadAssetPath}");
+        return new NativeMeshPayloadPreparationPreload(payloadAssetPath, payloadHash, payloadCompression, status, task);
+    }
+
     public static IEnumerator MaterializeEncryptedPayloadAssetCoroutine(
         CustomBaseVersion version,
         ModelFileData patchFile,
@@ -544,7 +650,8 @@ public static class NativeMeshPayloadService
         string originalFbxPath,
         FileManagerService fileManagerService,
         Action<float, string> reportProgress,
-        Action<NativeMeshPayloadAsset> completed)
+        Action<NativeMeshPayloadAsset> completed,
+        NativeMeshPayloadPreparationPreload preparationPreload = null)
     {
         if (version == null)
         {
@@ -593,20 +700,33 @@ public static class NativeMeshPayloadService
             yield break;
         }
 
-        var status = new NativeMeshPayloadPreparationStatus();
         long originalBytes = new FileInfo(originalFbxPath).Length;
         long binBytes = new FileInfo(binPath).Length;
         UnityEngine.Debug.Log(
             $"[NativeMeshPayloadProfile] Async materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} originalFbxKey={FormatByteSize(originalBytes)}");
 
         string assetName = Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(payloadAssetPath));
-        var prepareTask = Task.Run(() => PrepareNativeMeshPayloadData(
-            binPath,
-            originalFbxPath,
-            assetName,
-            payloadHash,
-            payloadCompression,
-            status));
+        NativeMeshPayloadPreparationStatus status;
+        Task<PreparedPayloadAssetData> prepareTask;
+        if (preparationPreload != null && preparationPreload.Matches(payloadAssetPath, payloadHash, payloadCompression))
+        {
+            status = preparationPreload.status;
+            prepareTask = preparationPreload.task;
+            UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Reusing advanced mesh payload preparation preload: {payloadAssetPath}");
+        }
+        else
+        {
+            status = new NativeMeshPayloadPreparationStatus();
+            prepareTask = Task.Run(() => PrepareNativeMeshPayloadData(
+                binPath,
+                originalFbxPath,
+                null,
+                null,
+                assetName,
+                payloadHash,
+                payloadCompression,
+                status));
+        }
 
         while (!prepareTask.IsCompleted)
         {
@@ -1428,15 +1548,37 @@ public static class NativeMeshPayloadService
     private static PreparedPayloadAssetData PrepareNativeMeshPayloadData(
         string binPath,
         string originalFbxPath,
+        byte[] preloadedBinData,
+        byte[] preloadedOriginalFbxData,
         string assetName,
         string payloadHash,
         string payloadCompression,
         NativeMeshPayloadPreparationStatus status)
     {
-        status.Report(0.02f, "Reading original FBX key...");
-        byte[] baseData = File.ReadAllBytes(originalFbxPath);
-        status.Report(0.12f, "Reading advanced mesh payload...");
-        byte[] binData = File.ReadAllBytes(binPath);
+        byte[] baseData;
+        if (preloadedOriginalFbxData != null && preloadedOriginalFbxData.Length > 0)
+        {
+            status.Report(0.12f, "Using preloaded original FBX key...");
+            baseData = preloadedOriginalFbxData;
+        }
+        else
+        {
+            status.Report(0.02f, "Reading original FBX key...");
+            baseData = File.ReadAllBytes(originalFbxPath);
+        }
+
+        byte[] binData;
+        if (preloadedBinData != null && preloadedBinData.Length > 0)
+        {
+            status.Report(0.24f, "Using in-memory advanced mesh payload...");
+            binData = preloadedBinData;
+        }
+        else
+        {
+            status.Report(0.12f, "Reading advanced mesh payload...");
+            binData = File.ReadAllBytes(binPath);
+        }
+
         status.Report(0.24f, "Decrypting advanced mesh payload...");
         byte[] payloadBytes = XorTransformWithProgress(baseData, binData, status, 0.24f, 0.48f);
         status.Report(0.50f, PayloadUsesGZip(payloadCompression) ? "Decompressing advanced mesh payload..." : "Parsing advanced mesh payload...");
@@ -1458,6 +1600,36 @@ public static class NativeMeshPayloadService
         }
 
         byte[] transformedData = new byte[keyData.Length];
+        if (keyData.Length >= ParallelXorThresholdBytes && Environment.ProcessorCount > 1)
+        {
+            int chunkCount = (keyData.Length + ParallelXorChunkBytes - 1) / ParallelXorChunkBytes;
+            int completedChunks = 0;
+            var options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+            };
+
+            Parallel.For(0, chunkCount, options, chunkIndex =>
+            {
+                int start = chunkIndex * ParallelXorChunkBytes;
+                int end = Math.Min(start + ParallelXorChunkBytes, keyData.Length);
+                int baseLength = baseData.Length;
+                for (int i = start; i < end; i++)
+                {
+                    transformedData[i] = (byte)(keyData[i] ^ baseData[i % baseLength]);
+                }
+
+                int done = Interlocked.Increment(ref completedChunks);
+                if (done == chunkCount || done % 4 == 0)
+                {
+                    float local = chunkCount > 0 ? done / (float)chunkCount : 1f;
+                    status.Report(Lerp(startProgress, endProgress, local), "Decrypting advanced mesh payload...");
+                }
+            });
+
+            return transformedData;
+        }
+
         const int progressStride = 4 * 1024 * 1024;
         for (int i = 0; i < keyData.Length; i++)
         {
@@ -1704,22 +1876,34 @@ public static class NativeMeshPayloadService
             yield return null;
         }
 
-        reportProgress?.Invoke(0.78f, "Creating advanced mesh cache asset...");
-        AssetDatabase.CreateAsset(payload, normalizedPath);
-        for (int i = 0; i < payload.renderers.Count; i++)
+        reportProgress?.Invoke(0.78f, "Registering advanced mesh cache...");
+        bool assetEditingStarted = false;
+        try
         {
-            var renderer = payload.renderers[i];
-            if (renderer?.mesh != null)
+            AssetDatabase.StartAssetEditing();
+            assetEditingStarted = true;
+            AssetDatabase.CreateAsset(payload, normalizedPath);
+            for (int i = 0; i < payload.renderers.Count; i++)
             {
-                AssetDatabase.AddObjectToAsset(renderer.mesh, payload);
+                var renderer = payload.renderers[i];
+                if (renderer?.mesh != null)
+                {
+                    AssetDatabase.AddObjectToAsset(renderer.mesh, payload);
+                }
             }
-            reportProgress?.Invoke(Mathf.Lerp(0.78f, 0.90f, payload.renderers.Count > 0 ? (i + 1f) / payload.renderers.Count : 1f), $"Registering cached mesh {i + 1}/{payload.renderers.Count}...");
-            yield return null;
+
+            EditorUtility.SetDirty(payload);
+        }
+        finally
+        {
+            if (assetEditingStarted)
+            {
+                AssetDatabase.StopAssetEditing();
+            }
         }
 
         reportProgress?.Invoke(0.94f, "Saving advanced mesh cache...");
-        EditorUtility.SetDirty(payload);
-        AssetDatabase.SaveAssets();
+        AssetDatabase.SaveAssetIfDirty(payload);
         reportProgress?.Invoke(1f, "Advanced mesh cache ready...");
         completed?.Invoke(payload);
     }
@@ -1772,7 +1956,7 @@ public static class NativeMeshPayloadService
         return from + (to - from) * Math.Max(0f, Math.Min(1f, value));
     }
 
-    private sealed class NativeMeshPayloadPreparationStatus
+    internal sealed class NativeMeshPayloadPreparationStatus
     {
         private readonly object gate = new object();
         private float progress;
@@ -1800,7 +1984,7 @@ public static class NativeMeshPayloadService
         }
     }
 
-    private sealed class PreparedPayloadAssetData
+    internal sealed class PreparedPayloadAssetData
     {
         public string assetName;
         public int payloadVersion;
@@ -1812,7 +1996,7 @@ public static class NativeMeshPayloadService
         public readonly List<NativeMeshPayloadAuthoringPoseBone> authoringPoseBones = new List<NativeMeshPayloadAuthoringPoseBone>();
     }
 
-    private sealed class PreparedPayloadRendererData
+    internal sealed class PreparedPayloadRendererData
     {
         public string avatarPath;
         public string fbxMeshPath;
@@ -1826,7 +2010,7 @@ public static class NativeMeshPayloadService
         public List<string> bonePaths = new List<string>();
     }
 
-    private sealed class PreparedMeshData
+    internal sealed class PreparedMeshData
     {
         public string name;
         public IndexFormat indexFormat;
@@ -1842,19 +2026,19 @@ public static class NativeMeshPayloadService
         public readonly List<PreparedBlendShapeData> blendShapes = new List<PreparedBlendShapeData>();
     }
 
-    private sealed class PreparedSubMeshData
+    internal sealed class PreparedSubMeshData
     {
         public MeshTopology topology;
         public int[] indices;
     }
 
-    private sealed class PreparedBlendShapeData
+    internal sealed class PreparedBlendShapeData
     {
         public string name;
         public readonly List<PreparedBlendShapeFrameData> frames = new List<PreparedBlendShapeFrameData>();
     }
 
-    private sealed class PreparedBlendShapeFrameData
+    internal sealed class PreparedBlendShapeFrameData
     {
         public float weight;
         public Vector3[] deltaVertices;

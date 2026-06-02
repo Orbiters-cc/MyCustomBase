@@ -208,8 +208,9 @@ public partial class VersionManagementModule
                              (isResetSelected && !canReset);
         }
 
+        bool isInstalledAction = IsInstalledActionState(action, selectedVersion);
         string buttonText = GetActionButtonText(action, selectedVersion);
-        Color buttonColor = GetActionButtonColor(action);
+        Color buttonColor = GetActionButtonColor(action, isInstalledAction);
         bool buttonEnabled = canInteract && !buttonDisabled;
         var button = new MCBProgressButtonElement(() =>
         {
@@ -237,6 +238,7 @@ public partial class VersionManagementModule
         button.EnableInClassList("mcb-version-main-action--downgrade", action == ActionType.DOWNGRADE);
         button.EnableInClassList("mcb-version-main-action--custom", action == ActionType.SWITCH_TO_CUSTOM);
         button.EnableInClassList("mcb-version-main-action--reset", action == ActionType.RESET);
+        button.EnableInClassList("mcb-version-main-action--installed", isInstalledAction);
         button.SetEnabled(buttonEnabled);
         root.Add(button);
     }
@@ -245,7 +247,7 @@ public partial class VersionManagementModule
     {
         if (action == ActionType.RESET)
         {
-            if (EditorUtility.DisplayDialog("Confirm Reset", "This will restore the original FBX from its backup and reapply the default avatar configuration.", "Reset", "Cancel"))
+            if (ShouldResetWithoutConfirmation() || EditorUtility.DisplayDialog("Confirm Reset", "This will restore the original FBX from its backup and reapply the default avatar configuration.", "Reset", "Cancel"))
             {
                 actions.StartReset();
                 editor.RefreshUiToolkitSections();
