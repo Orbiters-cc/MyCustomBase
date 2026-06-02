@@ -28,6 +28,22 @@ public static class NativeMeshPayloadService
     private const string GeneratedFolder = "Assets/MCB/generated/advancedMeshPayloads";
     private const string BuildTempFolder = "Assets/MCB/generated/advancedMeshBuildTemp";
 
+    public sealed class GeneratedPayloadStorageInfo
+    {
+        public GeneratedPayloadStorageInfo(long totalBytes, int assetCount, int fileCount)
+        {
+            TotalBytes = Math.Max(0L, totalBytes);
+            AssetCount = Math.Max(0, assetCount);
+            FileCount = Math.Max(0, fileCount);
+        }
+
+        public long TotalBytes { get; }
+        public int AssetCount { get; }
+        public int FileCount { get; }
+        public bool HasContent => FileCount > 0;
+        public string FormattedSize => FormatByteSize(TotalBytes);
+    }
+
     private static void LogApplyProfile(
         string label,
         System.Diagnostics.Stopwatch step,
@@ -43,8 +59,14 @@ public static class NativeMeshPayloadService
 
     private static string FormatByteSize(long bytes)
     {
+        const double gb = 1024d * 1024d * 1024d;
         const double mb = 1024d * 1024d;
         const double kb = 1024d;
+        if (bytes >= gb)
+        {
+            return $"{bytes / gb:F2} GB";
+        }
+
         if (bytes >= mb)
         {
             return $"{bytes / mb:F1} MB";
@@ -790,6 +812,36 @@ public static class NativeMeshPayloadService
         return string.Equals(transform, TransformName, StringComparison.OrdinalIgnoreCase);
     }
 
+    public static GeneratedPayloadStorageInfo GetGeneratedPayloadStorageInfo()
+    {
+        return GetGeneratedPayloadStorageInfo(GeneratedFolder);
+    }
+
+    public static GeneratedPayloadStorageInfo DeleteGeneratedPayloadsForVersion(CustomBaseVersion version)
+    {
+        string folder = GetGeneratedPayloadVersionFolder(version);
+        GeneratedPayloadStorageInfo storageInfo = GetGeneratedPayloadStorageInfo(folder);
+        if (!storageInfo.HasContent)
+        {
+            return storageInfo;
+        }
+
+        DeleteGeneratedPayloadFolder(folder);
+        PruneEmptyGeneratedPayloadAssetFolder(version);
+        return storageInfo;
+    }
+
+    public static GeneratedPayloadStorageInfo DeleteAllGeneratedPayloads()
+    {
+        GeneratedPayloadStorageInfo storageInfo = GetGeneratedPayloadStorageInfo();
+        if (storageInfo.HasContent)
+        {
+            DeleteGeneratedPayloadFolder(GeneratedFolder);
+        }
+
+        return storageInfo;
+    }
+
     private static List<PayloadRendererSource> ResolvePayloadRendererSources(
         GameObject customFbx,
         IEnumerable<ModelFileSmrPathData> smrPaths)
@@ -1034,8 +1086,20 @@ public static class NativeMeshPayloadService
             return null;
         }
 
+        if (!IsAssetDatabasePath(sourceUnityPath))
+        {
+            return null;
+        }
+
         var sourceAsset = AssetDatabase.LoadAssetAtPath<GameObject>(sourceUnityPath);
         return sourceAsset != null ? sourceAsset.transform : null;
+    }
+
+    private static bool IsAssetDatabasePath(string unityPath)
+    {
+        return !string.IsNullOrWhiteSpace(unityPath) &&
+               (unityPath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) ||
+                unityPath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase));
     }
 
     private static Vector3 DivideScale(Vector3 numerator, Vector3 denominator)
@@ -2758,6 +2822,155 @@ public static class NativeMeshPayloadService
             SanitizeFileName(version.version));
         string file = $"{SanitizeFileName(sourceName)}_{payloadHash}.asset";
         return MCBUtils.CombineUnityPath(folder, file);
+    }
+
+    private static string GetGeneratedPayloadVersionFolder(CustomBaseVersion version)
+    {
+        if (version == null || version.assetId <= 0 || string.IsNullOrWhiteSpace(version.version))
+        {
+            return null;
+        }
+
+        return MCBUtils.CombineUnityPath(
+            GeneratedFolder,
+            version.assetId.ToString(),
+            SanitizeFileName(version.version));
+    }
+
+    private static GeneratedPayloadStorageInfo GetGeneratedPayloadStorageInfo(string unityFolder)
+    {
+        string normalizedFolder = NormalizeGeneratedPayloadFolder(unityFolder);
+        if (string.IsNullOrWhiteSpace(normalizedFolder))
+        {
+            return new GeneratedPayloadStorageInfo(0L, 0, 0);
+        }
+
+        string fullPath = GetGeneratedPayloadFullPath(normalizedFolder);
+        if (!Directory.Exists(fullPath))
+        {
+            return new GeneratedPayloadStorageInfo(0L, 0, 0);
+        }
+
+        long totalBytes = 0L;
+        int assetCount = 0;
+        int fileCount = 0;
+
+        foreach (string file in Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                var fileInfo = new FileInfo(file);
+                totalBytes += fileInfo.Length;
+                fileCount++;
+                if (string.Equals(fileInfo.Extension, ".asset", StringComparison.OrdinalIgnoreCase))
+                {
+                    assetCount++;
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return new GeneratedPayloadStorageInfo(totalBytes, assetCount, fileCount);
+    }
+
+    private static void DeleteGeneratedPayloadFolder(string unityFolder)
+    {
+        string normalizedFolder = NormalizeGeneratedPayloadFolder(unityFolder);
+        if (string.IsNullOrWhiteSpace(normalizedFolder))
+        {
+            return;
+        }
+
+        if (AssetDatabase.IsValidFolder(normalizedFolder))
+        {
+            if (!AssetDatabase.DeleteAsset(normalizedFolder))
+            {
+                throw new IOException($"Unity failed to delete generated advanced mesh folder: {normalizedFolder}");
+            }
+
+            return;
+        }
+
+        string fullPath = GetGeneratedPayloadFullPath(normalizedFolder);
+        if (Directory.Exists(fullPath))
+        {
+            Directory.Delete(fullPath, true);
+        }
+
+        string metaPath = fullPath + ".meta";
+        if (File.Exists(metaPath))
+        {
+            File.Delete(metaPath);
+        }
+    }
+
+    private static void PruneEmptyGeneratedPayloadAssetFolder(CustomBaseVersion version)
+    {
+        if (version == null || version.assetId <= 0)
+        {
+            return;
+        }
+
+        string assetFolder = MCBUtils.CombineUnityPath(GeneratedFolder, version.assetId.ToString());
+        string fullPath = GetGeneratedPayloadFullPath(assetFolder);
+        if (Directory.Exists(fullPath) && !Directory.EnumerateFileSystemEntries(fullPath).Any())
+        {
+            DeleteGeneratedPayloadFolder(assetFolder);
+        }
+    }
+
+    private static string NormalizeGeneratedPayloadFolder(string unityFolder)
+    {
+        string normalized = MCBUtils.ToUnityPath(unityFolder)?.TrimEnd('/', '\\');
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
+
+        if (!IsGeneratedPayloadFolder(normalized))
+        {
+            throw new InvalidOperationException($"Refusing to delete non advanced mesh payload folder: {normalized}");
+        }
+
+        return normalized;
+    }
+
+    private static bool IsGeneratedPayloadFolder(string normalizedFolder)
+    {
+        return string.Equals(normalizedFolder, GeneratedFolder, StringComparison.OrdinalIgnoreCase) ||
+               normalizedFolder.StartsWith(GeneratedFolder + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetGeneratedPayloadFullPath(string normalizedFolder)
+    {
+        string fullPath = GetProjectRelativeFullPath(normalizedFolder);
+        string generatedFullPath = GetProjectRelativeFullPath(GeneratedFolder);
+        if (!IsSameOrChildPath(fullPath, generatedFullPath))
+        {
+            throw new InvalidOperationException($"Refusing to access generated advanced mesh path outside cache folder: {normalizedFolder}");
+        }
+
+        return fullPath;
+    }
+
+    private static bool IsSameOrChildPath(string candidatePath, string rootPath)
+    {
+        string candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase) ||
+               candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetProjectRelativeFullPath(string unityPath)
+    {
+        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string relativePath = MCBUtils.ToUnityPath(unityPath).Replace('/', Path.DirectorySeparatorChar);
+        return Path.GetFullPath(Path.Combine(projectRoot, relativePath));
     }
 
     private static void DeleteAssetFile(string normalizedPath)

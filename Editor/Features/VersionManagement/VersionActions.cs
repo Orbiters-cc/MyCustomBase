@@ -384,6 +384,23 @@ public class VersionActions
 
         if (deleted)
         {
+            try
+            {
+                var deletedPayloads = NativeMeshPayloadService.DeleteGeneratedPayloadsForVersion(version);
+                if (deletedPayloads.HasContent)
+                {
+                    MCBLogger.Log(
+                        $"[VersionActions] Deleted generated advanced mesh cache for assetId={version.assetId} version={version.version}: {deletedPayloads.AssetCount} assets, {deletedPayloads.FormattedSize}.");
+                }
+            }
+            catch (Exception e)
+            {
+                editor.warningsModule.AddWarning(
+                    $"Deleted version files, but failed to delete generated advanced meshes: {e.Message}",
+                    MessageType.Error,
+                    "Advanced mesh deletion failed");
+            }
+
             if (version.isUnsubmitted)
             {
                 editor.creatorModule.RemoveUnsubmittedVersion(version);

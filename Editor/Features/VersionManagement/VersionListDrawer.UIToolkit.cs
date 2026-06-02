@@ -165,29 +165,6 @@ public partial class VersionListDrawer
         return currentUserId > 0 && selectedAsset.ownerId.Value == currentUserId;
     }
 
-    private void BuildHeaderUIToolkit(VisualElement root)
-    {
-        var header = new VisualElement();
-        header.AddToClassList("mcb-version-list__header");
-
-        var title = CreateLabel($"{editor.GetSelectedAssetDisplayName()} Versions", 14, FontStyle.Bold, Color.white);
-        title.AddToClassList("mcb-version-list__title");
-        header.Add(title);
-
-        var changelogToggle = new Toggle("Display all changelogs") { value = displayAllChangelogs };
-        changelogToggle.AddToClassList("mcb-version-toggle");
-        changelogToggle.AddToClassList("mcb-version-list__changelog-toggle");
-        changelogToggle.RegisterValueChangedCallback(evt =>
-        {
-            displayAllChangelogs = evt.newValue;
-            individualChangelogStates.Clear();
-            RefreshVersionUi();
-        });
-        header.Add(changelogToggle);
-
-        root.Add(header);
-    }
-
     private VisualElement CreateCollapseExpandButtonUIToolkit()
     {
         var item = new VisualElement();
@@ -196,7 +173,7 @@ public partial class VersionListDrawer
         item.Add(CreateConnectorTimeline(isListCollapsed));
 
         var button = new Button();
-        RegisterImmediateClick(button, () =>
+        MCBButtonInteractionUtility.RegisterImmediateClick(button, () =>
         {
             isListCollapsed = !isListCollapsed;
             RefreshVersionUi();
@@ -658,7 +635,7 @@ public partial class VersionListDrawer
             text = detailsExpanded ? "-" : "+",
             tooltip = detailsExpanded ? "Collapse version details" : "Expand version details"
         };
-        RegisterImmediateClick(button, onClick);
+        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
         button.AddToClassList("mcb-version-details-toggle");
         return button;
     }
@@ -1000,16 +977,6 @@ public partial class VersionListDrawer
         return row;
     }
 
-    private Button CreateChangelogButton(string changelogKey)
-    {
-        return CreateIconButton("UnityEditor.ConsoleWindow", "Toggle changelog", () =>
-        {
-            bool showingChangelog = individualChangelogStates.ContainsKey(changelogKey) && individualChangelogStates[changelogKey];
-            individualChangelogStates[changelogKey] = !showingChangelog;
-            RefreshVersionUi();
-        });
-    }
-
     private static VisualElement CreateTimeline(bool isFirst, bool isLast, bool isSelected, bool isDisabled)
     {
         var timeline = new VisualElement();
@@ -1101,7 +1068,7 @@ public partial class VersionListDrawer
         button.AddToClassList("mcb-button");
         button.AddToClassList("mcb-button--icon-only");
         button.AddToClassList("mcb-version-action-button");
-        RegisterImmediateClick(button, onClick);
+        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
 
         var iconContent = EditorGUIUtility.IconContent(iconName);
         if (iconContent?.image != null)
@@ -1124,7 +1091,7 @@ public partial class VersionListDrawer
         button.AddToClassList("mcb-button");
         button.AddToClassList("mcb-button--icon-only");
         button.AddToClassList("mcb-version-action-button");
-        RegisterImmediateClick(button, onClick);
+        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
 
         var icon = new MCBInteractionIconElement(iconKind);
         icon.AddToClassList("mcb-button-icon");
@@ -1136,79 +1103,8 @@ public partial class VersionListDrawer
     {
         var button = new Button { text = text ?? string.Empty };
         button.AddToClassList("mcb-button");
-        RegisterImmediateClick(button, onClick);
+        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
         return button;
-    }
-
-    private static void RegisterImmediateClick(Button button, Action onClick)
-    {
-        if (button == null || onClick == null)
-        {
-            return;
-        }
-
-        bool suppressNextClicked = false;
-        long lastImmediateTicks = 0L;
-
-        void activateImmediate(EventBase evt)
-        {
-            long now = DateTime.UtcNow.Ticks;
-            if (!button.enabledInHierarchy ||
-                now - lastImmediateTicks < TimeSpan.TicksPerMillisecond * 25L)
-            {
-                evt.StopImmediatePropagation();
-                evt.PreventDefault();
-                return;
-            }
-
-            lastImmediateTicks = now;
-            suppressNextClicked = true;
-            button.schedule.Execute(() => suppressNextClicked = false).StartingIn(1000);
-            evt.StopImmediatePropagation();
-            evt.PreventDefault();
-            onClick();
-        }
-
-        button.clicked += () =>
-        {
-            if (suppressNextClicked)
-            {
-                suppressNextClicked = false;
-                return;
-            }
-
-            onClick();
-        };
-
-        button.RegisterCallback<PointerDownEvent>(evt =>
-        {
-            if (evt.button != 0)
-            {
-                return;
-            }
-
-            activateImmediate(evt);
-        }, TrickleDown.TrickleDown);
-        button.RegisterCallback<MouseDownEvent>(evt =>
-        {
-            if (evt.button != 0)
-            {
-                return;
-            }
-
-            activateImmediate(evt);
-        }, TrickleDown.TrickleDown);
-        button.RegisterCallback<KeyDownEvent>(evt =>
-        {
-            if (evt.keyCode != KeyCode.Return &&
-                evt.keyCode != KeyCode.KeypadEnter &&
-                evt.keyCode != KeyCode.Space)
-            {
-                return;
-            }
-
-            activateImmediate(evt);
-        }, TrickleDown.TrickleDown);
     }
 
     private static VisualElement CreateSpacer()

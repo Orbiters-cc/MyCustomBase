@@ -109,14 +109,12 @@ public static class AvatarAssetDiscoveryService
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
     }
 
-    public static bool TryGetCachedDiscoveryResponse(
-        string authToken,
-        IEnumerable<string> paths,
+    private static bool TryGetCachedDiscoveryResponse(
+        string cacheKey,
         bool filterOnlyCompatible,
         out AvatarAssetDiscoveryResponse response)
     {
         response = null;
-        string cacheKey = BuildDiscoveryCacheKey(authToken, paths, filterOnlyCompatible);
         if (string.IsNullOrEmpty(cacheKey))
         {
             return false;
@@ -164,19 +162,6 @@ public static class AvatarAssetDiscoveryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        string cacheKey = BuildDiscoveryCacheKey(authToken, normalizedPaths, filterOnlyCompatible);
-        AvatarAssetDiscoveryResponse cachedResponse;
-        if (TryGetCachedDiscoveryResponse(authToken, normalizedPaths, filterOnlyCompatible, out cachedResponse))
-        {
-            onComplete?.Invoke(cachedResponse, null);
-            yield break;
-        }
-
-        if (TryJoinPendingDiscovery(cacheKey, onComplete))
-        {
-            yield break;
-        }
-
         var inventoryTask = BuildProjectFileInventoryAsync(normalizedPaths);
         while (!inventoryTask.IsCompleted)
         {
@@ -187,11 +172,23 @@ public static class AvatarAssetDiscoveryService
         {
             string error = inventoryTask.Exception?.GetBaseException().Message ?? "Unknown inventory error.";
             MCBLogger.LogError($"[AvatarAssetDiscovery] Failed to build project file inventory: {error}");
-            CompleteDiscoveryRequest(cacheKey, null, $"Failed to prepare avatar asset discovery: {error}", onComplete);
+            CompleteDiscoveryRequest(null, null, $"Failed to prepare avatar asset discovery: {error}", onComplete);
             yield break;
         }
 
         var projectFiles = inventoryTask.Result;
+        string cacheKey = BuildDiscoveryCacheKey(authToken, normalizedPaths, projectFiles, filterOnlyCompatible);
+        AvatarAssetDiscoveryResponse cachedResponse;
+        if (TryGetCachedDiscoveryResponse(cacheKey, filterOnlyCompatible, out cachedResponse))
+        {
+            onComplete?.Invoke(cachedResponse, null);
+            yield break;
+        }
+
+        if (TryJoinPendingDiscovery(cacheKey, onComplete))
+        {
+            yield break;
+        }
 
         var requestPayload = new AvatarAssetDiscoveryRequest
         {
@@ -269,7 +266,7 @@ public static class AvatarAssetDiscoveryService
 
             response.assets = response.assets ?? new List<AvatarDiscoveredAsset>();
             PreloadThumbnails(response.assets);
-            CacheDiscoveryResponse(authToken, normalizedPaths, filterOnlyCompatible, response);
+            CacheDiscoveryResponse(cacheKey, response);
             CompleteDiscoveryRequest(cacheKey, response, null, onComplete);
         }
     }
@@ -330,13 +327,8 @@ public static class AvatarAssetDiscoveryService
         }
     }
 
-    private static void CacheDiscoveryResponse(
-        string authToken,
-        IEnumerable<string> paths,
-        bool filterOnlyCompatible,
-        AvatarAssetDiscoveryResponse response)
+    private static void CacheDiscoveryResponse(string cacheKey, AvatarAssetDiscoveryResponse response)
     {
-        string cacheKey = BuildDiscoveryCacheKey(authToken, paths, filterOnlyCompatible);
         if (string.IsNullOrEmpty(cacheKey) || response == null)
         {
             return;
@@ -349,15 +341,37 @@ public static class AvatarAssetDiscoveryService
         };
     }
 
-    private static string BuildDiscoveryCacheKey(string authToken, IEnumerable<string> paths, bool filterOnlyCompatible)
+    private static string BuildDiscoveryCacheKey(
+        string authToken,
+        IEnumerable<string> paths,
+        IEnumerable<ModelFileData> files,
+        bool filterOnlyCompatible)
     {
-        string signature = BuildAvatarSignature(paths);
+        string pathSignature = BuildAvatarSignature(paths);
+        string fileSignature = BuildModelFileSignature(files);
+        string signature = string.IsNullOrWhiteSpace(fileSignature)
+            ? pathSignature
+            : pathSignature + "|files:" + fileSignature;
         if (string.IsNullOrWhiteSpace(signature))
         {
             return null;
         }
 
         return HashForCache(authToken ?? string.Empty) + "|" + (filterOnlyCompatible ? "compatible" : "all") + "|" + signature;
+    }
+
+    private static string BuildModelFileSignature(IEnumerable<ModelFileData> files)
+    {
+        if (files == null)
+        {
+            return string.Empty;
+        }
+
+        return string.Join("|", files
+            .Where(file => file != null && !string.IsNullOrWhiteSpace(file.path))
+            .Select(file => NormalizeUnityPath(file.path).Trim() + ":" + (file.hash ?? string.Empty).Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(signature => signature, StringComparer.OrdinalIgnoreCase));
     }
 
     private static string HashForCache(string value)

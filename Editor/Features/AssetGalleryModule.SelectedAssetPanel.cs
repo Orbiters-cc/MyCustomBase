@@ -2,14 +2,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using UnityEditor;
-using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UIElements;
@@ -259,7 +253,7 @@ public partial class AssetGalleryModule
         row.AddToClassList("mcb-selected-banner__breadcrumb");
 
         var galleryStep = new Button { text = "Gallery" };
-        RegisterImmediateClick(galleryStep, ReturnToGallery);
+        MCBButtonInteractionUtility.RegisterImmediateClick(galleryStep, ReturnToGallery);
         galleryStep.AddToClassList("mcb-selected-banner__breadcrumb-step");
         row.Add(galleryStep);
 
@@ -280,7 +274,7 @@ public partial class AssetGalleryModule
         {
             tooltip = state != null && state.likedByCurrentUser ? "Unlike asset" : "Like asset"
         };
-        RegisterImmediateClick(button, ToggleSelectedAssetLike);
+        MCBButtonInteractionUtility.RegisterImmediateClick(button, ToggleSelectedAssetLike);
         button.AddToClassList("mcb-selected-banner__like-button");
         button.EnableInClassList("mcb-selected-banner__like-button--liked", state != null && state.likedByCurrentUser);
         button.SetEnabled(state != null && !state.isLoading);
@@ -375,7 +369,7 @@ public partial class AssetGalleryModule
         string url = selectedAsset.bannerUrl;
         if (string.IsNullOrWhiteSpace(url) && selectedAsset.id > 0)
         {
-            url = $"{MCBUtils.getApiUrl("assets")}/{selectedAsset.id}/mcb-banner";
+            url = $"/assets/{selectedAsset.id}/mcb-banner";
         }
 
         if (string.IsNullOrWhiteSpace(url))
@@ -383,17 +377,7 @@ public partial class AssetGalleryModule
             return null;
         }
 
-        if (Uri.TryCreate(url, UriKind.Absolute, out _))
-        {
-            return AppendSelectedAssetBannerFormat(url);
-        }
-
-        if (!Uri.TryCreate(MCBUtils.getApiUrl(string.Empty), UriKind.Absolute, out var apiRoot))
-        {
-            return AppendSelectedAssetBannerFormat(url);
-        }
-
-        return AppendSelectedAssetBannerFormat(new Uri(apiRoot, url.TrimStart('/')).ToString());
+        return AppendSelectedAssetBannerFormat(MCBUtils.ResolveApiUrl(url, string.Empty));
     }
 
     private static string AppendSelectedAssetBannerFormat(string url)

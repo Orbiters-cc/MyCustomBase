@@ -126,17 +126,16 @@ public static class PhotoshootGenerationService
             {
                 DisableExternalSceneLights();
                 bool avatarChanged = EnsureAvatarCopy(request.avatarRoot, request.bodyPose);
+                DisableAnimationComponents(avatarCopy);
+                SampleBodyPose(avatarCopy, request.bodyPose);
 
                 string faceBlendshapeKey = CreateFaceBlendshapeKey(request.selectedFaceBlendshapeNames);
                 bool faceBlendshapesChanged =
                     request.forceFaceBlendshapeApply ||
                     avatarChanged ||
                     !string.Equals(lastFaceBlendshapeKey, faceBlendshapeKey, StringComparison.Ordinal);
-                if (faceBlendshapesChanged)
-                {
-                    ResetAndApplyFaceBlendshapes(avatarCopy, request.selectedFaceBlendshapeNames);
-                    lastFaceBlendshapeKey = faceBlendshapeKey;
-                }
+                ResetAndApplyFaceBlendshapes(avatarCopy, request.selectedFaceBlendshapeNames);
+                lastFaceBlendshapeKey = faceBlendshapeKey;
                 Bounds bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
                 ApplyAvatarRotation(avatarCopy, request.avatarYawDegrees);
                 bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
@@ -366,7 +365,6 @@ public static class PhotoshootGenerationService
             avatarCopy.transform.position = Vector3.zero;
             avatarCopy.transform.rotation = Quaternion.identity;
             DisableAudioListeners(avatarCopy);
-            SampleBodyPose(avatarCopy, bodyPose);
 
             lastAvatarRoot = avatarRoot;
             lastBodyPose = bodyPose;
@@ -569,8 +567,8 @@ public static class PhotoshootGenerationService
         }
     }
 
-    private const string BodyPoseFolder = "Assets/animation";
-    private const string BackgroundFolder = "Assets/mcb test";
+    private const string BodyPoseFolder = "Packages/orbiters.mcb/Editor/Photoshoot/BodyPoses";
+    private const string BackgroundFolder = "Packages/orbiters.mcb/Editor/Photoshoot/Backgrounds";
     private const string BannerEffectShaderName = "Hidden/MCB/PhotoshootBannerEffect";
     private const string BannerEffectShaderPath = "Packages/orbiters.mcb/Editor/Shaders/MCBPhotoshootBannerEffect.shader";
     private const float BannerEffectMaxBlurTexels = 48f;
@@ -843,6 +841,29 @@ public static class PhotoshootGenerationService
         }
     }
 
+    private static void DisableAnimationComponents(GameObject root)
+    {
+        SetAnimationComponentsEnabled(root, false);
+    }
+
+    private static void SetAnimationComponentsEnabled(GameObject root, bool enabled)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        foreach (var animator in root.GetComponentsInChildren<Animator>(true))
+        {
+            animator.enabled = enabled;
+        }
+
+        foreach (var animation in root.GetComponentsInChildren<Animation>(true))
+        {
+            animation.enabled = enabled;
+        }
+    }
+
     private static void SampleBodyPose(GameObject avatarRoot, AnimationClip clip)
     {
         if (avatarRoot == null || clip == null)
@@ -851,6 +872,188 @@ public static class PhotoshootGenerationService
         }
 
         clip.SampleAnimation(avatarRoot, 0f);
+        SampleHumanoidBodyPose(avatarRoot, clip);
+    }
+
+    private static void SampleHumanoidBodyPose(GameObject avatarRoot, AnimationClip clip)
+    {
+        var animator = avatarRoot.GetComponentInChildren<Animator>(true);
+        if (animator == null || animator.avatar == null || !animator.avatar.isHuman)
+        {
+            return;
+        }
+
+        var humanPose = new HumanPose();
+        using (var humanPoseHandler = new HumanPoseHandler(animator.avatar, animator.transform))
+        {
+            humanPoseHandler.GetHumanPose(ref humanPose);
+            if (ApplyHumanoidClipCurves(clip, ref humanPose))
+            {
+                humanPoseHandler.SetHumanPose(ref humanPose);
+            }
+        }
+    }
+
+    private static bool ApplyHumanoidClipCurves(AnimationClip clip, ref HumanPose humanPose)
+    {
+        bool changed = false;
+        bool rootRotationChanged = false;
+        Dictionary<string, int> muscleIndices = BuildHumanoidMuscleIndexLookup();
+        foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+        {
+            var curve = AnimationUtility.GetEditorCurve(clip, binding);
+            if (curve == null)
+            {
+                continue;
+            }
+
+            float value = curve.Evaluate(0f);
+            if (TryGetHumanoidMuscleIndex(binding.propertyName, muscleIndices, out int muscleIndex) &&
+                humanPose.muscles != null &&
+                muscleIndex < humanPose.muscles.Length)
+            {
+                humanPose.muscles[muscleIndex] = value;
+                changed = true;
+                continue;
+            }
+
+            if (ApplyHumanoidRootCurve(binding.propertyName, value, ref humanPose, ref rootRotationChanged))
+            {
+                changed = true;
+            }
+        }
+
+        if (rootRotationChanged)
+        {
+            humanPose.bodyRotation = NormalizeQuaternion(humanPose.bodyRotation);
+        }
+
+        return changed;
+    }
+
+    private static bool TryGetHumanoidMuscleIndex(
+        string propertyName,
+        Dictionary<string, int> muscleIndices,
+        out int muscleIndex)
+    {
+        if (muscleIndices.TryGetValue(propertyName, out muscleIndex))
+        {
+            return true;
+        }
+
+        string normalizedName = NormalizeHumanoidMuscleName(propertyName);
+        return !string.IsNullOrEmpty(normalizedName) && muscleIndices.TryGetValue(normalizedName, out muscleIndex);
+    }
+
+    private static Dictionary<string, int> BuildHumanoidMuscleIndexLookup()
+    {
+        var output = new Dictionary<string, int>(StringComparer.Ordinal);
+        string[] muscleNames = HumanTrait.MuscleName;
+        for (int i = 0; i < muscleNames.Length; i++)
+        {
+            string muscleName = muscleNames[i];
+            if (string.IsNullOrEmpty(muscleName))
+            {
+                continue;
+            }
+
+            output[muscleName] = i;
+            string normalizedName = NormalizeHumanoidMuscleName(muscleName);
+            if (!string.IsNullOrEmpty(normalizedName))
+            {
+                output[normalizedName] = i;
+            }
+        }
+
+        return output;
+    }
+
+    private static string NormalizeHumanoidMuscleName(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        value = value
+            .Replace("LeftHand", "Left Hand")
+            .Replace("RightHand", "Right Hand");
+
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (char c in value)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                builder.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                builder.Append(' ');
+            }
+        }
+
+        string[] tokens = builder
+            .ToString()
+            .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        return string.Concat(tokens.Where(token => !string.Equals(token, "hand", StringComparison.Ordinal)));
+    }
+
+    private static bool ApplyHumanoidRootCurve(string propertyName, float value, ref HumanPose humanPose, ref bool rootRotationChanged)
+    {
+        switch (propertyName)
+        {
+            case "RootT.x":
+                humanPose.bodyPosition.x = value;
+                return true;
+            case "RootT.y":
+                humanPose.bodyPosition.y = value;
+                return true;
+            case "RootT.z":
+                humanPose.bodyPosition.z = value;
+                return true;
+            case "RootQ.x":
+                humanPose.bodyRotation.x = value;
+                rootRotationChanged = true;
+                return true;
+            case "RootQ.y":
+                humanPose.bodyRotation.y = value;
+                rootRotationChanged = true;
+                return true;
+            case "RootQ.z":
+                humanPose.bodyRotation.z = value;
+                rootRotationChanged = true;
+                return true;
+            case "RootQ.w":
+                humanPose.bodyRotation.w = value;
+                rootRotationChanged = true;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static Quaternion NormalizeQuaternion(Quaternion value)
+    {
+        float magnitude = Mathf.Sqrt(
+            value.x * value.x +
+            value.y * value.y +
+            value.z * value.z +
+            value.w * value.w);
+        if (magnitude <= Mathf.Epsilon)
+        {
+            return Quaternion.identity;
+        }
+
+        return new Quaternion(
+            value.x / magnitude,
+            value.y / magnitude,
+            value.z / magnitude,
+            value.w / magnitude);
     }
 
     private static void ResetAndApplyFaceBlendshapes(GameObject avatarRoot, IEnumerable<string> selectedFaceBlendshapeNames)

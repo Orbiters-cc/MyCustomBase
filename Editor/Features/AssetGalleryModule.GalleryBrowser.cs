@@ -2,16 +2,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using UnityEditor;
-using UnityEditor.UIElements;
 using UnityEngine;
-using UnityEngine.Networking;
 using UnityEngine.UIElements;
 
 public partial class AssetGalleryModule
@@ -428,17 +421,6 @@ public partial class AssetGalleryModule
 
         lastAvatarSignature = currentSignature;
         ResetState(clearSelection: signatureChanged);
-        AvatarAssetDiscoveryResponse cachedResponse;
-        if (AvatarAssetDiscoveryService.TryGetCachedDiscoveryResponse(
-                editor.authToken,
-                currentPaths,
-                true,
-                out cachedResponse))
-        {
-            ApplyDiscoveryResponse(cachedResponse, true);
-            return;
-        }
-
         StartDiscovery(filterOnlyCompatible: true);
     }
 

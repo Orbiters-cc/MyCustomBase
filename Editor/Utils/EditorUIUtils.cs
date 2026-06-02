@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 // A collection of static helper methods for drawing custom UI elements in the editor.
 #if UNITY_EDITOR
@@ -140,6 +142,80 @@ public static class EditorUIUtils
             float angle = (startAngle + i * angleStep) * Mathf.Deg2Rad;
             verts.Add(new Vector2(center.x + Mathf.Cos(angle) * radius, center.y + Mathf.Sin(angle) * radius));
         }
+    }
+}
+
+internal static class MCBButtonInteractionUtility
+{
+    public static void RegisterImmediateClick(Button button, Action onClick)
+    {
+        if (button == null || onClick == null)
+        {
+            return;
+        }
+
+        bool suppressNextClicked = false;
+        long lastImmediateTicks = 0L;
+
+        void activateImmediate(EventBase evt)
+        {
+            long now = DateTime.UtcNow.Ticks;
+            if (!button.enabledInHierarchy ||
+                now - lastImmediateTicks < TimeSpan.TicksPerMillisecond * 25L)
+            {
+                evt.StopImmediatePropagation();
+                evt.PreventDefault();
+                return;
+            }
+
+            lastImmediateTicks = now;
+            suppressNextClicked = true;
+            button.schedule.Execute(() => suppressNextClicked = false).StartingIn(1000);
+            evt.StopImmediatePropagation();
+            evt.PreventDefault();
+            onClick();
+        }
+
+        button.clicked += () =>
+        {
+            if (suppressNextClicked)
+            {
+                suppressNextClicked = false;
+                return;
+            }
+
+            onClick();
+        };
+
+        button.RegisterCallback<PointerDownEvent>(evt =>
+        {
+            if (evt.button != 0)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
+        button.RegisterCallback<MouseDownEvent>(evt =>
+        {
+            if (evt.button != 0)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
+        button.RegisterCallback<KeyDownEvent>(evt =>
+        {
+            if (evt.keyCode != KeyCode.Return &&
+                evt.keyCode != KeyCode.KeypadEnter &&
+                evt.keyCode != KeyCode.Space)
+            {
+                return;
+            }
+
+            activateImmediate(evt);
+        }, TrickleDown.TrickleDown);
     }
 }
 #endif

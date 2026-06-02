@@ -2,17 +2,12 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using UnityEditor;
-using UnityEditor.UIElements;
 using UnityEngine;
-using UnityEngine.Networking;
 using UnityEngine.UIElements;
 
 public class CreatorAvatarBaseOption
@@ -434,79 +429,8 @@ public partial class AssetGalleryModule
     {
         var button = new Button { text = text };
         button.AddToClassList("mcb-button");
-        RegisterImmediateClick(button, onClick);
+        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
         return button;
-    }
-
-    private static void RegisterImmediateClick(Button button, Action onClick)
-    {
-        if (button == null || onClick == null)
-        {
-            return;
-        }
-
-        bool suppressNextClicked = false;
-        long lastImmediateTicks = 0L;
-
-        void activateImmediate(EventBase evt)
-        {
-            long now = DateTime.UtcNow.Ticks;
-            if (!button.enabledInHierarchy ||
-                now - lastImmediateTicks < TimeSpan.TicksPerMillisecond * 25L)
-            {
-                evt.StopImmediatePropagation();
-                evt.PreventDefault();
-                return;
-            }
-
-            lastImmediateTicks = now;
-            suppressNextClicked = true;
-            button.schedule.Execute(() => suppressNextClicked = false).StartingIn(1000);
-            evt.StopImmediatePropagation();
-            evt.PreventDefault();
-            onClick();
-        }
-
-        button.clicked += () =>
-        {
-            if (suppressNextClicked)
-            {
-                suppressNextClicked = false;
-                return;
-            }
-
-            onClick();
-        };
-
-        button.RegisterCallback<PointerDownEvent>(evt =>
-        {
-            if (evt.button != 0)
-            {
-                return;
-            }
-
-            activateImmediate(evt);
-        }, TrickleDown.TrickleDown);
-        button.RegisterCallback<MouseDownEvent>(evt =>
-        {
-            if (evt.button != 0)
-            {
-                return;
-            }
-
-            activateImmediate(evt);
-        }, TrickleDown.TrickleDown);
-        button.RegisterCallback<KeyDownEvent>(evt =>
-        {
-            if (evt.keyCode != KeyCode.Return &&
-                evt.keyCode != KeyCode.KeypadEnter &&
-                evt.keyCode != KeyCode.Space)
-            {
-                return;
-            }
-
-            activateImmediate(evt);
-        }, TrickleDown.TrickleDown);
     }
 
     private static Button CreateIconButton(MCBInteractionIconKind iconKind, string text, Action onClick)

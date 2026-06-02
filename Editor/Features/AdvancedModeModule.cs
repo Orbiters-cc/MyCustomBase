@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 
 public class AdvancedModeModule
 {
+    private const double GeneratedAdvancedMeshStorageRefreshIntervalSeconds = 2d;
+
     private readonly MCBEditor editor;
     private bool advancedModeFoldout = true; // Opened by default when advanced mode is on
     private bool addArmatureToggle = false;
@@ -25,6 +27,10 @@ public class AdvancedModeModule
     private bool connectionMockBusy;
     private string healthCheckStatus;
     private MessageType healthCheckStatusType = MessageType.None;
+    private NativeMeshPayloadService.GeneratedPayloadStorageInfo generatedAdvancedMeshStorageInfo;
+    private double generatedAdvancedMeshStorageInfoCheckedAt = -1d;
+    private string generatedAdvancedMeshStatus;
+    private MessageType generatedAdvancedMeshStatusType = MessageType.None;
     
     public AdvancedModeModule(MCBEditor editor)
     {
@@ -324,6 +330,8 @@ public class AdvancedModeModule
                     $"Cached versions: {cacheStats.versionEntries} (hash entries: {cacheStats.hashEntries})\nRecommended version: {cachedRecommended}\nCurrent base FBX hash: {cachedFbxHash}",
                     MessageType.None);
 
+                DrawGeneratedAdvancedMeshControls();
+
                 // Recalculate current FBX hash button (as requested)
                 EditorGUILayout.BeginHorizontal();
                 GUILayout.Space(EditorGUI.indentLevel * 15);
@@ -513,6 +521,80 @@ public class AdvancedModeModule
             return candidate;
         }
         return assetPath;
+    }
+
+    private void DrawGeneratedAdvancedMeshControls()
+    {
+        var storage = GetGeneratedAdvancedMeshStorageInfo(false);
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Generated Advanced Meshes", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(
+            "Disk usage",
+            $"{storage.FormattedSize} ({FormatCount(storage.AssetCount, "asset")}, {FormatCount(storage.FileCount, "file")})");
+
+        using (new EditorGUI.DisabledScope(!storage.HasContent))
+        {
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(EditorGUI.indentLevel * 15);
+            if (GUILayout.Button("Delete all generated advanced meshes", GUILayout.Width(300f)))
+            {
+                bool confirmed = EditorUtility.DisplayDialog(
+                    "Delete Generated Advanced Meshes",
+                    $"Delete all generated advanced mesh cache assets?\n\nThis will free {storage.FormattedSize}. They will be regenerated when needed.",
+                    "Delete",
+                    "Cancel");
+
+                if (confirmed)
+                {
+                    try
+                    {
+                        var deleted = NativeMeshPayloadService.DeleteAllGeneratedPayloads();
+                        AssetDatabase.Refresh();
+                        generatedAdvancedMeshStorageInfo = NativeMeshPayloadService.GetGeneratedPayloadStorageInfo();
+                        generatedAdvancedMeshStorageInfoCheckedAt = EditorApplication.timeSinceStartup;
+                        generatedAdvancedMeshStatus = $"Deleted {FormatCount(deleted.AssetCount, "generated advanced mesh asset")} ({deleted.FormattedSize}).";
+                        generatedAdvancedMeshStatusType = MessageType.Info;
+                        MCBLogger.Log("[AdvancedMode] " + generatedAdvancedMeshStatus);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        generatedAdvancedMeshStorageInfo = null;
+                        generatedAdvancedMeshStorageInfoCheckedAt = -1d;
+                        generatedAdvancedMeshStatus = "Failed to delete generated advanced meshes. See Console for details.";
+                        generatedAdvancedMeshStatusType = MessageType.Error;
+                        Debug.LogError("[AdvancedMode] Failed to delete generated advanced meshes: " + ex);
+                    }
+
+                    editor.Repaint();
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        if (!string.IsNullOrWhiteSpace(generatedAdvancedMeshStatus))
+        {
+            EditorGUILayout.HelpBox(generatedAdvancedMeshStatus, generatedAdvancedMeshStatusType);
+        }
+    }
+
+    private NativeMeshPayloadService.GeneratedPayloadStorageInfo GetGeneratedAdvancedMeshStorageInfo(bool forceRefresh)
+    {
+        double now = EditorApplication.timeSinceStartup;
+        if (forceRefresh ||
+            generatedAdvancedMeshStorageInfo == null ||
+            now - generatedAdvancedMeshStorageInfoCheckedAt >= GeneratedAdvancedMeshStorageRefreshIntervalSeconds)
+        {
+            generatedAdvancedMeshStorageInfo = NativeMeshPayloadService.GetGeneratedPayloadStorageInfo();
+            generatedAdvancedMeshStorageInfoCheckedAt = now;
+        }
+
+        return generatedAdvancedMeshStorageInfo;
+    }
+
+    private static string FormatCount(int count, string noun)
+    {
+        return count == 1 ? $"1 {noun}" : $"{count} {noun}s";
     }
 
     private void DrawHealthCheckControls()

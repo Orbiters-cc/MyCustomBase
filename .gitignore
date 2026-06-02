@@ -1,4 +1,8 @@
 *.meta
+.agents/
+.codex/
+.graphifyignore
+graphify-out/
 ci/*
 !ci/*.py
 data/

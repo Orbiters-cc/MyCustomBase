@@ -102,6 +102,56 @@ public static class MCBUtils
         return "https://" + API_BASE_URL + scope;
     }
 
+    public static string ResolveApiUrl(string pathOrUrl, string scope = "")
+    {
+        if (string.IsNullOrWhiteSpace(pathOrUrl))
+        {
+            return pathOrUrl;
+        }
+
+        Uri apiRoot;
+        if (!Uri.TryCreate(EnsureTrailingSlash(getApiUrl(scope ?? string.Empty)), UriKind.Absolute, out apiRoot))
+        {
+            return pathOrUrl;
+        }
+
+        Uri absoluteUri;
+        if (Uri.TryCreate(pathOrUrl, UriKind.Absolute, out absoluteUri))
+        {
+            return NormalizeApiOrigin(absoluteUri, apiRoot);
+        }
+
+        return new Uri(apiRoot, pathOrUrl.TrimStart('/')).ToString();
+    }
+
+    private static string NormalizeApiOrigin(Uri uri, Uri apiRoot)
+    {
+        bool sameHost = string.Equals(uri.Host, apiRoot.Host, StringComparison.OrdinalIgnoreCase);
+        bool compatiblePort = uri.Port == apiRoot.Port || (uri.IsDefaultPort && apiRoot.IsDefaultPort);
+        if (!sameHost || !compatiblePort)
+        {
+            return uri.ToString();
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Scheme = apiRoot.Scheme,
+            Host = apiRoot.Host,
+            Port = apiRoot.IsDefaultPort ? -1 : apiRoot.Port
+        };
+        return builder.Uri.ToString();
+    }
+
+    private static string EnsureTrailingSlash(string value)
+    {
+        if (string.IsNullOrEmpty(value) || value.EndsWith("/", StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        return value + "/";
+    }
+
     public static string getWebsiteUrl()
     {
         if (isDevEnvironment)

@@ -4,6 +4,13 @@
 - Unity compiles this package with `/langversion:9.0`.
 - Do not introduce C# 10+ features (including global using) or compiler override changes.
 
+## Architecture / Code Quality
+- Before adding feature-local helpers, search for existing package utilities and service-layer helpers. Reuse or extend the existing shared path when the behavior is not truly feature-specific.
+- Backend/API URL construction must stay centralized. Use `MCBUtils.getApiUrl(...)` for API origins and `MCBUtils.ResolveApiUrl(...)` for backend-relative paths or backend URLs returned by the server. Do not add UI-specific URL normalization helpers for individual panels, banners, thumbnails, or similar resources.
+- If `MCBUtils` stops being the intuitive home for request URL logic, move the shared URL/request helpers into a clearly named common service in the same change and update call sites. Do not leave parallel URL-building logic split across UI modules.
+- Keep UI modules focused on UI state and presentation. Network request policy, URL generation, caching, serialization, and cross-feature behavior belong in shared services/utilities.
+- Avoid narrowly named helpers when the behavior is generic. A helper named for one screen or resource should only exist when its rules are genuinely unique to that screen/resource.
+
 ## Editor UI Direction
 - MCB editor UI is transitioning to Unity UI Toolkit with the shared styled surfaces used by the gallery and account modules.
 - Build every new UI element and every changed UI surface with UI Toolkit and the package USS style sheets.
@@ -132,3 +139,16 @@
 - Resetting to Base Default copies `*.fbx.old` back over `*.fbx` and leaves `*.fbx.old` in place.
 - The only valid state without `*.fbx.old` is the untouched default-base state where `*.fbx` itself is A.
 - XOR `.bin` patches are defined against A, so all version switching logic must read from `*.fbx.old` when it exists.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify` or `$graphify`, invoke the `skill` tool with `skill: "graphify"` before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
