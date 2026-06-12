@@ -41,6 +41,11 @@ public partial class CreatorModeModule
     private string newVersionTitle = "";
     private string newChangelog = "";
 
+    // Build & Publish state: the version that was built (and applied locally as a temporary
+    // version) but not yet published. Invalidated whenever the form changes.
+    private CustomBaseVersion builtPendingVersion;
+    private string builtPendingVersionSignature;
+
     private List<CustomBaseVersion> compatibleParentVersions;
     private List<string> parentVersionDisplayOptions;
     private string[] parentVersionDisplayOptionsArray = Array.Empty<string>();
@@ -251,32 +256,42 @@ public partial class CreatorModeModule
                 canSubmit = false;
             }
              
-            using (new EditorGUI.DisabledScope(!canSubmit))
+            bool hasPendingBuild = HasBuiltPendingVersion;
+            EditorGUILayout.BeginHorizontal();
+
+            // Build Button (green until a build exists, then grayed out)
+            using (new EditorGUI.DisabledScope(!canSubmit || hasPendingBuild || editor.isSubmitting))
             {
-                EditorGUILayout.BeginHorizontal();
-                
-                // Test Button
-                if (GUILayout.Button(editor.isSubmitting ? "Building..." : "Test", GUILayout.Height(30)))
+                GUI.backgroundColor = hasPendingBuild ? Color.white : Color.green;
+                if (GUILayout.Button(editor.isSubmitting ? "Working..." : "Build Version", GUILayout.Height(30)))
                 {
-                    if (EditorUtility.DisplayDialog("Confirm Test Build", "This will create and apply the new version locally without uploading it. The original FBX will be backed up.", "Build and Test", "Cancel"))
+                    if (EditorUtility.DisplayDialog("Confirm Build", "This will build the new version files and apply them locally as a temporary version. Nothing is uploaded yet. The original FBX will be backed up.", "Build", "Cancel"))
                     {
                         EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine());
                     }
                 }
-                
-                // Submit Button
-                GUI.backgroundColor = Color.green;
-                if (GUILayout.Button(editor.isSubmitting ? "Submitting..." : "Submit New Version", GUILayout.Height(30)))
-                {
-                    string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
-                    if (EditorUtility.DisplayDialog("Confirm Upload", $"This will create and upload the new version files.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Upload", "Cancel"))
-                    {
-                        EditorCoroutineUtility.StartCoroutineOwnerless(SubmitNewVersionCoroutine());
-                    }
-                }
                 GUI.backgroundColor = Color.white;
-                EditorGUILayout.EndHorizontal();
             }
+
+            // Publish Button (only shown once the version has been built)
+            if (hasPendingBuild)
+            {
+                using (new EditorGUI.DisabledScope(editor.isSubmitting))
+                {
+                    GUI.backgroundColor = Color.green;
+                    if (GUILayout.Button(editor.isSubmitting ? "Working..." : "Publish", GUILayout.Height(30)))
+                    {
+                        string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
+                        if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Unit Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
+                        {
+                            EditorCoroutineUtility.StartCoroutineOwnerless(PublishBuiltVersionCoroutine());
+                        }
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+            }
+
+            EditorGUILayout.EndHorizontal();
         }
         
         if (!string.IsNullOrEmpty(editor.submitError))
@@ -2453,6 +2468,21 @@ public partial class CreatorModeModule
             .ToList();
     }
 
+    private string GetNewVersionFormSignature()
+    {
+        return $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}|{newVersionScope}|{newVersionTitle}|{newChangelog}|{selectedParentVersionObject?.version}";
+    }
+
+    public bool HasBuiltPendingVersion =>
+        builtPendingVersion != null &&
+        string.Equals(builtPendingVersionSignature, GetNewVersionFormSignature(), StringComparison.Ordinal);
+
+    private void ClearBuiltPendingVersion()
+    {
+        builtPendingVersion = null;
+        builtPendingVersionSignature = null;
+    }
+
     private IEnumerator BuildAndApplyLocalVersionCoroutine()
     {
         editor.isSubmitting = true;
@@ -2470,20 +2500,40 @@ public partial class CreatorModeModule
 
             if (buildError != null)
             {
-                editor.submitError = buildError.Message;
-                editor.warningsModule.AddWarning(buildError.Message, MessageType.Error, "Test Build Failed");
-                MCBLogger.LogError($"[CreatorMode] Test Build failed: {buildError}");
+                ClearBuiltPendingVersion();
+                if (DiskSpaceService.IsDiskFullError(buildError))
+                {
+                    editor.submitError = DiskSpaceService.HandleDiskFull(editor, "Building the version");
+                    MCBLogger.LogError($"[CreatorMode] Build failed (disk full): {buildError}");
+                }
+                else
+                {
+                    editor.submitError = buildError.Message;
+                    editor.warningsModule.AddWarning(buildError.Message, MessageType.Error, "Build Failed");
+                    MCBLogger.LogError($"[CreatorMode] Build failed: {buildError}");
+                }
             }
             else
             {
+                buildResult.metadata.isUnsubmitted = true;
                 SaveUnsubmittedVersion(buildResult.metadata);
+                builtPendingVersion = buildResult.metadata;
                 var versionActions = new VersionActions(editor, networkService, fileManagerService);
-                
+
                 AssetDatabase.Refresh();
                 while(EditorApplication.isCompiling || EditorApplication.isUpdating) { yield return null; }
 
                 // Apply the newly built version
                 yield return versionActions.ApplyOrResetCoroutine(buildResult.metadata, false);
+
+                // Keep the creator form on the temporary version we just built: applying it can
+                // change the applied/selected version and re-suggest a next version number,
+                // which would otherwise reset the form (and disable Publish).
+                editor.selectedVersionForAction = buildResult.metadata;
+                editor.selectedCustomVersionForAction = null;
+                previouslySelectedVersion = buildResult.metadata;
+                PopulateFieldsFromVersion(buildResult.metadata);
+                builtPendingVersionSignature = GetNewVersionFormSignature();
             }
         }
         finally
@@ -2500,10 +2550,92 @@ public partial class CreatorModeModule
 
         if (buildError == null)
         {
-            EditorUtility.DisplayDialog("Test Build Complete", $"Version {buildResult.metadata.version} has been built and applied locally. You can find it in the version list.", "OK");
+            EditorUtility.DisplayDialog("Build Complete", $"Version {buildResult.metadata.version} has been built and applied locally as a temporary version. Review it, then click Publish to upload it" + (UnitGitReleasePublisher.IsUnitGitAvailable ? " and create a Unit Git release checkpoint." : "."), "OK");
         }
+
+        RefreshEditorUi();
     }
-    
+
+    private IEnumerator PublishBuiltVersionCoroutine()
+    {
+        if (!HasBuiltPendingVersion)
+        {
+            EditorUtility.DisplayDialog("Publish", "Build the version first: the form changed since the last build or no build exists yet.", "OK");
+            yield break;
+        }
+
+        // Generated files can disappear between Build and Publish (version switches, resets,
+        // cleanup...). Rebuild automatically instead of failing the upload.
+        if (!TryValidateUnsubmittedVersionFiles(builtPendingVersion, out string missingFiles))
+        {
+            MCBLogger.LogWarning($"[CreatorMode] Built version files are missing ({missingFiles}). Rebuilding the version before publishing.");
+            yield return BuildAndApplyLocalVersionCoroutine();
+            if (!HasBuiltPendingVersion || !TryValidateUnsubmittedVersionFiles(builtPendingVersion, out _))
+            {
+                MCBLogger.LogError("[CreatorMode] Rebuild before publish failed; aborting publish.");
+                yield break;
+            }
+        }
+
+        yield return UploadUnsubmittedVersionCoroutine(builtPendingVersion);
+    }
+
+    /// <summary>
+    /// Verifies that every project file referenced by an unsubmitted version still exists, so a
+    /// publish attempt can rebuild (or clearly report) instead of failing halfway through.
+    /// </summary>
+    private bool TryValidateUnsubmittedVersionFiles(CustomBaseVersion version, out string missingFiles)
+    {
+        var missing = new List<string>();
+        if (version == null)
+        {
+            missingFiles = "no version";
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(version.logicPrefabPath) &&
+            AssetDatabase.LoadAssetAtPath<GameObject>(version.logicPrefabPath) == null)
+        {
+            missing.Add(version.logicPrefabPath);
+        }
+
+        if (!string.IsNullOrEmpty(version.customVeinsTexturePath) &&
+            AssetDatabase.LoadAssetAtPath<Texture2D>(version.customVeinsTexturePath) == null)
+        {
+            missing.Add(version.customVeinsTexturePath);
+        }
+
+        foreach (var versionFile in (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => string.Equals(file?.role, "PATCH", StringComparison.OrdinalIgnoreCase)))
+        {
+            string sourcePath = GetMetadataString(versionFile, "sourcePath");
+            string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
+            string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
+
+            if (!string.IsNullOrWhiteSpace(sourcePath) &&
+                !File.Exists(sourcePath + FileManagerService.OriginalSuffix) &&
+                !File.Exists(sourcePath))
+            {
+                missing.Add(sourcePath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(customFbxPath) &&
+                AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath) == null &&
+                !File.Exists(Path.GetFullPath(customFbxPath)))
+            {
+                missing.Add(customFbxPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(customAvatarPath) &&
+                AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath) == null)
+            {
+                missing.Add(customAvatarPath);
+            }
+        }
+
+        missingFiles = string.Join(", ", missing);
+        return missing.Count == 0;
+    }
+
     public IEnumerator UploadUnsubmittedVersionCoroutine(CustomBaseVersion unsubmittedVersion)
     {
         editor.isSubmitting = true;
@@ -2554,7 +2686,7 @@ public partial class CreatorModeModule
                 if (!string.IsNullOrWhiteSpace(customFbxPath) && customFbx == null && string.IsNullOrWhiteSpace(externalCustomFbxPath))
                     throw new Exception($"Custom FBX asset not found for version upload: {customFbxPath}");
                 if (!string.IsNullOrWhiteSpace(customAvatarPath) && customBaseAvatar == null)
-                    throw new Exception($"Custom avatar asset not found for version upload: {customAvatarPath}");
+                    throw new Exception($"Custom avatar asset not found for version upload: {customAvatarPath}. The generated files for this version are gone; click 'Build Version' again, then Publish.");
 
                 string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
                 var sourceFile = unsubmittedVersion.sourceFiles?.FirstOrDefault(file =>
@@ -2595,7 +2727,11 @@ public partial class CreatorModeModule
                 CollectAnimationAssetPathsFromFixedBy(unsubmittedVersion.customBlendshapes)
             );
 
-            EditorUtility.DisplayProgressBar("Uploading", "Sending package to server...", 0.7f);
+            ValidateVersionPackageUploadSize(zipPath);
+
+            long packageBytes = new FileInfo(zipPath).Length;
+            MCBLogger.Log($"[CreatorMode] Version package created: {FormatBytes(packageBytes)} at {zipPath} (compressAdvancedMeshPayload={compressAdvancedMeshPayload}).");
+            EditorUtility.DisplayProgressBar("Uploading", $"Sending package to server ({FormatBytes(packageBytes)})...", 0.7f);
             string metadataJson = JsonConvert.SerializeObject(unsubmittedVersion, new StringEnumConverter());
             MCBLogger.Log($"[CreatorMode] Uploading version metadata assetId={unsubmittedVersion.assetId}, version={unsubmittedVersion.version}, scope={unsubmittedVersion.scope}, defaultAviVersion={unsubmittedVersion.defaultAviVersion}, changelogLength={(unsubmittedVersion.changelog ?? string.Empty).Length}");
             uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
@@ -2623,99 +2759,64 @@ public partial class CreatorModeModule
 
                 uploadSucceeded = true;
                 RemoveUnsubmittedVersion(unsubmittedVersion);
+                if (ReferenceEquals(unsubmittedVersion, builtPendingVersion) ||
+                    (builtPendingVersion != null && builtPendingVersion.Equals(unsubmittedVersion)))
+                {
+                    ClearBuiltPendingVersion();
+                }
+
                 new VersionActions(editor, networkService, fileManagerService).StartVersionFetch();
             }
         }
         catch (Exception ex)
         {
-            editor.submitError = ex.Message;
-            editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Upload Failed");
-            MCBLogger.LogError($"[CreatorMode] Upload failed: {ex}, url: {uploadUrl}");
+            bool serverSideDiskFull = !string.IsNullOrEmpty(ex.Message) &&
+                                      ex.Message.IndexOf("server storage volume", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (serverSideDiskFull)
+            {
+                editor.submitError = "The MCB server ran out of disk space while saving the package. " + ex.Message;
+                editor.warningsModule.AddWarning(editor.submitError, MessageType.Error, "Server disk full");
+                MCBLogger.LogError($"[CreatorMode] Upload failed (server disk full): {ex}, url: {uploadUrl}");
+            }
+            else if (DiskSpaceService.IsDiskFullError(ex) || DiskSpaceService.IsDiskFullMessage(ex.Message))
+            {
+                editor.submitError = DiskSpaceService.HandleDiskFull(editor, "Publishing the version");
+                MCBLogger.LogError($"[CreatorMode] Upload failed (disk full): {ex}, url: {uploadUrl}");
+            }
+            else
+            {
+                editor.submitError = ex.Message;
+                editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Upload Failed");
+                MCBLogger.LogError($"[CreatorMode] Upload failed: {ex}, url: {uploadUrl}");
+            }
         }
         finally
         {
             EditorUtility.ClearProgressBar();
             if (!string.IsNullOrEmpty(zipPath) && File.Exists(zipPath))
                 File.Delete(zipPath);
-            
+
             editor.isSubmitting = false;
             editor.Repaint();
         }
 
         if (uploadSucceeded)
         {
-            EditorUtility.DisplayDialog("Upload Successful", $"custom base version {unsubmittedVersion.version} has been uploaded.", "OK");
-        }
-    }
+            // Record the published version as a release checkpoint in the project's Git history.
+            bool checkpointCreated = UnitGitReleasePublisher.TryPublishReleaseCheckpoint(
+                unsubmittedVersion,
+                editor.GetSelectedAsset()?.name,
+                out string checkpointMessage);
 
-    private IEnumerator SubmitNewVersionCoroutine()
-    {
-        editor.isSubmitting = true;
-        editor.submitError = "";
-        editor.warningsModule.Clear();
-        editor.Repaint();
-
-        (CustomBaseVersion metadata, string zipPath) buildResult = default;
-        Exception error = null;
-        System.Threading.Tasks.Task<(bool success, string response, string error)> uploadTask = null;
-        string uploadUrl = null;
-            
-        try
-        {
-            buildResult = BuildNewVersion();
-            ValidateVersionMetadataForUpload(buildResult.metadata);
-            ValidateVersionPackageUploadSize(buildResult.zipPath);
-            EditorUtility.DisplayProgressBar("Uploading", "Sending package to server...", 0.8f);
-            string metadataJson = JsonConvert.SerializeObject(buildResult.metadata, new StringEnumConverter());
-            MCBLogger.Log($"[CreatorMode] Submitting version metadata assetId={buildResult.metadata.assetId}, version={buildResult.metadata.version}, scope={buildResult.metadata.scope}, defaultAviVersion={buildResult.metadata.defaultAviVersion}, changelogLength={(buildResult.metadata.changelog ?? string.Empty).Length}");
-            uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
-            uploadTask = networkService.SubmitNewVersionAsync(uploadUrl, editor.authToken, buildResult.zipPath, metadataJson);
-        }
-        catch (Exception ex)
-        {
-            error = ex;
+            string checkpointInfo = checkpointCreated
+                ? "\n\nA Unit Git release checkpoint commit was created."
+                : (string.IsNullOrWhiteSpace(checkpointMessage)
+                    ? string.Empty
+                    : $"\n\nNo Unit Git release checkpoint was created: {checkpointMessage}");
+            EditorUtility.DisplayDialog("Publish Successful", $"Custom base version {unsubmittedVersion.version} has been uploaded.{checkpointInfo}", "OK");
         }
 
-        if (uploadTask != null)
-        {
-            while (!uploadTask.IsCompleted) { yield return null; }
-        }
-
-        bool submissionSucceeded = false;
-        try
-        {
-            if (error != null) throw error;
-
-            if (uploadTask != null)
-            {
-                var (success, response, uploadError) = uploadTask.Result;
-                if (!success) throw new Exception(uploadError);
-
-                submissionSucceeded = true;
-                RemoveUnsubmittedVersion(buildResult.metadata);
-                new VersionActions(editor, networkService, fileManagerService).StartVersionFetch();
-            }
-        }
-        catch (Exception ex)
-        {
-            editor.submitError = ex.Message;
-            editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Submission Failed");
-            MCBLogger.LogError($"[CreatorMode] Submission failed: {ex}, url: {uploadUrl}");
-        }
-        finally
-        {
-            EditorUtility.ClearProgressBar();
-            if (!string.IsNullOrEmpty(buildResult.zipPath) && File.Exists(buildResult.zipPath))
-                File.Delete(buildResult.zipPath);
-            
-            editor.isSubmitting = false;
-            editor.Repaint();
-        }
-
-        if (submissionSucceeded)
-        {
-            EditorUtility.DisplayDialog("Upload Successful", $"New custom base version {buildResult.metadata.version} has been uploaded.", "OK");
-        }
+        RefreshEditorUi();
     }
 
     private static void ValidateVersionPackageUploadSize(string zipPath)

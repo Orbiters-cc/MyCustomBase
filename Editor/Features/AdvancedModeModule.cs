@@ -2,6 +2,7 @@
 using UnityEditor;
 using UnityEngine;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 
 public class AdvancedModeModule
@@ -31,6 +32,11 @@ public class AdvancedModeModule
     private double generatedAdvancedMeshStorageInfoCheckedAt = -1d;
     private string generatedAdvancedMeshStatus;
     private MessageType generatedAdvancedMeshStatusType = MessageType.None;
+    private bool unitGitConnectorBusy;
+    private string unitGitConnectorStatus;
+    private MessageType unitGitConnectorStatusType = MessageType.None;
+    private int unitGitInsertVersionIndex;
+    private string diskSpaceStatus;
     
     public AdvancedModeModule(MCBEditor editor)
     {
@@ -164,6 +170,8 @@ public class AdvancedModeModule
                 EditorGUILayout.EndHorizontal();
 
                 DrawHealthCheckControls();
+
+                DrawUnitGitConnectorControls();
 
                 // Flush user cache button
                 EditorGUILayout.BeginHorizontal();  
@@ -331,6 +339,8 @@ public class AdvancedModeModule
                     MessageType.None);
 
                 DrawGeneratedAdvancedMeshControls();
+
+                DrawDiskSpaceControls();
 
                 // Recalculate current FBX hash button (as requested)
                 EditorGUILayout.BeginHorizontal();
@@ -838,6 +848,128 @@ public class AdvancedModeModule
 
         // Draw using shared util (rounded chip with border)
         EditorUIUtils.DrawChipLabel(label, isActive ? bg : bgInactive, txt, border, width: 70, height: 20, cornerRadius: 8f, borderWidth: 1.0f);
+    }
+
+    private void DrawDiskSpaceControls()
+    {
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Disk Space", EditorStyles.boldLabel);
+
+        long freeBytes = DiskSpaceService.GetFreeBytesForProjectDrive();
+        EditorGUILayout.LabelField(
+            "Free space",
+            $"{DiskSpaceService.FormatBytes(freeBytes)} on {DiskSpaceService.GetProjectDriveName()}");
+
+        EditorGUILayout.BeginHorizontal();
+        GUILayout.Space(EditorGUI.indentLevel * 15);
+        if (GUILayout.Button(new GUIContent(
+                "Flush removable data",
+                "Deletes data MCB can recreate anytime: downloaded version files (except the applied and unsubmitted versions) and generated advanced mesh caches."),
+            GUILayout.Width(180)))
+        {
+            if (EditorUtility.DisplayDialog(
+                    "Flush Removable Data",
+                    "Delete downloaded version files (except the applied and unsubmitted versions) and all generated advanced mesh caches?\n\nThey can be downloaded or rebuilt again anytime.",
+                    "Flush",
+                    "Cancel"))
+            {
+                string summary = DiskSpaceService.FlushRemovableData(editor);
+                unitGitConnectorStatus = null;
+                diskSpaceStatus = summary;
+                editor.Repaint();
+            }
+        }
+        EditorGUILayout.EndHorizontal();
+
+        if (!string.IsNullOrEmpty(diskSpaceStatus))
+        {
+            EditorGUILayout.HelpBox(diskSpaceStatus, MessageType.Info);
+        }
+    }
+
+    private void DrawUnitGitConnectorControls()
+    {
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("UnitGit Connector", EditorStyles.boldLabel);
+
+        if (!UnitGitReleasePublisher.IsUnitGitAvailable)
+        {
+            EditorGUILayout.HelpBox("The Unit Git package (orbiters.unitgit) is not installed, so the MCB ↔ Unit Git integration is disabled.", MessageType.Warning);
+            return;
+        }
+
+        // Test commit: generates a dummy file and commits it through Unit Git.
+        EditorGUILayout.BeginHorizontal();
+        GUILayout.Space(EditorGUI.indentLevel * 15);
+        using (new EditorGUI.DisabledScope(unitGitConnectorBusy))
+        {
+            if (GUILayout.Button(unitGitConnectorBusy ? "Working..." : "Commit test", GUILayout.Width(180)))
+            {
+                unitGitConnectorBusy = true;
+                try
+                {
+                    bool ok = UnitGitReleasePublisher.TryCreateTestCommit(out string testMessage);
+                    unitGitConnectorStatus = testMessage;
+                    unitGitConnectorStatusType = ok ? MessageType.Info : MessageType.Error;
+                }
+                finally
+                {
+                    unitGitConnectorBusy = false;
+                }
+            }
+        }
+        EditorGUILayout.LabelField("Creates a dummy commit with a small generated file.", EditorStyles.miniLabel);
+        EditorGUILayout.EndHorizontal();
+
+        // Insert release: records an existing version of the asset as a Unit Git release checkpoint.
+        var insertableVersions = new System.Collections.Generic.List<CustomBaseVersion>();
+        if (editor.serverVersions != null) insertableVersions.AddRange(editor.serverVersions.Where(v => v != null));
+        if (editor.unsubmittedVersions != null) insertableVersions.AddRange(editor.unsubmittedVersions.Where(v => v != null));
+
+        if (insertableVersions.Count == 0)
+        {
+            EditorGUILayout.HelpBox("No versions are available for this asset yet (select an asset and fetch its versions to insert a release checkpoint).", MessageType.None);
+        }
+        else
+        {
+            string[] versionOptions = insertableVersions
+                .Select(v => $"v{v.version} ({v.scope}){(v.isUnsubmitted ? " [unsubmitted]" : string.Empty)}{(string.IsNullOrEmpty(v.title) ? string.Empty : " - " + v.title)}")
+                .ToArray();
+            unitGitInsertVersionIndex = Mathf.Clamp(unitGitInsertVersionIndex, 0, insertableVersions.Count - 1);
+
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(EditorGUI.indentLevel * 15);
+            unitGitInsertVersionIndex = EditorGUILayout.Popup(unitGitInsertVersionIndex, versionOptions);
+            using (new EditorGUI.DisabledScope(unitGitConnectorBusy))
+            {
+                if (GUILayout.Button(unitGitConnectorBusy ? "Working..." : "Insert release", GUILayout.Width(120)))
+                {
+                    unitGitConnectorBusy = true;
+                    try
+                    {
+                        var versionToInsert = insertableVersions[unitGitInsertVersionIndex];
+                        bool ok = UnitGitReleasePublisher.TryPublishReleaseCheckpoint(
+                            versionToInsert,
+                            editor.GetSelectedAsset()?.name,
+                            out string insertMessage);
+                        unitGitConnectorStatus = ok
+                            ? $"Release checkpoint created for v{versionToInsert.version}. It is now visible in the Unit Git history."
+                            : insertMessage;
+                        unitGitConnectorStatusType = ok ? MessageType.Info : MessageType.Error;
+                    }
+                    finally
+                    {
+                        unitGitConnectorBusy = false;
+                    }
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        if (!string.IsNullOrEmpty(unitGitConnectorStatus))
+        {
+            EditorGUILayout.HelpBox(unitGitConnectorStatus, unitGitConnectorStatusType);
+        }
     }
 
     private void DrawConnectionMockControls()

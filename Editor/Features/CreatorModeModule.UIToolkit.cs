@@ -1109,12 +1109,12 @@ public partial class CreatorModeModule
 
         MCBCreatorHelpBoxElement versionWarningBox = null;
         MCBCreatorHelpBoxElement metadataWarningBox = null;
-        Button testButton = null;
-        Button submitButton = null;
+        Button buildButton = null;
+        Button publishButton = null;
 
         Action refreshValidation = () =>
         {
-            UpdateSubmissionValidation(versionWarningBox, metadataWarningBox, testButton, submitButton);
+            UpdateSubmissionValidation(versionWarningBox, metadataWarningBox, buildButton, publishButton);
         };
 
         var versionRow = CreateCreatorRow();
@@ -1176,19 +1176,7 @@ public partial class CreatorModeModule
 
         var buttonRow = CreateCreatorRow();
         buttonRow.AddToClassList("mcb-creator-submit");
-        testButton = CreateTextButton(editor.isSubmitting ? "Building..." : "Test", null, () =>
-        {
-            string version = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
-            if (EditorUtility.DisplayDialog("Confirm Test Build", "This will create and apply the new version locally without uploading it. The original FBX will be backed up.", "Build and Test", "Cancel"))
-            {
-                EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine());
-                RefreshEditorUi();
-            }
-        });
-        testButton.AddToClassList("mcb-creator-submit__button");
-        buttonRow.Add(testButton);
-
-        submitButton = CreateTextButton(editor.isSubmitting ? "Submitting..." : "Submit New Version", null, () =>
+        buildButton = CreateTextButton(editor.isSubmitting ? "Working..." : "Build Version", "Build the new version files and apply them locally as a temporary version.", () =>
         {
             hasAttemptedToolkitSubmit = true;
             refreshValidation();
@@ -1198,31 +1186,62 @@ public partial class CreatorModeModule
                 return;
             }
 
-            string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
-            string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
-            if (EditorUtility.DisplayDialog("Confirm Upload", $"This will create and upload the new version files.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Upload", "Cancel"))
+            if (EditorUtility.DisplayDialog("Confirm Build", "This will build the new version files and apply them locally as a temporary version. Nothing is uploaded yet. The original FBX will be backed up.", "Build", "Cancel"))
             {
-                EditorCoroutineUtility.StartCoroutineOwnerless(SubmitNewVersionCoroutine());
+                EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine());
                 RefreshEditorUi();
             }
         });
-        submitButton.AddToClassList("mcb-button--primary");
-        submitButton.AddToClassList("mcb-creator-submit__button");
-        buttonRow.Add(submitButton);
+        buildButton.AddToClassList("mcb-button--primary");
+        buildButton.AddToClassList("mcb-creator-submit__button");
+        buttonRow.Add(buildButton);
+
+        publishButton = CreateTextButton(editor.isSubmitting ? "Working..." : "Publish", "Upload the built version to the server and create a Unit Git release checkpoint.", () =>
+        {
+            if (!HasBuiltPendingVersion)
+            {
+                return;
+            }
+
+            string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
+            string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
+            if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Unit Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
+            {
+                EditorCoroutineUtility.StartCoroutineOwnerless(PublishBuiltVersionCoroutine());
+                RefreshEditorUi();
+            }
+        });
+        publishButton.AddToClassList("mcb-creator-submit__button");
+        buttonRow.Add(publishButton);
         root.Add(buttonRow);
 
         refreshValidation();
     }
 
-    private void UpdateSubmissionValidation(MCBCreatorHelpBoxElement versionWarningBox, MCBCreatorHelpBoxElement metadataWarningBox, Button testButton, Button submitButton)
+    private void UpdateSubmissionValidation(MCBCreatorHelpBoxElement versionWarningBox, MCBCreatorHelpBoxElement metadataWarningBox, Button buildButton, Button publishButton)
     {
         CreatorSubmissionValidation validation = GetCreatorSubmissionValidation();
         SetHelpBoxMessage(versionWarningBox, validation.versionWarning, HelpBoxMessageType.Warning, !validation.isVersionValid);
         bool showMetadataWarning = !validation.hasRequiredVersionMetadata && hasAttemptedToolkitSubmit;
         SetHelpBoxMessage(metadataWarningBox, validation.metadataWarning, HelpBoxMessageType.Warning, showMetadataWarning);
 
-        testButton?.SetEnabled(!editor.isSubmitting && validation.canSubmit);
-        submitButton?.SetEnabled(!editor.isSubmitting && validation.canAttemptSubmit);
+        bool hasPendingBuild = HasBuiltPendingVersion;
+        if (buildButton != null)
+        {
+            // Green while a build is needed, grayed out once the current form state has been built.
+            buildButton.SetEnabled(!editor.isSubmitting && validation.canAttemptSubmit && !hasPendingBuild);
+            buildButton.EnableInClassList("mcb-button--primary", !hasPendingBuild);
+            buildButton.text = editor.isSubmitting ? "Working..." : "Build Version";
+        }
+
+        if (publishButton != null)
+        {
+            // Hidden until a build exists, so the first step only shows the Build button.
+            publishButton.style.display = hasPendingBuild ? DisplayStyle.Flex : DisplayStyle.None;
+            publishButton.SetEnabled(!editor.isSubmitting && hasPendingBuild);
+            publishButton.EnableInClassList("mcb-button--primary", hasPendingBuild);
+            publishButton.text = editor.isSubmitting ? "Working..." : "Publish";
+        }
     }
 
     private CreatorSubmissionValidation GetCreatorSubmissionValidation()

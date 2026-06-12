@@ -5,7 +5,8 @@
     "VRC.SDK3A.Editor",
     "VRC.SDKBase",
     "VRC.SDKBase.Editor",
-    "mcb"
+    "mcb",
+    "orbiters.unitgit.Editor"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
@@ -14,5 +15,12 @@
   "overrideReferences": false,
   "precompiledReferences": [],
   "defineConstraints": [],
-  "optionalUnityReferences": []
+  "optionalUnityReferences": [],
+  "versionDefines": [
+    {
+      "name": "orbiters.unitgit",
+      "expression": "",
+      "define": "ORBITERS_UNITGIT"
+    }
+  ]
 }
