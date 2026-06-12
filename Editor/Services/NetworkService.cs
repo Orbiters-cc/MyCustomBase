@@ -124,7 +124,7 @@ public class NetworkService
                (string.IsNullOrEmpty(bodySnippet) ? string.Empty : $" | body={bodySnippet}");
     }
 
-    private static string SanitizeUrlForLogs(string url)
+    public static string SanitizeUrlForLogs(string url)
     {
         if (string.IsNullOrEmpty(url))
         {
@@ -353,36 +353,150 @@ public class NetworkService
         return Mathf.Clamp01(progress);
     }
     
-    // --- NEW: Creator Mode Upload Method ---
-    public async Task<(bool success, string serverResponse, string error)> SubmitNewVersionAsync(string url, string authToken, string zipFilePath, string metadataJson)
+    // --- Creator Mode Upload: streaming multipart with progress, cancel and stall detection ---
+
+    /// <summary>Seconds without any uploaded-bytes movement before a large upload is
+    /// considered stalled and aborted (replaces the old fixed 300 s total timeout that
+    /// killed big uploads on slow links and let dead connections hang).</summary>
+    private const double UploadStallTimeoutSeconds = 120d;
+
+    /// <summary>
+    /// Uploads a version package as multipart/form-data ("metadata" JSON field +
+    /// "packageFile" zip part — wire-compatible with the previous implementation), but
+    /// streams the body from disk via UploadHandlerFile instead of loading the whole
+    /// zip into memory. The complete multipart body is pre-written to a temp file.
+    /// </summary>
+    public async Task<(bool success, string serverResponse, string error, bool cancelled)> SubmitNewVersionStreamingAsync(
+        string url,
+        string authToken,
+        string zipFilePath,
+        string metadataJson,
+        Action<float, ulong> onProgress = null,
+        System.Threading.CancellationToken cancellationToken = default)
     {
-        byte[] fileBytes = File.ReadAllBytes(zipFilePath);
-        string zipFileName = Path.GetFileName(zipFilePath);
-        
-        WWWForm form = new WWWForm();
-        form.AddField("metadata", metadataJson);
-        form.AddBinaryData("packageFile", fileBytes, zipFileName, "application/zip");
+        string boundary = "----MCBUpload" + Guid.NewGuid().ToString("N");
+        string bodyPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_body_{Guid.NewGuid():N}.tmp");
 
-        using (var req = UnityWebRequest.Post(url, form))
+        try
         {
-            req.SetRequestHeader("Authorization", $"Bearer {authToken}");
-            req.timeout = 300; // 5 minute timeout for uploads
+            WriteMultipartBodyFile(bodyPath, boundary, metadataJson, zipFilePath);
 
-            await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Upload version"));
-            
-            if (req.result != UnityWebRequest.Result.Success)
+            using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
             {
-                string body = null;
-                try { body = req.downloadHandler?.text; } catch { }
-                string serverMessage = CreateBodySnippet(body, 500);
-                string error = $"Upload failed: [{req.responseCode}] {req.error}";
-                if (!string.IsNullOrWhiteSpace(serverMessage))
+                req.uploadHandler = new UploadHandlerFile(bodyPath);
+                req.downloadHandler = new DownloadHandlerBuffer();
+                req.SetRequestHeader("Content-Type", $"multipart/form-data; boundary={boundary}");
+                req.SetRequestHeader("Authorization", $"Bearer {authToken}");
+                req.timeout = 0; // stall detection below replaces the fixed timeout
+
+                UnityWebRequestAsyncOperation operation;
+                try
                 {
-                    error += $" | {serverMessage}";
+                    operation = req.SendWebRequest();
                 }
-                return (false, body, error);
+                catch (Exception ex)
+                {
+                    MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Upload version"));
+                    return (false, null, $"Upload failed to start: {ex.Message}", false);
+                }
+
+                ulong lastUploadedBytes = 0;
+                double lastMovementAt = EditorApplication.timeSinceStartup;
+                bool aborted = false;
+                bool cancelled = false;
+                bool stalled = false;
+
+                while (!operation.isDone)
+                {
+                    ulong uploadedBytes = req.uploadedBytes;
+                    if (uploadedBytes != lastUploadedBytes)
+                    {
+                        lastUploadedBytes = uploadedBytes;
+                        lastMovementAt = EditorApplication.timeSinceStartup;
+                    }
+
+                    onProgress?.Invoke(Mathf.Clamp01(req.uploadProgress), uploadedBytes);
+
+                    if (!aborted && cancellationToken.IsCancellationRequested)
+                    {
+                        cancelled = true;
+                        aborted = true;
+                        req.Abort();
+                    }
+                    else if (!aborted && EditorApplication.timeSinceStartup - lastMovementAt > UploadStallTimeoutSeconds)
+                    {
+                        stalled = true;
+                        aborted = true;
+                        req.Abort();
+                    }
+
+                    await Task.Yield();
+                }
+
+                onProgress?.Invoke(1f, req.uploadedBytes);
+                MCBConnectivityMonitor.ReportManagedUnityWebRequest(req, url, MCBRequestPolicy.Backend("Upload version"));
+
+                if (cancelled)
+                {
+                    return (false, null, "The upload was cancelled.", true);
+                }
+
+                if (stalled)
+                {
+                    return (false, null, $"The upload timed out: no data was sent for {UploadStallTimeoutSeconds:0} seconds.", false);
+                }
+
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    string body = null;
+                    try { body = req.downloadHandler?.text; } catch { }
+                    string serverMessage = CreateBodySnippet(body, 500);
+                    string error = $"Upload failed: [{req.responseCode}] {req.error}";
+                    if (!string.IsNullOrWhiteSpace(serverMessage))
+                    {
+                        error += $" | {serverMessage}";
+                    }
+                    return (false, body, error, false);
+                }
+
+                return (true, req.downloadHandler.text, null, false);
             }
-            return (true, req.downloadHandler.text, null);
+        }
+        finally
+        {
+            try { if (File.Exists(bodyPath)) File.Delete(bodyPath); } catch { }
+        }
+    }
+
+    /// <summary>Writes the full multipart/form-data body to a temp file, streaming the
+    /// zip with a bounded buffer so memory usage stays flat regardless of package size.</summary>
+    private static void WriteMultipartBodyFile(string bodyPath, string boundary, string metadataJson, string zipFilePath)
+    {
+        string zipFileName = Path.GetFileName(zipFilePath);
+        var utf8 = new System.Text.UTF8Encoding(false);
+
+        using (var body = new FileStream(bodyPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024))
+        {
+            void WriteText(string text)
+            {
+                byte[] bytes = utf8.GetBytes(text);
+                body.Write(bytes, 0, bytes.Length);
+            }
+
+            WriteText($"--{boundary}\r\n");
+            WriteText("Content-Disposition: form-data; name=\"metadata\"\r\n\r\n");
+            WriteText(metadataJson ?? string.Empty);
+            WriteText("\r\n");
+
+            WriteText($"--{boundary}\r\n");
+            WriteText($"Content-Disposition: form-data; name=\"packageFile\"; filename=\"{zipFileName}\"\r\n");
+            WriteText("Content-Type: application/zip\r\n\r\n");
+            using (var zip = File.OpenRead(zipFilePath))
+            {
+                zip.CopyTo(body, 1024 * 1024);
+            }
+
+            WriteText($"\r\n--{boundary}--\r\n");
         }
     }
 

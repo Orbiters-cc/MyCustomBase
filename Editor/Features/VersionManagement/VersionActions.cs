@@ -739,11 +739,11 @@ public class VersionActions
         editor.warningsModule.Clear();
         editor.Repaint();
 
-        string path = MCBUtils.GetVersionDataPath(version);
         bool deleted = false;
         try
         {
-            fileManagerService.DeleteVersionFolder(path);
+            // Repository delete: refuses while the version is being built/published.
+            VersionRepository.Delete(version);
             deleted = true;
         }
         catch (Exception e) { editor.warningsModule.AddWarning($"Failed to delete folder: {e.Message}", MessageType.Error, "Deletion failed"); }

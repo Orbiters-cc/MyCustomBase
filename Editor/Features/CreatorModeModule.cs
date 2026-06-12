@@ -689,24 +689,6 @@ public partial class CreatorModeModule
         return false;
     }
 
-    private static void ValidateVersionMetadataForUpload(CustomBaseVersion metadata)
-    {
-        if (metadata == null)
-        {
-            throw new InvalidOperationException("Version metadata is missing.");
-        }
-
-        if (metadata.assetId <= 0)
-        {
-            throw new InvalidOperationException("Version metadata is missing a valid asset id.");
-        }
-
-        if (!HasRequiredNewVersionMetadata(metadata.version, metadata.scope, metadata.title, metadata.defaultAviVersion, out string message))
-        {
-            throw new InvalidOperationException(message);
-        }
-    }
-
     private bool HasModelFileBuildEntryPayload()
     {
         SyncModelFileBuildEntryCount();
@@ -759,22 +741,21 @@ public partial class CreatorModeModule
             return;
         }
 
-        (CustomBaseVersion metadata, string zipPath) buildResult = default;
         Exception buildError = null;
 
         try
         {
-            buildResult = BuildNewVersion();
-            if (buildResult.metadata == null)
+            var artifact = BuildNewVersion();
+            if (artifact?.Metadata == null)
             {
                 return;
             }
 
-            buildResult.metadata.isUnsubmitted = true;
-            SaveUnsubmittedVersion(buildResult.metadata);
-            editor.selectedVersionForAction = buildResult.metadata;
+            // The artifact is already committed and persisted as unsubmitted.
+            editor.LoadUnsubmittedVersions(true);
+            editor.selectedVersionForAction = artifact.Metadata;
             editor.selectedCustomVersionForAction = null;
-            MCBLogger.Log($"[CreatorMode] Saved temporary internal version {buildResult.metadata.version} after {reason}.");
+            MCBLogger.Log($"[CreatorMode] Saved temporary internal version {artifact.Metadata.version} after {reason}.");
         }
         catch (Exception ex)
         {
@@ -783,11 +764,6 @@ public partial class CreatorModeModule
         }
         finally
         {
-            if (!string.IsNullOrEmpty(buildResult.zipPath) && File.Exists(buildResult.zipPath))
-            {
-                File.Delete(buildResult.zipPath);
-            }
-
             EditorUtility.ClearProgressBar();
         }
 
@@ -1953,7 +1929,13 @@ public partial class CreatorModeModule
         return editor.serverVersions != null && editor.serverVersions.Count > 0;
     }
 
-    private (CustomBaseVersion metadata, string zipPath) BuildNewVersion()
+    /// <summary>
+    /// Collects the creator-form state into packaging entries and delegates to
+    /// VersionBuilder, which owns the artifact invariants (staging folder, manifest
+    /// written last, atomic commit). Returns the committed artifact; the version folder
+    /// and its unsubmitted state are already persisted when this returns.
+    /// </summary>
+    private VersionArtifact BuildNewVersion()
     {
         var logicPrefab = editor.avatarLogicPrefabProp.objectReferenceValue as GameObject;
         bool shouldIncludeCustomVeins = editor.includeCustomVeinsForCreatorProp.boolValue;
@@ -2096,19 +2078,10 @@ public partial class CreatorModeModule
                 : new List<ModelFileSmrPathData>();
         }
 
-        string tempZipPath = fileManagerService.CreateVersionPackageForUpload(
-            assetId,
-            newVersionString,
-            defaultAviVersion,
-            packageEntries,
-            logicPrefab,
-            shouldIncludeCustomVeins,
-            customVeinsTexture,
-            shouldIncludeDynamicNormalsBody,
-            shouldIncludeDynamicNormalsFlexing,
-            compressAdvancedMeshPayload,
-            fixedByAnimationAssetPaths);
-
+        // Metadata is constructed after packaging because the entry hashes are filled
+        // in while the version folder is populated.
+        Func<CustomBaseVersion> metadataFactory = () =>
+        {
         EditorUtility.DisplayProgressBar("Preparing Build", "Calculating hashes and dependencies...", 0.5f);
         var sourceFileEntries = new List<ModelFileData>();
         var versionFileEntries = new List<ModelFileData>();
@@ -2249,40 +2222,88 @@ public partial class CreatorModeModule
             versionFiles = versionFileEntries.ToArray()
         };
 
-        return (metadata, tempZipPath);
+        return metadata;
+        };
+
+        return VersionBuilder.Build(
+            fileManagerService,
+            assetId,
+            newVersionString,
+            defaultAviVersion,
+            packageEntries,
+            logicPrefab,
+            shouldIncludeCustomVeins,
+            customVeinsTexture,
+            shouldIncludeDynamicNormalsBody,
+            shouldIncludeDynamicNormalsFlexing,
+            compressAdvancedMeshPayload,
+            fixedByAnimationAssetPaths,
+            metadataFactory,
+            ComputeFormSignature());
     }
 
-    private void SaveUnsubmittedVersion(CustomBaseVersion versionToSave)
+    /// <summary>
+    /// Canonical signature over EVERY form field that affects build outputs (the old
+    /// signature only covered version|scope|title|changelog|parent, letting model-entry
+    /// or toggle edits slip past the Publish gate). Stored in the artifact manifest so
+    /// the pending-build state survives domain reloads.
+    /// </summary>
+    private string ComputeFormSignature()
     {
-        string path = MCBUtils.UNSUBMITTED_VERSIONS_FILE;
-        List<CustomBaseVersion> unsubmitted = new List<CustomBaseVersion>();
-        if (File.Exists(path))
+        var canonical = new System.Text.StringBuilder(512);
+        canonical.Append(newVersionMajor).Append('.').Append(newVersionMinor).Append('.').Append(newVersionPatch);
+        canonical.Append('|').Append(newVersionScope);
+        canonical.Append('|').Append(newVersionTitle);
+        canonical.Append('|').Append(newChangelog);
+        canonical.Append('|').Append(selectedParentVersionObject?.version);
+        canonical.Append('|').Append(GetAssetPathOf(editor.avatarLogicPrefabProp));
+        canonical.Append('|').Append(editor.includeCustomVeinsForCreatorProp.boolValue ? GetAssetPathOf(editor.customVeinsNormalMapProp) ?? "veins" : null);
+        canonical.Append('|').Append(editor.includeDynamicNormalsBodyForCreatorProp.boolValue);
+        canonical.Append('|').Append(editor.includeDynamicNormalsFlexingForCreatorProp.boolValue);
+        canonical.Append('|').Append(editor.useAdvancedMeshReplacementForCreatorProp != null && editor.useAdvancedMeshReplacementForCreatorProp.boolValue);
+        canonical.Append('|').Append(editor.compressAdvancedMeshPayloadForCreatorProp != null && editor.compressAdvancedMeshPayloadForCreatorProp.boolValue);
+        canonical.Append('|').Append(HasSuggestRealisticPayload()
+            ? string.Join(",", GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp))
+            : null);
+
+        SyncModelFileBuildEntryCount();
+        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
         {
-            unsubmitted = JsonConvert.DeserializeObject<List<CustomBaseVersion>>(File.ReadAllText(path)) ?? new List<CustomBaseVersion>();
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue;
+            canonical.Append("|entry:")
+                .Append(sourceFbx != null ? AssetDatabase.GetAssetPath(sourceFbx) : null).Append(';')
+                .Append(GetAssetPathOf(entry.FindPropertyRelative("customFbx"))).Append(';')
+                .Append(entry.FindPropertyRelative("externalCustomFbxPath")?.stringValue).Append(';')
+                .Append(GetAssetPathOf(entry.FindPropertyRelative("customBaseAvatar")));
         }
 
-        int existingIndex = unsubmitted.FindIndex(v => v.Equals(versionToSave));
-        if (existingIndex != -1) unsubmitted[existingIndex] = versionToSave;
-        else unsubmitted.Add(versionToSave);
+        canonical.Append("|blendshapes:").Append(JsonConvert.SerializeObject(
+            editor.customBaseTarget != null ? editor.customBaseTarget.customBlendshapesForCreator : null));
 
-        MCBUtils.EnsureDirectoryExists(path);
-        File.WriteAllText(path, JsonConvert.SerializeObject(unsubmitted, Formatting.Indented, new StringEnumConverter()));
-        
-        editor.LoadUnsubmittedVersions(true);
-        editor.Repaint();
+        return VersionManifest.ComputeStringHash(canonical.ToString());
     }
 
+    private static string GetAssetPathOf(SerializedProperty objectProp)
+    {
+        var obj = objectProp?.objectReferenceValue;
+        return obj != null ? AssetDatabase.GetAssetPath(obj) : null;
+    }
+
+    /// <summary>
+    /// Unsubmitted versions are persisted inside their version folder (version.json +
+    /// manifest written by the repository at build time), so "removing" one only needs
+    /// to clear the pending-build state and refresh the lists — the folder deletion or
+    /// publish transition already happened in the repository.
+    /// </summary>
     public void RemoveUnsubmittedVersion(CustomBaseVersion versionToRemove)
     {
-        string path = MCBUtils.UNSUBMITTED_VERSIONS_FILE;
-        if (!File.Exists(path)) return;
-        
-        List<CustomBaseVersion> unsubmitted = JsonConvert.DeserializeObject<List<CustomBaseVersion>>(File.ReadAllText(path)) ?? new List<CustomBaseVersion>();
+        if (builtPendingVersion != null && builtPendingVersion.Equals(versionToRemove))
+        {
+            ClearBuiltPendingVersion();
+        }
 
-        unsubmitted.RemoveAll(v => v.Equals(versionToRemove));
-
-        File.WriteAllText(path, JsonConvert.SerializeObject(unsubmitted, Formatting.Indented, new StringEnumConverter()));
-        
+        VersionRepository.InvalidateCache();
         editor.LoadUnsubmittedVersions(true);
         editor.Repaint();
     }
@@ -2307,21 +2328,24 @@ public partial class CreatorModeModule
                 {
                     selectedParentVersionIndex = parentIdx;
                     selectedParentVersionObject = compatibleParentVersions[parentIdx];
-                    SetDefaultVersionNumbers(selectedParentVersionObject);
                 }
                 else
                 {
                     selectedParentVersionIndex = -1;
                     selectedParentVersionObject = null;
-                    SetDefaultVersionNumbers(null);
                 }
             }
             else
             {
                 selectedParentVersionIndex = -1;
                 selectedParentVersionObject = null;
-                SetDefaultVersionNumbers(null);
             }
+
+            // Restoring a saved/built version must keep the artifact's own version.
+            // Parent selection is restored above only to preserve form context.
+            newVersionMajor = parsedVersion.Major;
+            newVersionMinor = parsedVersion.Minor;
+            newVersionPatch = parsedVersion.Build;
 
             SyncModelFileBuildEntryCount();
             var versionFilesBySourcePath = new Dictionary<string, ModelFileData>(StringComparer.OrdinalIgnoreCase);
@@ -2468,19 +2492,87 @@ public partial class CreatorModeModule
             .ToList();
     }
 
-    private string GetNewVersionFormSignature()
-    {
-        return $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}|{newVersionScope}|{newVersionTitle}|{newChangelog}|{selectedParentVersionObject?.version}";
-    }
+    private const string PendingBuildSessionKeyPrefix = "MCB_PendingBuild_";
+    private bool pendingBuildRecoveryAttempted;
 
-    public bool HasBuiltPendingVersion =>
-        builtPendingVersion != null &&
-        string.Equals(builtPendingVersionSignature, GetNewVersionFormSignature(), StringComparison.Ordinal);
+    public bool HasBuiltPendingVersion
+    {
+        get
+        {
+            if (builtPendingVersion == null)
+            {
+                TryRecoverPendingBuildAfterReload();
+            }
+
+            return builtPendingVersion != null &&
+                   !string.IsNullOrEmpty(builtPendingVersionSignature) &&
+                   string.Equals(builtPendingVersionSignature, ComputeFormSignature(), StringComparison.Ordinal);
+        }
+    }
 
     private void ClearBuiltPendingVersion()
     {
+        if (builtPendingVersion != null && builtPendingVersion.assetId > 0)
+        {
+            SessionState.EraseString(PendingBuildSessionKeyPrefix + builtPendingVersion.assetId);
+        }
+
         builtPendingVersion = null;
         builtPendingVersionSignature = null;
+    }
+
+    private void RememberPendingBuild(CustomBaseVersion version, string formSignature = null)
+    {
+        builtPendingVersion = version;
+        builtPendingVersionSignature = !string.IsNullOrEmpty(formSignature)
+            ? formSignature
+            : ComputeFormSignature();
+        if (version != null && version.assetId > 0)
+        {
+            SessionState.SetString(
+                PendingBuildSessionKeyPrefix + version.assetId,
+                $"{version.assetId}|{version.version}|{version.defaultAviVersion}");
+        }
+    }
+
+    /// <summary>
+    /// Domain reloads used to silently drop the pending build (Publish disappeared even
+    /// though the artifact was on disk). The artifact manifest carries the form
+    /// signature, so the pending state can be recovered from SessionState + disk.
+    /// </summary>
+    private void TryRecoverPendingBuildAfterReload()
+    {
+        if (pendingBuildRecoveryAttempted)
+        {
+            return;
+        }
+
+        pendingBuildRecoveryAttempted = true;
+        var selectedAsset = editor.GetSelectedAsset();
+        if (selectedAsset == null || selectedAsset.id <= 0)
+        {
+            pendingBuildRecoveryAttempted = false; // retry once an asset is selected
+            return;
+        }
+
+        string stored = SessionState.GetString(PendingBuildSessionKeyPrefix + selectedAsset.id, string.Empty);
+        string[] parts = stored.Split('|');
+        if (parts.Length != 3 || !int.TryParse(parts[0], out int assetId))
+        {
+            return;
+        }
+
+        var key = new CustomBaseVersion { assetId = assetId, version = parts[1], defaultAviVersion = parts[2], isUnsubmitted = true };
+        var artifact = VersionRepository.GetArtifact(key);
+        if (artifact?.Manifest == null || !artifact.Manifest.unsubmitted || string.IsNullOrEmpty(artifact.Manifest.formSignature) || !artifact.FolderExists)
+        {
+            return;
+        }
+
+        artifact.Metadata.isUnsubmitted = true;
+        builtPendingVersion = artifact.Metadata;
+        builtPendingVersionSignature = artifact.Manifest.formSignature;
+        MCBLogger.Log($"[CreatorMode] Recovered pending build v{artifact.Metadata.version} after domain reload.");
     }
 
     private IEnumerator BuildAndApplyLocalVersionCoroutine()
@@ -2490,59 +2582,48 @@ public partial class CreatorModeModule
         editor.warningsModule.Clear();
         editor.Repaint();
 
-        (CustomBaseVersion metadata, string zipPath) buildResult = default;
+        VersionArtifact builtArtifact = null;
         Exception buildError = null;
 
         try
         {
-            try { buildResult = BuildNewVersion(); }
+            try { builtArtifact = BuildNewVersion(); }
             catch (Exception ex) { buildError = ex; }
 
             if (buildError != null)
             {
                 ClearBuiltPendingVersion();
-                if (DiskSpaceService.IsDiskFullError(buildError))
-                {
-                    editor.submitError = DiskSpaceService.HandleDiskFull(editor, "Building the version");
-                    MCBLogger.LogError($"[CreatorMode] Build failed (disk full): {buildError}");
-                }
-                else
-                {
-                    editor.submitError = buildError.Message;
-                    editor.warningsModule.AddWarning(buildError.Message, MessageType.Error, "Build Failed");
-                    MCBLogger.LogError($"[CreatorMode] Build failed: {buildError}");
-                }
+                editor.submitError = OperationErrorReporter.Report(
+                    editor,
+                    OperationErrorClassifier.Classify(buildError, "Building the version"),
+                    "Build Failed");
             }
             else
             {
-                buildResult.metadata.isUnsubmitted = true;
-                SaveUnsubmittedVersion(buildResult.metadata);
-                builtPendingVersion = buildResult.metadata;
+                // The artifact (version folder + version.json + manifest) is already
+                // committed and persisted as unsubmitted by VersionBuilder.
+                var metadata = builtArtifact.Metadata;
+                editor.LoadUnsubmittedVersions(true);
                 var versionActions = new VersionActions(editor, networkService, fileManagerService);
 
                 AssetDatabase.Refresh();
                 while(EditorApplication.isCompiling || EditorApplication.isUpdating) { yield return null; }
 
                 // Apply the newly built version
-                yield return versionActions.ApplyOrResetCoroutine(buildResult.metadata, false);
+                yield return versionActions.ApplyOrResetCoroutine(metadata, false);
 
                 // Keep the creator form on the temporary version we just built: applying it can
                 // change the applied/selected version and re-suggest a next version number,
                 // which would otherwise reset the form (and disable Publish).
-                editor.selectedVersionForAction = buildResult.metadata;
+                editor.selectedVersionForAction = metadata;
                 editor.selectedCustomVersionForAction = null;
-                previouslySelectedVersion = buildResult.metadata;
-                PopulateFieldsFromVersion(buildResult.metadata);
-                builtPendingVersionSignature = GetNewVersionFormSignature();
+                previouslySelectedVersion = metadata;
+                PopulateFieldsFromVersion(metadata);
+                RememberPendingBuild(metadata, builtArtifact.Manifest?.formSignature);
             }
         }
         finally
         {
-            if (!string.IsNullOrEmpty(buildResult.zipPath) && File.Exists(buildResult.zipPath))
-            {
-                File.Delete(buildResult.zipPath);
-            }
-            
             editor.isSubmitting = false;
             EditorUtility.ClearProgressBar();
             editor.Repaint();
@@ -2550,7 +2631,7 @@ public partial class CreatorModeModule
 
         if (buildError == null)
         {
-            EditorUtility.DisplayDialog("Build Complete", $"Version {buildResult.metadata.version} has been built and applied locally as a temporary version. Review it, then click Publish to upload it" + (UnitGitReleasePublisher.IsUnitGitAvailable ? " and create a Unit Git release checkpoint." : "."), "OK");
+            EditorUtility.DisplayDialog("Build Complete", $"Version {builtArtifact.Metadata.version} has been built and applied locally as a temporary version. Review it, then click Publish to upload it" + (UnitGitReleasePublisher.IsUnitGitAvailable ? " and create a Unit Git release checkpoint." : "."), "OK");
         }
 
         RefreshEditorUi();
@@ -2564,281 +2645,34 @@ public partial class CreatorModeModule
             yield break;
         }
 
-        // Generated files can disappear between Build and Publish (version switches, resets,
-        // cleanup...). Rebuild automatically instead of failing the upload.
-        if (!TryValidateUnsubmittedVersionFiles(builtPendingVersion, out string missingFiles))
-        {
-            MCBLogger.LogWarning($"[CreatorMode] Built version files are missing ({missingFiles}). Rebuilding the version before publishing.");
-            yield return BuildAndApplyLocalVersionCoroutine();
-            if (!HasBuiltPendingVersion || !TryValidateUnsubmittedVersionFiles(builtPendingVersion, out _))
-            {
-                MCBLogger.LogError("[CreatorMode] Rebuild before publish failed; aborting publish.");
-                yield break;
-            }
-        }
-
+        // VersionPublisher validates the stored artifact against its manifest and
+        // uploads exactly the built outputs. If files were deleted or modified since
+        // the build, it blocks with an explicit "rebuild first" message — publishing
+        // never silently repackages from live project state.
         yield return UploadUnsubmittedVersionCoroutine(builtPendingVersion);
     }
 
     /// <summary>
-    /// Verifies that every project file referenced by an unsubmitted version still exists, so a
-    /// publish attempt can rebuild (or clearly report) instead of failing halfway through.
+    /// Single upload path for both the creator-form Publish button and the
+    /// version-list Upload button. The artifact is validated against its manifest and
+    /// uploaded exactly as built (see VersionPublisher) — the old behavior of
+    /// re-packaging the version from live project files at upload time is gone.
     /// </summary>
-    private bool TryValidateUnsubmittedVersionFiles(CustomBaseVersion version, out string missingFiles)
-    {
-        var missing = new List<string>();
-        if (version == null)
-        {
-            missingFiles = "no version";
-            return false;
-        }
-
-        if (!string.IsNullOrEmpty(version.logicPrefabPath) &&
-            AssetDatabase.LoadAssetAtPath<GameObject>(version.logicPrefabPath) == null)
-        {
-            missing.Add(version.logicPrefabPath);
-        }
-
-        if (!string.IsNullOrEmpty(version.customVeinsTexturePath) &&
-            AssetDatabase.LoadAssetAtPath<Texture2D>(version.customVeinsTexturePath) == null)
-        {
-            missing.Add(version.customVeinsTexturePath);
-        }
-
-        foreach (var versionFile in (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => string.Equals(file?.role, "PATCH", StringComparison.OrdinalIgnoreCase)))
-        {
-            string sourcePath = GetMetadataString(versionFile, "sourcePath");
-            string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
-            string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
-
-            if (!string.IsNullOrWhiteSpace(sourcePath) &&
-                !File.Exists(sourcePath + FileManagerService.OriginalSuffix) &&
-                !File.Exists(sourcePath))
-            {
-                missing.Add(sourcePath);
-            }
-
-            if (!string.IsNullOrWhiteSpace(customFbxPath) &&
-                AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath) == null &&
-                !File.Exists(Path.GetFullPath(customFbxPath)))
-            {
-                missing.Add(customFbxPath);
-            }
-
-            if (!string.IsNullOrWhiteSpace(customAvatarPath) &&
-                AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath) == null)
-            {
-                missing.Add(customAvatarPath);
-            }
-        }
-
-        missingFiles = string.Join(", ", missing);
-        return missing.Count == 0;
-    }
-
     public IEnumerator UploadUnsubmittedVersionCoroutine(CustomBaseVersion unsubmittedVersion)
     {
-        editor.isSubmitting = true;
-        editor.submitError = "";
-        editor.warningsModule.Clear();
-        editor.Repaint();
-
-        string zipPath = null;
-        Exception error = null;
-        System.Threading.Tasks.Task<(bool success, string response, string error)> uploadTask = null;
-        string uploadUrl = null;
-
-        try
-        {
-            var logicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(unsubmittedVersion.logicPrefabPath);
-            var customVeinsTexture = !string.IsNullOrEmpty(unsubmittedVersion.customVeinsTexturePath) 
-                ? AssetDatabase.LoadAssetAtPath<Texture2D>(unsubmittedVersion.customVeinsTexturePath) 
-                : null;
-
-            var selectedAsset = editor.GetSelectedAsset();
-            if (unsubmittedVersion.assetId <= 0 && selectedAsset != null)
+        yield return VersionPublisher.PublishCoroutine(
+            editor,
+            networkService,
+            fileManagerService,
+            unsubmittedVersion,
+            onPublished: () =>
             {
-                unsubmittedVersion.assetId = selectedAsset.id;
-            }
-
-            if (unsubmittedVersion.assetId <= 0)
-                throw new Exception("Unsubmitted version is missing its custom base asset id.");
-            ValidateVersionMetadataForUpload(unsubmittedVersion);
-            var packageEntries = new List<FileManagerService.ModelFilePackageEntry>();
-            foreach (var versionFile in (unsubmittedVersion.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => string.Equals(file?.role, "PATCH", StringComparison.OrdinalIgnoreCase)))
-            {
-                string sourcePath = GetMetadataString(versionFile, "sourcePath");
-                string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
-                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
-                if (string.IsNullOrWhiteSpace(sourcePath) || (string.IsNullOrWhiteSpace(customFbxPath) && string.IsNullOrWhiteSpace(customAvatarPath)))
-                    throw new Exception("Unsubmitted version patch metadata is incomplete.");
-
-                string originalSourcePath = sourcePath + FileManagerService.OriginalSuffix;
-                if (!File.Exists(originalSourcePath)) originalSourcePath = sourcePath;
-                if (!File.Exists(originalSourcePath))
-                    throw new Exception($"Source FBX file not found for version upload: {sourcePath}");
-
-                var customFbx = string.IsNullOrWhiteSpace(customFbxPath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
-                string externalCustomFbxPath = customFbx == null && !string.IsNullOrWhiteSpace(customFbxPath) && File.Exists(Path.GetFullPath(customFbxPath))
-                    ? Path.GetFullPath(customFbxPath)
-                    : null;
-                var customBaseAvatar = string.IsNullOrWhiteSpace(customAvatarPath) ? null : AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath);
-                if (!string.IsNullOrWhiteSpace(customFbxPath) && customFbx == null && string.IsNullOrWhiteSpace(externalCustomFbxPath))
-                    throw new Exception($"Custom FBX asset not found for version upload: {customFbxPath}");
-                if (!string.IsNullOrWhiteSpace(customAvatarPath) && customBaseAvatar == null)
-                    throw new Exception($"Custom avatar asset not found for version upload: {customAvatarPath}. The generated files for this version are gone; click 'Build Version' again, then Publish.");
-
-                string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
-                var sourceFile = unsubmittedVersion.sourceFiles?.FirstOrDefault(file =>
-                    file != null &&
-                    string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase));
-                bool useAdvancedMeshReplacement = string.Equals(
-                    versionFile.transform,
-                    NativeMeshPayloadService.TransformName,
-                    StringComparison.OrdinalIgnoreCase);
-
-                packageEntries.Add(new FileManagerService.ModelFilePackageEntry
-                {
-                    sourceFbxPath = originalSourcePath,
-                    customFbx = customFbx,
-                    externalCustomFbxPath = externalCustomFbxPath,
-                    customBaseAvatar = customBaseAvatar,
-                    useAdvancedMeshReplacement = useAdvancedMeshReplacement,
-                    smrPaths = sourceFile?.smrPaths ?? new List<ModelFileSmrPathData>()
-                });
-            }
-
-            EditorUtility.DisplayProgressBar("Preparing Upload", "Creating version package...", 0.3f);
-
-            bool compressAdvancedMeshPayload = ShouldCompressAdvancedMeshPayload(unsubmittedVersion);
-
-            // Re-create the zip from existing files
-            zipPath = fileManagerService.CreateVersionPackageForUpload(
-                unsubmittedVersion.assetId,
-                unsubmittedVersion.version,
-                unsubmittedVersion.defaultAviVersion,
-                packageEntries,
-                logicPrefab,
-                unsubmittedVersion.includeCustomVeins ?? false,
-                customVeinsTexture,
-                unsubmittedVersion.includeDynamicNormalsBody ?? false,
-                unsubmittedVersion.includeDynamicNormalsFlexing ?? false,
-                compressAdvancedMeshPayload,
-                CollectAnimationAssetPathsFromFixedBy(unsubmittedVersion.customBlendshapes)
-            );
-
-            ValidateVersionPackageUploadSize(zipPath);
-
-            long packageBytes = new FileInfo(zipPath).Length;
-            MCBLogger.Log($"[CreatorMode] Version package created: {FormatBytes(packageBytes)} at {zipPath} (compressAdvancedMeshPayload={compressAdvancedMeshPayload}).");
-            EditorUtility.DisplayProgressBar("Uploading", $"Sending package to server ({FormatBytes(packageBytes)})...", 0.7f);
-            string metadataJson = JsonConvert.SerializeObject(unsubmittedVersion, new StringEnumConverter());
-            MCBLogger.Log($"[CreatorMode] Uploading version metadata assetId={unsubmittedVersion.assetId}, version={unsubmittedVersion.version}, scope={unsubmittedVersion.scope}, defaultAviVersion={unsubmittedVersion.defaultAviVersion}, changelogLength={(unsubmittedVersion.changelog ?? string.Empty).Length}");
-            uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
-            uploadTask = networkService.SubmitNewVersionAsync(uploadUrl, editor.authToken, zipPath, metadataJson);
-        }
-        catch (Exception ex)
-        {
-            error = ex;
-        }
-
-        if (uploadTask != null)
-        {
-            while (!uploadTask.IsCompleted) { yield return null; }
-        }
-
-        bool uploadSucceeded = false;
-        try
-        {
-            if (error != null) throw error;
-
-            if (uploadTask != null)
-            {
-                var (success, response, uploadError) = uploadTask.Result;
-                if (!success) throw new Exception(uploadError);
-
-                uploadSucceeded = true;
-                RemoveUnsubmittedVersion(unsubmittedVersion);
                 if (ReferenceEquals(unsubmittedVersion, builtPendingVersion) ||
                     (builtPendingVersion != null && builtPendingVersion.Equals(unsubmittedVersion)))
                 {
                     ClearBuiltPendingVersion();
                 }
-
-                new VersionActions(editor, networkService, fileManagerService).StartVersionFetch();
-            }
-        }
-        catch (Exception ex)
-        {
-            bool serverSideDiskFull = !string.IsNullOrEmpty(ex.Message) &&
-                                      ex.Message.IndexOf("server storage volume", StringComparison.OrdinalIgnoreCase) >= 0;
-            if (serverSideDiskFull)
-            {
-                editor.submitError = "The MCB server ran out of disk space while saving the package. " + ex.Message;
-                editor.warningsModule.AddWarning(editor.submitError, MessageType.Error, "Server disk full");
-                MCBLogger.LogError($"[CreatorMode] Upload failed (server disk full): {ex}, url: {uploadUrl}");
-            }
-            else if (DiskSpaceService.IsDiskFullError(ex) || DiskSpaceService.IsDiskFullMessage(ex.Message))
-            {
-                editor.submitError = DiskSpaceService.HandleDiskFull(editor, "Publishing the version");
-                MCBLogger.LogError($"[CreatorMode] Upload failed (disk full): {ex}, url: {uploadUrl}");
-            }
-            else
-            {
-                editor.submitError = ex.Message;
-                editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Upload Failed");
-                MCBLogger.LogError($"[CreatorMode] Upload failed: {ex}, url: {uploadUrl}");
-            }
-        }
-        finally
-        {
-            EditorUtility.ClearProgressBar();
-            if (!string.IsNullOrEmpty(zipPath) && File.Exists(zipPath))
-                File.Delete(zipPath);
-
-            editor.isSubmitting = false;
-            editor.Repaint();
-        }
-
-        if (uploadSucceeded)
-        {
-            // Record the published version as a release checkpoint in the project's Git history.
-            bool checkpointCreated = UnitGitReleasePublisher.TryPublishReleaseCheckpoint(
-                unsubmittedVersion,
-                editor.GetSelectedAsset()?.name,
-                out string checkpointMessage);
-
-            string checkpointInfo = checkpointCreated
-                ? "\n\nA Unit Git release checkpoint commit was created."
-                : (string.IsNullOrWhiteSpace(checkpointMessage)
-                    ? string.Empty
-                    : $"\n\nNo Unit Git release checkpoint was created: {checkpointMessage}");
-            EditorUtility.DisplayDialog("Publish Successful", $"Custom base version {unsubmittedVersion.version} has been uploaded.{checkpointInfo}", "OK");
-        }
-
-        RefreshEditorUi();
-    }
-
-    private static void ValidateVersionPackageUploadSize(string zipPath)
-    {
-        if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
-        {
-            return;
-        }
-
-        long length = new FileInfo(zipPath).Length;
-        if (length <= MaxVersionPackageUploadBytes)
-        {
-            return;
-        }
-
-        throw new InvalidOperationException(
-            $"Version package is too large to upload ({FormatBytes(length)}). Maximum allowed size is {FormatBytes(MaxVersionPackageUploadBytes)}.");
-    }
-
-    private static string FormatBytes(long bytes)
-    {
-        return $"{Math.Round(bytes / 1024d / 1024d, 1)} MB";
+            });
     }
 }
 #endif

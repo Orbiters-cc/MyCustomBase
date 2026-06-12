@@ -637,10 +637,17 @@ public class FileManagerService
         }
     }
     
-    public string CreateVersionPackageForUpload(
-        int assetId,
-        string newVersionString,
-        string baseFbxVersion,
+    /// <summary>
+    /// Populates an (already created) version folder with every build output: default
+    /// avatar, XOR / native-mesh-payload .bin patches, generated avatar assets, logic
+    /// prefab + nested unitypackage, veins texture. The caller owns the folder
+    /// lifecycle — builds run against a VersionRepository staging folder which is
+    /// atomically committed afterwards; this method never deletes or replaces existing
+    /// version folders and no longer produces the upload zip (publish re-creates the
+    /// zip from the manifest-listed outputs).
+    /// </summary>
+    public void PopulateVersionFolder(
+        string versionFolderUnityPath,
         IList<ModelFilePackageEntry> modelEntries,
         GameObject logicPrefab,
         bool includeCustomVeins,
@@ -650,22 +657,13 @@ public class FileManagerService
         bool compressAdvancedMeshPayload,
         IEnumerable<string> additionalAnimationAssetPaths = null)
     {
-        string newVersionDataPath = MCBUtils.GetVersionDataPath(assetId, newVersionString, baseFbxVersion);
+        string newVersionDataPath = versionFolderUnityPath;
         if (string.IsNullOrEmpty(newVersionDataPath))
         {
-            throw new ArgumentException("A valid assetId, version, and base FBX version are required to create a version package.");
+            throw new ArgumentException("A valid version folder path is required to create a version package.");
         }
 
-        string newVersionDataFullPath = Path.GetFullPath(newVersionDataPath);
-        string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_{Guid.NewGuid()}.zip");
-
-        try
         {
-            if (Directory.Exists(newVersionDataFullPath))
-            {
-                Directory.Delete(newVersionDataFullPath, true);
-            }
-
             MCBUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
 
             string defaultAvatarSourcePath = "Packages/orbiters.mcb/creator assets/default avatar.asset";
@@ -796,14 +794,38 @@ public class FileManagerService
             CopyLogicAndExtras(newVersionDataPath, logicPrefab, includeCustomVeins, customVeinsTexture, additionalAnimationAssetPaths);
 
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-            if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
-            ZipFile.CreateFromDirectory(newVersionDataFullPath, tempZipPath, CompressionLevel.Optimal, false);
+        }
+    }
+
+    /// <summary>
+    /// Creates the upload zip from exactly the manifest-listed output files of a built
+    /// artifact, after their hashes were validated. Content-identical to the build-time
+    /// folder content; version.json / manifest.json are local-only and excluded by the
+    /// manifest itself. Returns the temp zip path (caller deletes it).
+    /// </summary>
+    public string CreateZipFromManifestOutputs(VersionArtifact artifact)
+    {
+        if (artifact?.Manifest == null) throw new ArgumentNullException(nameof(artifact));
+
+        string folderFullPath = Path.GetFullPath(artifact.FolderUnityPath);
+        string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_{Guid.NewGuid()}.zip");
+
+        try
+        {
+            using (var zip = ZipFile.Open(tempZipPath, ZipArchiveMode.Create))
+            {
+                foreach (var output in artifact.Manifest.outputs)
+                {
+                    if (output == null || string.IsNullOrWhiteSpace(output.path)) continue;
+                    string sourcePath = Path.Combine(folderFullPath, output.path.Replace('/', Path.DirectorySeparatorChar));
+                    zip.CreateEntryFromFile(sourcePath, output.path, CompressionLevel.Optimal);
+                }
+            }
 
             return tempZipPath;
         }
         catch (Exception)
         {
-            if (Directory.Exists(newVersionDataFullPath)) Directory.Delete(newVersionDataFullPath, true);
             if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
             throw;
         }

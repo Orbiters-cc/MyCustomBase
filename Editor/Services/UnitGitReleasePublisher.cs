@@ -134,9 +134,14 @@ public static class UnitGitReleasePublisher
             {
                 MCBLogger.Log($"[CreatorMode] Unit Git release checkpoint created for v{entry.version} (commit {result.CommitHash}).");
             }
-            else if (DiskSpaceService.IsDiskFullMessage(result.Message))
+            else if (OperationErrorClassifier.IsDiskFullMessage(result.Message))
             {
-                message = DiskSpaceService.HandleDiskFull(null, "Creating the Unit Git release checkpoint");
+                message = OperationErrorReporter.Report(null, new OperationError
+                {
+                    Category = OperationErrorCategory.DiskFull,
+                    UserMessage = DiskUtils.BuildDiskFullMessage("Creating the Unit Git release checkpoint"),
+                    Detail = result.Message
+                }, "Unit Git checkpoint");
                 MCBLogger.LogWarning($"[CreatorMode] Unit Git release checkpoint failed (disk full): {result.Message}");
             }
             else
@@ -148,9 +153,14 @@ public static class UnitGitReleasePublisher
         }
         catch (Exception ex)
         {
-            if (DiskSpaceService.IsDiskFullError(ex))
+            if (OperationErrorClassifier.IsDiskFullError(ex))
             {
-                message = DiskSpaceService.HandleDiskFull(null, "Creating the Unit Git release checkpoint");
+                message = OperationErrorReporter.Report(null, new OperationError
+                {
+                    Category = OperationErrorCategory.DiskFull,
+                    UserMessage = DiskUtils.BuildDiskFullMessage("Creating the Unit Git release checkpoint"),
+                    Detail = ex.ToString()
+                }, "Unit Git checkpoint");
             }
             else
             {

@@ -14,7 +14,6 @@ using VRC.SDKBase.Editor;
 public class MCBEditor : UnityEditor.Editor
 {
     private const string DevModeWarningEnabledPrefKey = "MCB.DevModeWarningEnabled";
-    private static readonly TimeSpan LocalVersionCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly string[] UiToolkitStyleSheets =
     {
         "Packages/orbiters.mcb/Editor/Styles/mcb-theme.uss",
@@ -24,10 +23,6 @@ public class MCBEditor : UnityEditor.Editor
         "Packages/orbiters.mcb/Editor/Styles/mcb-version.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-avatar-options.uss"
     };
-    private static List<CustomBaseVersion> cachedImportedVersions;
-    private static DateTime cachedImportedVersionsAtUtc = DateTime.MinValue;
-    private static List<CustomBaseVersion> cachedUnsubmittedVersions;
-    private static DateTime cachedUnsubmittedVersionsAtUtc = DateTime.MinValue;
     private static readonly Dictionary<string, List<string>> SharedDetectedAvatarFbxPathCache =
         new Dictionary<string, List<string>>(StringComparer.Ordinal);
 
@@ -885,71 +880,11 @@ public class MCBEditor : UnityEditor.Editor
         return null;
     }
 
-    public override void OnInspectorGUI()
-    {
-        serializedObject.Update();
+    // The legacy full-IMGUI inspector path (OnInspectorGUI) was removed: Unity never
+    // called it because CreateInspectorGUI() above unconditionally returns the
+    // UI Toolkit root. The UI Toolkit layout with its IMGUIContainer sections is the
+    // only render path.
 
-        try
-        {
-            SafeUiCall(DrawBanner);
-            
-            // Account module just under the banner
-            SafeUiCall(() => accountModule?.Draw());
-
-            if (dependencyInstallerModule != null && dependencyInstallerModule.DrawFallbackIfBlocked())
-            {
-                return;
-            }
-
-            if (!isAuthenticated)
-            {
-                SafeUiCall(() => authModule.DrawMagicSyncAuth());
-            }
-
-            bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
-            bool showOfflineSavedVersionsUi = !HasServerAccess && importedVersions != null && importedVersions.Count > 0;
-
-            if (hasMajorUpdateLockout)
-            {
-                SafeUiCall(DrawMajorUpdateRequiredInfo);
-                if (showOfflineSavedVersionsUi)
-                {
-                    SafeUiCall(DrawOfflineSavedVersionsInfo);
-                    SafeUiCall(() => versionModule.Draw());
-                    SafeUiCall(() => avatarOptionsModule?.Draw());
-                }
-            }
-            else if (HasServerAccess)
-            {
-                SafeUiCall(() => assetGalleryModule?.DrawSelectedAssetHeader());
-                SafeUiCall(() => assetGalleryModule?.Draw());
-
-                if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
-                {
-                    SafeUiCall(() => warningsModule?.Draw());
-                    SafeUiCall(() => creatorModule.Draw());
-                    SafeUiCall(() => versionModule.Draw());
-                    SafeUiCall(() => avatarOptionsModule?.Draw());
-                    SafeUiCall(() => adjustMaterialModule?.Draw());
-                }
-            }
-            else if (showOfflineSavedVersionsUi)
-            {
-                SafeUiCall(DrawOfflineSavedVersionsInfo);
-                SafeUiCall(() => versionModule.Draw());
-                SafeUiCall(() => avatarOptionsModule?.Draw());
-            }
-
-            // Logout moved to AccountModule
-            SafeUiCall(() => advancedModule.Draw());
-            DrawUiRenderingError();
-        }
-        finally
-        {
-            serializedObject.ApplyModifiedProperties();
-        }
-    }
-    
     private void SafeUiCall(Action drawAction)
     {
         if (drawAction == null) return;
@@ -1475,93 +1410,22 @@ public class MCBEditor : UnityEditor.Editor
         SceneMeshDotEffectService.PlayAvatarSweep(customBaseTarget.transform != null ? customBaseTarget.transform.root : null, loops);
     }
 
+    /// <summary>Local version lists are served by the VersionRepository scan, which
+    /// classifies folders by their build manifest (unsubmitted artifacts vs imported/
+    /// downloaded versions), runs the one-time legacy-index migration and garbage
+    /// collection, and caches results internally.</summary>
     public void LoadUnsubmittedVersions(bool forceRefresh = false)
     {
+        var scan = VersionRepository.Scan(forceRefresh);
         unsubmittedVersions.Clear();
-        if (!forceRefresh && IsLocalVersionCacheFresh(cachedUnsubmittedVersionsAtUtc) && cachedUnsubmittedVersions != null)
-        {
-            unsubmittedVersions.AddRange(cachedUnsubmittedVersions);
-            return;
-        }
-
-        string path = MCBUtils.UNSUBMITTED_VERSIONS_FILE;
-        if (File.Exists(path))
-        {
-            try
-            {
-                string json = File.ReadAllText(path);
-                var loaded = JsonConvert.DeserializeObject<List<CustomBaseVersion>>(json);
-                if (loaded != null)
-                {
-                    foreach (var v in loaded)
-                    {
-                        v.isUnsubmitted = true; // Set runtime flag
-                        unsubmittedVersions.Add(v);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MCBLogger.LogError($"[MCB] Failed to load unsubmitted versions from {path}: {ex.Message}");
-            }
-        }
-
-        cachedUnsubmittedVersions = new List<CustomBaseVersion>(unsubmittedVersions);
-        cachedUnsubmittedVersionsAtUtc = DateTime.UtcNow;
+        unsubmittedVersions.AddRange(scan.unsubmitted);
     }
 
     public void LoadImportedVersions(bool forceRefresh = false)
     {
+        var scan = VersionRepository.Scan(forceRefresh);
         importedVersions.Clear();
-        if (!forceRefresh && IsLocalVersionCacheFresh(cachedImportedVersionsAtUtc) && cachedImportedVersions != null)
-        {
-            importedVersions.AddRange(cachedImportedVersions);
-            return;
-        }
-
-        string versionsRoot = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
-        if (!Directory.Exists(versionsRoot))
-        {
-            cachedImportedVersions = new List<CustomBaseVersion>();
-            cachedImportedVersionsAtUtc = DateTime.UtcNow;
-            return;
-        }
-
-        try
-        {
-            foreach (string versionJsonPath in Directory.GetFiles(versionsRoot, "version.json", SearchOption.AllDirectories))
-            {
-                try
-                {
-                    string json = File.ReadAllText(versionJsonPath);
-                    var version = JsonConvert.DeserializeObject<CustomBaseVersion>(json);
-                    if (version == null || version.assetId <= 0 || string.IsNullOrWhiteSpace(version.version) || string.IsNullOrWhiteSpace(version.defaultAviVersion))
-                    {
-                        MCBLogger.LogWarning($"[MCB] Ignoring invalid imported version metadata at {versionJsonPath}");
-                        continue;
-                    }
-
-                    version.isImported = true;
-                    importedVersions.Add(version);
-                }
-                catch (Exception ex)
-                {
-                    MCBLogger.LogWarning($"[MCB] Failed to parse imported version metadata at {versionJsonPath}: {ex.Message}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            MCBLogger.LogError($"[MCB] Failed to scan imported versions: {ex.Message}");
-        }
-
-        cachedImportedVersions = new List<CustomBaseVersion>(importedVersions);
-        cachedImportedVersionsAtUtc = DateTime.UtcNow;
-    }
-
-    private static bool IsLocalVersionCacheFresh(DateTime cachedAtUtc)
-    {
-        return cachedAtUtc != DateTime.MinValue && DateTime.UtcNow - cachedAtUtc < LocalVersionCacheDuration;
+        importedVersions.AddRange(scan.imported);
     }
 
     public List<CustomBaseVersion> GetAllVersions()

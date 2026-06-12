@@ -855,10 +855,10 @@ public class AdvancedModeModule
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Disk Space", EditorStyles.boldLabel);
 
-        long freeBytes = DiskSpaceService.GetFreeBytesForProjectDrive();
+        long freeBytes = DiskUtils.GetFreeBytesForProjectDrive();
         EditorGUILayout.LabelField(
             "Free space",
-            $"{DiskSpaceService.FormatBytes(freeBytes)} on {DiskSpaceService.GetProjectDriveName()}");
+            $"{DiskUtils.FormatBytes(freeBytes)} on {DiskUtils.GetProjectDriveName()}");
 
         EditorGUILayout.BeginHorizontal();
         GUILayout.Space(EditorGUI.indentLevel * 15);
@@ -873,7 +873,7 @@ public class AdvancedModeModule
                     "Flush",
                     "Cancel"))
             {
-                string summary = DiskSpaceService.FlushRemovableData(editor);
+                string summary = VersionRepository.FlushRemovableData(editor);
                 unitGitConnectorStatus = null;
                 diskSpaceStatus = summary;
                 editor.Repaint();

@@ -80,8 +80,9 @@ public partial class CustomVeinsDrawer
         BuildPoiyomiInstallSuggestionUIToolkit(controls, targetMaterials);
         BuildVeinsTexturePreviewUIToolkit(controls, appliedVersion);
 
-        bool veinsApplied = targetMaterials.Count > 0 && targetMaterials.All(material => materialService.HasDetailNormalMap(material));
-        bool shouldShowWarning = currentEnabled && !veinsApplied;
+        bool canVerifyVeinsState = targetMaterials.Count > 0;
+        bool veinsApplied = canVerifyVeinsState && targetMaterials.All(material => materialService.HasDetailNormalMap(material));
+        bool shouldShowWarning = currentEnabled && canVerifyVeinsState && !veinsApplied;
         if (shouldShowWarning)
         {
             BuildVeinsMissingWarningUIToolkit(controls, isLocked);
@@ -100,8 +101,8 @@ public partial class CustomVeinsDrawer
         if (targetMaterials.Count == 0)
         {
             root.Add(AvatarOptionsModule.CreateOptionHelpBox(
-                "Could not detect materials on the targeted FBX meshes",
-                HelpBoxMessageType.Warning));
+                "Could not verify targeted FBX material status. The custom veins may still be applied in the scene.",
+                HelpBoxMessageType.Info));
             return;
         }
 
