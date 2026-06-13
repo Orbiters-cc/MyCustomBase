@@ -9,6 +9,7 @@ public partial class AvatarOptionsModule
     private readonly CustomVeinsDrawer customVeinsDrawer;
     private readonly SlidersDrawer slidersDrawer;
     private readonly BlendshapeDrawer blendshapeDrawer;
+    private readonly ReFitDrawer refitDrawer;
 
     public AvatarOptionsModule(MCBEditor editor)
     {
@@ -16,6 +17,7 @@ public partial class AvatarOptionsModule
         customVeinsDrawer = new CustomVeinsDrawer(editor);
         slidersDrawer = new SlidersDrawer(editor);
         blendshapeDrawer = new BlendshapeDrawer(editor, slidersDrawer.RequestApplyDebounced);
+        refitDrawer = new ReFitDrawer(editor);
     }
 
     public void Draw()

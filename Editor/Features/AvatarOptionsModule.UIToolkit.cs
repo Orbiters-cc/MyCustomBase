@@ -52,6 +52,7 @@ public partial class AvatarOptionsModule
         bool hasContent = false;
         try
         {
+            hasContent |= refitDrawer.BuildUIToolkit(avatarOptionsRoot);
             hasContent |= customVeinsDrawer.BuildUIToolkit(avatarOptionsRoot);
             hasContent |= slidersDrawer.BuildUIToolkit(avatarOptionsRoot);
             hasContent |= blendshapeDrawer.BuildUIToolkit(avatarOptionsRoot);

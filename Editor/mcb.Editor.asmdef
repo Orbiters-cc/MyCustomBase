@@ -6,7 +6,9 @@
     "VRC.SDKBase",
     "VRC.SDKBase.Editor",
     "mcb",
-    "orbiters.unitgit.Editor"
+    "orbiters.unitgit.Editor",
+    "orbiters.refit",
+    "orbiters.refit.Editor"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
@@ -21,6 +23,11 @@
       "name": "orbiters.unitgit",
       "expression": "",
       "define": "ORBITERS_UNITGIT"
+    },
+    {
+      "name": "orbiters.refit",
+      "expression": "",
+      "define": "ORBITERS_REFIT"
     }
   ]
 }

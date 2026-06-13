@@ -1021,6 +1021,10 @@ public class VersionActions
                         versionForAssets,
                         GetResetAffectedFbxPaths(versionForAssets, fbxPath));
                 }
+
+                // Resetting to the default original base: restore any asset meshes modified by ReFit
+                // back to their original meshes (tracked on the MyCustomBase component).
+                MCBReFitIntegration.RestoreOriginalAssetMeshes(editor.customBaseTarget);
             }
             catch (Exception e)
             {

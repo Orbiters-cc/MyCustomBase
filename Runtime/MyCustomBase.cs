@@ -54,6 +54,17 @@ public class AnimationPositionOffsetEntry
     public Vector3 offset;
 }
 
+// One asset mesh modified by ReFit, with its original mesh so a reset can restore it.
+// Serialized on the component so the mapping survives Unity restarts and scene reloads.
+[Serializable]
+public class RefitAppliedMeshEntry
+{
+    public string rendererPath;
+    public Mesh originalMesh;
+    public Mesh refitMesh;
+    public string refitMeshAssetPath;
+}
+
 // This component is a pure data container for an avatar that has been modified
 // by the custom base workflow. It holds only the state that needs to be saved with the scene/prefab.
 [AddComponentMenu("Orbiters/My Custom Base (MCB)")]
@@ -125,6 +136,9 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] [SerializeField] public List<AnimationPositionOffsetEntry> appliedVersionAnimationPositionOffsetsCache = new List<AnimationPositionOffsetEntry>();
 
     [HideInInspector] [SerializeField] public int pendingSceneMeshDotEffectLoops = 0;
+
+    [Tooltip("Asset meshes modified by ReFit, with their original meshes so resetting to the default base restores them.")]
+    [HideInInspector] [SerializeField] public List<RefitAppliedMeshEntry> appliedRefits = new List<RefitAppliedMeshEntry>();
 
     // --- CREATOR MODE PERSISTENT DATA ---
     [HideInInspector] public bool isCreatorMode = false;
