@@ -15,9 +15,18 @@
   "mcb": {
     "dependencyDisplayNames": {
       "com.vrcfury.vrcfury": "VRCFury",
-      "com.poiyomi.toon": "Poiyomi Toon"
+      "com.poiyomi.toon": "Poiyomi Toon",
+      "orbiters.refit": "ReFit",
+      "orbiters.unitgit": "Unit Git"
     },
     "repositories": [
+      {
+        "url": "https://github.com/blackorbit1/orbiters-vpm/raw/refs/heads/main/index.json",
+        "packages": [
+          "orbiters.refit",
+          "orbiters.unitgit"
+        ]
+      },
       {
         "url": "https://vcc.vrcfury.com/",
         "packages": [
@@ -32,6 +41,16 @@
       }
     ],
     "optionalVpmDependencies": {
+      "orbiters.refit": {
+        "version": ">=0.1.0 <1.0.0",
+        "displayName": "ReFit",
+        "reason": "Adds the ReFit avatar options panel for adapting clothing and accessory meshes to the applied custom base."
+      },
+      "orbiters.unitgit": {
+        "version": ">=0.1.0 <1.0.0",
+        "displayName": "Unit Git",
+        "reason": "Records MCB release checkpoints and generated ReFit files through Unit Git when available."
+      },
       "com.poiyomi.toon": {
         "version": ">=9.0.0 <10.0.0",
         "displayName": "Poiyomi Toon",

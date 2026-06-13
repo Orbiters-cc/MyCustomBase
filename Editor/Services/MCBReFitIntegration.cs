@@ -4,16 +4,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.SceneManagement;
-#if ORBITERS_REFIT
-using Orbiters.ReFit;
-using Orbiters.ReFit.Editor;
-#endif
-#if ORBITERS_UNITGIT
-using Orbiters.UnitGit.Editor;
-#endif
 
 /// <summary>
 /// Bridges MCB with the optional ReFit package (orbiters.refit): re-fits the avatar's clothing/accessory
@@ -26,14 +19,7 @@ public static class MCBReFitIntegration
 {
     public static bool IsReFitAvailable
     {
-        get
-        {
-#if ORBITERS_REFIT
-            return true;
-#else
-            return false;
-#endif
-        }
+        get { return ReFitApi.IsAvailable; }
     }
 
     // ------------------------------------------------------------------
@@ -147,7 +133,6 @@ public static class MCBReFitIntegration
         MCBLogger.Log($"[MCB] ReFit: restored {restored} asset mesh(es) to their original version.");
     }
 
-#if ORBITERS_REFIT
     // ------------------------------------------------------------------
     // Source avatar (mesh A = default base body, on the SAME skeleton)
     // ------------------------------------------------------------------
@@ -204,7 +189,7 @@ public static class MCBReFitIntegration
         clone.SetActive(false);
         foreach (var behaviour in clone.GetComponentsInChildren<Behaviour>(true))
         {
-            try { if (!(behaviour is Transform)) behaviour.enabled = false; }
+            try { behaviour.enabled = false; }
             catch { /* harmless */ }
         }
 
@@ -240,6 +225,15 @@ public static class MCBReFitIntegration
         var mcb = editor.customBaseTarget;
         var root = mcb.transform.root;
         progressState.Begin("Preparing ReFit...", new Color32(0, 218, 109, 255));
+
+        if (!IsReFitAvailable)
+        {
+            progressState.Fail();
+            const string msg = "The ReFit package (orbiters.refit) is not installed.";
+            Debug.LogWarning("[MCB] ReFit aborted: " + msg);
+            onComplete?.Invoke(false, msg);
+            yield break;
+        }
 
         var shapes = (mcb.appliedCustomBaseVersion != null && mcb.appliedCustomBaseVersion.customBlendshapes != null
                 ? mcb.appliedCustomBaseVersion.customBlendshapes
@@ -324,33 +318,36 @@ public static class MCBReFitIntegration
             }
             var originalMesh = renderer.sharedMesh;
 
-            var request = new ReFitRequest
-            {
-                mode = shapes.Count > 0 ? ReFitMode.MeshAndBlendshape : ReFitMode.MeshToMesh,
-                assetRenderer = renderer,
-                sourceAvatar = source,
-                targetAvatar = root.gameObject,
-                sourceBodyRenderer = sourceBody,
-                targetBodyRenderer = targetBody,
-                targetBlendshapes = shapes,
-                settings = new ReFitSettings
-                {
-                    replaceArmature = false,     // the asset already lives on this avatar's armature
-                    transferWeights = false,
-                    prefixTransferredShapes = false, // keep exact body shape names so links/animations match
-                    savePrefab = false
-                }
-            };
-
             float baseT = (float)done / targets.Count;
             float slice = 1f / targets.Count;
-            ReFitResult result = null;
-            yield return ReFitService.ExecuteCoroutine(
-                request,
-                (t, label) => progressState.Report(baseT + Mathf.Clamp01(t) * slice * 0.95f, $"{renderer.name}: {label}"),
-                r => result = r);
+            object result = null;
+            IEnumerator coroutine = null;
 
-            if (result != null && result.success)
+            try
+            {
+                object request = ReFitApi.CreateRequest(
+                    shapes.Count > 0,
+                    renderer,
+                    source,
+                    root.gameObject,
+                    sourceBody,
+                    targetBody,
+                    shapes);
+                coroutine = ReFitApi.ExecuteCoroutine(
+                    request,
+                    (t, label) => progressState.Report(baseT + Mathf.Clamp01(t) * slice * 0.95f, $"{renderer.name}: {label}"),
+                    r => result = r);
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{renderer.name}: {ex.Message}");
+                reportDone(++done);
+                continue;
+            }
+
+            yield return coroutine;
+
+            if (result != null && ReFitApi.IsSuccessful(result))
             {
                 if (existing == null)
                 {
@@ -358,16 +355,14 @@ public static class MCBReFitIntegration
                     mcb.appliedRefits.Add(existing);
                 }
                 if (existing.originalMesh == null) existing.originalMesh = originalMesh;
-                existing.refitMesh = result.mesh;
-                existing.refitMeshAssetPath = result.meshAssetPath;
-                if (!string.IsNullOrEmpty(result.meshAssetPath)) changedPaths.Add(result.meshAssetPath);
+                existing.refitMesh = ReFitApi.GetMesh(result);
+                existing.refitMeshAssetPath = ReFitApi.GetMeshAssetPath(result);
+                if (!string.IsNullOrEmpty(existing.refitMeshAssetPath)) changedPaths.Add(existing.refitMeshAssetPath);
                 EditorUtility.SetDirty(mcb);
             }
             else
             {
-                string detail = result != null
-                    ? string.Join("; ", result.report.messages.Where(m => m.severity == ReFitSeverity.Error).Select(m => m.text))
-                    : "unknown error";
+                string detail = result != null ? ReFitApi.GetErrorSummary(result) : "unknown error";
                 failures.Add($"{renderer.name}: {detail}");
             }
             reportDone(++done);
@@ -413,7 +408,6 @@ public static class MCBReFitIntegration
     /// <summary>Commits only the ReFit-generated files (and the scene) through Unit Git when installed.</summary>
     private static string CommitReFitChanges(List<string> meshAssetPaths, string scenePath, int meshCount)
     {
-#if ORBITERS_UNITGIT
         try
         {
             if (meshAssetPaths.Count == 0) return null;
@@ -425,17 +419,22 @@ public static class MCBReFitIntegration
             }
             if (!string.IsNullOrEmpty(scenePath)) AddWithMeta(paths, scenePath);
 
-            var result = UnitGitReleases.CommitFiles(
+            if (UnitGitReleasePublisher.TryCommitFiles(
                 "MCB : ReFit",
                 $"Re-fitted {meshCount} asset mesh(es) to the applied custom base version.\n" +
                 string.Join("\n", meshAssetPaths),
-                paths.Distinct().ToArray());
-            if (result.Success)
+                paths,
+                out string message,
+                out string commitHash))
             {
-                MCBLogger.Log($"[MCB] ReFit changes committed via Unit Git: {result.CommitHash}");
+                MCBLogger.Log($"[MCB] ReFit changes committed via Unit Git: {commitHash}");
                 return "Committed via Unit Git.";
             }
-            MCBLogger.LogWarning($"[MCB] ReFit Unit Git commit failed: {result.Message}");
+
+            if (UnitGitReleasePublisher.IsUnitGitAvailable)
+            {
+                MCBLogger.LogWarning($"[MCB] ReFit Unit Git commit failed: {message}");
+            }
             return null;
         }
         catch (Exception ex)
@@ -443,12 +442,8 @@ public static class MCBReFitIntegration
             MCBLogger.LogWarning($"[MCB] ReFit Unit Git commit failed: {ex.Message}");
             return null;
         }
-#else
-        return null;
-#endif
     }
 
-#if ORBITERS_UNITGIT
     private static void AddWithMeta(List<string> paths, string path)
     {
         if (string.IsNullOrEmpty(path)) return;
@@ -466,7 +461,250 @@ public static class MCBReFitIntegration
             folder = Path.GetDirectoryName(folder)?.Replace('\\', '/');
         }
     }
-#endif
-#endif // ORBITERS_REFIT
+
+    private static class ReFitApi
+    {
+        private const string RequestTypeName = "Orbiters.ReFit.ReFitRequest";
+        private const string SettingsTypeName = "Orbiters.ReFit.ReFitSettings";
+        private const string ModeTypeName = "Orbiters.ReFit.ReFitMode";
+        private const string ProgressTypeName = "Orbiters.ReFit.ReFitProgress";
+        private const string ServiceTypeName = "Orbiters.ReFit.Editor.ReFitService";
+        private const string ResultTypeName = "Orbiters.ReFit.Editor.ReFitResult";
+
+        public static bool IsAvailable
+        {
+            get
+            {
+                return RequestType != null &&
+                       SettingsType != null &&
+                       ModeType != null &&
+                       ProgressType != null &&
+                       ServiceType != null &&
+                       ResultType != null;
+            }
+        }
+
+        private static Type RequestType { get { return FindType(RequestTypeName); } }
+        private static Type SettingsType { get { return FindType(SettingsTypeName); } }
+        private static Type ModeType { get { return FindType(ModeTypeName); } }
+        private static Type ProgressType { get { return FindType(ProgressTypeName); } }
+        private static Type ServiceType { get { return FindType(ServiceTypeName); } }
+        private static Type ResultType { get { return FindType(ResultTypeName); } }
+
+        public static object CreateRequest(
+            bool meshAndBlendshape,
+            SkinnedMeshRenderer assetRenderer,
+            GameObject sourceAvatar,
+            GameObject targetAvatar,
+            SkinnedMeshRenderer sourceBodyRenderer,
+            SkinnedMeshRenderer targetBodyRenderer,
+            List<string> targetBlendshapes)
+        {
+            EnsureAvailable();
+
+            object settings = Activator.CreateInstance(SettingsType);
+            SetMember(settings, "replaceArmature", false);
+            SetMember(settings, "transferWeights", false);
+            SetMember(settings, "prefixTransferredShapes", false);
+            SetMember(settings, "savePrefab", false);
+
+            object request = Activator.CreateInstance(RequestType);
+            SetMember(request, "mode", Enum.Parse(ModeType, meshAndBlendshape ? "MeshAndBlendshape" : "MeshToMesh"));
+            SetMember(request, "assetRenderer", assetRenderer);
+            SetMember(request, "sourceAvatar", sourceAvatar);
+            SetMember(request, "targetAvatar", targetAvatar);
+            SetMember(request, "sourceBodyRenderer", sourceBodyRenderer);
+            SetMember(request, "targetBodyRenderer", targetBodyRenderer);
+            SetMember(request, "targetBlendshapes", targetBlendshapes);
+            SetMember(request, "settings", settings);
+            return request;
+        }
+
+        public static IEnumerator ExecuteCoroutine(
+            object request,
+            Action<float, string> onProgress,
+            Action<object> onComplete)
+        {
+            EnsureAvailable();
+
+            var progressCallback = new ReFitProgressCallback(onProgress);
+            Delegate progressDelegate = Delegate.CreateDelegate(
+                ProgressType,
+                progressCallback,
+                nameof(ReFitProgressCallback.OnProgress));
+            Type completeDelegateType = typeof(Action<>).MakeGenericType(ResultType);
+            Delegate completeDelegate = CreateCompleteDelegate(ResultType, onComplete);
+
+            var method = ServiceType.GetMethod(
+                "ExecuteCoroutine",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { RequestType, ProgressType, completeDelegateType },
+                null);
+            if (method == null)
+            {
+                throw new MissingMethodException(ServiceType.FullName, "ExecuteCoroutine");
+            }
+
+            try
+            {
+                object result = method.Invoke(null, new object[] { request, progressDelegate, completeDelegate });
+                if (result is IEnumerator enumerator)
+                {
+                    return enumerator;
+                }
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                throw ex.InnerException;
+            }
+
+            throw new InvalidOperationException("ReFit ExecuteCoroutine did not return an editor coroutine.");
+        }
+
+        public static bool IsSuccessful(object result)
+        {
+            object value = GetMemberValue(result, "success");
+            return value is bool success && success;
+        }
+
+        public static Mesh GetMesh(object result)
+        {
+            return GetMemberValue(result, "mesh") as Mesh;
+        }
+
+        public static string GetMeshAssetPath(object result)
+        {
+            return GetMemberValue(result, "meshAssetPath") as string;
+        }
+
+        public static string GetErrorSummary(object result)
+        {
+            var errors = new List<string>();
+            object report = GetMemberValue(result, "report");
+            if (GetMemberValue(report, "messages") is IEnumerable messages)
+            {
+                foreach (object message in messages)
+                {
+                    object severity = GetMemberValue(message, "severity");
+                    if (!string.Equals(severity != null ? severity.ToString() : null, "Error", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    string text = GetMemberValue(message, "text") as string;
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        errors.Add(text);
+                    }
+                }
+            }
+
+            return errors.Count == 0 ? "unknown error" : string.Join("; ", errors);
+        }
+
+        private static void EnsureAvailable()
+        {
+            if (!IsAvailable)
+            {
+                throw new InvalidOperationException("The ReFit package (orbiters.refit) is not installed.");
+            }
+        }
+
+        private static Delegate CreateCompleteDelegate(Type resultType, Action<object> onComplete)
+        {
+            var method = typeof(ReFitApi)
+                .GetMethod(nameof(CreateCompleteDelegateTyped), BindingFlags.NonPublic | BindingFlags.Static)
+                .MakeGenericMethod(resultType);
+            return (Delegate)method.Invoke(null, new object[] { onComplete });
+        }
+
+        private static Action<T> CreateCompleteDelegateTyped<T>(Action<object> onComplete)
+        {
+            return result => onComplete?.Invoke(result);
+        }
+
+        private static Type FindType(string fullName)
+        {
+            if (string.IsNullOrWhiteSpace(fullName))
+            {
+                return null;
+            }
+
+            var direct = Type.GetType(fullName);
+            if (direct != null)
+            {
+                return direct;
+            }
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type type = null;
+                try { type = assembly.GetType(fullName); }
+                catch { }
+                if (type != null)
+                {
+                    return type;
+                }
+            }
+
+            return null;
+        }
+
+        private static void SetMember(object target, string name, object value)
+        {
+            if (target == null || string.IsNullOrEmpty(name))
+            {
+                return;
+            }
+
+            var type = target.GetType();
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+            if (field != null)
+            {
+                field.SetValue(target, value);
+                return;
+            }
+
+            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (property != null && property.CanWrite)
+            {
+                property.SetValue(target, value);
+            }
+        }
+
+        private static object GetMemberValue(object target, string name)
+        {
+            if (target == null || string.IsNullOrEmpty(name))
+            {
+                return null;
+            }
+
+            var type = target.GetType();
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+            if (field != null)
+            {
+                return field.GetValue(target);
+            }
+
+            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            return property != null && property.CanRead ? property.GetValue(target) : null;
+        }
+
+        private sealed class ReFitProgressCallback
+        {
+            private readonly Action<float, string> onProgress;
+
+            public ReFitProgressCallback(Action<float, string> onProgress)
+            {
+                this.onProgress = onProgress;
+            }
+
+            public void OnProgress(float t, string label)
+            {
+                onProgress?.Invoke(t, label);
+            }
+        }
+    }
 }
 #endif

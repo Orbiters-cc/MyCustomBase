@@ -171,6 +171,8 @@ public class AdvancedModeModule
 
                 DrawHealthCheckControls();
 
+                DrawOptionalIntegrationDependencyControls();
+
                 DrawUnitGitConnectorControls();
 
                 // Flush user cache button
@@ -894,7 +896,15 @@ public class AdvancedModeModule
 
         if (!UnitGitReleasePublisher.IsUnitGitAvailable)
         {
-            EditorGUILayout.HelpBox("The Unit Git package (orbiters.unitgit) is not installed, so the MCB ↔ Unit Git integration is disabled.", MessageType.Warning);
+            if (VpmDependencyService.Instance.IsOptionalDependencyAssumedInstalled(VpmDependencyService.UnitGitPackageId))
+            {
+                EditorGUILayout.HelpBox(
+                    "The optional dependency check is currently bypassed, but the Unit Git editor API was not found. The MCB <-> Unit Git integration is disabled.",
+                    MessageType.Warning);
+                return;
+            }
+
+            EditorGUILayout.HelpBox("The Unit Git package (orbiters.unitgit) is not installed, so the MCB <-> Unit Git integration is disabled.", MessageType.Warning);
             return;
         }
 
@@ -969,6 +979,39 @@ public class AdvancedModeModule
         if (!string.IsNullOrEmpty(unitGitConnectorStatus))
         {
             EditorGUILayout.HelpBox(unitGitConnectorStatus, unitGitConnectorStatusType);
+        }
+    }
+
+    private void DrawOptionalIntegrationDependencyControls()
+    {
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Optional Integrations", EditorStyles.boldLabel);
+
+        bool current = VpmDependencyService.Instance.AssumeLocalOptionalIntegrationsInstalled;
+        bool next = EditorGUILayout.Toggle(
+            new GUIContent(
+                "Assume local ReFit/Unit Git",
+                "Bypasses VPM optional dependency checks for orbiters.refit and orbiters.unitgit. Useful when developing those packages as local embedded packages."),
+            current);
+
+        if (next != current)
+        {
+            VpmDependencyService.Instance.AssumeLocalOptionalIntegrationsInstalled = next;
+            editor.RefreshUiToolkitSections();
+            editor.Repaint();
+        }
+
+        if (next)
+        {
+            EditorGUILayout.HelpBox(
+                "MCB will treat ReFit and Unit Git as installed for optional dependency prompts. Use this only for local package development; if the packages are not actually present or their assemblies fail to compile, related behavior may be unavailable or unexpected.",
+                MessageType.Warning);
+        }
+        else
+        {
+            EditorGUILayout.HelpBox(
+                "Leave this off for normal projects so MCB can offer to add ReFit and Unit Git from the configured VPM repository.",
+                MessageType.None);
         }
     }
 

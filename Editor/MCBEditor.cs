@@ -1,7 +1,6 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -29,7 +28,6 @@ public class MCBEditor : UnityEditor.Editor
     // --- Target & Serialized Object ---
     public MyCustomBase customBaseTarget;
     public new SerializedObject serializedObject;
-    private Texture2D bannerTexture;
 
     // --- Serialized Properties ---
     public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
@@ -152,7 +150,6 @@ public class MCBEditor : UnityEditor.Editor
         versionService.OnVersionsUpdated += OnVersionsUpdated;
         versionService.OnVersionFetchError += OnVersionFetchError;
         
-        bannerTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(Path.Combine(MCBUtils.PACKAGE_BASE_FOLDER, "Editor/banner.png")); 
         FindSerializedProperties();
         
         networkService = new NetworkService();
@@ -900,20 +897,6 @@ public class MCBEditor : UnityEditor.Editor
         }
     }
 
-    private void DrawUiRenderingError()
-    {
-        if (string.IsNullOrEmpty(uiRenderingError)) return;
-
-        EditorGUILayout.Space();
-        EditorGUILayout.HelpBox(uiRenderingError, MessageType.Error);
-
-        if (GUILayout.Button("Dismiss Error Message"))
-        {
-            uiRenderingError = null;
-            lastUiRenderingExceptionSignature = null;
-        }
-    }
-
     private void RecordUiException(Exception ex)
     {
         if (ex == null) return;
@@ -936,41 +919,6 @@ public class MCBEditor : UnityEditor.Editor
             MCBLogger.LogException(ex);
             lastUiRenderingExceptionSignature = signature;
         }
-    }
-
-    private void DrawBanner()
-    {
-        Texture2D textureToDraw = null;
-        var selectedAsset = GetSelectedAsset();
-        if (isAuthenticated && selectedAsset != null)
-        {
-            try
-            {
-                textureToDraw = AvatarAssetDiscoveryService.GetBanner(selectedAsset);
-            }
-            catch (Exception ex)
-            {
-                MCBLogger.LogError($"[MCBEditor] Failed to resolve selected asset banner for assetId={selectedAsset.id} name='{selectedAsset.name}': {ex}");
-            }
-
-            // Fall back to the package banner while the asset banner is missing or still downloading.
-            if (textureToDraw == null)
-            {
-                textureToDraw = bannerTexture;
-            }
-        }
-        else if (isAuthenticated && assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly())
-        {
-            textureToDraw = bannerTexture;
-        }
-
-        if (textureToDraw == null) return;
-        if (textureToDraw.height == 0) return;
-        float aspect = (float)textureToDraw.width / textureToDraw.height;
-        float desiredWidth = EditorGUIUtility.currentViewWidth;
-        Rect rect = GUILayoutUtility.GetRect(desiredWidth, desiredWidth / aspect);
-        GUI.DrawTexture(rect, textureToDraw, ScaleMode.StretchToFill);
-        GUILayout.Space(5);
     }
 
     private void RefreshConnectivityDiagnosticsUIToolkit()

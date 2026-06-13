@@ -1,7 +1,6 @@
 #if UNITY_EDITOR
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -34,14 +33,17 @@ public class ReFitDrawer
 
     public bool BuildUIToolkit(VisualElement root)
     {
-#if !ORBITERS_REFIT
-        return false;
-#else
         if (!editor.isCustomBase ||
             editor.customBaseTarget == null ||
             editor.customBaseTarget.appliedCustomBaseVersion == null)
         {
             return false;
+        }
+
+        if (!MCBReFitIntegration.IsReFitAvailable)
+        {
+            BuildInstallPromptUIToolkit(root);
+            return true;
         }
 
         var candidates = MCBReFitIntegration.GetRefitCandidates(editor);
@@ -129,10 +131,74 @@ public class ReFitDrawer
 
         root.Add(card);
         return true;
-#endif
     }
 
-#if ORBITERS_REFIT
+    private void BuildInstallPromptUIToolkit(VisualElement root)
+    {
+        var card = AvatarOptionsModule.CreateOptionCard("mcb-avatar-refit");
+        card.Add(AvatarOptionsModule.CreateOptionTitle("ReFit"));
+
+        var description = AvatarOptionsModule.CreateOptionLabel(
+            "ReFit adapts clothing and accessory meshes made for the original base so they follow the applied custom base version.",
+            12,
+            FontStyle.Normal,
+            new Color(0.82f, 0.82f, 0.82f));
+        description.style.whiteSpace = WhiteSpace.Normal;
+        card.Add(description);
+
+        var status = VpmDependencyService.Instance.GetOptionalDependencyStatus(VpmDependencyService.ReFitPackageId);
+        bool assumedInstalled = status != null && status.IsAssumedInstalled;
+        if (assumedInstalled)
+        {
+            card.Add(AvatarOptionsModule.CreateOptionHelpBox(
+                "Advanced settings currently assume ReFit is installed, but the ReFit editor API was not found. Disable the optional integration bypass to add ReFit through VPM.",
+                HelpBoxMessageType.Warning));
+        }
+        else if (status != null && status.IsInstalled)
+        {
+            card.Add(AvatarOptionsModule.CreateOptionHelpBox(
+                "ReFit is listed as installed, but its editor API was not found. Wait for Unity to finish compiling, or check the Console for ReFit assembly errors.",
+                HelpBoxMessageType.Warning));
+        }
+        else if (status != null && !string.IsNullOrWhiteSpace(status.Reason))
+        {
+            var reason = AvatarOptionsModule.CreateOptionLabel(
+                status.Reason,
+                11,
+                FontStyle.Normal,
+                new Color(0.62f, 0.62f, 0.62f));
+            reason.style.whiteSpace = WhiteSpace.Normal;
+            reason.style.marginTop = 6;
+            card.Add(reason);
+        }
+
+        string label = VpmDependencyService.Instance.IsInstalling ? "Adding ReFit..." : "Add ReFit";
+        var installButton = AvatarOptionsModule.CreateOptionButton(label, () =>
+        {
+            var result = VpmDependencyService.Instance.InstallOptionalDependency(VpmDependencyService.ReFitPackageId);
+            if (!result.Success)
+            {
+                EditorUtility.DisplayDialog("Add ReFit Failed", result.ErrorMessage, "Ok");
+            }
+            else
+            {
+                EditorUtility.DisplayDialog(
+                    "ReFit Added",
+                    "ReFit was added. Unity may reload assemblies before the ReFit avatar options become available.",
+                    "Ok");
+            }
+
+            AvatarOptionsModule.RefreshEditorUi(editor);
+        });
+        installButton.AddToClassList("mcb-button--primary");
+        installButton.style.height = 36;
+        installButton.style.marginTop = 10;
+        installButton.SetEnabled(status != null && !status.IsInstalled && !VpmDependencyService.Instance.IsInstalling);
+        card.Add(installButton);
+
+        root.Add(card);
+    }
+
     /// <summary>Number of assets whose applied state differs from the current selection (drives Apply's enabled state).</summary>
     private int CountPendingChanges(List<SkinnedMeshRenderer> candidates, Dictionary<SkinnedMeshRenderer, string> pathOf)
     {
@@ -191,6 +257,5 @@ public class ReFitDrawer
         isRunning = false;
         AvatarOptionsModule.RefreshEditorUi(editor);
     }
-#endif
 }
 #endif

@@ -22,6 +22,7 @@ public class VpmDependencyStatus
     public bool IsRequired;
     public bool IsInstalled;
     public string InstalledVersion;
+    public bool IsAssumedInstalled;
     public bool IsRepositoryConfigured;
     public bool IsPackageAvailable;
     public string Error;
@@ -42,7 +43,11 @@ public class VpmDependencyInstallResult
 
 public class VpmDependencyService
 {
+    public const string ReFitPackageId = "orbiters.refit";
+    public const string UnitGitPackageId = "orbiters.unitgit";
+
     private const string PackageManifestPath = "Packages/orbiters.mcb/package.json";
+    private const string AssumeLocalOptionalIntegrationsInstalledPrefKey = "MCB.AssumeLocalOptionalIntegrationsInstalled";
     private static readonly TimeSpan DependencyStatusCacheDuration = TimeSpan.FromSeconds(60);
 
     private static VpmDependencyService instance;
@@ -58,6 +63,33 @@ public class VpmDependencyService
 
     public bool IsInstalling { get; private set; }
     public event Action StatusChanged;
+
+    public bool AssumeLocalOptionalIntegrationsInstalled
+    {
+        get
+        {
+            try { return EditorPrefs.GetBool(AssumeLocalOptionalIntegrationsInstalledPrefKey, false); }
+            catch { return false; }
+        }
+        set
+        {
+            if (value == AssumeLocalOptionalIntegrationsInstalled)
+            {
+                return;
+            }
+
+            try { EditorPrefs.SetBool(AssumeLocalOptionalIntegrationsInstalledPrefKey, value); }
+            catch { return; }
+
+            ClearDependencyStatusCache();
+            NotifyStatusChanged();
+        }
+    }
+
+    public bool IsOptionalDependencyAssumedInstalled(string packageId)
+    {
+        return AssumeLocalOptionalIntegrationsInstalled && IsLocalOptionalIntegrationPackage(packageId);
+    }
 
     public List<VpmDependencyStatus> GetRequiredDependencyStatuses()
     {
@@ -313,6 +345,16 @@ public class VpmDependencyService
 
         status.DisplayName = ResolveDisplayName(packageId, optional);
 
+        if (!isRequired && IsOptionalDependencyAssumedInstalled(packageId))
+        {
+            status.IsInstalled = true;
+            status.IsAssumedInstalled = true;
+            status.InstalledVersion = "assumed installed";
+            status.IsRepositoryConfigured = true;
+            status.IsPackageAvailable = true;
+            return status;
+        }
+
         try
         {
             var project = new UnityProject(GetProjectPath());
@@ -368,6 +410,12 @@ public class VpmDependencyService
         }
 
         return status;
+    }
+
+    private static bool IsLocalOptionalIntegrationPackage(string packageId)
+    {
+        return string.Equals(packageId, ReFitPackageId, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(packageId, UnitGitPackageId, StringComparison.OrdinalIgnoreCase);
     }
 
     private static IVRCPackage GetInstalledPackage(UnityProject project, string packageId, string versionRange, out IVRCPackage matchingPackage)
