@@ -148,6 +148,7 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public GameObject avatarLogicPrefab;
     [HideInInspector] public bool useAdvancedMeshReplacementForCreator = false;
     [HideInInspector] public bool compressAdvancedMeshPayloadForCreator = false;
+    [HideInInspector] public bool useHdiffFbxDeltaForCreator = true;
     [HideInInspector] public bool includeCustomVeinsForCreator = false;
     [HideInInspector] public Texture2D customVeinsNormalMap;
     [HideInInspector] public bool includeDynamicNormalsBodyForCreator = false;

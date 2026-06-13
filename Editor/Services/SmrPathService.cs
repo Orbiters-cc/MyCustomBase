@@ -117,18 +117,18 @@ public static class SmrPathService
         return map.TryGetValue(unityPath, out var entries) ? entries : new List<ModelFileSmrPathData>();
     }
 
-    public static void RefreshTargetMeshesFromFbx(
+    public static int RefreshTargetMeshesFromFbx(
         Transform avatarRoot,
         string fbxPath,
         IEnumerable<ModelFileSmrPathData> smrPaths,
         bool allowNameFallback = true,
         IEnumerable<string> meshNamesToRefresh = null)
     {
-        if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return;
+        if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
 
         string unityFbxPath = MCBUtils.ToUnityPath(fbxPath);
         var fbxRoot = GetFbxRoot(unityFbxPath);
-        if (fbxRoot == null) return;
+        if (fbxRoot == null) return 0;
         var meshNameFilter = BuildMeshNameFilter(meshNamesToRefresh);
 
         var entries = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>())
@@ -143,6 +143,7 @@ public static class SmrPathService
 
         if (entries.Count > 0)
         {
+            int refreshedCount = 0;
             foreach (var entry in entries)
             {
                 var targetTransform = FindTransformByRelativePath(avatarRoot, entry.avatarPath);
@@ -155,13 +156,14 @@ public static class SmrPathService
                 Undo.RecordObject(targetSmr, "Refresh Mesh from FBX");
                 targetSmr.sharedMesh = replacementMesh;
                 EditorUtility.SetDirty(targetSmr);
+                refreshedCount++;
             }
 
-            return;
+            return refreshedCount;
         }
 
-        if (!allowNameFallback) return;
-        RefreshTargetMeshesByCurrentMeshName(avatarRoot, unityFbxPath, fbxRoot, meshNameFilter);
+        if (!allowNameFallback) return 0;
+        return RefreshTargetMeshesByCurrentMeshName(avatarRoot, unityFbxPath, fbxRoot, meshNameFilter);
     }
 
     public static List<ModelFileSmrPathData> ResolveSmrPathsForSource(CustomBaseVersion version, string sourceFbxPath)
@@ -430,7 +432,7 @@ public static class SmrPathService
         return null;
     }
 
-    private static void RefreshTargetMeshesByCurrentMeshName(Transform avatarRoot, string fbxPath, GameObject fbxRoot, HashSet<string> meshNameFilter)
+    private static int RefreshTargetMeshesByCurrentMeshName(Transform avatarRoot, string fbxPath, GameObject fbxRoot, HashSet<string> meshNameFilter)
     {
         var meshLookup = new Dictionary<string, Mesh>(StringComparer.Ordinal);
         foreach (var smr in fbxRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
@@ -445,6 +447,7 @@ public static class SmrPathService
             meshLookup.Add(meshFilter.sharedMesh.name, meshFilter.sharedMesh);
         }
 
+        int refreshedCount = 0;
         foreach (var smr in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
             if (smr == null || smr.sharedMesh == null) continue;
@@ -461,7 +464,10 @@ public static class SmrPathService
             Undo.RecordObject(smr, "Refresh Mesh from FBX");
             smr.sharedMesh = replacementMesh;
             EditorUtility.SetDirty(smr);
+            refreshedCount++;
         }
+
+        return refreshedCount;
     }
 }
 #endif

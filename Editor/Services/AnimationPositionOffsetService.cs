@@ -603,8 +603,8 @@ public class AnimationPositionOffsetService
         if (file == null) return false;
         if (!string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase)) return false;
 
-        string transform = string.IsNullOrWhiteSpace(file.transform) ? "XOR_BIN_TO_FBX" : file.transform;
-        return string.Equals(transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) ||
+        string transform = string.IsNullOrWhiteSpace(file.transform) ? ModelFileTransforms.XorBinToFbx : file.transform;
+        return ModelFileTransforms.IsFbxReplacementTransform(transform) ||
                NativeMeshPayloadService.IsAdvancedMeshPatchTransform(transform);
     }
 

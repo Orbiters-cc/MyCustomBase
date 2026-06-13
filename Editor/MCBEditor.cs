@@ -34,6 +34,7 @@ public class MCBEditor : UnityEditor.Editor
                                customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
                                modelFileBuildEntriesProp,
                                useAdvancedMeshReplacementForCreatorProp, compressAdvancedMeshPayloadForCreatorProp,
+                               useHdiffFbxDeltaForCreatorProp,
                                includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
                                includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp,
                                includeSuggestRealisticForCreatorProp, suggestRealisticMeshPathsForCreatorProp;
@@ -1324,6 +1325,7 @@ public class MCBEditor : UnityEditor.Editor
         avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
         useAdvancedMeshReplacementForCreatorProp = serializedObject.FindProperty("useAdvancedMeshReplacementForCreator");
         compressAdvancedMeshPayloadForCreatorProp = serializedObject.FindProperty("compressAdvancedMeshPayloadForCreator");
+        useHdiffFbxDeltaForCreatorProp = serializedObject.FindProperty("useHdiffFbxDeltaForCreator");
         customBlendshapesForCreatorProp = serializedObject.FindProperty("customBlendshapesForCreator");
         includeCustomVeinsForCreatorProp = serializedObject.FindProperty("includeCustomVeinsForCreator");
         customVeinsNormalMapProp = serializedObject.FindProperty("customVeinsNormalMap");

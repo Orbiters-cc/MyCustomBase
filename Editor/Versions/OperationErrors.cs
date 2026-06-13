@@ -94,6 +94,13 @@ public static class OperationErrorClassifier
         {
             error.Category = OperationErrorCategory.Cancelled;
         }
+        else if (Contains(message, "HDiff") ||
+                 Contains(message, "hash mismatch") ||
+                 Contains(message, "integrity verification"))
+        {
+            error.Category = OperationErrorCategory.Integrity;
+            error.UserMessage = "Version patch integrity verification failed. Rebuild or re-download the version files and try again.\n" + message;
+        }
         else if (Contains(message, "timed out") || Contains(message, "timeout") ||
                  Contains(message, "Cannot connect") || Contains(message, "connection") ||
                  Contains(message, "Cannot resolve"))

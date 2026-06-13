@@ -133,9 +133,15 @@ public partial class AssetGalleryModule
             int index = i;
             var row = CreateRow();
             row.style.alignItems = Align.Center;
+            row.style.minWidth = 0f;
 
             var field = new ObjectField($"FBX {index + 1}") { objectType = typeof(GameObject), allowSceneObjects = false, value = targetFbxFiles[index] };
+            field.labelElement.style.width = 56f;
+            field.labelElement.style.minWidth = 56f;
+            field.style.flexBasis = 0f;
             field.style.flexGrow = 1f;
+            field.style.flexShrink = 1f;
+            field.style.minWidth = 0f;
             field.RegisterValueChangedCallback(evt =>
             {
                 targetFbxFiles[index] = evt.newValue as GameObject;
@@ -147,7 +153,11 @@ public partial class AssetGalleryModule
                 targetFbxFiles.RemoveAt(index);
                 editor.RefreshUiToolkitSections();
             });
+            remove.tooltip = "Remove target FBX";
             remove.style.width = 28f;
+            remove.style.minWidth = 28f;
+            remove.style.maxWidth = 28f;
+            remove.style.flexShrink = 0f;
             remove.style.marginLeft = 8f;
             row.Add(remove);
             form.Add(row);

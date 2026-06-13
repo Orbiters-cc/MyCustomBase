@@ -18,6 +18,7 @@
 
 ## Health Checks
 - When touching version apply/reset code, FBX backup handling, native mesh payloads, advanced mesh paths, dynamic normals, material mutations, slider creation, blendshape preservation, or applied-version caches, run the deterministic editor health checks before finishing.
+- When adding a new health check or health-check menu item, update `Editor/Features/AdvancedModeModule.cs` so Advanced Mode > Health Checks exposes it. If the check is deterministic, also include it in `MCBEditorHealthChecks.RunAllOrThrow`.
 - Preferred Unity menu path: `Tools > My Custom Base (MCB) > Health Checks > All Deterministic`.
 - Preferred batch-mode entry point: `MCBEditorHealthChecks.RunAllOrThrow`.
 - If Unity cannot be launched, run at least `dotnet build mcb.Editor.csproj --no-restore` from the Unity project root and clearly report that the editor health checks were not run.

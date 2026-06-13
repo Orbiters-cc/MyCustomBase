@@ -646,7 +646,7 @@ public class VersionActions
         return version?.versionFiles?
                    .Where(file => file != null &&
                                   string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
-                                  string.Equals(file.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase)) ??
+                                  string.Equals(file.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase)) ??
                Enumerable.Empty<ModelFileData>();
     }
 
@@ -1227,10 +1227,10 @@ public class VersionActions
             
             // Apply or remove dynamic normals based on version feature flags
             // CRITICAL FIX: Execute INSIDE the coroutine (not via delayCall) with proper yield statements
-            if (!shouldApplyDynamicNormals && !versionUsesAdvancedMesh)
+            if (!shouldApplyDynamicNormals)
             {
                 MCBLogger.Log("[VersionActions] Removing dynamic normals.");
-                dynamicNormalsService.Remove();
+                dynamicNormalsService.Remove(affectedFbxPaths);
                 
                 // Wait for any asset processing triggered by removal
                 yield return null;
@@ -1240,11 +1240,6 @@ public class VersionActions
                 }
                 MCBLogger.Log("[VersionActions] Dynamic normals removal completed.");
                 profile.Mark("Removed DynamicNormals and waited for editor update");
-            }
-            else if (!shouldApplyDynamicNormals && versionUsesAdvancedMesh)
-            {
-                MCBLogger.Log("[VersionActions] Native mesh payload already replaced the active mesh; dynamic normals removal is not required.");
-                profile.Mark("Skipped DynamicNormals removal for advanced native mesh");
             }
 
             if (!versionUsesAdvancedMesh)
@@ -1484,7 +1479,7 @@ public class VersionActions
             }
 
             string transform = patchFile.transform;
-            if (string.Equals(transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase))
             {
                 ReportApplyProgress(0.12f, $"Preparing advanced mesh {i + 1}/{patchFiles.Length}...");
                 var routine = ApplyXorBinToUnityAssetCoroutine(version, patchFile);
@@ -1495,13 +1490,13 @@ public class VersionActions
                 continue;
             }
 
-            if (string.Equals(transform, "DIRECT_ASSET", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(transform, ModelFileTransforms.DirectAsset, StringComparison.OrdinalIgnoreCase))
             {
                 ReportApplyProgress(0.20f, $"Using direct asset patch {i + 1}/{patchFiles.Length}...");
                 continue;
             }
 
-            if (!string.Equals(transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase))
+            if (!ModelFileTransforms.IsFbxReplacementTransform(transform))
             {
                 throw new NotSupportedException($"Unsupported model file transform '{transform}'.");
             }
@@ -1509,7 +1504,14 @@ public class VersionActions
             ReportApplyProgress(Mathf.Lerp(0.12f, 0.28f, (i + 1f) / patchFiles.Length), $"Applying FBX patch {i + 1}/{patchFiles.Length}...");
             string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
             string binPath = ResolveVersionPatchPath(version, patchFile);
-            ApplyXorBinToFbx(binPath, targetFbxPath);
+            if (ModelFileTransforms.IsHdiffFbxReplacementTransform(transform))
+            {
+                ApplyHdiffXorBinToFbx(version, patchFile, binPath, targetFbxPath);
+            }
+            else
+            {
+                ApplyXorBinToFbx(binPath, targetFbxPath);
+            }
             yield return null;
         }
     }
@@ -1522,18 +1524,105 @@ public class VersionActions
         if (string.IsNullOrWhiteSpace(fbxPath) || !File.Exists(fbxPath))
             throw new FileNotFoundException("Apply failed: target FBX file not found.", fbxPath);
 
-        string originalFbxPath = fbxPath.EndsWith(FileManagerService.OriginalSuffix) ? fbxPath : fbxPath + FileManagerService.OriginalSuffix;
-        if (!File.Exists(originalFbxPath))
-        {
-            fileManagerService.CreateBackup(fbxPath);
-            originalFbxPath = fbxPath + FileManagerService.OriginalSuffix;
-        }
+        string originalFbxPath = EnsureOriginalFbxKeyPath(fbxPath, "XOR FBX patch");
 
         byte[] baseData = File.ReadAllBytes(originalFbxPath);
         byte[] binData = File.ReadAllBytes(binPath);
         byte[] transformedData = fileManagerService.XorTransform(baseData, binData);
 
         File.WriteAllBytes(fbxPath, transformedData);
+    }
+
+    private void ApplyHdiffXorBinToFbx(CustomBaseVersion version, ModelFileData patchFile, string binPath, string fbxPath)
+    {
+        if (patchFile == null)
+        {
+            throw new ArgumentNullException(nameof(patchFile));
+        }
+
+        if (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath))
+        {
+            throw new FileNotFoundException("Apply failed: HDiff .bin file not found. Please download or build it first.", binPath);
+        }
+
+        if (string.IsNullOrWhiteSpace(fbxPath) || !File.Exists(fbxPath))
+        {
+            throw new FileNotFoundException("Apply failed: target FBX file not found.", fbxPath);
+        }
+
+        string originalFbxPath = EnsureOriginalFbxKeyPath(fbxPath, "HDiff FBX patch");
+        VerifyPatchSourceHash(version, patchFile, originalFbxPath);
+
+        string tempOutputPath = HdiffService.CreateTempWorkPath(".fbx");
+        try
+        {
+            HdiffService.ApplyXorEncryptedPatchToTempFbx(
+                originalFbxPath,
+                binPath,
+                tempOutputPath,
+                fileManagerService);
+
+            if (!string.IsNullOrWhiteSpace(patchFile.outputHash))
+            {
+                string actualOutputHash = fileManagerService.CalculateFileHash(tempOutputPath);
+                if (!string.Equals(actualOutputHash, patchFile.outputHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException(
+                        $"HDiff apply failed integrity verification for '{Path.GetFileName(fbxPath)}'. Expected {patchFile.outputHash}, got {actualOutputHash ?? "<missing>"}.");
+                }
+            }
+
+            fileManagerService.ReplaceFbxWithCustomCopy(fbxPath, tempOutputPath);
+        }
+        finally
+        {
+            if (File.Exists(tempOutputPath))
+            {
+                try
+                {
+                    File.Delete(tempOutputPath);
+                }
+                catch (Exception ex)
+                {
+                    MCBLogger.LogWarning($"[VersionActions] Failed to delete HDiff temp FBX '{tempOutputPath}': {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private string EnsureOriginalFbxKeyPath(string fbxPath, string operation)
+    {
+        string originalFbxPath = fbxPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase)
+            ? fbxPath
+            : fbxPath + FileManagerService.OriginalSuffix;
+        if (!File.Exists(originalFbxPath))
+        {
+            fileManagerService.CreateBackup(fbxPath);
+            originalFbxPath = fbxPath + FileManagerService.OriginalSuffix;
+        }
+
+        if (!File.Exists(originalFbxPath))
+        {
+            throw new FileNotFoundException($"Apply failed: original FBX key file could not be prepared for {operation}.", originalFbxPath);
+        }
+
+        return originalFbxPath;
+    }
+
+    private void VerifyPatchSourceHash(CustomBaseVersion version, ModelFileData patchFile, string originalFbxPath)
+    {
+        ModelFileData sourceFile = ResolveSourceFileForPatch(version, patchFile);
+        if (sourceFile == null || string.IsNullOrWhiteSpace(sourceFile.hash))
+        {
+            throw new InvalidDataException("HDiff patch is missing source file hash metadata.");
+        }
+
+        string actualHash = fileManagerService.CalculateFileHash(originalFbxPath);
+        if (!string.Equals(actualHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"HDiff patch base FBX hash mismatch for '{sourceFile.path}'. Expected {sourceFile.hash}, got {actualHash ?? "<missing>"}.");
+        }
     }
 
     private IEnumerator ApplyXorBinToUnityAssetCoroutine(CustomBaseVersion version, ModelFileData patchFile)
@@ -1649,7 +1738,7 @@ public class VersionActions
         var advancedPatchFiles = version.versionFiles?
             .Where(file => file != null &&
                            string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
-                           string.Equals(file.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
+                           string.Equals(file.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (advancedPatchFiles == null || advancedPatchFiles.Length == 0)
         {
@@ -1702,9 +1791,7 @@ public class VersionActions
                 if (patchFile == null) continue;
                 if (string.IsNullOrWhiteSpace(patchFile.transform)) continue;
                 string transform = patchFile.transform;
-                if (!string.Equals(transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(transform, "DIRECT_ASSET", StringComparison.OrdinalIgnoreCase))
+                if (!ModelFileTransforms.AffectsFbxPath(transform))
                 {
                     continue;
                 }
@@ -1748,7 +1835,7 @@ public class VersionActions
             foreach (var patchFile in version.versionFiles)
             {
                 if (patchFile == null) continue;
-                if (!string.Equals(patchFile.transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!ModelFileTransforms.IsFbxReplacementTransform(patchFile.transform)) continue;
                 string path = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
                 if (!string.IsNullOrWhiteSpace(path)) paths.Add(path);
             }
@@ -2774,7 +2861,7 @@ public class VersionActions
         var patchFile = version.versionFiles?.FirstOrDefault(file =>
             file != null &&
             string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(file.transform, "XOR_BIN_TO_FBX", StringComparison.OrdinalIgnoreCase) &&
+            ModelFileTransforms.IsFbxReplacementTransform(file.transform) &&
             IsPatchForSourceFile(file, sourceFile));
 
         if (!string.IsNullOrWhiteSpace(patchFile?.outputHash))
@@ -2783,6 +2870,11 @@ public class VersionActions
         }
 
         return sourceFile.hash;
+    }
+
+    private ModelFileData ResolveSourceFileForPatch(CustomBaseVersion version, ModelFileData patchFile)
+    {
+        return version?.sourceFiles?.FirstOrDefault(sourceFile => IsPatchForSourceFile(patchFile, sourceFile));
     }
 
     private bool IsPatchForSourceFile(ModelFileData patchFile, ModelFileData sourceFile)

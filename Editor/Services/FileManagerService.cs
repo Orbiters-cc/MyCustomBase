@@ -24,6 +24,8 @@ public class FileManagerService
         public string externalCustomFbxPath;
         public Avatar customBaseAvatar;
         public bool useAdvancedMeshReplacement;
+        public bool useHdiffFbxDelta;
+        public bool usedHdiffFbxDelta;
         public List<ModelFileSmrPathData> smrPaths;
         public string binUnityPath;
         public string avatarUnityPath;
@@ -31,8 +33,11 @@ public class FileManagerService
         public string binHash;
         public string avatarHash;
         public string outputHash;
+        public string patchTransform;
         public string payloadCompression;
         public int advancedRendererCount;
+        public HdiffService.BuildInfo hdiffBuildInfo;
+        public string hdiffFallbackReason;
     }
 
     public string CalculateFileHash(string path)
@@ -753,12 +758,43 @@ public class FileManagerService
                         }
                         else
                         {
-                            byte[] baseData = File.ReadAllBytes(entry.sourceFbxPath);
-                            byte[] targetData = File.ReadAllBytes(customFbxPath);
-                            byte[] encryptedData = XorTransform(baseData, targetData);
                             entry.outputHash = CalculateFileHash(customFbxPath);
 
-                            File.WriteAllBytes(Path.GetFullPath(binUnityPath), encryptedData);
+                            bool wroteHdiff = false;
+                            if (entry.useHdiffFbxDelta)
+                            {
+                                wroteHdiff = HdiffService.TryWriteXorEncryptedDiffBin(
+                                    entry.sourceFbxPath,
+                                    customFbxPath,
+                                    Path.GetFullPath(binUnityPath),
+                                    this,
+                                    out var hdiffInfo,
+                                    out string hdiffFailureReason);
+
+                                if (wroteHdiff)
+                                {
+                                    entry.usedHdiffFbxDelta = true;
+                                    entry.hdiffBuildInfo = hdiffInfo;
+                                    entry.patchTransform = ModelFileTransforms.HdiffXorBinToFbx;
+                                    MCBLogger.Log(
+                                        $"[FileManager] Built HDiff FBX delta for '{safeBaseName}': patch={hdiffInfo.patchBytes} bytes, " +
+                                        $"full={hdiffInfo.outputBytes} bytes, ratio={hdiffInfo.patchRatio:P1}, compression={hdiffInfo.compressionType ?? "unknown"}.");
+                                }
+                                else
+                                {
+                                    entry.hdiffFallbackReason = hdiffFailureReason;
+                                    MCBLogger.LogWarning($"[FileManager] Falling back to XOR FBX patch for '{safeBaseName}': {hdiffFailureReason}");
+                                }
+                            }
+
+                            if (!wroteHdiff)
+                            {
+                                byte[] baseData = File.ReadAllBytes(entry.sourceFbxPath);
+                                byte[] targetData = File.ReadAllBytes(customFbxPath);
+                                byte[] encryptedData = XorTransform(baseData, targetData);
+                                File.WriteAllBytes(Path.GetFullPath(binUnityPath), encryptedData);
+                                entry.patchTransform = ModelFileTransforms.XorBinToFbx;
+                            }
 
                             entry.binUnityPath = binUnityPath;
                             entry.binHash = CalculateFileHash(Path.GetFullPath(binUnityPath));

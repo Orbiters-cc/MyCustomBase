@@ -207,6 +207,7 @@ public partial class CreatorModeModule
             EditorGUILayout.Space();
 
             DrawAdvancedMeshReplacementToggle();
+            DrawHdiffFbxDeltaToggle();
             EditorGUILayout.LabelField("New Version Details:", EditorStyles.miniBoldLabel);
             DrawVersionFields();
             
@@ -341,6 +342,37 @@ public partial class CreatorModeModule
         }
     }
 
+    private void DrawHdiffFbxDeltaToggle()
+    {
+        if (editor.useHdiffFbxDeltaForCreatorProp == null)
+        {
+            return;
+        }
+
+        bool advancedMeshEnabled = FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
+                                   editor.useAdvancedMeshReplacementForCreatorProp != null &&
+                                   editor.useAdvancedMeshReplacementForCreatorProp.boolValue;
+
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            using (new EditorGUI.DisabledScope(advancedMeshEnabled))
+            {
+                EditorGUILayout.PropertyField(
+                    editor.useHdiffFbxDeltaForCreatorProp,
+                    new GUIContent(
+                        "Use HDiff FBX Deltas",
+                        "Build normal FBX replacements as HDiff binary deltas when this reduces the uploaded patch size. Falls back to XOR when HDiff is unavailable, fails, or is too large."));
+            }
+
+            if (advancedMeshEnabled)
+            {
+                EditorGUILayout.HelpBox(
+                    "Advanced Mesh Replacement uses native mesh payloads instead of FBX replacement deltas.",
+                    MessageType.Info);
+            }
+        }
+    }
+
     private static bool ShouldCompressAdvancedMeshPayload(CustomBaseVersion version)
     {
         bool foundAdvancedPayload = false;
@@ -348,7 +380,7 @@ public partial class CreatorModeModule
         foreach (var versionFile in version?.versionFiles ?? Array.Empty<ModelFileData>())
         {
             if (versionFile == null ||
-                !string.Equals(versionFile.transform, NativeMeshPayloadService.TransformName, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(versionFile.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -511,30 +543,102 @@ public partial class CreatorModeModule
             AssetDatabase.ImportAsset(customPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 
             Transform avatarRoot = editor.customBaseTarget.transform.root;
-            var smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, targetPath);
+            var smrPaths = CollectTargetedSmrPathsForModelEntry(avatarRoot, targetPath, targetFbx, customFbx);
             if (smrPaths.Count == 0)
             {
-                smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, customPath);
+                throw new InvalidOperationException("No avatar SkinnedMeshRenderer currently maps to the target FBX.");
             }
 
-            bool replacedFbx = fileManagerService.ReplaceFbxWithCustomCopy(targetPath, customPath);
-            if (replacedFbx)
+            Undo.IncrementCurrentGroup();
+            int undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Apply Custom FBX Meshes");
+            Undo.RecordObject(editor.customBaseTarget, "Apply Custom FBX Meshes");
+
+            int refreshedCount = SmrPathService.RefreshTargetMeshesFromFbx(
+                avatarRoot,
+                customPath,
+                smrPaths,
+                allowNameFallback: false);
+            Undo.CollapseUndoOperations(undoGroup);
+
+            if (refreshedCount == 0)
             {
-                AssetDatabase.ImportAsset(targetPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                throw new InvalidOperationException("The custom FBX does not contain meshes matching the selected target FBX renderers.");
             }
-            SmrPathService.RefreshTargetMeshesFromFbx(avatarRoot, targetPath, smrPaths);
+
+            if (refreshedCount < smrPaths.Count)
+            {
+                MCBLogger.LogWarning($"[MCB] Applied custom FBX to {refreshedCount}/{smrPaths.Count} target renderer(s). Some target meshes were not found in the custom FBX.");
+            }
 
             SaveTemporaryInternalVersion("custom FBX apply");
-            new VersionActions(editor, networkService, fileManagerService).StartRecalculateCurrentFbxHash();
 
             EditorUtility.SetDirty(editor.customBaseTarget);
-            MCBLogger.Log($"[MCB] Applied custom FBX '{customPath}' to target '{targetPath}'.");
+            MCBLogger.Log($"[MCB] Applied custom FBX '{customPath}' to {refreshedCount} renderer(s) mapped from target '{targetPath}'.");
         }
         catch (Exception ex)
         {
             MCBLogger.LogError($"[MCB] Failed to apply custom FBX: {ex.Message}");
             EditorUtility.DisplayDialog("Apply Custom FBX", $"Could not apply the custom FBX:\n{ex.Message}", "OK");
         }
+    }
+
+    private static List<ModelFileSmrPathData> CollectTargetedSmrPathsForModelEntry(
+        Transform avatarRoot,
+        string targetPath,
+        GameObject targetFbx,
+        GameObject customFbx = null)
+    {
+        var smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, targetPath);
+        var targeted = FilterSmrPathsToSourceRendererNames(smrPaths, targetFbx);
+        if (targeted.Count > 0)
+        {
+            return targeted;
+        }
+
+        if (smrPaths.Count > 0)
+        {
+            return smrPaths;
+        }
+
+        if (customFbx == null)
+        {
+            return smrPaths;
+        }
+
+        string customPath = AssetDatabase.GetAssetPath(customFbx);
+        if (string.IsNullOrWhiteSpace(customPath))
+        {
+            return smrPaths;
+        }
+
+        var customSmrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, customPath);
+        var targetedCustom = FilterSmrPathsToSourceRendererNames(customSmrPaths, targetFbx);
+        return targetedCustom.Count > 0 ? targetedCustom : customSmrPaths;
+    }
+
+    private static List<ModelFileSmrPathData> FilterSmrPathsToSourceRendererNames(IEnumerable<ModelFileSmrPathData> smrPaths, GameObject sourceFbx)
+    {
+        var entries = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>())
+            .Where(entry => entry != null)
+            .ToList();
+        if (entries.Count <= 1 || sourceFbx == null)
+        {
+            return entries;
+        }
+
+        var sourceRendererNames = new HashSet<string>(
+            sourceFbx.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+                .Where(renderer => renderer != null)
+                .Select(renderer => renderer.transform.name)
+                .Where(name => !string.IsNullOrWhiteSpace(name)),
+            StringComparer.Ordinal);
+
+        return sourceRendererNames.Count == 0
+            ? entries
+            : entries
+                .Where(entry => sourceRendererNames.Contains(entry.rendererName))
+                .ToList();
     }
 
     private void ApplyCustomAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, Avatar customAvatar)
@@ -2007,6 +2111,7 @@ public partial class CreatorModeModule
 
         SyncModelFileBuildEntryCount();
         var packageEntries = new List<FileManagerService.ModelFilePackageEntry>();
+        var sourceFbxByPath = new Dictionary<string, GameObject>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
         {
             var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
@@ -2024,6 +2129,7 @@ public partial class CreatorModeModule
             string sourceFbxPath = AssetDatabase.GetAssetPath(sourceFbx);
             if (string.IsNullOrWhiteSpace(sourceFbxPath))
                 throw new Exception($"Source FBX {i + 1} is missing.");
+            sourceFbxByPath[MCBUtils.ToUnityPath(sourceFbxPath)] = sourceFbx;
 
             string originalFbxPath = sourceFbxPath + FileManagerService.OriginalSuffix;
             if (!File.Exists(originalFbxPath))
@@ -2042,18 +2148,6 @@ public partial class CreatorModeModule
             });
         }
 
-        var packageSourcePaths = packageEntries
-            .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.sourceFbxPath))
-            .Select(entry =>
-            {
-                string path = MCBUtils.ToUnityPath(entry.sourceFbxPath);
-                return path.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase)
-                    ? path.Substring(0, path.Length - FileManagerService.OriginalSuffix.Length)
-                    : path;
-            })
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var smrPathsByFbx = SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, packageSourcePaths);
         bool useAdvancedMeshReplacement =
             FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
             editor.useAdvancedMeshReplacementForCreatorProp != null &&
@@ -2062,6 +2156,10 @@ public partial class CreatorModeModule
             useAdvancedMeshReplacement &&
             editor.compressAdvancedMeshPayloadForCreatorProp != null &&
             editor.compressAdvancedMeshPayloadForCreatorProp.boolValue;
+        bool useHdiffFbxDelta =
+            !useAdvancedMeshReplacement &&
+            editor.useHdiffFbxDeltaForCreatorProp != null &&
+            editor.useHdiffFbxDeltaForCreatorProp.boolValue;
         foreach (var packageEntry in packageEntries)
         {
             string sourceUnityPath = MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
@@ -2069,13 +2167,20 @@ public partial class CreatorModeModule
             {
                 sourceUnityPath = sourceUnityPath.Substring(0, sourceUnityPath.Length - FileManagerService.OriginalSuffix.Length);
             }
+            sourceFbxByPath.TryGetValue(sourceUnityPath, out var sourceFbx);
 
             packageEntry.useAdvancedMeshReplacement = useAdvancedMeshReplacement &&
                                                      (packageEntry.customFbx != null ||
                                                       !string.IsNullOrWhiteSpace(packageEntry.externalCustomFbxPath));
-            packageEntry.smrPaths = smrPathsByFbx.TryGetValue(sourceUnityPath, out var entries)
-                ? entries
-                : new List<ModelFileSmrPathData>();
+            packageEntry.useHdiffFbxDelta = useHdiffFbxDelta &&
+                                            !packageEntry.useAdvancedMeshReplacement &&
+                                            (packageEntry.customFbx != null ||
+                                             !string.IsNullOrWhiteSpace(packageEntry.externalCustomFbxPath));
+            packageEntry.smrPaths = CollectTargetedSmrPathsForModelEntry(
+                editor.customBaseTarget.transform.root,
+                sourceUnityPath,
+                sourceFbx,
+                packageEntry.customFbx);
         }
 
         // Metadata is constructed after packaging because the entry hashes are filled
@@ -2106,9 +2211,7 @@ public partial class CreatorModeModule
                 type = "FBX",
                 role = "SOURCE",
                 metas = sourceMetas,
-                smrPaths = smrPathsByFbx.TryGetValue(sourceUnityPath, out var smrEntries)
-                    ? smrEntries
-                    : new List<ModelFileSmrPathData>()
+                smrPaths = packageEntry.smrPaths ?? new List<ModelFileSmrPathData>()
             });
 
             var modelFileMetadata = new Dictionary<string, object>
@@ -2136,6 +2239,15 @@ public partial class CreatorModeModule
                     rawModelFileMetadata["payloadFormat"] = NativeMeshPayloadService.PayloadFormat;
                     rawModelFileMetadata[NativeMeshPayloadService.PayloadCompressionMetadataKey] = packageEntry.payloadCompression;
                 }
+                else if (packageEntry.usedHdiffFbxDelta && packageEntry.hdiffBuildInfo != null)
+                {
+                    rawModelFileMetadata[HdiffService.DeltaFormatMetadataKey] = HdiffService.DeltaFormat;
+                    rawModelFileMetadata[HdiffService.DeltaCompressionMetadataKey] = packageEntry.hdiffBuildInfo.compressionType;
+                    rawModelFileMetadata[HdiffService.DeltaOriginalSizeMetadataKey] = packageEntry.hdiffBuildInfo.baseBytes.ToString();
+                    rawModelFileMetadata[HdiffService.DeltaOutputSizeMetadataKey] = packageEntry.hdiffBuildInfo.outputBytes.ToString();
+                    rawModelFileMetadata[HdiffService.DeltaPatchSizeMetadataKey] = packageEntry.hdiffBuildInfo.patchBytes.ToString();
+                    rawModelFileMetadata[HdiffService.DeltaPatchRatioMetadataKey] = packageEntry.hdiffBuildInfo.patchRatio.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
 
                 versionFileEntries.Add(new ModelFileData
                 {
@@ -2147,8 +2259,10 @@ public partial class CreatorModeModule
                         ? packageEntry.payloadCompression
                         : null,
                     transform = packageEntry.useAdvancedMeshReplacement
-                        ? NativeMeshPayloadService.TransformName
-                        : "XOR_BIN_TO_FBX",
+                        ? ModelFileTransforms.XorBinToUnityAsset
+                        : (!string.IsNullOrWhiteSpace(packageEntry.patchTransform)
+                            ? packageEntry.patchTransform
+                            : ModelFileTransforms.XorBinToFbx),
                     outputHash = packageEntry.outputHash,
                     metas = customMetas,
                     metadata = rawModelFileMetadata
@@ -2162,7 +2276,7 @@ public partial class CreatorModeModule
                     hash = packageEntry.avatarHash,
                     type = "PREFAB",
                     role = "PATCH",
-                    transform = "DIRECT_ASSET",
+                    transform = ModelFileTransforms.DirectAsset,
                     metadata = modelFileMetadata
                 });
             }
@@ -2262,6 +2376,7 @@ public partial class CreatorModeModule
         canonical.Append('|').Append(editor.includeDynamicNormalsFlexingForCreatorProp.boolValue);
         canonical.Append('|').Append(editor.useAdvancedMeshReplacementForCreatorProp != null && editor.useAdvancedMeshReplacementForCreatorProp.boolValue);
         canonical.Append('|').Append(editor.compressAdvancedMeshPayloadForCreatorProp != null && editor.compressAdvancedMeshPayloadForCreatorProp.boolValue);
+        canonical.Append('|').Append(editor.useHdiffFbxDeltaForCreatorProp != null && editor.useHdiffFbxDeltaForCreatorProp.boolValue);
         canonical.Append('|').Append(HasSuggestRealisticPayload()
             ? string.Join(",", GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp))
             : null);

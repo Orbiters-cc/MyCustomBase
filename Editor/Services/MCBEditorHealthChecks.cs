@@ -21,6 +21,7 @@ public static class MCBEditorHealthChecks
 
     public static void RunAllOrThrow()
     {
+        HdiffHealthCheck.RunOrThrow();
         NativeMeshPayloadHealthCheck.RunOrThrow();
         VersionApplyResetInvariantHealthCheck.RunOrThrow();
     }

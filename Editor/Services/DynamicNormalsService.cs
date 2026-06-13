@@ -149,6 +149,11 @@ public class DynamicNormalsService
 
     public void Remove()
     {
+        Remove(null);
+    }
+
+    public void Remove(IEnumerable<string> preferredFbxPaths)
+    {
         if (editor.customBaseTarget == null) return;
 
         var root = editor.customBaseTarget.transform.root;
@@ -168,6 +173,7 @@ public class DynamicNormalsService
         if (originalMeshes.TryGetValue(bodyMesh, out originalMesh))
         {
             string currentDynamicNormalsAssetPath = AssetDatabase.GetAssetPath(bodyMesh.sharedMesh);
+            Undo.RecordObject(bodyMesh, "Remove Dynamic Normals");
             bodyMesh.sharedMesh = originalMesh;
             Debug.Log($"[DynamicNormals] Restored original mesh from cached reference: {originalMesh.name}");
             
@@ -188,16 +194,14 @@ public class DynamicNormalsService
             string currentDynamicNormalsAssetPath = AssetDatabase.GetAssetPath(currentMesh);
             
             // Extract the original mesh name
-            string originalName = currentMesh.name.Replace(" (DynamicNormals)", "");
-            
-            // Get the base FBX path to ensure we load from the correct FBX
-            string baseFbxPath = GetBaseFbxPath();
+            string originalName = NormalizeDynamicNormalsMeshName(currentMesh.name);
             
             // Search for the original mesh in assets
-            originalMesh = FindOriginalMeshInAssets(originalName, baseFbxPath);
+            originalMesh = FindOriginalMeshInAssets(originalName, GetPreferredFbxPaths(preferredFbxPaths));
             
             if (originalMesh != null)
             {
+                Undo.RecordObject(bodyMesh, "Remove Dynamic Normals");
                 bodyMesh.sharedMesh = originalMesh;
                 Debug.Log($"[DynamicNormals] Successfully restored original mesh from assets: {originalMesh.name}");
                 
@@ -219,6 +223,19 @@ public class DynamicNormalsService
         }
 
         activeBlendshapes.Clear();
+    }
+
+    private static string NormalizeDynamicNormalsMeshName(string meshName)
+    {
+        if (string.IsNullOrWhiteSpace(meshName))
+        {
+            return meshName;
+        }
+
+        return meshName
+            .Replace(" (DynamicNormals)", "")
+            .Replace("(DynamicNormals)", "")
+            .Trim();
     }
 
     private void DeleteMeshAssetIfDynamicNormals(string assetPath)
@@ -250,29 +267,71 @@ public class DynamicNormalsService
         }
     }
 
-    private string GetBaseFbxPath()
+    private List<string> GetPreferredFbxPaths(IEnumerable<string> preferredFbxPaths)
     {
-        // Get the base FBX path from the editor's baseFbxFiles property
-        var baseFbxFilesProp = editor.serializedObject.FindProperty("baseFbxFiles");
-        if (baseFbxFilesProp != null && baseFbxFilesProp.arraySize > 0)
+        var paths = new List<string>();
+        foreach (string path in preferredFbxPaths ?? Enumerable.Empty<string>())
         {
-            var fbx = baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject;
-            if (fbx != null)
+            if (string.IsNullOrWhiteSpace(path))
             {
-                string path = AssetDatabase.GetAssetPath(fbx);
-                Debug.Log($"[DynamicNormals] Detected base FBX path: {path}");
-                return path;
+                continue;
+            }
+
+            string normalized = MCBUtils.ToUnityPath(path);
+            if (!paths.Contains(normalized, System.StringComparer.OrdinalIgnoreCase))
+            {
+                paths.Add(normalized);
             }
         }
-        return null;
+
+        var baseFbxFilesProp = editor.serializedObject.FindProperty("baseFbxFiles");
+        if (baseFbxFilesProp != null)
+        {
+            for (int i = 0; i < baseFbxFilesProp.arraySize; i++)
+            {
+                var fbx = baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+                if (fbx == null)
+                {
+                    continue;
+                }
+
+                string path = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(fbx));
+                if (!string.IsNullOrWhiteSpace(path) &&
+                    !paths.Contains(path, System.StringComparer.OrdinalIgnoreCase))
+                {
+                    paths.Add(path);
+                }
+            }
+        }
+
+        if (paths.Count > 0)
+        {
+            Debug.Log($"[DynamicNormals] Preferred original mesh FBX path(s): {string.Join(", ", paths)}");
+        }
+
+        return paths;
     }
 
-    private Mesh FindOriginalMeshInAssets(string meshName, string preferredFbxPath)
+    private Mesh FindOriginalMeshInAssets(string meshName, IEnumerable<string> preferredFbxPaths)
     {
+        var preferredPaths = (preferredFbxPaths ?? Enumerable.Empty<string>())
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(MCBUtils.ToUnityPath)
+            .Distinct(System.StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (string preferredPath in preferredPaths)
+        {
+            var mesh = FindMeshAtPath(meshName, preferredPath);
+            if (mesh != null)
+            {
+                Debug.Log($"[DynamicNormals] Found original mesh in preferred FBX at: {preferredPath}");
+                return mesh;
+            }
+        }
+
         // Search for mesh assets with the given name
         string[] guids = AssetDatabase.FindAssets($"t:Mesh {meshName}");
-        
-        Mesh preferredMesh = null;
         Mesh fallbackMesh = null;
         
         foreach (string guid in guids)
@@ -286,14 +345,6 @@ public class DynamicNormalsService
             {
                 if (asset is Mesh mesh && mesh.name == meshName)
                 {
-                    // Check if this mesh is from the preferred FBX
-                    if (!string.IsNullOrEmpty(preferredFbxPath) && assetPath.Equals(preferredFbxPath, System.StringComparison.OrdinalIgnoreCase))
-                    {
-                        Debug.Log($"[DynamicNormals] Found original mesh in preferred FBX at: {assetPath}");
-                        preferredMesh = mesh;
-                        break;
-                    }
-                    
                     // Store as fallback if we don't find the preferred one
                     if (fallbackMesh == null)
                     {
@@ -303,24 +354,33 @@ public class DynamicNormalsService
                 }
             }
             
-            // If we found the preferred mesh, stop searching
-            if (preferredMesh != null)
-            {
-                break;
-            }
         }
-        
-        if (preferredMesh != null)
-        {
-            return preferredMesh;
-        }
-        else if (fallbackMesh != null)
+
+        if (fallbackMesh != null)
         {
             Debug.LogWarning($"[DynamicNormals] Using fallback mesh (preferred FBX path not found or not specified).");
             return fallbackMesh;
         }
         
         Debug.LogWarning($"[DynamicNormals] Could not find mesh '{meshName}' in asset database.");
+        return null;
+    }
+
+    private static Mesh FindMeshAtPath(string meshName, string assetPath)
+    {
+        if (string.IsNullOrWhiteSpace(meshName) || string.IsNullOrWhiteSpace(assetPath))
+        {
+            return null;
+        }
+
+        foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(MCBUtils.ToUnityPath(assetPath)))
+        {
+            if (asset is Mesh mesh && mesh.name == meshName)
+            {
+                return mesh;
+            }
+        }
+
         return null;
     }
 

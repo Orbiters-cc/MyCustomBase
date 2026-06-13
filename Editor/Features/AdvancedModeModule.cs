@@ -9,6 +9,46 @@ public class AdvancedModeModule
 {
     private const double GeneratedAdvancedMeshStorageRefreshIntervalSeconds = 2d;
 
+    private readonly struct HealthCheckDefinition
+    {
+        public readonly string ButtonLabel;
+        public readonly string StatusLabel;
+        public readonly string Tooltip;
+        public readonly float Width;
+        public readonly System.Action Run;
+
+        public HealthCheckDefinition(string buttonLabel, string statusLabel, string tooltip, float width, System.Action run)
+        {
+            ButtonLabel = buttonLabel;
+            StatusLabel = statusLabel;
+            Tooltip = tooltip;
+            Width = width;
+            Run = run;
+        }
+    }
+
+    private static readonly HealthCheckDefinition[] HealthChecks =
+    {
+        new HealthCheckDefinition(
+            "HDiff",
+            "HDiff health check",
+            "Validate HDiff binary delta creation, XOR wrapping, and patch reconstruction.",
+            90f,
+            HdiffHealthCheck.RunOrThrow),
+        new HealthCheckDefinition(
+            "Native Mesh Payload",
+            "Native Mesh Payload health check",
+            "Validate native mesh payload build, materialization, mesh assignment, and authoring pose application.",
+            170f,
+            NativeMeshPayloadHealthCheck.RunOrThrow),
+        new HealthCheckDefinition(
+            "Version Apply/Reset",
+            "Version Apply/Reset invariant health check",
+            "Validate version apply/reset FBX backup and advanced mesh source-path invariants.",
+            170f,
+            VersionApplyResetInvariantHealthCheck.RunOrThrow)
+    };
+
     private readonly MCBEditor editor;
     private bool advancedModeFoldout = true; // Opened by default when advanced mode is on
     private bool addArmatureToggle = false;
@@ -625,14 +665,12 @@ public class AdvancedModeModule
                 RunHealthCheck("All deterministic health checks", MCBEditorHealthChecks.RunAllOrThrow);
             }
 
-            if (GUILayout.Button(new GUIContent("Native Mesh Payload", "Validate native mesh payload build, materialization, mesh assignment, and authoring pose application."), GUILayout.Width(170f)))
+            foreach (var healthCheck in HealthChecks)
             {
-                RunHealthCheck("Native Mesh Payload health check", NativeMeshPayloadHealthCheck.RunOrThrow);
-            }
-
-            if (GUILayout.Button(new GUIContent("Version Apply/Reset", "Validate version apply/reset FBX backup and advanced mesh source-path invariants."), GUILayout.Width(170f)))
-            {
-                RunHealthCheck("Version Apply/Reset invariant health check", VersionApplyResetInvariantHealthCheck.RunOrThrow);
+                if (GUILayout.Button(new GUIContent(healthCheck.ButtonLabel, healthCheck.Tooltip), GUILayout.Width(healthCheck.Width)))
+                {
+                    RunHealthCheck(healthCheck.StatusLabel, healthCheck.Run);
+                }
             }
 
             EditorGUILayout.EndHorizontal();

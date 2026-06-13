@@ -159,6 +159,7 @@ public static class VersionApplyResetInvariantHealthCheck
     {
         const string firstFbx = "Assets/MCB/HealthChecks/BaseA.fbx";
         const string secondFbx = "Assets/MCB/HealthChecks/BaseB.fbx";
+        const string thirdFbx = "Assets/MCB/HealthChecks/BaseC.fbx";
         var version = new CustomBaseVersion
         {
             assetId = 42,
@@ -167,7 +168,8 @@ public static class VersionApplyResetInvariantHealthCheck
             sourceFiles = new[]
             {
                 new ModelFileData { id = 1, path = firstFbx, type = "FBX", role = "SOURCE" },
-                new ModelFileData { id = 2, path = secondFbx, type = "FBX", role = "SOURCE" }
+                new ModelFileData { id = 2, path = secondFbx, type = "FBX", role = "SOURCE" },
+                new ModelFileData { id = 3, path = thirdFbx, type = "FBX", role = "SOURCE" }
             },
             versionFiles = new[]
             {
@@ -176,7 +178,7 @@ public static class VersionApplyResetInvariantHealthCheck
                     id = 10,
                     path = "first.bin",
                     role = "PATCH",
-                    transform = "XOR_BIN_TO_FBX",
+                    transform = ModelFileTransforms.XorBinToFbx,
                     sourceModelFileId = 1
                 },
                 new ModelFileData
@@ -184,7 +186,7 @@ public static class VersionApplyResetInvariantHealthCheck
                     id = 11,
                     path = "second.bin",
                     role = "PATCH",
-                    transform = NativeMeshPayloadService.TransformName,
+                    transform = ModelFileTransforms.XorBinToUnityAsset,
                     metadata = new Dictionary<string, object> { { "sourcePath", secondFbx } }
                 },
                 new ModelFileData
@@ -192,8 +194,16 @@ public static class VersionApplyResetInvariantHealthCheck
                     id = 12,
                     path = "direct.asset",
                     role = "PATCH",
-                    transform = "DIRECT_ASSET",
+                    transform = ModelFileTransforms.DirectAsset,
                     sourceModelFileId = 2
+                },
+                new ModelFileData
+                {
+                    id = 14,
+                    path = "third.bin",
+                    role = "PATCH",
+                    transform = ModelFileTransforms.HdiffXorBinToFbx,
+                    sourceModelFileId = 3
                 }
             }
         };
@@ -201,20 +211,20 @@ public static class VersionApplyResetInvariantHealthCheck
         var actions = new VersionActions(null, null, new FileManagerService());
 
         var affected = (List<string>)InvokePrivate(actions, "GetAffectedFbxPaths", version, null);
-        AssertSamePaths(affected, new[] { firstFbx, secondFbx }, "Affected FBX paths should be resolved from source file ids and metadata.");
+        AssertSamePaths(affected, new[] { firstFbx, secondFbx, thirdFbx }, "Affected FBX paths should be resolved from source file ids and metadata.");
 
         var importPaths = (List<string>)InvokePrivate(actions, "GetFbxImportPaths", version, null);
-        AssertSamePaths(importPaths, new[] { firstFbx }, "Only XOR FBX patches should trigger FBX imports.");
+        AssertSamePaths(importPaths, new[] { firstFbx, thirdFbx }, "FBX replacement patches should trigger FBX imports.");
 
         var resetPaths = (List<string>)InvokePrivate(actions, "GetResetAffectedFbxPaths", version, "Assets/MCB/HealthChecks/Fallback.fbx");
-        AssertSamePaths(resetPaths, new[] { firstFbx, secondFbx }, "Reset should prefer version source paths over the fallback FBX.");
+        AssertSamePaths(resetPaths, new[] { firstFbx, secondFbx, thirdFbx }, "Reset should prefer version source paths over the fallback FBX.");
 
         var missingSourcePatch = new ModelFileData
         {
             id = 13,
             path = "missing.bin",
             role = "PATCH",
-            transform = "XOR_BIN_TO_FBX"
+            transform = ModelFileTransforms.XorBinToFbx
         };
         AssertThrows<InvalidDataException>(
             () => InvokePrivate(actions, "ResolveTargetFbxPath", version, missingSourcePatch, firstFbx),
@@ -239,7 +249,7 @@ public static class VersionApplyResetInvariantHealthCheck
                     id = 20,
                     path = "missing.bin",
                     role = "PATCH",
-                    transform = "XOR_BIN_TO_FBX",
+                    transform = ModelFileTransforms.HdiffXorBinToFbx,
                     sourceModelFileId = 1
                 }
             }
