@@ -54,13 +54,37 @@ public class AnimationPositionOffsetEntry
     public Vector3 offset;
 }
 
-// One asset mesh modified by ReFit, with its original mesh so a reset can restore it.
+// One transform captured before ReFit so a reset can restore the asset armature pose.
+// Serialized on the component so the mapping survives Unity restarts and scene reloads.
+[Serializable]
+public class RefitTransformState
+{
+    public Transform transform;
+    public string path;
+    public Vector3 localPosition;
+    public Quaternion localRotation = Quaternion.identity;
+    public Vector3 localScale = Vector3.one;
+}
+
+// One asset mesh modified by ReFit, with its original renderer state so a reset can restore it.
 // Serialized on the component so the mapping survives Unity restarts and scene reloads.
 [Serializable]
 public class RefitAppliedMeshEntry
 {
     public string rendererPath;
     public Mesh originalMesh;
+    public List<Transform> originalBones = new List<Transform>();
+    public List<string> originalBonePaths = new List<string>();
+    public bool originalRootBoneCaptured;
+    public Transform originalRootBone;
+    public string originalRootBonePath;
+    public List<RefitTransformState> originalTransformStates = new List<RefitTransformState>();
+    public List<string> originalBlendShapeNames = new List<string>();
+    public List<float> originalBlendShapeWeights = new List<float>();
+    public bool originalUpdateWhenOffscreenCaptured;
+    public bool originalUpdateWhenOffscreen;
+    public bool originalLocalBoundsCaptured;
+    public Bounds originalLocalBounds;
     public Mesh refitMesh;
     public string refitMeshAssetPath;
 }

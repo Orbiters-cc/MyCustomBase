@@ -160,6 +160,43 @@
     padding: 14px;
 }
 
+.mcb-auth-host,
+.mcb-status-host {
+    padding: 10px 24px 0 24px;
+    min-width: 0;
+    width: 100%;
+}
+
+.mcb-auth-panel {
+    margin-bottom: 8px;
+}
+
+.mcb-auth-panel__actions {
+    flex-direction: row;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+
+.mcb-auth-panel__button {
+    min-width: 120px;
+}
+
+.mcb-status-message,
+.mcb-main-warning {
+    margin-bottom: 8px;
+}
+
+.mcb-status-message__title,
+.mcb-main-warning__title {
+    margin-bottom: 3px;
+}
+
+.mcb-main-warning__dismiss {
+    align-self: stretch;
+    min-width: 46px;
+    margin-left: 10px;
+}
+
 .mcb-dependencies {
     background-color: rgba(0,0,0,0);
     padding: 8px 24px 24px 24px;

@@ -23,20 +23,10 @@ def validate_zip_name(name):
     return None
 
 
-def is_allowed_meta(name):
-    if not name.endswith(".meta"):
+def is_allowed_package_file(name):
+    if name.endswith(".meta"):
         return False
 
-    target = name[:-5]
-    target_parts = PurePosixPath(target).parts
-    if target in ROOT_FILES:
-        return True
-    if len(target_parts) == 1 and target in PACKAGE_ROOTS:
-        return True
-    return bool(target_parts and target_parts[0] in PACKAGE_ROOTS)
-
-
-def is_allowed_package_file(name):
     if name in ROOT_FILES:
         return True
 
@@ -44,7 +34,7 @@ def is_allowed_package_file(name):
     if parts[0] in PACKAGE_ROOTS:
         return True
 
-    return is_allowed_meta(name)
+    return False
 
 
 def main():

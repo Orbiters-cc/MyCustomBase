@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 // Provides contextual warnings and quick fixes for Poiyomi body materials.
 public class AdjustMaterialModule
@@ -18,24 +20,54 @@ public class AdjustMaterialModule
 
     private MaterialService materialService;
     private Transform cachedRoot;
-    private bool foldout = true;
 
     public AdjustMaterialModule(MCBEditor editor)
     {
         this.editor = editor;
     }
 
-    public void Draw()
+    public bool BuildUIToolkit(VisualElement root)
     {
-        if (!EnsureMaterialService())
+        if (root == null || !EnsureMaterialService())
         {
-            return;
+            return false;
         }
+
+        if (!CollectWarningState(out var lightingInfos, out bool shouldShowLightingWarning, out var normalInfos))
+        {
+            return false;
+        }
+
+        var card = AvatarOptionsModule.CreateOptionCard("mcb-adjust-material");
+        card.Add(AvatarOptionsModule.CreateOptionTitle("Adjust Material"));
+
+        if (shouldShowLightingWarning)
+        {
+            BuildLightingWarningUIToolkit(card, lightingInfos);
+        }
+
+        foreach (NormalMaterialInfo normalInfo in normalInfos)
+        {
+            BuildNormalMapWarningUIToolkit(card, normalInfo);
+        }
+
+        root.Add(card);
+        return true;
+    }
+
+    private bool CollectWarningState(
+        out List<LightingMaterialInfo> lightingInfos,
+        out bool shouldShowLightingWarning,
+        out List<NormalMaterialInfo> normalInfos)
+    {
+        lightingInfos = new List<LightingMaterialInfo>();
+        normalInfos = new List<NormalMaterialInfo>();
+        shouldShowLightingWarning = false;
 
         var appliedVersion = editor?.customBaseTarget?.appliedCustomBaseVersion;
         if (appliedVersion == null)
         {
-            return;
+            return false;
         }
 
         List<SkinnedMeshRenderer> defaultTargetRenderers = GetDefaultMaterialTargetRenderers(appliedVersion)
@@ -48,47 +80,19 @@ public class AdjustMaterialModule
                              IsPoiyomiShader(material?.shader))
             .ToList();
 
-        var lightingInfos = suggestRealisticTargets
+        lightingInfos = suggestRealisticTargets
             .Select(target => CreateLightingMaterialInfo(target.Renderer, target.AvatarPath))
             .Where(info => info != null)
             .ToList();
 
-        bool shouldShowLightingWarning = lightingInfos.Any(info => info.HasLightingProperty && info.IsTextureRamp);
+        shouldShowLightingWarning = lightingInfos.Any(info => info.HasLightingProperty && info.IsTextureRamp);
 
-        var normalInfos = defaultTargetRenderers
+        normalInfos = defaultTargetRenderers
             .Select(renderer => CreateNormalMaterialInfo(renderer, null))
             .Where(info => info != null)
             .ToList();
 
-        bool shouldShowModule = shouldShowLightingWarning || normalInfos.Count > 0;
-        if (!shouldShowModule)
-        {
-            return;
-        }
-
-        EditorGUILayout.Space();
-        foldout = EditorGUILayout.Foldout(foldout, "Adjust Material", true, EditorStyles.foldoutHeader);
-        if (!foldout)
-        {
-            return;
-        }
-
-        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-        if (shouldShowLightingWarning)
-        {
-            DrawLightingWarning(lightingInfos);
-        }
-
-        if (normalInfos.Count > 0)
-        {
-            foreach (NormalMaterialInfo normalInfo in normalInfos)
-            {
-                DrawNormalMapWarning(normalInfo);
-            }
-        }
-
-        EditorGUILayout.EndVertical();
+        return shouldShowLightingWarning || normalInfos.Count > 0;
     }
 
     private bool EnsureMaterialService()
@@ -114,7 +118,7 @@ public class AdjustMaterialModule
         return true;
     }
 
-    private void DrawLightingWarning(IReadOnlyList<LightingMaterialInfo> lightingInfos)
+    private void BuildLightingWarningUIToolkit(VisualElement root, IReadOnlyList<LightingMaterialInfo> lightingInfos)
     {
         if (lightingInfos == null || lightingInfos.Count == 0)
         {
@@ -136,8 +140,6 @@ public class AdjustMaterialModule
             ? $"Your {slotLabel} material is set to a lighting type that won't show the muscles well, it is recommended to set the lighting mode to Realistic."
             : $"Your {slotLabel} materials are set to a lighting type that won't show the muscles well, it is recommended to set their lighting mode to Realistic.";
 
-        EditorGUILayout.HelpBox(message, MessageType.Warning);
-
         bool anyLocked = lightingInfos.Any(info =>
             info.Material != null &&
             info.HasLightingProperty &&
@@ -145,82 +147,136 @@ public class AdjustMaterialModule
             materialService.IsMaterialLocked(info.Material));
 
         bool canUpdateLighting = lightingInfos.Any(info => info.HasLightingProperty && info.IsTextureRamp);
+        string buttonLabel = anyLocked ? "Unlock and set to Realistic" : "Set to Realistic";
 
-        using (new EditorGUI.DisabledScope(!canUpdateLighting))
+        var box = CreateWarningActionBox(message, buttonLabel, () =>
         {
-            string buttonLabel = anyLocked ? "Unlock and set to Realistic" : "Set to Realistic";
-
-            if (GUILayout.Button(buttonLabel, GUILayout.Width(220f)))
+            foreach (LightingMaterialInfo info in lightingInfos)
             {
-                foreach (LightingMaterialInfo info in lightingInfos)
+                if (!info.HasLightingProperty || !info.IsTextureRamp || info.Material == null)
                 {
-                    if (!info.HasLightingProperty || !info.IsTextureRamp || info.Material == null)
-                    {
-                        continue;
-                    }
-
-                    if (!EnsureUnlocked(info.Material))
-                    {
-                        EditorUtility.DisplayDialog(
-                            "Unlock Failed",
-                            $"Could not unlock the material shader on {info.SlotName}. Please unlock it manually from Poiyomi before trying again.",
-                            "Ok");
-                        return;
-                    }
+                    continue;
                 }
 
-                List<SkinnedMeshRenderer> renderersToUpdate = lightingInfos
-                    .Where(info => info.HasLightingProperty && info.IsTextureRamp)
-                    .Select(info => info.Renderer)
-                    .Where(renderer => renderer != null)
-                    .GroupBy(renderer => renderer.GetInstanceID())
-                    .Select(group => group.First())
-                    .ToList();
-
-                if (renderersToUpdate.Count > 0)
+                if (!EnsureUnlocked(info.Material))
                 {
-                    ApplyLightingMode(renderersToUpdate);
+                    EditorUtility.DisplayDialog(
+                        "Unlock Failed",
+                        $"Could not unlock the material shader on {info.SlotName}. Please unlock it manually from Poiyomi before trying again.",
+                        "Ok");
+                    return;
                 }
             }
-        }
+
+            List<SkinnedMeshRenderer> renderersToUpdate = lightingInfos
+                .Where(info => info.HasLightingProperty && info.IsTextureRamp)
+                .Select(info => info.Renderer)
+                .Where(renderer => renderer != null)
+                .GroupBy(renderer => renderer.GetInstanceID())
+                .Select(group => group.First())
+                .ToList();
+
+            if (renderersToUpdate.Count > 0)
+            {
+                ApplyLightingMode(renderersToUpdate);
+                AvatarOptionsModule.RefreshEditorUi(editor);
+            }
+        });
+        box.SetEnabled(canUpdateLighting);
+        root.Add(box);
     }
 
-    private void DrawNormalMapWarning(NormalMaterialInfo info)
+    private void BuildNormalMapWarningUIToolkit(VisualElement root, NormalMaterialInfo info)
     {
-        EditorGUILayout.HelpBox(
-            $"Your {info.SlotName} material is using a normal map with fake muscles, it will conflict with the custom base muscles look.",
-            MessageType.Warning);
-
-        if (info.NormalTexture != null)
+        if (root == null || info == null)
         {
-            EditorGUILayout.LabelField("Detected normal map:", EditorStyles.miniLabel);
-            using (new EditorGUI.DisabledScope(true))
-            {
-                EditorGUILayout.ObjectField(info.NormalTexture, typeof(Texture), false);
-            }
-        }
-        else if (!string.IsNullOrEmpty(info.NormalTexturePath))
-        {
-            EditorGUILayout.LabelField("Detected normal map:", EditorStyles.miniLabel);
-            EditorGUILayout.LabelField(info.NormalTexturePath, EditorStyles.wordWrappedMiniLabel);
+            return;
         }
 
         bool isLocked = materialService.IsMaterialLocked(info.Material);
         string buttonLabel = isLocked ? "Unlock and remove normal map" : "Remove normal map";
 
-        if (GUILayout.Button(buttonLabel, GUILayout.Width(220f)))
-        {
-            if (!EnsureUnlocked(info.Material))
+        var box = CreateWarningActionBox(
+            $"Your {info.SlotName} material is using a normal map with fake muscles, it will conflict with the custom base muscles look.",
+            buttonLabel,
+            () =>
             {
-                EditorUtility.DisplayDialog(
-                    "Unlock Failed",
-                    "Could not unlock the material shader. Please unlock it manually from Poiyomi before trying again.",
-                    "Ok");
-                return;
-            }
+                if (!EnsureUnlocked(info.Material))
+                {
+                    EditorUtility.DisplayDialog(
+                        "Unlock Failed",
+                        "Could not unlock the material shader. Please unlock it manually from Poiyomi before trying again.",
+                        "Ok");
+                    return;
+                }
 
-            RemoveNormalMap(info.Material, info.Renderer);
+                RemoveNormalMap(info.Material, info.Renderer);
+                AvatarOptionsModule.RefreshEditorUi(editor);
+            },
+            out var content);
+
+        if (content != null)
+        {
+            if (info.NormalTexture != null)
+            {
+                var label = AvatarOptionsModule.CreateOptionLabel("Detected normal map", 11, FontStyle.Normal, new Color(0.7f, 0.7f, 0.7f));
+                label.AddToClassList("mcb-adjust-material__normal-label");
+                content.Add(label);
+
+                var field = new ObjectField
+                {
+                    objectType = typeof(Texture),
+                    value = info.NormalTexture,
+                    allowSceneObjects = false
+                };
+                field.SetEnabled(false);
+                field.AddToClassList("mcb-adjust-material__normal-field");
+                content.Add(field);
+            }
+            else if (!string.IsNullOrEmpty(info.NormalTexturePath))
+            {
+                var label = AvatarOptionsModule.CreateOptionLabel("Detected normal map", 11, FontStyle.Normal, new Color(0.7f, 0.7f, 0.7f));
+                label.AddToClassList("mcb-adjust-material__normal-label");
+                content.Add(label);
+
+                var path = AvatarOptionsModule.CreateOptionLabel(info.NormalTexturePath, 11, FontStyle.Normal, new Color(0.62f, 0.62f, 0.62f));
+                path.AddToClassList("mcb-avatar-helpbox__secondary");
+                content.Add(path);
+            }
         }
+
+        root.Add(box);
+    }
+
+    private static VisualElement CreateWarningActionBox(string message, string buttonLabel, Action clicked)
+    {
+        return CreateWarningActionBox(message, buttonLabel, clicked, out _);
+    }
+
+    private static VisualElement CreateWarningActionBox(string message, string buttonLabel, Action clicked, out VisualElement content)
+    {
+        var box = new VisualElement();
+        box.AddToClassList("mcb-avatar-helpbox");
+        box.AddToClassList("mcb-avatar-helpbox--warning");
+        box.AddToClassList("mcb-adjust-material__warning");
+
+        var icon = AvatarOptionsModule.CreateOptionLabel("!", 14, FontStyle.Bold, Color.white);
+        icon.AddToClassList("mcb-avatar-helpbox__icon");
+        box.Add(icon);
+
+        content = new VisualElement();
+        content.AddToClassList("mcb-avatar-helpbox__content");
+
+        var label = AvatarOptionsModule.CreateOptionLabel(message, 12, FontStyle.Normal, new Color(0.82f, 0.82f, 0.82f));
+        label.AddToClassList("mcb-avatar-helpbox__text");
+        content.Add(label);
+
+        var button = AvatarOptionsModule.CreateOptionButton(buttonLabel, clicked);
+        button.AddToClassList("mcb-adjust-material__action");
+        content.Add(button);
+
+        box.Add(content);
+        return box;
     }
 
     private bool EnsureUnlocked(Material material)

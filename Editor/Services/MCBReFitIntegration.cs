@@ -17,9 +17,28 @@ using UnityEngine;
 /// </summary>
 public static class MCBReFitIntegration
 {
+    private sealed class ReFitSourceReference
+    {
+        public GameObject sourceAvatar;
+        public SkinnedMeshRenderer sourceBody;
+        public SkinnedMeshRenderer targetBody;
+    }
+
+    private sealed class SourceBodyReference
+    {
+        public GameObject sourceAvatar;
+        public SkinnedMeshRenderer renderer;
+        public int score;
+    }
+
     public static bool IsReFitAvailable
     {
         get { return ReFitApi.IsAvailable; }
+    }
+
+    public static string ReFitAvailabilityMessage
+    {
+        get { return ReFitApi.AvailabilityMessage; }
     }
 
     // ------------------------------------------------------------------
@@ -76,12 +95,17 @@ public static class MCBReFitIntegration
     private static Mesh ResolveBaseMesh(Dictionary<string, Mesh> baseMeshes, string currentMeshName, string rendererName)
     {
         if (baseMeshes == null) return null;
-        string clean = (currentMeshName ?? string.Empty).Replace("(Clone)", "").Replace("_ReFit", "").Trim();
+        string clean = CleanMeshName(currentMeshName);
         if (baseMeshes.TryGetValue(clean, out var m)) return m;
         int dot = clean.IndexOf('.');
         if (dot > 0 && baseMeshes.TryGetValue(clean.Substring(0, dot), out m)) return m;
         if (!string.IsNullOrEmpty(rendererName) && baseMeshes.TryGetValue(rendererName, out m)) return m;
         return null;
+    }
+
+    private static string CleanMeshName(string name)
+    {
+        return (name ?? string.Empty).Replace("(Clone)", "").Replace("_ReFit", "").Trim();
     }
 
     /// <summary>Hierarchy path of a renderer relative to the avatar root (Transform.Find compatible).</summary>
@@ -109,7 +133,8 @@ public static class MCBReFitIntegration
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Restores every ReFit-modified asset mesh back to its original mesh and clears the tracking list.
+    /// Restores every ReFit-modified asset renderer back to its original mesh, blendshape weights and armature
+    /// transform state, then clears the tracking list.
     /// Called when resetting the avatar to the default original base.
     /// </summary>
     public static void RestoreOriginalAssetMeshes(MyCustomBase target)
@@ -119,13 +144,11 @@ public static class MCBReFitIntegration
         int restored = 0;
         foreach (var entry in target.appliedRefits)
         {
-            if (entry == null || entry.originalMesh == null || string.IsNullOrEmpty(entry.rendererPath)) continue;
+            if (entry == null || string.IsNullOrEmpty(entry.rendererPath)) continue;
             var t = root.Find(entry.rendererPath);
             var smr = t != null ? t.GetComponent<SkinnedMeshRenderer>() : null;
             if (smr == null) continue;
-            Undo.RecordObject(smr, "MCB ReFit restore");
-            smr.sharedMesh = entry.originalMesh;
-            restored++;
+            if (RestoreRendererState(root, smr, entry, "MCB ReFit restore")) restored++;
         }
         Undo.RecordObject(target, "MCB ReFit restore");
         target.appliedRefits.Clear();
@@ -133,19 +156,209 @@ public static class MCBReFitIntegration
         MCBLogger.Log($"[MCB] ReFit: restored {restored} asset mesh(es) to their original version.");
     }
 
+    private static RefitAppliedMeshEntry CaptureRendererState(Transform root, string rendererPath, SkinnedMeshRenderer smr)
+    {
+        var entry = new RefitAppliedMeshEntry
+        {
+            rendererPath = rendererPath,
+            originalMesh = smr.sharedMesh,
+            originalRootBoneCaptured = true,
+            originalUpdateWhenOffscreenCaptured = true,
+            originalUpdateWhenOffscreen = smr.updateWhenOffscreen,
+            originalLocalBoundsCaptured = true,
+            originalLocalBounds = smr.localBounds
+        };
+
+        var mesh = smr.sharedMesh;
+        if (mesh != null)
+        {
+            for (int i = 0; i < mesh.blendShapeCount; i++)
+            {
+                entry.originalBlendShapeNames.Add(mesh.GetBlendShapeName(i));
+                entry.originalBlendShapeWeights.Add(smr.GetBlendShapeWeight(i));
+            }
+        }
+
+        entry.originalRootBone = smr.rootBone;
+        if (TryGetPathUnderRoot(root, smr.rootBone, out string rootBonePath))
+        {
+            entry.originalRootBonePath = rootBonePath;
+        }
+
+        if (smr.bones != null)
+        {
+            foreach (var bone in smr.bones)
+            {
+                entry.originalBones.Add(bone);
+                entry.originalBonePaths.Add(TryGetPathUnderRoot(root, bone, out string bonePath) ? bonePath : null);
+            }
+        }
+
+        var capturedTransforms = new HashSet<string>(StringComparer.Ordinal);
+        CaptureTransformState(root, smr.transform, entry.originalTransformStates, capturedTransforms);
+        CaptureTransformState(root, smr.rootBone, entry.originalTransformStates, capturedTransforms);
+        if (smr.bones != null)
+        {
+            foreach (var bone in smr.bones)
+            {
+                CaptureTransformState(root, bone, entry.originalTransformStates, capturedTransforms);
+            }
+        }
+
+        return entry;
+    }
+
+    private static void CaptureTransformState(Transform root, Transform transform, List<RefitTransformState> states, HashSet<string> capturedPaths)
+    {
+        if (transform == null) return;
+        TryGetPathUnderRoot(root, transform, out string path);
+        string key = path ?? "instance:" + transform.GetInstanceID();
+        if (!capturedPaths.Add(key)) return;
+
+        states.Add(new RefitTransformState
+        {
+            transform = transform,
+            path = path,
+            localPosition = transform.localPosition,
+            localRotation = transform.localRotation,
+            localScale = transform.localScale
+        });
+    }
+
+    private static bool RestoreRendererState(Transform root, SkinnedMeshRenderer smr, RefitAppliedMeshEntry entry, string undoName)
+    {
+        if (root == null || smr == null || entry == null) return false;
+        bool restored = false;
+
+        if (entry.originalTransformStates != null)
+        {
+            foreach (var state in entry.originalTransformStates)
+            {
+                if (state == null) continue;
+                var transform = state.transform != null ? state.transform : ResolveStoredTransform(root, state.path);
+                if (transform == null) continue;
+
+                Undo.RecordObject(transform, undoName);
+                transform.localPosition = state.localPosition;
+                transform.localRotation = state.localRotation;
+                transform.localScale = state.localScale;
+                EditorUtility.SetDirty(transform);
+                restored = true;
+            }
+        }
+
+        Undo.RecordObject(smr, undoName);
+        if (entry.originalMesh != null)
+        {
+            smr.sharedMesh = entry.originalMesh;
+            restored = true;
+        }
+
+        if (entry.originalBonePaths != null && entry.originalBonePaths.Count > 0)
+        {
+            var bones = new Transform[entry.originalBonePaths.Count];
+            for (int i = 0; i < bones.Length; i++)
+            {
+                bones[i] = ResolveStoredBone(root, entry, i);
+            }
+            smr.bones = bones;
+            restored = true;
+        }
+
+        if (entry.originalRootBoneCaptured)
+        {
+            smr.rootBone = entry.originalRootBone != null
+                ? entry.originalRootBone
+                : ResolveStoredTransform(root, entry.originalRootBonePath);
+            restored = true;
+        }
+
+        if (entry.originalUpdateWhenOffscreenCaptured)
+        {
+            smr.updateWhenOffscreen = entry.originalUpdateWhenOffscreen;
+            restored = true;
+        }
+
+        if (entry.originalLocalBoundsCaptured)
+        {
+            smr.localBounds = entry.originalLocalBounds;
+            restored = true;
+        }
+
+        if (RestoreBlendShapeWeights(smr, entry))
+        {
+            restored = true;
+        }
+
+        EditorUtility.SetDirty(smr);
+        return restored;
+    }
+
+    private static bool RestoreBlendShapeWeights(SkinnedMeshRenderer smr, RefitAppliedMeshEntry entry)
+    {
+        var mesh = smr.sharedMesh;
+        if (mesh == null ||
+            entry.originalBlendShapeNames == null ||
+            entry.originalBlendShapeWeights == null ||
+            entry.originalBlendShapeNames.Count == 0)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < mesh.blendShapeCount; i++)
+        {
+            smr.SetBlendShapeWeight(i, 0f);
+        }
+
+        int count = Math.Min(entry.originalBlendShapeNames.Count, entry.originalBlendShapeWeights.Count);
+        for (int i = 0; i < count; i++)
+        {
+            string shapeName = entry.originalBlendShapeNames[i];
+            if (string.IsNullOrEmpty(shapeName)) continue;
+            int index = mesh.GetBlendShapeIndex(shapeName);
+            if (index >= 0) smr.SetBlendShapeWeight(index, entry.originalBlendShapeWeights[i]);
+        }
+
+        return true;
+    }
+
+    private static bool TryGetPathUnderRoot(Transform root, Transform transform, out string path)
+    {
+        path = null;
+        if (root == null || transform == null || !transform.IsChildOf(root)) return false;
+        path = GetRendererPath(root, transform);
+        return true;
+    }
+
+    private static Transform ResolveStoredTransform(Transform root, string path)
+    {
+        if (root == null || path == null) return null;
+        return path.Length == 0 ? root : root.Find(path);
+    }
+
+    private static Transform ResolveStoredBone(Transform root, RefitAppliedMeshEntry entry, int index)
+    {
+        if (entry.originalBones != null &&
+            index >= 0 &&
+            index < entry.originalBones.Count &&
+            entry.originalBones[index] != null)
+        {
+            return entry.originalBones[index];
+        }
+
+        return ResolveStoredTransform(root, entry.originalBonePaths[index]);
+    }
+
     // ------------------------------------------------------------------
-    // Source avatar (mesh A = default base body, on the SAME skeleton)
+    // Source avatar (mesh A = default base body, with its own armature)
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Builds the source avatar (model A) for ReFit: a hidden clone of the scene avatar whose targeted body
-    /// renderers have their meshes swapped back to the DEFAULT base meshes from the avatar's base FBX files.
-    /// Because it is a clone of the scene avatar, it shares the exact skeleton, scale and pose of the target —
-    /// so the asset binds and re-fits cleanly, with no scale/armature mismatch. Caller must destroy the clone.
+    /// Resolves model A for ReFit from the configured base FBX asset, preserving that FBX's own armature,
+    /// bindposes and skin weights. ReFit clones this source internally during staging.
     /// </summary>
-    public static GameObject BuildSourceClone(MyCustomBase mcb, out string primaryBodyPath, out string error)
+    private static ReFitSourceReference BuildSourceReference(MyCustomBase mcb, out string error)
     {
-        primaryBodyPath = null;
         error = null;
         var root = mcb.transform.root;
 
@@ -158,22 +371,8 @@ public static class MCBReFitIntegration
             return null;
         }
 
-        // Body renderers = those whose mesh maps to a base FBX mesh by name. Primary = the largest one.
-        var bodyRenderers = new List<SkinnedMeshRenderer>();
-        SkinnedMeshRenderer primary = null;
-        int bestVerts = -1;
-        foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-        {
-            if (!IsBodyRenderer(smr, baseMeshes)) continue;
-            bodyRenderers.Add(smr);
-            if (smr.sharedMesh.vertexCount > bestVerts)
-            {
-                bestVerts = smr.sharedMesh.vertexCount;
-                primary = smr;
-                primaryBodyPath = GetRendererPath(root, smr.transform);
-            }
-        }
-        if (primary == null)
+        var targetBody = FindPrimaryBodyRenderer(root, baseMeshes);
+        if (targetBody == null)
         {
             error = "ReFit could not match any of the avatar's meshes to the base FBX (looked for meshes named like " +
                     string.Join(", ", baseMeshes.Keys.Take(6)) +
@@ -183,30 +382,92 @@ public static class MCBReFitIntegration
             return null;
         }
 
-        var clone = UnityEngine.Object.Instantiate(root.gameObject);
-        clone.name = root.name + "__ReFitSource";
-        clone.hideFlags = HideFlags.HideAndDontSave;
-        clone.SetActive(false);
-        foreach (var behaviour in clone.GetComponentsInChildren<Behaviour>(true))
+        var baseMesh = ResolveBaseMesh(baseMeshes, targetBody.sharedMesh.name, targetBody.transform.name);
+        if (baseMesh == null)
         {
-            try { behaviour.enabled = false; }
-            catch { /* harmless */ }
+            error = $"ReFit could not resolve the original base mesh for target body renderer '{targetBody.name}'.";
+            Debug.LogWarning("[MCB] ReFit: " + error);
+            return null;
         }
 
-        int swapped = 0;
-        foreach (var smr in bodyRenderers)
+        var source = ResolveSourceBodyRenderer(mcb, baseMesh, targetBody.transform.name);
+        if (source == null || source.sourceAvatar == null || source.renderer == null)
         {
-            var path = GetRendererPath(root, smr.transform);
-            var t = clone.transform.Find(path);
-            var cloneSmr = t != null ? t.GetComponent<SkinnedMeshRenderer>() : null;
-            if (cloneSmr == null || cloneSmr.sharedMesh == null) continue;
-            var baseMesh = ResolveBaseMesh(baseMeshes, cloneSmr.sharedMesh.name, t.name);
-            if (baseMesh != null && baseMesh != cloneSmr.sharedMesh) { cloneSmr.sharedMesh = baseMesh; swapped++; }
+            error = $"ReFit could not find a skinned renderer for original mesh '{baseMesh.name}' inside the configured base FBX asset.";
+            Debug.LogWarning("[MCB] ReFit: " + error);
+            return null;
         }
-        if (swapped == 0)
-            Debug.LogWarning("[MCB] ReFit: no body mesh differed from the base FBX, so the mesh re-fit is a no-op (only blendshapes will transfer).");
 
-        return clone;
+        return new ReFitSourceReference
+        {
+            sourceAvatar = source.sourceAvatar,
+            sourceBody = source.renderer,
+            targetBody = targetBody
+        };
+    }
+
+    private static SkinnedMeshRenderer FindPrimaryBodyRenderer(Transform root, Dictionary<string, Mesh> baseMeshes)
+    {
+        SkinnedMeshRenderer primary = null;
+        int bestVerts = -1;
+        foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (!IsBodyRenderer(smr, baseMeshes)) continue;
+            if (smr.sharedMesh.vertexCount > bestVerts)
+            {
+                bestVerts = smr.sharedMesh.vertexCount;
+                primary = smr;
+            }
+        }
+
+        return primary;
+    }
+
+    private static SourceBodyReference ResolveSourceBodyRenderer(MyCustomBase target, Mesh baseMesh, string targetRendererName)
+    {
+        SourceBodyReference best = null;
+        if (target == null || baseMesh == null) return null;
+
+        foreach (var fbx in target.baseFbxFiles)
+        {
+            if (fbx == null) continue;
+            foreach (var renderer in fbx.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (renderer == null || renderer.sharedMesh == null) continue;
+                int score = ScoreSourceBodyRenderer(renderer, baseMesh, targetRendererName);
+                if (score <= 0) continue;
+                if (best == null ||
+                    score > best.score ||
+                    (score == best.score && renderer.sharedMesh.vertexCount > best.renderer.sharedMesh.vertexCount))
+                {
+                    best = new SourceBodyReference
+                    {
+                        sourceAvatar = fbx,
+                        renderer = renderer,
+                        score = score
+                    };
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private static int ScoreSourceBodyRenderer(SkinnedMeshRenderer renderer, Mesh baseMesh, string targetRendererName)
+    {
+        int score = 0;
+        if (renderer.sharedMesh == baseMesh) score += 10000;
+        if (string.Equals(CleanMeshName(renderer.sharedMesh.name), CleanMeshName(baseMesh.name), StringComparison.OrdinalIgnoreCase))
+        {
+            score += 1000;
+        }
+        if (!string.IsNullOrWhiteSpace(targetRendererName) &&
+            string.Equals(renderer.transform.name, targetRendererName, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 100;
+        }
+
+        return score;
     }
 
     // ------------------------------------------------------------------
@@ -229,7 +490,9 @@ public static class MCBReFitIntegration
         if (!IsReFitAvailable)
         {
             progressState.Fail();
-            const string msg = "The ReFit package (orbiters.refit) is not installed.";
+            string msg = string.IsNullOrWhiteSpace(ReFitAvailabilityMessage)
+                ? "The ReFit package (orbiters.refit) is not installed."
+                : ReFitAvailabilityMessage;
             Debug.LogWarning("[MCB] ReFit aborted: " + msg);
             onComplete?.Invoke(false, msg);
             yield break;
@@ -243,7 +506,7 @@ public static class MCBReFitIntegration
             .Distinct()
             .ToList();
 
-        var source = BuildSourceClone(mcb, out string primaryBodyPath, out string sourceError);
+        var source = BuildSourceReference(mcb, out string sourceError);
         if (source == null)
         {
             progressState.Fail();
@@ -253,15 +516,11 @@ public static class MCBReFitIntegration
             yield break;
         }
 
-        var sourceBody = string.IsNullOrEmpty(primaryBodyPath) ? null : source.transform.Find(primaryBodyPath)?.GetComponent<SkinnedMeshRenderer>();
-        var targetBody = string.IsNullOrEmpty(primaryBodyPath) ? null : root.Find(primaryBodyPath)?.GetComponent<SkinnedMeshRenderer>();
-
         var changedPaths = new List<string>();
         var failures = new List<string>();
         int done = 0;
 
-        // Wrap so the temporary source clone is always destroyed, even on early exit.
-        var enumerator = RefitTargets(editor, mcb, root, source, sourceBody, targetBody, shapes, targets,
+        var enumerator = RefitTargets(editor, mcb, root, source.sourceAvatar, source.sourceBody, source.targetBody, shapes, targets,
             progressState, changedPaths, failures, v => done = v);
         while (true)
         {
@@ -269,7 +528,6 @@ public static class MCBReFitIntegration
             try { moved = enumerator.MoveNext(); }
             catch (Exception ex)
             {
-                if (source != null) UnityEngine.Object.DestroyImmediate(source);
                 progressState.Fail();
                 Debug.LogError($"[MCB] ReFit failed: {ex}");
                 onComplete?.Invoke(false, $"ReFit failed: {ex.Message}");
@@ -278,8 +536,6 @@ public static class MCBReFitIntegration
             if (!moved) break;
             yield return enumerator.Current;
         }
-
-        if (source != null) UnityEngine.Object.DestroyImmediate(source);
 
         // Save + commit
         progressState.Report(0.97f, "Saving & committing...");
@@ -309,12 +565,17 @@ public static class MCBReFitIntegration
             if (renderer == null || renderer.sharedMesh == null) { reportDone(++done); continue; }
             string rendererPath = GetRendererPath(root, renderer.transform);
 
-            // Re-running: recompute from the clean original mesh instead of stacking refits.
+            // Re-running: recompute from the clean original renderer state instead of stacking refits
+            // or inheriting armature edits made after the first ReFit.
             var existing = FindEntry(mcb, rendererPath);
-            if (existing != null && existing.originalMesh != null && renderer.sharedMesh != existing.originalMesh)
+            RefitAppliedMeshEntry capturedOriginalState = null;
+            if (existing != null)
             {
-                Undo.RecordObject(renderer, "MCB ReFit");
-                renderer.sharedMesh = existing.originalMesh;
+                RestoreRendererState(root, renderer, existing, "MCB ReFit");
+            }
+            else
+            {
+                capturedOriginalState = CaptureRendererState(root, rendererPath, renderer);
             }
             var originalMesh = renderer.sharedMesh;
 
@@ -351,7 +612,8 @@ public static class MCBReFitIntegration
             {
                 if (existing == null)
                 {
-                    existing = new RefitAppliedMeshEntry { rendererPath = rendererPath, originalMesh = originalMesh };
+                    existing = capturedOriginalState ?? CaptureRendererState(root, rendererPath, renderer);
+                    if (existing.originalMesh == null) existing.originalMesh = originalMesh;
                     mcb.appliedRefits.Add(existing);
                 }
                 if (existing.originalMesh == null) existing.originalMesh = originalMesh;
@@ -369,7 +631,7 @@ public static class MCBReFitIntegration
         }
     }
 
-    /// <summary>Restores a single asset renderer to its original mesh and drops it from the tracking list.</summary>
+    /// <summary>Restores a single asset renderer to its original renderer state and drops it from the tracking list.</summary>
     public static void RestoreAsset(MyCustomBase mcb, string rendererPath)
     {
         if (mcb == null) return;
@@ -378,10 +640,9 @@ public static class MCBReFitIntegration
         var root = mcb.transform.root;
         var t = root.Find(rendererPath);
         var smr = t != null ? t.GetComponent<SkinnedMeshRenderer>() : null;
-        if (smr != null && entry.originalMesh != null)
+        if (smr != null)
         {
-            Undo.RecordObject(smr, "MCB ReFit restore");
-            smr.sharedMesh = entry.originalMesh;
+            RestoreRendererState(root, smr, entry, "MCB ReFit restore");
         }
         Undo.RecordObject(mcb, "MCB ReFit restore");
         mcb.appliedRefits.Remove(entry);
@@ -464,6 +725,8 @@ public static class MCBReFitIntegration
 
     private static class ReFitApi
     {
+        private const int RequiredApiVersion = 1;
+        private const string ExecuteCoroutineCapability = "execute-coroutine";
         private const string RequestTypeName = "Orbiters.ReFit.ReFitRequest";
         private const string SettingsTypeName = "Orbiters.ReFit.ReFitSettings";
         private const string ModeTypeName = "Orbiters.ReFit.ReFitMode";
@@ -473,15 +736,12 @@ public static class MCBReFitIntegration
 
         public static bool IsAvailable
         {
-            get
-            {
-                return RequestType != null &&
-                       SettingsType != null &&
-                       ModeType != null &&
-                       ProgressType != null &&
-                       ServiceType != null &&
-                       ResultType != null;
-            }
+            get { return string.IsNullOrEmpty(AvailabilityMessage); }
+        }
+
+        public static string AvailabilityMessage
+        {
+            get { return GetAvailabilityMessage(); }
         }
 
         private static Type RequestType { get { return FindType(RequestTypeName); } }
@@ -607,8 +867,85 @@ public static class MCBReFitIntegration
         {
             if (!IsAvailable)
             {
-                throw new InvalidOperationException("The ReFit package (orbiters.refit) is not installed.");
+                throw new InvalidOperationException(AvailabilityMessage);
             }
+        }
+
+        private static string GetAvailabilityMessage()
+        {
+            if (RequestType == null ||
+                SettingsType == null ||
+                ModeType == null ||
+                ProgressType == null ||
+                ServiceType == null ||
+                ResultType == null)
+            {
+                return "The ReFit package (orbiters.refit) is not installed.";
+            }
+
+            int apiVersion = GetStaticIntMember(ServiceType, "ApiVersion");
+            if (apiVersion < RequiredApiVersion)
+            {
+                return $"The ReFit package is installed but incompatible. MCB requires ReFit API v{RequiredApiVersion}+; found v{apiVersion}.";
+            }
+
+            if (!HasCapability(ServiceType, ExecuteCoroutineCapability))
+            {
+                return $"The ReFit package is installed but incompatible. Missing capability: {ExecuteCoroutineCapability}.";
+            }
+
+            return string.Empty;
+        }
+
+        private static int GetStaticIntMember(Type type, string name)
+        {
+            if (type == null || string.IsNullOrEmpty(name))
+            {
+                return 0;
+            }
+
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static);
+            if (field != null && field.GetValue(null) is int fieldValue)
+            {
+                return fieldValue;
+            }
+
+            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Static);
+            if (property != null && property.CanRead && property.GetValue(null) is int propertyValue)
+            {
+                return propertyValue;
+            }
+
+            return 0;
+        }
+
+        private static bool HasCapability(Type type, string capability)
+        {
+            if (type == null || string.IsNullOrWhiteSpace(capability))
+            {
+                return false;
+            }
+
+            var method = type.GetMethod("GetCapabilities", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+            if (method == null)
+            {
+                return false;
+            }
+
+            if (!(method.Invoke(null, null) is IEnumerable capabilities))
+            {
+                return false;
+            }
+
+            foreach (object value in capabilities)
+            {
+                if (string.Equals(value?.ToString(), capability, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static Delegate CreateCompleteDelegate(Type resultType, Action<object> onComplete)

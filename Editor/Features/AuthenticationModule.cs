@@ -1,75 +1,86 @@
 #if UNITY_EDITOR
-using System.Threading.Tasks;
 using UnityEditor;
-using UnityEditorInternal;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 // Handles the UI and logic for user authentication.
 public class AuthenticationModule
 {
     private readonly MCBEditor editor;
+    private VisualElement authRoot;
 
     public AuthenticationModule(MCBEditor editor)
     {
         this.editor = editor;
     }
 
-    public void DrawMagicSyncAuth()
+    public void AttachUIToolkit(VisualElement root)
     {
-        EditorGUILayout.Space(10);
-        EditorGUILayout.BeginHorizontal();
-        GUILayout.FlexibleSpace();
-
-        if (GUILayout.Button("Magic Sync", GUILayout.Width(120f), GUILayout.Height(30f)))
-        {
-            AuthenticationService.RegisterAuth().ContinueWith(task =>
-            {
-                // Queue the result to be processed on the main thread
-                EditorApplication.delayCall += () =>
-                {
-                    if (task.Result)
-                    {
-                        editor.CheckAuthentication(); // Update state in the main editor
-                        editor.Repaint();
-                    }
-                    else
-                    {
-                        EditorUtility.DisplayDialog("Authentication Failed", "Please visit the Orbiters website and click 'Magic Sync' first.", "OK");
-                    }
-                };
-            });
-        }
-
-        GUILayout.FlexibleSpace();
-        EditorGUILayout.EndHorizontal();
-        EditorGUILayout.Space(10);
-        EditorGUILayout.HelpBox("Use Magic Sync to authenticate this tool. Go to the Orbiters website, click 'Magic Sync' to copy your token, then click the button above.", MessageType.Info);
-        EditorGUILayout.Space(5);
+        authRoot = root;
+        RefreshUIToolkit();
     }
 
-    public void DrawLogoutButton()
+    public void DetachUIToolkit()
     {
-        EditorGUILayout.Space(10);
-        EditorGUILayout.BeginHorizontal();
-        GUILayout.FlexibleSpace();
+        authRoot = null;
+    }
 
-        GUI.backgroundColor = new Color(0.9f, 0.3f, 0.3f);
-        if (GUILayout.Button("Logout", GUILayout.Width(100f), GUILayout.Height(25f)))
+    public void RefreshUIToolkit()
+    {
+        if (authRoot == null)
         {
-            if (EditorUtility.DisplayDialog("Confirm Logout", "Are you sure you want to log out?", "Logout", "Cancel"))
+            return;
+        }
+
+        authRoot.Clear();
+        authRoot.AddToClassList("mcb-auth-host");
+
+        if (editor == null || editor.isAuthenticated)
+        {
+            authRoot.style.display = DisplayStyle.None;
+            return;
+        }
+
+        authRoot.style.display = DisplayStyle.Flex;
+
+        var panel = new VisualElement();
+        panel.AddToClassList("mcb-auth-panel");
+        panel.AddToClassList("mcb-form-card");
+        authRoot.Add(panel);
+
+        var buttonRow = new VisualElement();
+        buttonRow.AddToClassList("mcb-auth-panel__actions");
+        panel.Add(buttonRow);
+
+        var button = AvatarOptionsModule.CreateOptionButton("Magic Sync", StartMagicSync);
+        button.AddToClassList("mcb-button--primary");
+        button.AddToClassList("mcb-auth-panel__button");
+        buttonRow.Add(button);
+
+        panel.Add(AvatarOptionsModule.CreateOptionHelpBox(
+            "Use Magic Sync to authenticate this tool. Go to the Orbiters website, click 'Magic Sync' to copy your token, then click the button above.",
+            HelpBoxMessageType.Info));
+    }
+
+    private void StartMagicSync()
+    {
+        AuthenticationService.RegisterAuth().ContinueWith(task =>
+        {
+            // Queue the result to be processed on the main thread
+            EditorApplication.delayCall += () =>
             {
-                if (AuthenticationService.RemoveAuth())
+                if (task.Result)
                 {
-                    editor.CheckAuthentication();
+                    editor.CheckAuthentication(); // Update state in the main editor
+                    RefreshUIToolkit();
                     editor.Repaint();
                 }
-            }
-        }
-        GUI.backgroundColor = Color.white;
-
-        GUILayout.FlexibleSpace();
-        EditorGUILayout.EndHorizontal();
-        EditorGUILayout.Space(10);
+                else
+                {
+                    EditorUtility.DisplayDialog("Authentication Failed", "Please visit the Orbiters website and click 'Magic Sync' first.", "OK");
+                }
+            };
+        });
     }
 
     // Authentication logic moved to AuthenticationService. This class now only provides UI helpers.

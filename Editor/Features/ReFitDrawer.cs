@@ -147,17 +147,22 @@ public class ReFitDrawer
         card.Add(description);
 
         var status = VpmDependencyService.Instance.GetOptionalDependencyStatus(VpmDependencyService.ReFitPackageId);
+        string apiMessage = MCBReFitIntegration.ReFitAvailabilityMessage;
         bool assumedInstalled = status != null && status.IsAssumedInstalled;
         if (assumedInstalled)
         {
             card.Add(AvatarOptionsModule.CreateOptionHelpBox(
-                "Advanced settings currently assume ReFit is installed, but the ReFit editor API was not found. Disable the optional integration bypass to add ReFit through VPM.",
+                string.IsNullOrWhiteSpace(apiMessage)
+                    ? "Advanced settings currently assume ReFit is installed, but the ReFit editor API was not found. Disable the optional integration bypass to add ReFit through VPM."
+                    : apiMessage,
                 HelpBoxMessageType.Warning));
         }
         else if (status != null && status.IsInstalled)
         {
             card.Add(AvatarOptionsModule.CreateOptionHelpBox(
-                "ReFit is listed as installed, but its editor API was not found. Wait for Unity to finish compiling, or check the Console for ReFit assembly errors.",
+                string.IsNullOrWhiteSpace(apiMessage)
+                    ? "ReFit is listed as installed, but its editor API was not found. Wait for Unity to finish compiling, or check the Console for ReFit assembly errors."
+                    : apiMessage,
                 HelpBoxMessageType.Warning));
         }
         else if (status != null && !string.IsNullOrWhiteSpace(status.Reason))

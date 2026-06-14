@@ -29,6 +29,41 @@
     margin-bottom: 10px;
 }
 
+.mcb-adjust-material-host {
+    padding-top: 0;
+}
+
+.mcb-adjust-material__warning {
+    margin-top: 8px;
+}
+
+.mcb-adjust-material__action {
+    align-self: flex-start;
+    min-width: 170px;
+    margin-top: 8px;
+}
+
+.mcb-adjust-material__normal-label {
+    margin-top: 8px;
+    margin-bottom: 3px;
+}
+
+.mcb-adjust-material__normal-field {
+    min-height: 22px;
+    max-width: 100%;
+}
+
+.mcb-adjust-material__normal-field .unity-base-field__input,
+.mcb-adjust-material__normal-field .unity-object-field__input,
+.mcb-adjust-material__normal-field .unity-object-field__object {
+    background-color: #2b2b2b;
+    color: #d1d1d1;
+    border-width: 0;
+    border-radius: 6px;
+    min-height: 22px;
+    height: 22px;
+}
+
 .mcb-avatar-toggle {
     color: #d1d1d1;
     min-width: 0;

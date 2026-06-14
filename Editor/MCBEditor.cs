@@ -59,15 +59,15 @@ public class MCBEditor : UnityEditor.Editor
     private VisualElement accountHost;
     private VisualElement dependencyHost;
     private VisualElement connectivityHost;
+    private VisualElement authHost;
+    private VisualElement statusHost;
     private VisualElement galleryHost;
     private VisualElement selectedAssetActionsHost;
     private VisualElement creatorHost;
     private VisualElement versionHost;
     private VisualElement avatarOptionsHost;
+    private VisualElement adjustMaterialHost;
     private VisualElement commentsHost;
-    private IMGUIContainer topImGuiContainer;
-    private IMGUIContainer middleImGuiContainer;
-    private IMGUIContainer postCreatorImGuiContainer;
     private IMGUIContainer bottomBarImGuiContainer;
     private IVisualElementScheduledItem dynamicUiSchedule;
     public const float AssetViewImGuiPaddingLeft = 24f;
@@ -168,6 +168,7 @@ public class MCBEditor : UnityEditor.Editor
         avatarOptionsModule = new AvatarOptionsModule(this);
         adjustMaterialModule = new AdjustMaterialModule(this);
         warningsModule = new WarningsModule();
+        warningsModule.Changed += OnWarningsChanged;
         
         // Load local versions first (synchronous, but fast)
         LoadImportedVersions();
@@ -204,6 +205,7 @@ public class MCBEditor : UnityEditor.Editor
         EditorApplication.delayCall -= RunScheduledAsyncInitialization;
         asyncInitializationScheduled = false;
         accountModule?.DetachUIToolkit();
+        authModule?.DetachUIToolkit();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
         creatorModule?.DetachUIToolkit();
@@ -218,13 +220,16 @@ public class MCBEditor : UnityEditor.Editor
         bannerHost = null;
         accountHost = null;
         dependencyHost = null;
+        connectivityHost = null;
+        authHost = null;
+        statusHost = null;
         galleryHost = null;
         selectedAssetActionsHost = null;
         creatorHost = null;
         versionHost = null;
         avatarOptionsHost = null;
+        adjustMaterialHost = null;
         commentsHost = null;
-        postCreatorImGuiContainer = null;
         bottomBarImGuiContainer = null;
         
         // Unsubscribe from version service events
@@ -236,6 +241,10 @@ public class MCBEditor : UnityEditor.Editor
 
         MCBConnectivityMonitor.StatusChanged -= RepaintFromConnectivityMonitor;
         MCBPackageVersionService.StatusChanged -= RepaintFromPackageVersionStatus;
+        if (warningsModule != null)
+        {
+            warningsModule.Changed -= OnWarningsChanged;
+        }
         EditorApplication.projectChanged -= OnProjectChanged;
         EditorApplication.hierarchyChanged -= OnHierarchyChanged;
     }
@@ -276,9 +285,8 @@ public class MCBEditor : UnityEditor.Editor
         connectivityHost = new VisualElement();
         uiToolkitRoot.Add(connectivityHost);
 
-        topImGuiContainer = new IMGUIContainer(DrawToolkitTopImGui);
-        topImGuiContainer.AddToClassList("mcb-imgui-top");
-        uiToolkitRoot.Add(topImGuiContainer);
+        authHost = new VisualElement();
+        uiToolkitRoot.Add(authHost);
 
         galleryHost = new VisualElement();
         uiToolkitRoot.Add(galleryHost);
@@ -287,9 +295,9 @@ public class MCBEditor : UnityEditor.Editor
         selectedAssetActionsHost.AddToClassList("mcb-selected-actions-host");
         uiToolkitRoot.Add(selectedAssetActionsHost);
 
-        middleImGuiContainer = new IMGUIContainer(DrawToolkitMiddleImGui);
-        middleImGuiContainer.AddToClassList("mcb-imgui-middle");
-        uiToolkitRoot.Add(middleImGuiContainer);
+        statusHost = new VisualElement();
+        statusHost.AddToClassList("mcb-status-host");
+        uiToolkitRoot.Add(statusHost);
 
         creatorHost = new VisualElement();
         creatorHost.AddToClassList("mcb-creator-host");
@@ -303,9 +311,10 @@ public class MCBEditor : UnityEditor.Editor
         avatarOptionsHost.AddToClassList("mcb-avatar-options-host");
         uiToolkitRoot.Add(avatarOptionsHost);
 
-        postCreatorImGuiContainer = new IMGUIContainer(DrawToolkitPostCreatorImGui);
-        postCreatorImGuiContainer.AddToClassList("mcb-imgui-middle");
-        uiToolkitRoot.Add(postCreatorImGuiContainer);
+        adjustMaterialHost = new VisualElement();
+        adjustMaterialHost.AddToClassList("mcb-avatar-options");
+        adjustMaterialHost.AddToClassList("mcb-adjust-material-host");
+        uiToolkitRoot.Add(adjustMaterialHost);
 
         commentsHost = new VisualElement();
         commentsHost.AddToClassList("mcb-comments-host");
@@ -316,6 +325,7 @@ public class MCBEditor : UnityEditor.Editor
         uiToolkitRoot.Add(bottomBarImGuiContainer);
 
         accountModule?.AttachUIToolkit(accountHost);
+        authModule?.AttachUIToolkit(authHost);
         dependencyInstallerModule?.AttachUIToolkit(dependencyHost);
         assetGalleryModule?.AttachUIToolkit(galleryHost, selectedAssetActionsHost, commentsHost);
         creatorModule?.AttachUIToolkit(creatorHost);
@@ -339,19 +349,19 @@ public class MCBEditor : UnityEditor.Editor
         {
             DrawVectorBannerUIToolkit();
             accountModule?.RefreshUIToolkit();
+            authModule?.RefreshUIToolkit();
             dependencyInstallerModule?.RefreshUIToolkit();
             RefreshConnectivityDiagnosticsUIToolkit();
             assetGalleryModule?.RefreshUIToolkit();
             creatorModule?.RefreshUIToolkit();
             versionModule?.RefreshUIToolkit();
             avatarOptionsModule?.RefreshUIToolkit();
+            RefreshStatusMessagesUIToolkit();
+            RefreshAdjustMaterialUIToolkit();
             ApplyDependencyBlockerState();
             OrderUiToolkitLayers();
             chromeSurfaceHost?.WakeForSeconds(20f);
             chromeSurfaceHost?.MarkDirtyRepaint();
-            topImGuiContainer?.MarkDirtyRepaint();
-            middleImGuiContainer?.MarkDirtyRepaint();
-            postCreatorImGuiContainer?.MarkDirtyRepaint();
             bottomBarImGuiContainer?.MarkDirtyRepaint();
         }
         catch (Exception ex)
@@ -367,14 +377,14 @@ public class MCBEditor : UnityEditor.Editor
         headerHost?.BringToFront();
         dependencyHost?.BringToFront();
         connectivityHost?.BringToFront();
-        topImGuiContainer?.BringToFront();
+        authHost?.BringToFront();
         galleryHost?.BringToFront();
         selectedAssetActionsHost?.BringToFront();
-        middleImGuiContainer?.BringToFront();
+        statusHost?.BringToFront();
         creatorHost?.BringToFront();
         versionHost?.BringToFront();
         avatarOptionsHost?.BringToFront();
-        postCreatorImGuiContainer?.BringToFront();
+        adjustMaterialHost?.BringToFront();
         commentsHost?.BringToFront();
         bottomBarImGuiContainer?.BringToFront();
     }
@@ -384,20 +394,184 @@ public class MCBEditor : UnityEditor.Editor
         bool blocked = dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies;
         DisplayStyle contentDisplay = blocked ? DisplayStyle.None : DisplayStyle.Flex;
 
-        if (topImGuiContainer != null) topImGuiContainer.style.display = contentDisplay;
         if (connectivityHost != null)
         {
             connectivityHost.style.display = blocked || connectivityHost.childCount == 0 ? DisplayStyle.None : DisplayStyle.Flex;
         }
+        if (authHost != null && blocked) authHost.style.display = DisplayStyle.None;
         if (galleryHost != null) galleryHost.style.display = contentDisplay;
         if (selectedAssetActionsHost != null) selectedAssetActionsHost.style.display = contentDisplay;
-        if (middleImGuiContainer != null) middleImGuiContainer.style.display = contentDisplay;
+        if (statusHost != null && blocked) statusHost.style.display = DisplayStyle.None;
         if (creatorHost != null && blocked) creatorHost.style.display = DisplayStyle.None;
         if (versionHost != null && blocked) versionHost.style.display = DisplayStyle.None;
         if (avatarOptionsHost != null && blocked) avatarOptionsHost.style.display = DisplayStyle.None;
-        if (postCreatorImGuiContainer != null) postCreatorImGuiContainer.style.display = contentDisplay;
+        if (adjustMaterialHost != null && blocked) adjustMaterialHost.style.display = DisplayStyle.None;
         if (commentsHost != null) commentsHost.style.display = contentDisplay;
         if (bottomBarImGuiContainer != null) bottomBarImGuiContainer.style.display = contentDisplay;
+    }
+
+    private void RefreshStatusMessagesUIToolkit()
+    {
+        if (statusHost == null)
+        {
+            return;
+        }
+
+        statusHost.Clear();
+        statusHost.AddToClassList("mcb-status-host");
+
+        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
+        {
+            statusHost.style.display = DisplayStyle.None;
+            return;
+        }
+
+        bool hasContent = false;
+        bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
+        bool showOfflineSavedVersionsUi = !HasServerAccess && importedVersions != null && importedVersions.Count > 0;
+
+        if (hasMajorUpdateLockout)
+        {
+            var status = MCBPackageVersionService.CurrentStatus;
+            if (status != null && status.requiresMajorUpdate)
+            {
+                string message = string.IsNullOrWhiteSpace(status.updateMessage)
+                    ? $"A new major version of MCB is available.\n\nCurrent version: {status.currentVersion}\nLatest version: {status.latestVersion}\n\nUpdate the package from VCC before using connected features."
+                    : status.updateMessage;
+
+                statusHost.Add(CreateStatusMessage("Update needed", message, HelpBoxMessageType.Warning));
+                hasContent = true;
+            }
+
+            if (showOfflineSavedVersionsUi)
+            {
+                statusHost.Add(CreateStatusMessage(null, GetOfflineSavedVersionsMessage(), HelpBoxMessageType.Info));
+                hasContent = true;
+            }
+        }
+        else if (HasServerAccess)
+        {
+            if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
+            {
+                hasContent |= warningsModule != null && warningsModule.BuildUIToolkit(statusHost);
+            }
+        }
+        else if (showOfflineSavedVersionsUi)
+        {
+            statusHost.Add(CreateStatusMessage(null, GetOfflineSavedVersionsMessage(), HelpBoxMessageType.Info));
+            hasContent = true;
+        }
+
+        statusHost.style.display = hasContent ? DisplayStyle.Flex : DisplayStyle.None;
+    }
+
+    private void RefreshAdjustMaterialUIToolkit()
+    {
+        if (adjustMaterialHost == null)
+        {
+            return;
+        }
+
+        adjustMaterialHost.Clear();
+        adjustMaterialHost.AddToClassList("mcb-avatar-options");
+        adjustMaterialHost.AddToClassList("mcb-adjust-material-host");
+
+        bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
+        bool canShowAdjustMaterial =
+            dependencyInstallerModule != null &&
+            !dependencyInstallerModule.HasBlockingRequiredDependencies &&
+            !hasMajorUpdateLockout &&
+            HasServerAccess &&
+            (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly());
+
+        if (!canShowAdjustMaterial)
+        {
+            adjustMaterialHost.style.display = DisplayStyle.None;
+            return;
+        }
+
+        bool hasContent = false;
+        serializedObject.Update();
+        try
+        {
+            hasContent = adjustMaterialModule != null && adjustMaterialModule.BuildUIToolkit(adjustMaterialHost);
+        }
+        finally
+        {
+            serializedObject.ApplyModifiedProperties();
+        }
+
+        adjustMaterialHost.style.display = hasContent ? DisplayStyle.Flex : DisplayStyle.None;
+    }
+
+    private void OnWarningsChanged()
+    {
+        RefreshStatusMessagesUIToolkit();
+        Repaint();
+    }
+
+    private static string GetOfflineSavedVersionsMessage()
+    {
+        return "Imported saved versions are available offline. You can apply them or reset to the original avatar base without logging in.";
+    }
+
+    private static VisualElement CreateStatusMessage(string title, string message, HelpBoxMessageType messageType)
+    {
+        var box = new VisualElement();
+        box.AddToClassList("mcb-avatar-helpbox");
+        box.AddToClassList("mcb-status-message");
+        box.AddToClassList(GetStatusMessageClass(messageType));
+
+        var icon = AvatarOptionsModule.CreateOptionLabel(GetStatusMessageIcon(messageType), 14, FontStyle.Bold, Color.white);
+        icon.AddToClassList("mcb-avatar-helpbox__icon");
+        box.Add(icon);
+
+        var content = new VisualElement();
+        content.AddToClassList("mcb-avatar-helpbox__content");
+
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            var titleLabel = AvatarOptionsModule.CreateOptionLabel(title, 13, FontStyle.Bold, Color.white);
+            titleLabel.AddToClassList("mcb-status-message__title");
+            content.Add(titleLabel);
+        }
+
+        var body = AvatarOptionsModule.CreateOptionLabel(message, 12, FontStyle.Normal, new Color(0.82f, 0.82f, 0.82f));
+        body.AddToClassList("mcb-avatar-helpbox__text");
+        content.Add(body);
+
+        box.Add(content);
+        return box;
+    }
+
+    private static string GetStatusMessageClass(HelpBoxMessageType messageType)
+    {
+        switch (messageType)
+        {
+            case HelpBoxMessageType.Error:
+                return "mcb-avatar-helpbox--error";
+            case HelpBoxMessageType.Warning:
+                return "mcb-avatar-helpbox--warning";
+            case HelpBoxMessageType.Info:
+                return "mcb-avatar-helpbox--info";
+            default:
+                return "mcb-avatar-helpbox--none";
+        }
+    }
+
+    private static string GetStatusMessageIcon(HelpBoxMessageType messageType)
+    {
+        switch (messageType)
+        {
+            case HelpBoxMessageType.Error:
+                return "x";
+            case HelpBoxMessageType.Warning:
+                return "!";
+            case HelpBoxMessageType.Info:
+                return "i";
+            default:
+                return string.Empty;
+        }
     }
 
     private static void LoadUiToolkitStyleSheets(VisualElement root)
@@ -414,113 +588,6 @@ public class MCBEditor : UnityEditor.Editor
             {
                 root.styleSheets.Add(styleSheet);
             }
-        }
-    }
-
-    private void DrawToolkitTopImGui()
-    {
-        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
-        {
-            return;
-        }
-
-        serializedObject.Update();
-        try
-        {
-            if (!isAuthenticated)
-            {
-                SafeUiCall(() => authModule.DrawMagicSyncAuth());
-            }
-        }
-        finally
-        {
-            serializedObject.ApplyModifiedProperties();
-        }
-    }
-
-    private void DrawToolkitMiddleImGui()
-    {
-        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
-        {
-            return;
-        }
-
-        serializedObject.Update();
-        bool useAssetViewPadding = IsSelectedAssetView();
-        try
-        {
-            if (useAssetViewPadding)
-            {
-                BeginAssetViewImGuiPadding();
-            }
-
-            bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
-            bool showOfflineSavedVersionsUi = !HasServerAccess && importedVersions != null && importedVersions.Count > 0;
-
-            if (hasMajorUpdateLockout)
-            {
-                SafeUiCall(DrawMajorUpdateRequiredInfo);
-                if (showOfflineSavedVersionsUi)
-                {
-                    SafeUiCall(DrawOfflineSavedVersionsInfo);
-                }
-            }
-            else if (HasServerAccess)
-            {
-                if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
-                {
-                    SafeUiCall(() => warningsModule?.Draw());
-                }
-            }
-            else if (showOfflineSavedVersionsUi)
-            {
-                SafeUiCall(DrawOfflineSavedVersionsInfo);
-            }
-        }
-        finally
-        {
-            if (useAssetViewPadding)
-            {
-                EndAssetViewImGuiPadding();
-            }
-
-            serializedObject.ApplyModifiedProperties();
-        }
-    }
-
-    private void DrawToolkitPostCreatorImGui()
-    {
-        if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
-        {
-            return;
-        }
-
-        serializedObject.Update();
-        bool useAssetViewPadding = IsSelectedAssetView();
-        try
-        {
-            if (useAssetViewPadding)
-            {
-                BeginAssetViewImGuiPadding();
-            }
-
-            bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
-            if (!hasMajorUpdateLockout && HasServerAccess)
-            {
-                if (assetGalleryModule == null || !assetGalleryModule.ShouldShowGalleryOnly())
-                {
-                    SafeUiCall(() => adjustMaterialModule?.Draw());
-                }
-            }
-        }
-        finally
-        {
-            if (useAssetViewPadding)
-            {
-                EndAssetViewImGuiPadding();
-            }
-
-            serializedObject.ApplyModifiedProperties();
         }
     }
 
@@ -556,22 +623,6 @@ public class MCBEditor : UnityEditor.Editor
 
         RefreshUiToolkitSections();
         Repaint();
-    }
-
-    private static void BeginAssetViewImGuiPadding()
-    {
-        GUILayout.Space(AssetViewImGuiPaddingTop);
-        EditorGUILayout.BeginHorizontal();
-        GUILayout.Space(AssetViewImGuiPaddingLeft);
-        EditorGUILayout.BeginVertical();
-    }
-
-    private static void EndAssetViewImGuiPadding()
-    {
-        EditorGUILayout.EndVertical();
-        GUILayout.Space(AssetViewImGuiPaddingRight);
-        EditorGUILayout.EndHorizontal();
-        GUILayout.Space(AssetViewImGuiPaddingBottom);
     }
 
     private void DrawVectorBannerUIToolkit()
@@ -883,21 +934,6 @@ public class MCBEditor : UnityEditor.Editor
     // UI Toolkit root. The UI Toolkit layout with its IMGUIContainer sections is the
     // only render path.
 
-    private void SafeUiCall(Action drawAction)
-    {
-        if (drawAction == null) return;
-
-        try
-        {
-            drawAction.Invoke();
-        }
-        catch (Exception ex)
-        {
-            if (ex is ExitGUIException) throw;
-            RecordUiException(ex);
-        }
-    }
-
     private void RecordUiException(Exception ex)
     {
         if (ex == null) return;
@@ -1198,35 +1234,6 @@ public class MCBEditor : UnityEditor.Editor
         }
     }
 
-    private void DrawOfflineSavedVersionsInfo()
-    {
-        EditorGUILayout.HelpBox("Imported saved versions are available offline. You can apply them or reset to the original avatar base without logging in.", MessageType.Info);
-    }
-
-    private void DrawMajorUpdateRequiredInfo()
-    {
-        var status = MCBPackageVersionService.CurrentStatus;
-        if (status == null || !status.requiresMajorUpdate)
-        {
-            return;
-        }
-
-        var titleStyle = new GUIStyle(EditorStyles.boldLabel);
-        titleStyle.fontSize = 20;
-        titleStyle.alignment = TextAnchor.MiddleCenter;
-        titleStyle.normal.textColor = new Color(0.85f, 0.15f, 0.15f);
-
-        EditorGUILayout.Space(8f);
-        EditorGUILayout.LabelField("Update needed !", titleStyle, GUILayout.Height(28f));
-        EditorGUILayout.Space(4f);
-
-        string message = string.IsNullOrWhiteSpace(status.updateMessage)
-            ? $"A new major version of MCB is available.\n\nCurrent version: {status.currentVersion}\nLatest version: {status.latestVersion}\n\nUpdate the package from VCC before using connected features."
-            : status.updateMessage;
-
-        EditorGUILayout.HelpBox(message, MessageType.Warning);
-    }
-    
     public void CheckAuthentication()
     {
         authToken = AuthenticationService.GetAuth()?.token;

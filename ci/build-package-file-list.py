@@ -19,20 +19,12 @@ def collect_package_files(root):
         if path.is_file() and not path.is_symlink():
             files.add(to_posix(path.relative_to(root)))
 
-        meta_path = root / (root_file + ".meta")
-        if meta_path.is_file() and not meta_path.is_symlink():
-            files.add(to_posix(meta_path.relative_to(root)))
-
     for package_root in PACKAGE_ROOTS:
         package_root_path = root / package_root
         if package_root_path.is_dir() and not package_root_path.is_symlink():
             for path in package_root_path.rglob("*"):
-                if path.is_file() and not path.is_symlink():
+                if path.is_file() and not path.is_symlink() and path.suffix.lower() != ".meta":
                     files.add(to_posix(path.relative_to(root)))
-
-        root_meta = root / (package_root + ".meta")
-        if root_meta.is_file() and not root_meta.is_symlink():
-            files.add(to_posix(root_meta.relative_to(root)))
 
     return sorted(files, key=str.lower)
 
@@ -61,12 +53,8 @@ def main():
         if not meta_output.is_absolute():
             meta_output = root / meta_output
 
-        meta_files = [path for path in files if path.endswith(".meta")]
-        if not meta_files:
-            raise SystemExit("Package allowlist produced no .meta files.")
-
-        meta_output.write_text("\n".join(meta_files) + "\n", encoding="utf-8")
-        print(f"Wrote {len(meta_files)} package .meta file entries to {meta_output}")
+        meta_output.write_text("", encoding="utf-8")
+        print(f"Wrote 0 package .meta file entries to {meta_output}")
 
 
 if __name__ == "__main__":

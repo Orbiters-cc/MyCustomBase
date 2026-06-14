@@ -934,15 +934,22 @@ public class AdvancedModeModule
 
         if (!UnitGitReleasePublisher.IsUnitGitAvailable)
         {
+            string availabilityMessage = UnitGitReleasePublisher.UnitGitAvailabilityMessage;
             if (VpmDependencyService.Instance.IsOptionalDependencyAssumedInstalled(VpmDependencyService.UnitGitPackageId))
             {
                 EditorGUILayout.HelpBox(
-                    "The optional dependency check is currently bypassed, but the Unit Git editor API was not found. The MCB <-> Unit Git integration is disabled.",
+                    string.IsNullOrWhiteSpace(availabilityMessage)
+                        ? "The optional dependency check is currently bypassed, but the Unit Git editor API was not found. The MCB <-> Unit Git integration is disabled."
+                        : availabilityMessage,
                     MessageType.Warning);
                 return;
             }
 
-            EditorGUILayout.HelpBox("The Unit Git package (orbiters.unitgit) is not installed, so the MCB <-> Unit Git integration is disabled.", MessageType.Warning);
+            EditorGUILayout.HelpBox(
+                string.IsNullOrWhiteSpace(availabilityMessage)
+                    ? "The Unit Git package (orbiters.unitgit) is not installed, so the MCB <-> Unit Git integration is disabled."
+                    : availabilityMessage,
+                MessageType.Warning);
             return;
         }
 

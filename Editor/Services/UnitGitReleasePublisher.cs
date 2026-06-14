@@ -1,3 +1,4 @@
+#if UNITY_EDITOR
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -12,13 +13,32 @@ using UnityEditor;
 /// </summary>
 public static class UnitGitReleasePublisher
 {
+    private const int RequiredApiVersion = 2;
+    private const string CommitFilesCapability = "commit-files";
+    private const string ScopedReleaseCheckpointCapability = "scoped-release-checkpoint";
     private const string UnitGitReleasesTypeName = "Orbiters.UnitGit.Editor.UnitGitReleases";
     private const string UnitGitReleaseEntryTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseEntry";
     private const string UnitGitReleaseFieldTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseField";
 
     public static bool IsUnitGitAvailable
     {
-        get { return TryGetUnitGitTypes(out _, out _, out _, out _); }
+        get { return string.IsNullOrEmpty(UnitGitAvailabilityMessage); }
+    }
+
+    public static string UnitGitAvailabilityMessage
+    {
+        get
+        {
+            return TryGetCompatibleUnitGitTypes(
+                out _,
+                out _,
+                out _,
+                out string message,
+                CommitFilesCapability,
+                ScopedReleaseCheckpointCapability)
+                ? string.Empty
+                : message;
+        }
     }
 
     /// <summary>
@@ -28,7 +48,7 @@ public static class UnitGitReleasePublisher
     public static bool TryCreateTestCommit(out string message)
     {
         message = string.Empty;
-        if (!TryGetUnitGitTypes(out var releasesType, out _, out _, out message))
+        if (!TryGetCompatibleUnitGitTypes(out var releasesType, out _, out _, out message, CommitFilesCapability))
         {
             return false;
         }
@@ -101,7 +121,7 @@ public static class UnitGitReleasePublisher
     {
         message = string.Empty;
         commitHash = string.Empty;
-        if (!TryGetUnitGitTypes(out var releasesType, out _, out _, out message))
+        if (!TryGetCompatibleUnitGitTypes(out var releasesType, out _, out _, out message, CommitFilesCapability))
         {
             return false;
         }
@@ -142,7 +162,12 @@ public static class UnitGitReleasePublisher
     public static bool TryPublishReleaseCheckpoint(CustomBaseVersion version, string assetName, out string message)
     {
         message = string.Empty;
-        if (!TryGetUnitGitTypes(out var releasesType, out var entryType, out var fieldType, out _))
+        if (!TryGetCompatibleUnitGitTypes(
+                out var releasesType,
+                out var entryType,
+                out var fieldType,
+                out message,
+                ScopedReleaseCheckpointCapability))
         {
             return false;
         }
@@ -186,8 +211,8 @@ public static class UnitGitReleasePublisher
             object result = InvokeUnitGitMethod(
                 releasesType,
                 "PublishRelease",
-                new[] { entryType, typeof(string) },
-                new[] { entry, commitTitle });
+                new[] { entryType, typeof(string), typeof(string[]) },
+                new object[] { entry, commitTitle, BuildReleaseCheckpointPaths(version) });
 
             message = GetStringMember(result, "Message");
             string commitHash = GetStringMember(result, "CommitHash");
@@ -240,6 +265,48 @@ public static class UnitGitReleasePublisher
         }
     }
 
+    private static string[] BuildReleaseCheckpointPaths(CustomBaseVersion version)
+    {
+        var paths = new List<string>();
+        if (version == null)
+        {
+            return paths.ToArray();
+        }
+
+        string folder = MCBUtils.GetVersionDataPath(version);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return paths.ToArray();
+        }
+
+        AddIfExists(paths, MCBUtils.CombineUnityPath(folder, "version.json"));
+        AddIfExists(paths, MCBUtils.CombineUnityPath(folder, VersionManifest.FileName));
+        return paths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static void AddIfExists(List<string> paths, string unityPath)
+    {
+        if (string.IsNullOrWhiteSpace(unityPath))
+        {
+            return;
+        }
+
+        string normalized = MCBUtils.ToUnityPath(unityPath);
+        if (File.Exists(Path.GetFullPath(normalized)))
+        {
+            paths.Add(normalized);
+        }
+
+        string metaPath = normalized + ".meta";
+        if (File.Exists(Path.GetFullPath(metaPath)))
+        {
+            paths.Add(metaPath);
+        }
+    }
+
     private static bool TryGetUnitGitTypes(out Type releasesType, out Type entryType, out Type fieldType, out string message)
     {
         releasesType = FindType(UnitGitReleasesTypeName);
@@ -253,6 +320,89 @@ public static class UnitGitReleasePublisher
         }
 
         message = "The Unit Git package (orbiters.unitgit) is not installed.";
+        return false;
+    }
+
+    private static bool TryGetCompatibleUnitGitTypes(
+        out Type releasesType,
+        out Type entryType,
+        out Type fieldType,
+        out string message,
+        params string[] requiredCapabilities)
+    {
+        if (!TryGetUnitGitTypes(out releasesType, out entryType, out fieldType, out message))
+        {
+            return false;
+        }
+
+        int apiVersion = GetStaticIntMember(releasesType, "ApiVersion");
+        if (apiVersion < RequiredApiVersion)
+        {
+            message = $"The Unit Git package is installed but incompatible. MCB requires Unit Git API v{RequiredApiVersion}+; found v{apiVersion}.";
+            return false;
+        }
+
+        foreach (string capability in requiredCapabilities ?? Array.Empty<string>())
+        {
+            if (!HasCapability(releasesType, capability))
+            {
+                message = $"The Unit Git package is installed but incompatible. Missing capability: {capability}.";
+                return false;
+            }
+        }
+
+        message = string.Empty;
+        return true;
+    }
+
+    private static int GetStaticIntMember(Type type, string name)
+    {
+        if (type == null || string.IsNullOrEmpty(name))
+        {
+            return 0;
+        }
+
+        var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static);
+        if (field != null && field.GetValue(null) is int fieldValue)
+        {
+            return fieldValue;
+        }
+
+        var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Static);
+        if (property != null && property.CanRead && property.GetValue(null) is int propertyValue)
+        {
+            return propertyValue;
+        }
+
+        return 0;
+    }
+
+    private static bool HasCapability(Type type, string capability)
+    {
+        if (type == null || string.IsNullOrWhiteSpace(capability))
+        {
+            return false;
+        }
+
+        var method = type.GetMethod("GetCapabilities", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+        if (method == null)
+        {
+            return false;
+        }
+
+        if (!(method.Invoke(null, null) is IEnumerable capabilities))
+        {
+            return false;
+        }
+
+        foreach (object value in capabilities)
+        {
+            if (string.Equals(value?.ToString(), capability, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -377,3 +527,4 @@ public static class UnitGitReleasePublisher
             : ex;
     }
 }
+#endif
