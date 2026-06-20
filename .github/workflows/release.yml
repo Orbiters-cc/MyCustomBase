@@ -63,7 +63,8 @@ jobs:
         run: zip -q "${{ github.workspace }}/${{ env.zipFile }}" -@ < packageFiles
 
       # Validate the release zip does not contain repository or editor-local files
-      - name: Validate Package Zip Contents
+      # and still exposes the expected Unity import contract without tracked .meta files.
+      - name: Validate Package Zip Import Contract
         working-directory: "${{ env.packagePath }}"
         run: python3 ci/validate-package-archive.py "${{ github.workspace }}/${{ env.zipFile }}"
       
