@@ -1,25 +1,17 @@
 #if UNITY_EDITOR
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using UnityEditor;
 
 /// <summary>
 /// Bridges MCB version publication with Unit Git when the optional Unit Git package is present.
-/// The calls are late-bound so MCB can import without the Unit Git assemblies installed.
+/// The reflection details live in UnitGitReleaseApiBinding so this publisher only depends on the
+/// current Unit Git release API contract.
 /// </summary>
 public static class UnitGitReleasePublisher
 {
-    private const int RequiredApiVersion = 2;
-    private const string CommitFilesCapability = "commit-files";
-    private const string ScopedReleaseCheckpointCapability = "scoped-release-checkpoint";
-    private const string UnitGitReleasesTypeName = "Orbiters.UnitGit.Editor.UnitGitReleases";
-    private const string UnitGitReleaseEntryTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseEntry";
-    private const string UnitGitReleaseFieldTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseField";
-
     public static bool IsUnitGitAvailable
     {
         get { return string.IsNullOrEmpty(UnitGitAvailabilityMessage); }
@@ -29,13 +21,11 @@ public static class UnitGitReleasePublisher
     {
         get
         {
-            return TryGetCompatibleUnitGitTypes(
-                out _,
-                out _,
+            return TryBindReleaseApi(
                 out _,
                 out string message,
-                CommitFilesCapability,
-                ScopedReleaseCheckpointCapability)
+                UnitGitReleaseApiBinding.CommitFilesCapability,
+                UnitGitReleaseApiBinding.ScopedReleaseCheckpointCapability)
                 ? string.Empty
                 : message;
         }
@@ -43,12 +33,12 @@ public static class UnitGitReleasePublisher
 
     /// <summary>
     /// Connector test: generates a small dummy file and commits it through Unit Git, so the
-    /// MCB ↔ Unit Git integration can be verified without publishing anything.
+    /// MCB <-> Unit Git integration can be verified without publishing anything.
     /// </summary>
     public static bool TryCreateTestCommit(out string message)
     {
         message = string.Empty;
-        if (!TryGetCompatibleUnitGitTypes(out var releasesType, out _, out _, out message, CommitFilesCapability))
+        if (!TryBindReleaseApi(out var api, out message, UnitGitReleaseApiBinding.CommitFilesCapability))
         {
             return false;
         }
@@ -70,38 +60,29 @@ public static class UnitGitReleasePublisher
             if (File.Exists(filePath + ".meta")) pathsToCommit.Add(filePath + ".meta");
             if (File.Exists(folder + ".meta")) pathsToCommit.Add(folder + ".meta");
 
-            object result = InvokeUnitGitMethod(
-                releasesType,
-                "CommitFiles",
-                new[] { typeof(string), typeof(string), typeof(string[]) },
-                new object[]
-                {
-                    "MCB : Unit Git connector test",
-                    $"Generated test file: {filePath}",
-                    pathsToCommit.ToArray()
-                });
+            UnitGitReleaseApiResult result = api.CommitFiles(
+                "MCB : Unit Git connector test",
+                $"Generated test file: {filePath}",
+                pathsToCommit.ToArray());
 
-            bool success = GetBoolMember(result, "Success");
-            string commitHash = GetStringMember(result, "CommitHash");
-            string resultMessage = GetStringMember(result, "Message");
-            message = success
-                ? $"Test commit created ({ShortHash(commitHash)}) with {fileName}."
-                : resultMessage;
+            message = result.Success
+                ? $"Test commit created ({ShortHash(result.CommitHash)}) with {fileName}."
+                : result.Message;
 
-            if (success)
+            if (result.Success)
             {
-                MCBLogger.Log($"[MCB] Unit Git connector test commit created: {commitHash}");
+                MCBLogger.Log($"[MCB] Unit Git connector test commit created: {result.CommitHash}");
             }
             else
             {
-                MCBLogger.LogWarning($"[MCB] Unit Git connector test commit failed: {resultMessage}");
+                MCBLogger.LogWarning($"[MCB] Unit Git connector test commit failed: {result.Message}");
             }
 
-            return success;
+            return result.Success;
         }
         catch (Exception ex)
         {
-            message = UnwrapReflectionException(ex).Message;
+            message = ex.Message;
             MCBLogger.LogWarning($"[MCB] Unit Git connector test commit failed: {message}");
             return false;
         }
@@ -121,7 +102,7 @@ public static class UnitGitReleasePublisher
     {
         message = string.Empty;
         commitHash = string.Empty;
-        if (!TryGetCompatibleUnitGitTypes(out var releasesType, out _, out _, out message, CommitFilesCapability))
+        if (!TryBindReleaseApi(out var api, out message, UnitGitReleaseApiBinding.CommitFilesCapability))
         {
             return false;
         }
@@ -138,19 +119,14 @@ public static class UnitGitReleasePublisher
 
         try
         {
-            object result = InvokeUnitGitMethod(
-                releasesType,
-                "CommitFiles",
-                new[] { typeof(string), typeof(string), typeof(string[]) },
-                new object[] { commitTitle, trailingParagraph, paths });
-
-            message = GetStringMember(result, "Message");
-            commitHash = GetStringMember(result, "CommitHash");
-            return GetBoolMember(result, "Success");
+            UnitGitReleaseApiResult result = api.CommitFiles(commitTitle, trailingParagraph, paths);
+            message = result.Message;
+            commitHash = result.CommitHash;
+            return result.Success;
         }
         catch (Exception ex)
         {
-            message = UnwrapReflectionException(ex).Message;
+            message = ex.Message;
             return false;
         }
     }
@@ -162,12 +138,10 @@ public static class UnitGitReleasePublisher
     public static bool TryPublishReleaseCheckpoint(CustomBaseVersion version, string assetName, out string message)
     {
         message = string.Empty;
-        if (!TryGetCompatibleUnitGitTypes(
-                out var releasesType,
-                out var entryType,
-                out var fieldType,
+        if (!TryBindReleaseApi(
+                out var api,
                 out message,
-                ScopedReleaseCheckpointCapability))
+                UnitGitReleaseApiBinding.ScopedReleaseCheckpointCapability))
         {
             return false;
         }
@@ -177,50 +151,43 @@ public static class UnitGitReleasePublisher
             EditorUtility.DisplayProgressBar("Unit Git", "Creating release checkpoint commit...", 0.9f);
             AssetDatabase.SaveAssets();
 
-            object entry = Activator.CreateInstance(entryType);
-            SetMember(entry, "tool", "MCB");
-            SetMember(entry, "type", "mcb-version");
-            SetMember(entry, "name", string.IsNullOrWhiteSpace(assetName) ? "MCB Asset" : assetName.Trim());
-            SetMember(entry, "version", version?.version ?? string.Empty);
-            SetMember(entry, "title", version?.title ?? string.Empty);
-            SetMember(entry, "changelog", version?.changelog ?? string.Empty);
-            SetMember(entry, "scope", version != null ? version.scope.ToString() : string.Empty);
-            SetMember(entry, "date", DateTime.UtcNow.ToString("o"));
+            object entry = api.CreateReleaseEntry();
+            api.SetReleaseEntryValue(entry, "tool", "MCB");
+            api.SetReleaseEntryValue(entry, "type", "mcb-version");
+            api.SetReleaseEntryValue(entry, "name", string.IsNullOrWhiteSpace(assetName) ? "MCB Asset" : assetName.Trim());
+            api.SetReleaseEntryValue(entry, "version", version?.version ?? string.Empty);
+            api.SetReleaseEntryValue(entry, "title", version?.title ?? string.Empty);
+            api.SetReleaseEntryValue(entry, "changelog", version?.changelog ?? string.Empty);
+            api.SetReleaseEntryValue(entry, "scope", version != null ? version.scope.ToString() : string.Empty);
+            api.SetReleaseEntryValue(entry, "date", DateTime.UtcNow.ToString("o"));
 
             if (version != null)
             {
                 if (version.assetId > 0)
                 {
-                    AddReleaseField(entry, fieldType, "Asset Id", version.assetId.ToString());
+                    api.AddReleaseField(entry, "Asset Id", version.assetId.ToString());
                 }
 
                 if (!string.IsNullOrWhiteSpace(version.defaultAviVersion))
                 {
-                    AddReleaseField(entry, fieldType, "Default Avatar Version", version.defaultAviVersion);
+                    api.AddReleaseField(entry, "Default Avatar Version", version.defaultAviVersion);
                 }
 
                 if (!string.IsNullOrWhiteSpace(version.parentVersion))
                 {
-                    AddReleaseField(entry, fieldType, "Parent Version", version.parentVersion);
+                    api.AddReleaseField(entry, "Parent Version", version.parentVersion);
                 }
             }
 
-            string entryVersion = GetStringMember(entry, "version");
-            string entryTitle = GetStringMember(entry, "title");
+            string entryVersion = api.GetReleaseEntryString(entry, "version");
+            string entryTitle = api.GetReleaseEntryString(entry, "title");
             string commitTitle = $"MCB : v{entryVersion} - {entryTitle}";
-            object result = InvokeUnitGitMethod(
-                releasesType,
-                "PublishRelease",
-                new[] { entryType, typeof(string), typeof(string[]) },
-                new object[] { entry, commitTitle, BuildReleaseCheckpointPaths(version) });
+            UnitGitReleaseApiResult result = api.PublishRelease(entry, commitTitle, BuildReleaseCheckpointPaths(version));
 
-            message = GetStringMember(result, "Message");
-            string commitHash = GetStringMember(result, "CommitHash");
-            bool success = GetBoolMember(result, "Success");
-
-            if (success)
+            message = result.Message;
+            if (result.Success)
             {
-                MCBLogger.Log($"[CreatorMode] Unit Git release checkpoint created for v{entryVersion} (commit {commitHash}).");
+                MCBLogger.Log($"[CreatorMode] Unit Git release checkpoint created for v{entryVersion} (commit {result.CommitHash}).");
             }
             else if (OperationErrorClassifier.IsDiskFullMessage(message))
             {
@@ -237,32 +204,39 @@ public static class UnitGitReleasePublisher
                 MCBLogger.LogWarning($"[CreatorMode] Unit Git release checkpoint failed: {message}");
             }
 
-            return success;
+            return result.Success;
         }
         catch (Exception ex)
         {
-            var actual = UnwrapReflectionException(ex);
-            if (OperationErrorClassifier.IsDiskFullError(actual))
+            if (OperationErrorClassifier.IsDiskFullError(ex))
             {
                 message = OperationErrorReporter.Report(null, new OperationError
                 {
                     Category = OperationErrorCategory.DiskFull,
                     UserMessage = DiskUtils.BuildDiskFullMessage("Creating the Unit Git release checkpoint"),
-                    Detail = actual.ToString()
+                    Detail = ex.ToString()
                 }, "Unit Git checkpoint");
             }
             else
             {
-                message = actual.Message;
+                message = ex.Message;
             }
 
-            MCBLogger.LogWarning($"[CreatorMode] Unit Git release checkpoint failed: {actual.Message}");
+            MCBLogger.LogWarning($"[CreatorMode] Unit Git release checkpoint failed: {ex.Message}");
             return false;
         }
         finally
         {
             EditorUtility.ClearProgressBar();
         }
+    }
+
+    private static bool TryBindReleaseApi(
+        out UnitGitReleaseApiBinding api,
+        out string message,
+        params string[] requiredCapabilities)
+    {
+        return UnitGitReleaseApiBinding.TryCreateInstalled(requiredCapabilities, out api, out message);
     }
 
     private static string[] BuildReleaseCheckpointPaths(CustomBaseVersion version)
@@ -281,6 +255,21 @@ public static class UnitGitReleasePublisher
 
         AddIfExists(paths, MCBUtils.CombineUnityPath(folder, "version.json"));
         AddIfExists(paths, MCBUtils.CombineUnityPath(folder, VersionManifest.FileName));
+
+        VersionManifest manifest = VersionManifest.Load(folder);
+        if (manifest != null && manifest.outputs != null)
+        {
+            foreach (VersionManifestFile output in manifest.outputs)
+            {
+                if (output == null || string.IsNullOrWhiteSpace(output.path))
+                {
+                    continue;
+                }
+
+                AddIfExists(paths, MCBUtils.CombineUnityPath(folder, output.path));
+            }
+        }
+
         return paths
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -305,226 +294,6 @@ public static class UnitGitReleasePublisher
         {
             paths.Add(metaPath);
         }
-    }
-
-    private static bool TryGetUnitGitTypes(out Type releasesType, out Type entryType, out Type fieldType, out string message)
-    {
-        releasesType = FindType(UnitGitReleasesTypeName);
-        entryType = FindType(UnitGitReleaseEntryTypeName);
-        fieldType = FindType(UnitGitReleaseFieldTypeName);
-
-        if (releasesType != null && entryType != null && fieldType != null)
-        {
-            message = string.Empty;
-            return true;
-        }
-
-        message = "The Unit Git package (orbiters.unitgit) is not installed.";
-        return false;
-    }
-
-    private static bool TryGetCompatibleUnitGitTypes(
-        out Type releasesType,
-        out Type entryType,
-        out Type fieldType,
-        out string message,
-        params string[] requiredCapabilities)
-    {
-        if (!TryGetUnitGitTypes(out releasesType, out entryType, out fieldType, out message))
-        {
-            return false;
-        }
-
-        int apiVersion = GetStaticIntMember(releasesType, "ApiVersion");
-        if (apiVersion < RequiredApiVersion)
-        {
-            message = $"The Unit Git package is installed but incompatible. MCB requires Unit Git API v{RequiredApiVersion}+; found v{apiVersion}.";
-            return false;
-        }
-
-        foreach (string capability in requiredCapabilities ?? Array.Empty<string>())
-        {
-            if (!HasCapability(releasesType, capability))
-            {
-                message = $"The Unit Git package is installed but incompatible. Missing capability: {capability}.";
-                return false;
-            }
-        }
-
-        message = string.Empty;
-        return true;
-    }
-
-    private static int GetStaticIntMember(Type type, string name)
-    {
-        if (type == null || string.IsNullOrEmpty(name))
-        {
-            return 0;
-        }
-
-        var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static);
-        if (field != null && field.GetValue(null) is int fieldValue)
-        {
-            return fieldValue;
-        }
-
-        var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Static);
-        if (property != null && property.CanRead && property.GetValue(null) is int propertyValue)
-        {
-            return propertyValue;
-        }
-
-        return 0;
-    }
-
-    private static bool HasCapability(Type type, string capability)
-    {
-        if (type == null || string.IsNullOrWhiteSpace(capability))
-        {
-            return false;
-        }
-
-        var method = type.GetMethod("GetCapabilities", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
-        if (method == null)
-        {
-            return false;
-        }
-
-        if (!(method.Invoke(null, null) is IEnumerable capabilities))
-        {
-            return false;
-        }
-
-        foreach (object value in capabilities)
-        {
-            if (string.Equals(value?.ToString(), capability, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static object InvokeUnitGitMethod(Type ownerType, string methodName, Type[] parameterTypes, object[] arguments)
-    {
-        var method = ownerType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static, null, parameterTypes, null);
-        if (method == null)
-        {
-            throw new MissingMethodException(ownerType.FullName, methodName);
-        }
-
-        return method.Invoke(null, arguments);
-    }
-
-    private static void AddReleaseField(object entry, Type fieldType, string key, string value)
-    {
-        if (!(GetMemberValue(entry, "fields") is IList fields))
-        {
-            return;
-        }
-
-        object field = CreateReleaseField(fieldType, key, value);
-        fields.Add(field);
-    }
-
-    private static object CreateReleaseField(Type fieldType, string key, string value)
-    {
-        var constructor = fieldType.GetConstructor(new[] { typeof(string), typeof(string) });
-        if (constructor != null)
-        {
-            return constructor.Invoke(new object[] { key, value });
-        }
-
-        object field = Activator.CreateInstance(fieldType);
-        SetMember(field, "key", key);
-        SetMember(field, "value", value);
-        return field;
-    }
-
-    private static Type FindType(string fullName)
-    {
-        if (string.IsNullOrWhiteSpace(fullName))
-        {
-            return null;
-        }
-
-        var direct = Type.GetType(fullName);
-        if (direct != null)
-        {
-            return direct;
-        }
-
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            Type type = null;
-            try { type = assembly.GetType(fullName); }
-            catch { }
-            if (type != null)
-            {
-                return type;
-            }
-        }
-
-        return null;
-    }
-
-    private static void SetMember(object target, string name, object value)
-    {
-        if (target == null || string.IsNullOrEmpty(name))
-        {
-            return;
-        }
-
-        var type = target.GetType();
-        var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
-        if (field != null)
-        {
-            field.SetValue(target, value);
-            return;
-        }
-
-        var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-        if (property != null && property.CanWrite)
-        {
-            property.SetValue(target, value);
-        }
-    }
-
-    private static object GetMemberValue(object target, string name)
-    {
-        if (target == null || string.IsNullOrEmpty(name))
-        {
-            return null;
-        }
-
-        var type = target.GetType();
-        var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
-        if (field != null)
-        {
-            return field.GetValue(target);
-        }
-
-        var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-        return property != null && property.CanRead ? property.GetValue(target) : null;
-    }
-
-    private static bool GetBoolMember(object target, string name)
-    {
-        object value = GetMemberValue(target, name);
-        return value is bool boolValue && boolValue;
-    }
-
-    private static string GetStringMember(object target, string name)
-    {
-        return GetMemberValue(target, name) as string ?? string.Empty;
-    }
-
-    private static Exception UnwrapReflectionException(Exception ex)
-    {
-        return ex is TargetInvocationException targetInvocation && targetInvocation.InnerException != null
-            ? targetInvocation.InnerException
-            : ex;
     }
 }
 #endif

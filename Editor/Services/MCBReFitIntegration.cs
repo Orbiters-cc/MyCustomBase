@@ -725,8 +725,6 @@ public static class MCBReFitIntegration
 
     private static class ReFitApi
     {
-        private const int RequiredApiVersion = 1;
-        private const string ExecuteCoroutineCapability = "execute-coroutine";
         private const string RequestTypeName = "Orbiters.ReFit.ReFitRequest";
         private const string SettingsTypeName = "Orbiters.ReFit.ReFitSettings";
         private const string ModeTypeName = "Orbiters.ReFit.ReFitMode";
@@ -795,12 +793,7 @@ public static class MCBReFitIntegration
             Type completeDelegateType = typeof(Action<>).MakeGenericType(ResultType);
             Delegate completeDelegate = CreateCompleteDelegate(ResultType, onComplete);
 
-            var method = ServiceType.GetMethod(
-                "ExecuteCoroutine",
-                BindingFlags.Public | BindingFlags.Static,
-                null,
-                new[] { RequestType, ProgressType, completeDelegateType },
-                null);
+            var method = GetExecuteCoroutineMethod();
             if (method == null)
             {
                 throw new MissingMethodException(ServiceType.FullName, "ExecuteCoroutine");
@@ -883,69 +876,28 @@ public static class MCBReFitIntegration
                 return "The ReFit package (orbiters.refit) is not installed.";
             }
 
-            int apiVersion = GetStaticIntMember(ServiceType, "ApiVersion");
-            if (apiVersion < RequiredApiVersion)
+            if (GetExecuteCoroutineMethod() == null)
             {
-                return $"The ReFit package is installed but incompatible. MCB requires ReFit API v{RequiredApiVersion}+; found v{apiVersion}.";
-            }
-
-            if (!HasCapability(ServiceType, ExecuteCoroutineCapability))
-            {
-                return $"The ReFit package is installed but incompatible. Missing capability: {ExecuteCoroutineCapability}.";
+                return "The ReFit package is installed but incompatible. Missing ReFitService.ExecuteCoroutine(ReFitRequest, ReFitProgress, Action<ReFitResult>).";
             }
 
             return string.Empty;
         }
 
-        private static int GetStaticIntMember(Type type, string name)
+        private static MethodInfo GetExecuteCoroutineMethod()
         {
-            if (type == null || string.IsNullOrEmpty(name))
+            if (RequestType == null || ProgressType == null || ServiceType == null || ResultType == null)
             {
-                return 0;
+                return null;
             }
 
-            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static);
-            if (field != null && field.GetValue(null) is int fieldValue)
-            {
-                return fieldValue;
-            }
-
-            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Static);
-            if (property != null && property.CanRead && property.GetValue(null) is int propertyValue)
-            {
-                return propertyValue;
-            }
-
-            return 0;
-        }
-
-        private static bool HasCapability(Type type, string capability)
-        {
-            if (type == null || string.IsNullOrWhiteSpace(capability))
-            {
-                return false;
-            }
-
-            var method = type.GetMethod("GetCapabilities", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
-            if (method == null)
-            {
-                return false;
-            }
-
-            if (!(method.Invoke(null, null) is IEnumerable capabilities))
-            {
-                return false;
-            }
-
-            foreach (object value in capabilities)
-            {
-                if (string.Equals(value?.ToString(), capability, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            Type completeDelegateType = typeof(Action<>).MakeGenericType(ResultType);
+            return ServiceType.GetMethod(
+                "ExecuteCoroutine",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { RequestType, ProgressType, completeDelegateType },
+                null);
         }
 
         private static Delegate CreateCompleteDelegate(Type resultType, Action<object> onComplete)
