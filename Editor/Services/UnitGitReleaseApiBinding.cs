@@ -27,7 +27,7 @@ internal sealed class UnitGitReleaseApiBinding
     private const string UnitGitReleasesTypeName = "Orbiters.UnitGit.Editor.UnitGitReleases";
     private const string UnitGitReleaseEntryTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseEntry";
     private const string UnitGitReleaseFieldTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseField";
-    private const string MissingPackageMessage = "The Unit Git package (orbiters.unitgit) is not installed.";
+    internal const string MissingPackageMessage = "The Unit Git package (orbiters.unitgit) is not installed.";
 
     private readonly Type releasesType;
     private readonly Type entryType;
@@ -112,6 +112,11 @@ internal sealed class UnitGitReleaseApiBinding
         api = new UnitGitReleaseApiBinding(releasesType, entryType, fieldType);
         message = string.Empty;
         return true;
+    }
+
+    internal static bool IsMissingPackageMessage(string message)
+    {
+        return string.Equals(message, MissingPackageMessage, StringComparison.Ordinal);
     }
 
     internal object CreateReleaseEntry()

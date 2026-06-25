@@ -143,6 +143,7 @@ public static class UnitGitReleasePublisher
                 out message,
                 UnitGitReleaseApiBinding.ScopedReleaseCheckpointCapability))
         {
+            SuppressOptionalCheckpointMessage(ref message);
             return false;
         }
 
@@ -237,6 +238,17 @@ public static class UnitGitReleasePublisher
         params string[] requiredCapabilities)
     {
         return UnitGitReleaseApiBinding.TryCreateInstalled(requiredCapabilities, out api, out message);
+    }
+
+    internal static bool SuppressOptionalCheckpointMessage(ref string message)
+    {
+        if (!UnitGitReleaseApiBinding.IsMissingPackageMessage(message))
+        {
+            return false;
+        }
+
+        message = string.Empty;
+        return true;
     }
 
     private static string[] BuildReleaseCheckpointPaths(CustomBaseVersion version)

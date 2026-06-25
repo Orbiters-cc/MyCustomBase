@@ -88,6 +88,42 @@ public sealed class UnitGitReleaseApiBindingTests
         Assert.That(message, Is.EqualTo("The Unit Git package is installed but incompatible. Missing release API method: PublishRelease()."));
     }
 
+    [Test]
+    public void MissingUnitGitPackageIsSilentForAutomaticCheckpointNoOp()
+    {
+        bool ok = UnitGitReleaseApiBinding.TryCreateForTypes(
+            null,
+            null,
+            null,
+            new[] { UnitGitReleaseApiBinding.ScopedReleaseCheckpointCapability },
+            out _,
+            out string message);
+
+        Assert.That(ok, Is.False);
+        Assert.That(message, Is.EqualTo(UnitGitReleaseApiBinding.MissingPackageMessage));
+
+        bool suppressed = UnitGitReleasePublisher.SuppressOptionalCheckpointMessage(ref message);
+
+        Assert.That(suppressed, Is.True);
+        Assert.That(message, Is.Empty);
+    }
+
+    [Test]
+    public void IncompatibleUnitGitPackageStillReportsCheckpointFailure()
+    {
+        bool ok = UnitGitReleaseApiBinding.TryCreateForTypes(
+            typeof(V1ReleasesApi),
+            typeof(ReleaseEntry),
+            typeof(ReleaseField),
+            new[] { UnitGitReleaseApiBinding.ScopedReleaseCheckpointCapability },
+            out _,
+            out string message);
+
+        Assert.That(ok, Is.False);
+        Assert.That(UnitGitReleasePublisher.SuppressOptionalCheckpointMessage(ref message), Is.False);
+        Assert.That(message, Is.EqualTo("The Unit Git package is installed but incompatible. MCB requires Unit Git release API v2; found v1."));
+    }
+
     public sealed class ReleaseField
     {
         public string key = string.Empty;
