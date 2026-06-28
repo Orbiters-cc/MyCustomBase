@@ -17,6 +17,11 @@ using UnityEngine;
 /// </summary>
 public static class MCBReFitIntegration
 {
+    private const string XRayGizmosObjectNamePrefix = "__XRayGizmos_";
+    private const string XRayGizmosMeshNamePrefix = "XRayArmatureMesh";
+    private const string XRayGizmosMeshEdgesSuffix = "_XRayMeshEdges";
+    private const string XRayGizmosWeightPaintSuffix = "_XRayWeightPaint";
+
     private sealed class ReFitSourceReference
     {
         public GameObject sourceAvatar;
@@ -62,10 +67,56 @@ public static class MCBReFitIntegration
         foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
             if (smr == null || smr.sharedMesh == null) continue;
+            if (IsGeneratedEditorOnlyRenderer(smr)) continue;
             if (IsBodyRenderer(smr, baseMeshes)) continue; // part of the base body (Body, Tail, Hair, ...)
             result.Add(smr);
         }
         return result;
+    }
+
+    internal static bool IsGeneratedEditorOnlyRenderer(SkinnedMeshRenderer renderer)
+    {
+        if (renderer == null) return false;
+        if (HasEditorGeneratedHideFlags(renderer.hideFlags)) return true;
+
+        var go = renderer.gameObject;
+        if (go != null)
+        {
+            if (HasEditorGeneratedHideFlags(go.hideFlags)) return true;
+            if (IsXRayGizmosObject(go.transform)) return true;
+        }
+
+        var mesh = renderer.sharedMesh;
+        return mesh != null && IsXRayGizmosMeshName(mesh.name);
+    }
+
+    private static bool HasEditorGeneratedHideFlags(HideFlags flags)
+    {
+        return flags == HideFlags.HideAndDontSave || flags == HideFlags.DontSave;
+    }
+
+    private static bool IsXRayGizmosObject(Transform transform)
+    {
+        while (transform != null)
+        {
+            if (!string.IsNullOrEmpty(transform.name) &&
+                transform.name.StartsWith(XRayGizmosObjectNamePrefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            transform = transform.parent;
+        }
+
+        return false;
+    }
+
+    private static bool IsXRayGizmosMeshName(string name)
+    {
+        return !string.IsNullOrEmpty(name) &&
+               (name.StartsWith(XRayGizmosMeshNamePrefix, StringComparison.Ordinal) ||
+                name.EndsWith(XRayGizmosMeshEdgesSuffix, StringComparison.Ordinal) ||
+                name.EndsWith(XRayGizmosWeightPaintSuffix, StringComparison.Ordinal));
     }
 
     /// <summary>Name -> Mesh of every skinned mesh found in the avatar's base FBX files.</summary>
@@ -229,13 +280,16 @@ public static class MCBReFitIntegration
     {
         if (root == null || smr == null || entry == null) return false;
         bool restored = false;
+        var transformStatesByPath = BuildTransformStateMap(entry.originalTransformStates);
 
         if (entry.originalTransformStates != null)
         {
             foreach (var state in entry.originalTransformStates)
             {
                 if (state == null) continue;
-                var transform = state.transform != null ? state.transform : ResolveStoredTransform(root, state.path);
+                var transform = state.transform != null
+                    ? state.transform
+                    : ResolveOrCreateStoredTransform(root, state.path, transformStatesByPath, undoName);
                 if (transform == null) continue;
 
                 Undo.RecordObject(transform, undoName);
@@ -259,7 +313,7 @@ public static class MCBReFitIntegration
             var bones = new Transform[entry.originalBonePaths.Count];
             for (int i = 0; i < bones.Length; i++)
             {
-                bones[i] = ResolveStoredBone(root, entry, i);
+                bones[i] = ResolveStoredBone(root, entry, i, transformStatesByPath, undoName);
             }
             smr.bones = bones;
             restored = true;
@@ -269,7 +323,7 @@ public static class MCBReFitIntegration
         {
             smr.rootBone = entry.originalRootBone != null
                 ? entry.originalRootBone
-                : ResolveStoredTransform(root, entry.originalRootBonePath);
+                : ResolveOrCreateStoredTransform(root, entry.originalRootBonePath, transformStatesByPath, undoName);
             restored = true;
         }
 
@@ -286,6 +340,11 @@ public static class MCBReFitIntegration
         }
 
         if (RestoreBlendShapeWeights(smr, entry))
+        {
+            restored = true;
+        }
+
+        if (RemoveReFitGeneratedMetadata(smr, undoName))
         {
             restored = true;
         }
@@ -336,7 +395,59 @@ public static class MCBReFitIntegration
         return path.Length == 0 ? root : root.Find(path);
     }
 
-    private static Transform ResolveStoredBone(Transform root, RefitAppliedMeshEntry entry, int index)
+    private static Dictionary<string, RefitTransformState> BuildTransformStateMap(List<RefitTransformState> states)
+    {
+        var map = new Dictionary<string, RefitTransformState>(StringComparer.Ordinal);
+        if (states == null) return map;
+        foreach (var state in states)
+        {
+            if (state == null || string.IsNullOrEmpty(state.path) || map.ContainsKey(state.path)) continue;
+            map.Add(state.path, state);
+        }
+        return map;
+    }
+
+    private static Transform ResolveOrCreateStoredTransform(Transform root, string path,
+        Dictionary<string, RefitTransformState> statesByPath, string undoName)
+    {
+        var existing = ResolveStoredTransform(root, path);
+        if (existing != null || root == null || path == null || path.Length == 0) return existing;
+
+        var parts = path.Split('/');
+        var parent = root;
+        string currentPath = string.Empty;
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string part = parts[i];
+            if (string.IsNullOrEmpty(part)) return null;
+
+            currentPath = currentPath.Length == 0 ? part : currentPath + "/" + part;
+            var child = parent.Find(part);
+            if (child == null)
+            {
+                var go = new GameObject(part);
+                Undo.RegisterCreatedObjectUndo(go, undoName);
+                child = go.transform;
+                child.SetParent(parent, false);
+            }
+
+            if (statesByPath != null && statesByPath.TryGetValue(currentPath, out var state))
+            {
+                Undo.RecordObject(child, undoName);
+                child.localPosition = state.localPosition;
+                child.localRotation = state.localRotation;
+                child.localScale = state.localScale;
+                EditorUtility.SetDirty(child);
+            }
+
+            parent = child;
+        }
+
+        return parent;
+    }
+
+    private static Transform ResolveStoredBone(Transform root, RefitAppliedMeshEntry entry, int index,
+        Dictionary<string, RefitTransformState> statesByPath, string undoName)
     {
         if (entry.originalBones != null &&
             index >= 0 &&
@@ -346,7 +457,19 @@ public static class MCBReFitIntegration
             return entry.originalBones[index];
         }
 
-        return ResolveStoredTransform(root, entry.originalBonePaths[index]);
+        return ResolveOrCreateStoredTransform(root, entry.originalBonePaths[index], statesByPath, undoName);
+    }
+
+    private static bool RemoveReFitGeneratedMetadata(SkinnedMeshRenderer smr, string undoName)
+    {
+        if (smr == null) return false;
+        var metadataType = ReFitApi.FindOptionalType("Orbiters.ReFit.ReFitGeneratedAssetMetadata");
+        if (metadataType == null) return false;
+        var metadata = smr.GetComponent(metadataType);
+        if (metadata == null) return false;
+        Undo.DestroyObjectImmediate(metadata);
+        EditorUtility.SetDirty(smr);
+        return true;
     }
 
     // ------------------------------------------------------------------
@@ -740,6 +863,11 @@ public static class MCBReFitIntegration
         public static string AvailabilityMessage
         {
             get { return GetAvailabilityMessage(); }
+        }
+
+        public static Type FindOptionalType(string fullName)
+        {
+            return FindType(fullName);
         }
 
         private static Type RequestType { get { return FindType(RequestTypeName); } }
