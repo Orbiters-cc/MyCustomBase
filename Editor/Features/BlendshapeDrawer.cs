@@ -90,15 +90,11 @@ public partial class BlendshapeDrawer
             float newWeight = EditorGUILayout.Slider(new GUIContent(shapeName), currentWeight, 0f, 100f);
             if (EditorGUI.EndChangeCheck())
             {
-                foreach (var renderer in renderers)
-                {
-                    int index = renderer.sharedMesh.GetBlendShapeIndex(shapeName);
-                    if (index >= 0)
-                    {
-                        renderer.SetBlendShapeWeight(index, newWeight);
-                        EditorUtility.SetDirty(renderer);
-                    }
-                }
+                MCBReFitIntegration.ApplyBlendShapeWeightWithTransferredReFit(
+                    editor.customBaseTarget,
+                    renderers,
+                    shapeName,
+                    newWeight);
 
                 values.GetArrayElementAtIndex(i).floatValue = newWeight;
                 
@@ -183,15 +179,11 @@ public partial class BlendshapeDrawer
         {
             var entry = blendshapeEntries[i];
             float defaultValue = ParseDefaultValue(entry.defaultValue);
-            bool applied = false;
-            foreach (var renderer in renderers)
-            {
-                int index = renderer.sharedMesh.GetBlendShapeIndex(entry.name);
-                if (index < 0) continue;
-                renderer.SetBlendShapeWeight(index, defaultValue);
-                EditorUtility.SetDirty(renderer);
-                applied = true;
-            }
+            bool applied = MCBReFitIntegration.ApplyBlendShapeWeightWithTransferredReFit(
+                editor.customBaseTarget,
+                renderers,
+                entry.name,
+                defaultValue);
             if (!applied) continue;
             values.GetArrayElementAtIndex(i).floatValue = defaultValue;
         }

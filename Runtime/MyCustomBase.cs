@@ -81,6 +81,8 @@ public class RefitAppliedMeshEntry
     public List<RefitTransformState> originalTransformStates = new List<RefitTransformState>();
     public List<string> originalBlendShapeNames = new List<string>();
     public List<float> originalBlendShapeWeights = new List<float>();
+    public List<string> transferredBlendShapeSourceNames = new List<string>();
+    public List<string> transferredBlendShapeNames = new List<string>();
     public bool originalUpdateWhenOffscreenCaptured;
     public bool originalUpdateWhenOffscreen;
     public bool originalLocalBoundsCaptured;

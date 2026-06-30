@@ -138,7 +138,10 @@ public class VRCFuryService
         foreach (var sliderEntry in selectedSliders)
         {
             AddSliderToggleFeature(slidersObj, avatarRoot, menuPath, sliderEntry);
-            AddApplyDuringUploadFeature(slidersObj, sliderEntry.name);
+            foreach (string blendshapeName in GetSliderBlendshapeActionNames(avatarRoot, sliderEntry.name))
+            {
+                AddApplyDuringUploadFeature(slidersObj, blendshapeName);
+            }
         }
 
         // 5. Add/Update Override Menu Icon if missing
@@ -171,18 +174,26 @@ public class VRCFuryService
         _toggleType.GetField("globalParam")?.SetValue(toggleFeature, GetSliderGlobalParamName(sliderEntry.name));
 
         var state = System.Activator.CreateInstance(_stateType);
-        var blendshapeAction = CreateBlendshapeAction(sliderEntry.name, 100f);
-        if (blendshapeAction != null)
+        var actionsField = _stateType.GetField("actions");
+        if (actionsField?.GetValue(state) is System.Collections.IList actionsList)
         {
-            var actionsField = _stateType.GetField("actions");
-            if (actionsField?.GetValue(state) is System.Collections.IList actionsList)
+            foreach (string blendshapeName in GetSliderBlendshapeActionNames(avatarRoot, sliderEntry.name))
             {
+                var blendshapeAction = CreateBlendshapeAction(blendshapeName, 100f);
+                if (blendshapeAction == null) continue;
                 actionsList.Add(blendshapeAction);
             }
         }
 
         _toggleType.GetField("state")?.SetValue(toggleFeature, state);
         _vrcFuryType.GetField("content").SetValue(vrcf, toggleFeature);
+    }
+
+    private static List<string> GetSliderBlendshapeActionNames(GameObject avatarRoot, string sliderName)
+    {
+        var customBase = avatarRoot != null ? avatarRoot.GetComponentInChildren<MyCustomBase>(true) : null;
+        var names = MCBReFitIntegration.GetBlendShapeNamesWithTransferredReFit(customBase, sliderName);
+        return names.Count > 0 ? names : new List<string> { sliderName };
     }
 
     private void AddApplyDuringUploadFeature(GameObject obj, string blendshapeName)

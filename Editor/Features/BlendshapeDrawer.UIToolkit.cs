@@ -153,15 +153,11 @@ public partial class BlendshapeDrawer
         float defaultValue,
         float newWeight)
     {
-        foreach (var renderer in renderers)
-        {
-            int index = renderer.sharedMesh.GetBlendShapeIndex(shapeName);
-            if (index >= 0)
-            {
-                renderer.SetBlendShapeWeight(index, newWeight);
-                EditorUtility.SetDirty(renderer);
-            }
-        }
+        MCBReFitIntegration.ApplyBlendShapeWeightWithTransferredReFit(
+            editor.customBaseTarget,
+            renderers,
+            shapeName,
+            newWeight);
 
         editor.serializedObject.Update();
         var values = editor.blendShapeValuesProp;

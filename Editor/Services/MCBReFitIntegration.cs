@@ -381,6 +381,60 @@ public static class MCBReFitIntegration
         return true;
     }
 
+    public static List<string> GetBlendShapeNamesWithTransferredReFit(MyCustomBase target, string sourceBlendShapeName)
+    {
+        var names = new List<string>();
+        if (string.IsNullOrEmpty(sourceBlendShapeName)) return names;
+
+        names.Add(sourceBlendShapeName);
+        if (target?.appliedRefits == null) return names;
+
+        foreach (var entry in target.appliedRefits)
+        {
+            if (entry?.transferredBlendShapeSourceNames == null || entry.transferredBlendShapeNames == null) continue;
+            int count = Math.Min(entry.transferredBlendShapeSourceNames.Count, entry.transferredBlendShapeNames.Count);
+            for (int i = 0; i < count; i++)
+            {
+                if (!string.Equals(entry.transferredBlendShapeSourceNames[i], sourceBlendShapeName, StringComparison.Ordinal))
+                    continue;
+
+                string generatedName = entry.transferredBlendShapeNames[i];
+                if (!string.IsNullOrEmpty(generatedName) && !names.Contains(generatedName))
+                    names.Add(generatedName);
+            }
+        }
+
+        return names;
+    }
+
+    public static bool ApplyBlendShapeWeightWithTransferredReFit(MyCustomBase target,
+        IEnumerable<SkinnedMeshRenderer> renderers, string sourceBlendShapeName, float weight)
+    {
+        if (renderers == null || string.IsNullOrEmpty(sourceBlendShapeName)) return false;
+
+        var names = GetBlendShapeNamesWithTransferredReFit(target, sourceBlendShapeName);
+        if (names.Count == 0) return false;
+
+        bool changed = false;
+        foreach (var renderer in renderers)
+        {
+            if (renderer == null || renderer.sharedMesh == null) continue;
+
+            var appliedIndices = new HashSet<int>();
+            foreach (string name in names)
+            {
+                int index = renderer.sharedMesh.GetBlendShapeIndex(name);
+                if (index < 0 || !appliedIndices.Add(index)) continue;
+
+                renderer.SetBlendShapeWeight(index, weight);
+                EditorUtility.SetDirty(renderer);
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
     private static bool TryGetPathUnderRoot(Transform root, Transform transform, out string path)
     {
         path = null;
@@ -742,6 +796,10 @@ public static class MCBReFitIntegration
                 if (existing.originalMesh == null) existing.originalMesh = originalMesh;
                 existing.refitMesh = ReFitApi.GetMesh(result);
                 existing.refitMeshAssetPath = ReFitApi.GetMeshAssetPath(result);
+                UpdateTransferredBlendShapeMap(existing,
+                    ReFitApi.GetSecondarySourceShapeNames(result),
+                    ReFitApi.GetSecondaryShapeNames(result));
+                SyncTransferredBlendShapeWeights(existing, targetBody, renderer);
                 if (!string.IsNullOrEmpty(existing.refitMeshAssetPath)) changedPaths.Add(existing.refitMeshAssetPath);
                 EditorUtility.SetDirty(mcb);
             }
@@ -752,6 +810,66 @@ public static class MCBReFitIntegration
             }
             reportDone(++done);
         }
+    }
+
+    private static void UpdateTransferredBlendShapeMap(RefitAppliedMeshEntry entry, string[] sourceNames, string[] generatedNames)
+    {
+        if (entry == null) return;
+        if (entry.transferredBlendShapeSourceNames == null)
+            entry.transferredBlendShapeSourceNames = new List<string>();
+        if (entry.transferredBlendShapeNames == null)
+            entry.transferredBlendShapeNames = new List<string>();
+
+        entry.transferredBlendShapeSourceNames.Clear();
+        entry.transferredBlendShapeNames.Clear();
+
+        if (sourceNames == null || generatedNames == null) return;
+        int count = Math.Min(sourceNames.Length, generatedNames.Length);
+        for (int i = 0; i < count; i++)
+        {
+            string sourceName = sourceNames[i];
+            string generatedName = generatedNames[i];
+            if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(generatedName)) continue;
+            entry.transferredBlendShapeSourceNames.Add(sourceName);
+            entry.transferredBlendShapeNames.Add(generatedName);
+        }
+    }
+
+    private static void SyncTransferredBlendShapeWeights(RefitAppliedMeshEntry entry,
+        SkinnedMeshRenderer sourceBody, SkinnedMeshRenderer targetRenderer)
+    {
+        if (entry?.transferredBlendShapeSourceNames == null ||
+            entry.transferredBlendShapeNames == null ||
+            sourceBody == null ||
+            sourceBody.sharedMesh == null ||
+            targetRenderer == null ||
+            targetRenderer.sharedMesh == null)
+        {
+            return;
+        }
+
+        bool changed = false;
+        int count = Math.Min(entry.transferredBlendShapeSourceNames.Count, entry.transferredBlendShapeNames.Count);
+        for (int i = 0; i < count; i++)
+        {
+            string sourceName = entry.transferredBlendShapeSourceNames[i];
+            string generatedName = entry.transferredBlendShapeNames[i];
+            if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(generatedName)) continue;
+
+            int sourceIndex = sourceBody.sharedMesh.GetBlendShapeIndex(sourceName);
+            int generatedIndex = targetRenderer.sharedMesh.GetBlendShapeIndex(generatedName);
+            if (sourceIndex < 0 || generatedIndex < 0) continue;
+
+            if (!changed)
+            {
+                Undo.RecordObject(targetRenderer, "MCB ReFit blendshape sync");
+                changed = true;
+            }
+
+            targetRenderer.SetBlendShapeWeight(generatedIndex, sourceBody.GetBlendShapeWeight(sourceIndex));
+        }
+
+        if (changed) EditorUtility.SetDirty(targetRenderer);
     }
 
     /// <summary>Restores a single asset renderer to its original renderer state and drops it from the tracking list.</summary>
@@ -959,6 +1077,16 @@ public static class MCBReFitIntegration
             return GetMemberValue(result, "meshAssetPath") as string;
         }
 
+        public static string[] GetSecondaryShapeNames(object result)
+        {
+            return GetStringArray(result, "secondaryShapeNames");
+        }
+
+        public static string[] GetSecondarySourceShapeNames(object result)
+        {
+            return GetStringArray(result, "secondarySourceShapeNames");
+        }
+
         public static string GetErrorSummary(object result)
         {
             var errors = new List<string>();
@@ -982,6 +1110,22 @@ public static class MCBReFitIntegration
             }
 
             return errors.Count == 0 ? "unknown error" : string.Join("; ", errors);
+        }
+
+        private static string[] GetStringArray(object result, string name)
+        {
+            object value = GetMemberValue(result, name);
+            if (value is string[] array) return array;
+            if (value is IEnumerable enumerable)
+            {
+                var strings = new List<string>();
+                foreach (object item in enumerable)
+                {
+                    strings.Add(item as string);
+                }
+                return strings.ToArray();
+            }
+            return null;
         }
 
         private static void EnsureAvailable()

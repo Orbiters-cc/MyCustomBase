@@ -1342,6 +1342,7 @@ public class VersionActions
                 if (preserveBlendshapeValues)
                 {
                     RestoreBlendshapeState(root, blendshapeSnapshot, BuildBlendshapeDefaultLookup(version));
+                    SyncReFitTransferredBlendshapeWeights(root, version);
                     SyncBlendshapeOverridesFromCurrentWeights(root, version);
                     MCBLogger.Log($"[VersionActions] Restored blendshape values by name (saved renderers: {blendshapeSnapshot.Count}, overrides: {editor.customBaseTarget.customBlendshapeOverrideNames.Count})");
                 }
@@ -2146,19 +2147,51 @@ public class VersionActions
                 valueToApply = editor.customBaseTarget.customBlendshapeOverrideValues[overrideIdx];
             }
 
-            foreach (var renderer in renderers)
-            {
-                int index = renderer.sharedMesh.GetBlendShapeIndex(entry.name);
-                if (index >= 0)
-                {
-                    renderer.SetBlendShapeWeight(index, valueToApply);
-                    EditorUtility.SetDirty(renderer);
-                }
-            }
+            MCBReFitIntegration.ApplyBlendShapeWeightWithTransferredReFit(
+                editor.customBaseTarget,
+                renderers,
+                entry.name,
+                valueToApply);
 
             editor.customBaseTarget.blendShapeValues.Add(valueToApply);
         }
 
+    }
+
+    private void SyncReFitTransferredBlendshapeWeights(Transform root, CustomBaseVersion version)
+    {
+        if (root == null || version?.customBlendshapes == null || version.customBlendshapes.Length == 0) return;
+
+        var renderers = GetTargetBlendshapeRenderers(root).ToList();
+        if (renderers.Count == 0) return;
+
+        foreach (var entry in version.customBlendshapes)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.name)) continue;
+            if (!TryGetCurrentBlendshapeWeight(renderers, entry.name, out float currentWeight)) continue;
+            MCBReFitIntegration.ApplyBlendShapeWeightWithTransferredReFit(
+                editor.customBaseTarget,
+                renderers,
+                entry.name,
+                currentWeight);
+        }
+    }
+
+    private static bool TryGetCurrentBlendshapeWeight(IEnumerable<SkinnedMeshRenderer> renderers, string blendshapeName, out float weight)
+    {
+        weight = 0f;
+        if (renderers == null || string.IsNullOrEmpty(blendshapeName)) return false;
+
+        foreach (var renderer in renderers)
+        {
+            if (renderer == null || renderer.sharedMesh == null) continue;
+            int index = renderer.sharedMesh.GetBlendShapeIndex(blendshapeName);
+            if (index < 0) continue;
+            weight = renderer.GetBlendShapeWeight(index);
+            return true;
+        }
+
+        return false;
     }
 
     private IEnumerable<SkinnedMeshRenderer> GetTargetBlendshapeRenderers(Transform root)
