@@ -803,7 +803,8 @@ public partial class AssetGalleryModule
 
                     editor.RefreshUiToolkitSections();
                     editor.Repaint();
-                }));
+                },
+                editor.customBaseTarget));
     }
 
     private void ApplyDiscoveryResponse(AvatarAssetDiscoveryResponse response, bool filterOnlyCompatible)

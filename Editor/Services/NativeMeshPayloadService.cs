@@ -903,7 +903,7 @@ public static class NativeMeshPayloadService
             string sourcePath = MCBUtils.ToUnityPath(rawPath);
             var source = version?.sourceFiles?.FirstOrDefault(file =>
                 file != null &&
-                string.Equals(MCBUtils.ToUnityPath(file.path), sourcePath, StringComparison.OrdinalIgnoreCase));
+                SourceFileMatchesPath(file, sourcePath));
             foreach (var renderer in ResolveRenderersForSource(avatarRoot, source))
             {
                 if (renderer != null && seen.Add(renderer.GetInstanceID()))
@@ -2868,7 +2868,7 @@ public static class NativeMeshPayloadService
         {
             var source = version.sourceFiles.FirstOrDefault(file =>
                 file != null &&
-                string.Equals(MCBUtils.ToUnityPath(file.path), MCBUtils.ToUnityPath(sourcePath), StringComparison.OrdinalIgnoreCase));
+                SourceFileMatchesPath(file, MCBUtils.ToUnityPath(sourcePath)));
             if (source != null)
             {
                 yield return source;
@@ -3254,6 +3254,28 @@ public static class NativeMeshPayloadService
                normalized.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase)
             ? normalized.Substring(0, normalized.Length - FileManagerService.OriginalSuffix.Length)
             : normalized;
+    }
+
+    private static bool SourceFileMatchesPath(ModelFileData file, string normalizedPath)
+    {
+        if (file == null || string.IsNullOrWhiteSpace(normalizedPath))
+        {
+            return false;
+        }
+
+        string sourcePath = MCBUtils.ToUnityPath(file.path);
+        if (string.Equals(sourcePath, normalizedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (file.metadata != null &&
+            file.metadata.TryGetValue(AvatarPathOverrideService.MetadataLocalTargetPath, out object localTargetPath))
+        {
+            return string.Equals(MCBUtils.ToUnityPath(localTargetPath?.ToString()), normalizedPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static string BuildUniqueSubAssetName(string baseName, HashSet<string> usedNames)

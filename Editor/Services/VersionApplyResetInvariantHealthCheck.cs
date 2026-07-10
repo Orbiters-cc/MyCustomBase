@@ -82,11 +82,27 @@ public static class VersionApplyResetInvariantHealthCheck
             File.WriteAllBytes(binBPath, fileManager.XorTransform(original, versionB));
             File.WriteAllBytes(binCPath, fileManager.XorTransform(original, versionC));
 
-            InvokePrivate(actions, "ApplyXorBinToFbx", binBPath, targetPath);
+            var version = new CustomBaseVersion
+            {
+                sourceFiles = new[]
+                {
+                    new ModelFileData
+                    {
+                        id = 1,
+                        path = targetPath,
+                        hash = fileManager.CalculateFileHash(targetPath),
+                        type = "FBX",
+                        role = "SOURCE"
+                    }
+                }
+            };
+            var patch = new ModelFileData { sourceModelFileId = 1 };
+
+            InvokePrivate(actions, "ApplyXorBinToFbx", version, patch, binBPath, targetPath);
             AssertFileBytes(targetPath + FileManagerService.OriginalSuffix, original, "First XOR apply did not preserve the original backup.");
             AssertFileBytes(targetPath, versionB, "First XOR apply did not produce version B bytes.");
 
-            InvokePrivate(actions, "ApplyXorBinToFbx", binCPath, targetPath);
+            InvokePrivate(actions, "ApplyXorBinToFbx", version, patch, binCPath, targetPath);
             AssertFileBytes(targetPath + FileManagerService.OriginalSuffix, original, "Second XOR apply overwrote the original backup.");
             AssertFileBytes(targetPath, versionC, "Second XOR apply did not use the original backup as its XOR key.");
         }
@@ -143,7 +159,7 @@ public static class VersionApplyResetInvariantHealthCheck
             File.WriteAllBytes(backupPath, original);
 
             string resolvedWithBackup = (string)InvokeStaticPrivate("ResolveOriginalFbxKeyPath", targetPath);
-            ThrowIf(!PathsEqual(resolvedWithBackup, backupPath), "Advanced mesh key resolution did not prefer .fbx.old when present.");
+            ThrowIf(!PathsEqual(resolvedWithBackup, backupPath), "Advanced mesh key resolution did not prefer .fbx.originalbase when present.");
 
             File.Delete(backupPath);
             string resolvedWithoutBackup = (string)InvokeStaticPrivate("ResolveOriginalFbxKeyPath", targetPath);
@@ -258,7 +274,7 @@ public static class VersionApplyResetInvariantHealthCheck
         var actions = new VersionActions(null, null, new FileManagerService());
         AssertThrows<FileNotFoundException>(
             () => InvokePrivate(actions, "RestoreBackupsForVersion", version, "Assets/MCB/HealthChecks/Fallback.fbx", true),
-            "Reset should fail when a backup is required and no affected .fbx.old file exists.");
+            "Reset should fail when a backup is required and no affected .fbx.originalbase file exists.");
 
         InvokePrivate(actions, "RestoreBackupsForVersion", version, "Assets/MCB/HealthChecks/Fallback.fbx", false);
     }

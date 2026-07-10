@@ -91,6 +91,7 @@ Editor/Services/AuthenticationService.cs
 Editor/Services/AvatarAssetDiscoveryService.cs
 Editor/Services/AvatarDefinitionGenerationService.cs
 Editor/Services/AvatarParametersService.cs
+Editor/Services/AvatarPathOverrideService.cs
 Editor/Services/BlenderAddonService.cs
 Editor/Services/BlenderInstallService.cs
 Editor/Services/BlenderProjectService.cs
@@ -125,6 +126,7 @@ Editor/Services/SceneMeshDotEffectService.cs
 Editor/Services/SmrPathService.cs
 Editor/Services/UnitGitReleaseApiBinding.cs
 Editor/Services/UnitGitReleasePublisher.cs
+Editor/Services/UnityPackageFbxSourceExtractor.cs
 Editor/Services/UserCustomVersionService.cs
 Editor/Services/UserService.cs
 Editor/Services/VersionApplyResetInvariantHealthCheck.cs
@@ -164,4 +166,5 @@ Runtime/MCBLogger.cs
 Runtime/MCBUtils.cs
 Runtime/MyCustomBase.cs
 Tests/Editor/mcb.Editor.Tests.asmdef
+Tests/Editor/MCBReFitIntegrationTests.cs
 Tests/Editor/UnitGitReleaseApiBindingTests.cs

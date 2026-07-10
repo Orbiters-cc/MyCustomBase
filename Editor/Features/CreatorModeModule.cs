@@ -2129,19 +2129,28 @@ public partial class CreatorModeModule
             string sourceFbxPath = AssetDatabase.GetAssetPath(sourceFbx);
             if (string.IsNullOrWhiteSpace(sourceFbxPath))
                 throw new Exception($"Source FBX {i + 1} is missing.");
-            sourceFbxByPath[MCBUtils.ToUnityPath(sourceFbxPath)] = sourceFbx;
+            string localTargetPath = MCBUtils.ToUnityPath(sourceFbxPath);
+            sourceFbxByPath[localTargetPath] = sourceFbx;
 
-            string originalFbxPath = sourceFbxPath + FileManagerService.OriginalSuffix;
+            var pathOverride = AvatarPathOverrideService.FindOverrideForLocalTarget(editor.customBaseTarget, localTargetPath);
+            string referenceSourcePath = !string.IsNullOrWhiteSpace(pathOverride?.referenceSourcePath)
+                ? AvatarPathOverrideService.NormalizeUnityPath(pathOverride.referenceSourcePath)
+                : localTargetPath;
+
+            string originalFbxPath = FileManagerService.GetOriginalBasePath(localTargetPath);
             if (!File.Exists(originalFbxPath))
             {
-                originalFbxPath = sourceFbxPath;
+                originalFbxPath = localTargetPath;
             }
             if (!File.Exists(originalFbxPath))
-                throw new Exception($"FBX file not found for target {i + 1}: {sourceFbxPath}");
+                throw new Exception($"FBX file not found for target {i + 1}: {localTargetPath}");
 
             packageEntries.Add(new FileManagerService.ModelFilePackageEntry
             {
                 sourceFbxPath = originalFbxPath,
+                referenceSourcePath = referenceSourcePath,
+                localTargetPath = localTargetPath,
+                pathOverride = pathOverride,
                 customFbx = customFbx,
                 externalCustomFbxPath = hasExternalCustomFbx ? Path.GetFullPath(externalCustomFbxPath) : null,
                 customBaseAvatar = customAvatar
@@ -2162,11 +2171,9 @@ public partial class CreatorModeModule
             editor.useHdiffFbxDeltaForCreatorProp.boolValue;
         foreach (var packageEntry in packageEntries)
         {
-            string sourceUnityPath = MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
-            if (sourceUnityPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase))
-            {
-                sourceUnityPath = sourceUnityPath.Substring(0, sourceUnityPath.Length - FileManagerService.OriginalSuffix.Length);
-            }
+            string sourceUnityPath = !string.IsNullOrWhiteSpace(packageEntry.localTargetPath)
+                ? MCBUtils.ToUnityPath(packageEntry.localTargetPath)
+                : MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
             sourceFbxByPath.TryGetValue(sourceUnityPath, out var sourceFbx);
 
             packageEntry.useAdvancedMeshReplacement = useAdvancedMeshReplacement &&
@@ -2192,32 +2199,54 @@ public partial class CreatorModeModule
         var versionFileEntries = new List<ModelFileData>();
         foreach (var packageEntry in packageEntries)
         {
-            string sourceUnityPath = MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
-            if (sourceUnityPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase))
-            {
-                sourceUnityPath = sourceUnityPath.Substring(0, sourceUnityPath.Length - FileManagerService.OriginalSuffix.Length);
-            }
+            string localTargetPath = !string.IsNullOrWhiteSpace(packageEntry.localTargetPath)
+                ? MCBUtils.ToUnityPath(packageEntry.localTargetPath)
+                : MCBUtils.ToUnityPath(packageEntry.sourceFbxPath);
+            string referenceSourcePath = !string.IsNullOrWhiteSpace(packageEntry.referenceSourcePath)
+                ? MCBUtils.ToUnityPath(packageEntry.referenceSourcePath)
+                : localTargetPath;
 
-            var sourceMetas = ResolveSourceMetasForPath(sourceUnityPath);
+            var sourceMetas = ResolveSourceMetasForPath(referenceSourcePath);
             string customFbxPath = packageEntry.customFbx != null
                 ? AssetDatabase.GetAssetPath(packageEntry.customFbx)
                 : packageEntry.externalCustomFbxPath;
             var customMetas = CollectModelImporterMetaForUnityPath(customFbxPath);
 
-            sourceFileEntries.Add(new ModelFileData
+            var sourceFileEntry = new ModelFileData
             {
-                path = sourceUnityPath,
+                path = referenceSourcePath,
                 hash = packageEntry.sourceHash,
                 type = "FBX",
                 role = "SOURCE",
                 metas = sourceMetas,
                 smrPaths = packageEntry.smrPaths ?? new List<ModelFileSmrPathData>()
-            });
+            };
+            if (packageEntry.pathOverride != null)
+            {
+                AvatarPathOverrideService.ApplyOverrideMetadata(sourceFileEntry, packageEntry.pathOverride, editor.customBaseTarget);
+            }
+            sourceFileEntries.Add(sourceFileEntry);
 
             var modelFileMetadata = new Dictionary<string, object>
             {
-                { "sourcePath", sourceUnityPath }
+                { "sourcePath", referenceSourcePath }
             };
+            if (!string.Equals(referenceSourcePath, localTargetPath, StringComparison.OrdinalIgnoreCase))
+            {
+                modelFileMetadata[AvatarPathOverrideService.MetadataLocalTargetPath] = localTargetPath;
+                string localTargetGuid = AssetDatabase.AssetPathToGUID(localTargetPath);
+                if (!string.IsNullOrWhiteSpace(localTargetGuid))
+                {
+                    modelFileMetadata[AvatarPathOverrideService.MetadataLocalTargetGuid] = localTargetGuid;
+                }
+            }
+            if (packageEntry.pathOverride != null)
+            {
+                AvatarPathOverrideService.ApplyOverrideMetadata(
+                    new ModelFileData { metadata = modelFileMetadata },
+                    packageEntry.pathOverride,
+                    editor.customBaseTarget);
+            }
             if (!string.IsNullOrWhiteSpace(customFbxPath))
             {
                 modelFileMetadata["customFbxPath"] = customFbxPath;
@@ -2467,6 +2496,12 @@ public partial class CreatorModeModule
             foreach (var versionFile in ver.versionFiles ?? Array.Empty<ModelFileData>())
             {
                 string sourcePath = GetMetadataString(versionFile, "sourcePath");
+                string localTargetPath = GetMetadataString(versionFile, AvatarPathOverrideService.MetadataLocalTargetPath);
+                if (!string.IsNullOrWhiteSpace(localTargetPath))
+                {
+                    versionFilesBySourcePath[MCBUtils.ToUnityPath(localTargetPath)] = versionFile;
+                }
+
                 if (string.IsNullOrWhiteSpace(sourcePath))
                 {
                     continue;

@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -15,11 +16,16 @@ using CompressionLevel = System.IO.Compression.CompressionLevel;
 
 public class FileManagerService
 {
-    public const string OriginalSuffix = ".old";
+    public const string OriginalBaseSuffix = ".originalbase";
+    public const string OriginalSuffix = OriginalBaseSuffix;
+    public const string PreMcbBackupPrefix = ".backup";
 
     public class ModelFilePackageEntry
     {
         public string sourceFbxPath;
+        public string referenceSourcePath;
+        public string localTargetPath;
+        public AvatarPathOverrideEntry pathOverride;
         public GameObject customFbx;
         public string externalCustomFbxPath;
         public Avatar customBaseAvatar;
@@ -56,14 +62,14 @@ public class FileManagerService
     public void CreateBackup(string fbxPath)
     {
         if (string.IsNullOrEmpty(fbxPath) || !File.Exists(fbxPath)) return;
-        string backupPath = fbxPath + OriginalSuffix;
+        string backupPath = GetOriginalBasePath(fbxPath);
         if (File.Exists(backupPath)) return;
         File.Copy(fbxPath, backupPath);
     }
     
     public bool BackupExists(string fbxPath)
     {
-        return !string.IsNullOrEmpty(fbxPath) && File.Exists(fbxPath + OriginalSuffix);
+        return !string.IsNullOrEmpty(fbxPath) && File.Exists(GetOriginalBasePath(fbxPath));
     }
 
     public bool FbxMatchesBackupAtPath(string unityFbxPath)
@@ -75,7 +81,7 @@ public class FileManagerService
 
         string unityPath = MCBUtils.ToUnityPath(unityFbxPath);
         string fullFbxPath = Path.GetFullPath(unityPath);
-        string fullBackupPath = fullFbxPath + OriginalSuffix;
+        string fullBackupPath = GetOriginalBasePath(fullFbxPath);
         return File.Exists(fullFbxPath) &&
                File.Exists(fullBackupPath) &&
                FilesAreEqual(fullFbxPath, fullBackupPath);
@@ -101,7 +107,7 @@ public class FileManagerService
             return false;
         }
 
-        string backupPath = targetFullPath + OriginalSuffix;
+        string backupPath = GetOriginalBasePath(targetFullPath);
         if (!File.Exists(backupPath))
         {
             File.Copy(targetFullPath, backupPath);
@@ -159,19 +165,19 @@ public class FileManagerService
 
     public void RestoreBackup(string fbxPath)
     {
-        string backupPath = fbxPath + OriginalSuffix;
+        string backupPath = GetOriginalBasePath(fbxPath);
         if (!File.Exists(backupPath)) return;
         File.Copy(backupPath, fbxPath, true);
     }
 
     // Force-restore a specific FBX regardless of current selection/state.
-    // The .old file is the immutable default-base source and must remain in place.
+    // The .originalbase file is the immutable default-base source and must remain in place.
     public void ForceRestoreBackupAtPath(string unityFbxPath)
     {
         if (string.IsNullOrEmpty(unityFbxPath)) throw new ArgumentNullException(nameof(unityFbxPath));
         string unityPath = MCBUtils.ToUnityPath(unityFbxPath);
         string fullFbxPath = Path.GetFullPath(unityPath);
-        string fullBackupPath = fullFbxPath + OriginalSuffix;
+        string fullBackupPath = GetOriginalBasePath(fullFbxPath);
 
         if (!File.Exists(fullBackupPath))
         {
@@ -190,6 +196,46 @@ public class FileManagerService
         // Force Unity to reimport the restored FBX
         AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
         AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+    }
+
+    public static string GetOriginalBasePath(string fbxPath)
+    {
+        if (string.IsNullOrEmpty(fbxPath)) return fbxPath;
+        return fbxPath.EndsWith(OriginalBaseSuffix, StringComparison.OrdinalIgnoreCase)
+            ? fbxPath
+            : fbxPath + OriginalBaseSuffix;
+    }
+
+    public static string CreatePreMcbBackupToken(DateTime? timestampOverride = null)
+    {
+        DateTime timestamp = (timestampOverride ?? DateTime.Now).ToLocalTime();
+        return timestamp.ToString("ddMMMyyyy-HHmmss", CultureInfo.InvariantCulture).ToLowerInvariant();
+    }
+
+    public static string GetPreMcbBackupPath(string fbxPath, string token)
+    {
+        if (string.IsNullOrWhiteSpace(fbxPath) || string.IsNullOrWhiteSpace(token)) return null;
+        return fbxPath + PreMcbBackupPrefix + token;
+    }
+
+    public string CreatePreMcbBackup(string fbxPath, string preferredToken = null)
+    {
+        if (string.IsNullOrWhiteSpace(fbxPath) || !File.Exists(fbxPath)) return null;
+
+        string tokenBase = string.IsNullOrWhiteSpace(preferredToken)
+            ? CreatePreMcbBackupToken()
+            : preferredToken.Trim();
+        string token = tokenBase;
+        string backupPath = GetPreMcbBackupPath(fbxPath, token);
+        int attempt = 1;
+        while (File.Exists(backupPath))
+        {
+            token = $"{tokenBase}-{attempt++}";
+            backupPath = GetPreMcbBackupPath(fbxPath, token);
+        }
+
+        File.Copy(fbxPath, backupPath);
+        return token;
     }
     
     public void DeleteVersionFolder(string path)

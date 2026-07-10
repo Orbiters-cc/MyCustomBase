@@ -1352,6 +1352,14 @@ public class MCBEditor : UnityEditor.Editor
             customBaseTarget.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
             EditorUtility.SetDirty(customBaseTarget);
         }
+
+        if (customBaseTarget.avatarPathOverrides == null)
+        {
+            customBaseTarget.avatarPathOverrides = new List<AvatarPathOverrideEntry>();
+            EditorUtility.SetDirty(customBaseTarget);
+        }
+
+        AvatarPathOverrideService.EnsureInstanceId(customBaseTarget);
     }
 
     private void PlayPendingComponentAddedMeshEffect()
@@ -1456,12 +1464,18 @@ public class MCBEditor : UnityEditor.Editor
             return false;
         }
 
+        AvatarPathOverrideService.SyncOverridesForSelectedAsset(
+            customBaseTarget,
+            selectedAsset.sourceFiles,
+            GetDetectedAvatarFbxPaths());
+
         var paths = selectedAsset.sourceFiles
             .Where(file => file != null
                            && string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase)
                            && string.Equals(file.role, "SOURCE", StringComparison.OrdinalIgnoreCase)
                            && !string.IsNullOrWhiteSpace(file.path))
-            .Select(file => MCBUtils.ToUnityPath(file.path))
+            .Select(file => AvatarPathOverrideService.ResolveLocalTargetPath(customBaseTarget, file))
+            .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 

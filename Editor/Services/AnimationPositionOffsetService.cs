@@ -629,7 +629,8 @@ public class AnimationPositionOffsetService
             string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
             var byPath = version.sourceFiles.FirstOrDefault(file =>
                 file != null &&
-                string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase));
+                (string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(MCBUtils.ToUnityPath(GetMetadataString(file, AvatarPathOverrideService.MetadataLocalTargetPath)), normalizedSourcePath, StringComparison.OrdinalIgnoreCase)));
             if (byPath != null) return byPath;
         }
 

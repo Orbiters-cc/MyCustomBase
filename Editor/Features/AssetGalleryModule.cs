@@ -41,6 +41,29 @@ public class CreateCustomBaseAssetResponse
 
 public partial class AssetGalleryModule
 {
+    private enum CreateCustomBaseSceneMode
+    {
+        AlreadyCustomized,
+        DefaultBase
+    }
+
+    private sealed class OriginalSourceKeyCandidate
+    {
+        public string displayName;
+        public string publishedSourcePath;
+        public string externalPath;
+        public string hash;
+        public string importKind;
+        public string packagePath;
+    }
+
+    private sealed class OriginalSourceKeyMapping
+    {
+        public string localTargetPath;
+        public int selectedCandidateIndex = -1;
+        public string referenceSourcePath;
+    }
+
     private readonly MCBEditor editor;
     private readonly GalleryBrowser galleryBrowser;
     private readonly SelectedAssetPanel selectedAssetPanel;
@@ -97,9 +120,12 @@ public partial class AssetGalleryModule
     private string createDescription = "";
     private string createJinxxyLink = "";
     private string createGumroadLink = "";
+    private CreateCustomBaseSceneMode createSceneMode = CreateCustomBaseSceneMode.AlreadyCustomized;
     private int selectedAvatarBaseIndex;
     private string otherAvatarBaseName = "";
     private readonly List<GameObject> targetFbxFiles = new List<GameObject>();
+    private readonly List<OriginalSourceKeyCandidate> originalSourceKeyCandidates = new List<OriginalSourceKeyCandidate>();
+    private readonly List<OriginalSourceKeyMapping> originalSourceKeyMappings = new List<OriginalSourceKeyMapping>();
     private bool isLoadingAvatarBases;
     private string avatarBaseLoadError;
     private List<CreatorAvatarBaseOption> avatarBaseOptions = new List<CreatorAvatarBaseOption>();

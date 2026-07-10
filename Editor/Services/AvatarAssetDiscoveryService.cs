@@ -50,6 +50,7 @@ internal class AvatarAssetDiscoveryRequest
 {
     [JsonProperty] public List<string> paths;
     [JsonProperty] public List<ModelFileData> files;
+    [JsonProperty] public List<AvatarPathOverrideService.DiscoveryPathOverridePayload> pathOverrides;
     [JsonProperty] public bool filterOnlyCompatible;
 }
 
@@ -148,7 +149,8 @@ public static class AvatarAssetDiscoveryService
         string authToken,
         List<string> paths,
         bool filterOnlyCompatible,
-        Action<AvatarAssetDiscoveryResponse, string> onComplete)
+        Action<AvatarAssetDiscoveryResponse, string> onComplete,
+        MyCustomBase customBaseTarget = null)
     {
         if (string.IsNullOrWhiteSpace(authToken))
         {
@@ -177,7 +179,8 @@ public static class AvatarAssetDiscoveryService
         }
 
         var projectFiles = inventoryTask.Result;
-        string cacheKey = BuildDiscoveryCacheKey(authToken, normalizedPaths, projectFiles, filterOnlyCompatible);
+        var pathOverrides = AvatarPathOverrideService.BuildDiscoveryPayload(customBaseTarget);
+        string cacheKey = BuildDiscoveryCacheKey(authToken, normalizedPaths, projectFiles, pathOverrides, filterOnlyCompatible);
         AvatarAssetDiscoveryResponse cachedResponse;
         if (TryGetCachedDiscoveryResponse(cacheKey, filterOnlyCompatible, out cachedResponse))
         {
@@ -194,6 +197,7 @@ public static class AvatarAssetDiscoveryService
         {
             paths = normalizedPaths,
             files = projectFiles,
+            pathOverrides = pathOverrides,
             filterOnlyCompatible = filterOnlyCompatible
         };
 
@@ -345,13 +349,19 @@ public static class AvatarAssetDiscoveryService
         string authToken,
         IEnumerable<string> paths,
         IEnumerable<ModelFileData> files,
+        IEnumerable<AvatarPathOverrideService.DiscoveryPathOverridePayload> pathOverrides,
         bool filterOnlyCompatible)
     {
         string pathSignature = BuildAvatarSignature(paths);
         string fileSignature = BuildModelFileSignature(files);
+        string overrideSignature = BuildPathOverrideSignature(pathOverrides);
         string signature = string.IsNullOrWhiteSpace(fileSignature)
             ? pathSignature
             : pathSignature + "|files:" + fileSignature;
+        if (!string.IsNullOrWhiteSpace(overrideSignature))
+        {
+            signature += "|overrides:" + overrideSignature;
+        }
         if (string.IsNullOrWhiteSpace(signature))
         {
             return null;
@@ -370,6 +380,25 @@ public static class AvatarAssetDiscoveryService
         return string.Join("|", files
             .Where(file => file != null && !string.IsNullOrWhiteSpace(file.path))
             .Select(file => NormalizeUnityPath(file.path).Trim() + ":" + (file.hash ?? string.Empty).Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(signature => signature, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string BuildPathOverrideSignature(IEnumerable<AvatarPathOverrideService.DiscoveryPathOverridePayload> pathOverrides)
+    {
+        if (pathOverrides == null)
+        {
+            return string.Empty;
+        }
+
+        return string.Join("|", pathOverrides
+            .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.referenceSourcePath) && !string.IsNullOrWhiteSpace(entry.localTargetPath))
+            .Select(entry =>
+                NormalizeUnityPath(entry.referenceSourcePath).Trim() +
+                "->" +
+                NormalizeUnityPath(entry.localTargetPath).Trim() +
+                ":" +
+                (entry.referenceHash ?? string.Empty).Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(signature => signature, StringComparer.OrdinalIgnoreCase));
     }

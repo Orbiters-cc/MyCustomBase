@@ -54,6 +54,19 @@ public class AnimationPositionOffsetEntry
     public Vector3 offset;
 }
 
+[Serializable]
+public class AvatarPathOverrideEntry
+{
+    public int sourceModelFileId;
+    public string referenceSourcePath;
+    public string referenceHash;
+    public string localTargetPath;
+    public string localTargetGuid;
+    public string preMcbBackupToken;
+    public string sourceImportKind;
+    public string sourcePackagePath;
+}
+
 // One transform captured before ReFit so a reset can restore the asset armature pose.
 // Serialized on the component so the mapping survives Unity restarts and scene reloads.
 [Serializable]
@@ -107,6 +120,9 @@ public class MyCustomBase : MonoBehaviour
 
     [Tooltip("The base FBX file for this avatar. Used to find compatible custom base versions.")]
     public List<GameObject> baseFbxFiles = new List<GameObject>();
+
+    [HideInInspector] public string mcbInstanceId = "";
+    [HideInInspector] public List<AvatarPathOverrideEntry> avatarPathOverrides = new List<AvatarPathOverrideEntry>();
 
     // --- APPLIED STATE ---
     [Tooltip("The version information of the custom base modification that is currently applied to this avatar's FBX.")]

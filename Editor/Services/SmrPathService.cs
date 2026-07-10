@@ -176,9 +176,16 @@ public static class SmrPathService
         string normalized = MCBUtils.ToUnityPath(sourceFbxPath);
         var source = version.sourceFiles.FirstOrDefault(file =>
             file != null &&
-            string.Equals(MCBUtils.ToUnityPath(file.path), normalized, StringComparison.OrdinalIgnoreCase));
+            (string.Equals(MCBUtils.ToUnityPath(file.path), normalized, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(GetMetadataString(file, AvatarPathOverrideService.MetadataLocalTargetPath), normalized, StringComparison.OrdinalIgnoreCase)));
 
         return source?.smrPaths ?? new List<ModelFileSmrPathData>();
+    }
+
+    private static string GetMetadataString(ModelFileData file, string key)
+    {
+        if (file?.metadata == null || string.IsNullOrWhiteSpace(key)) return null;
+        return file.metadata.TryGetValue(key, out object value) ? MCBUtils.ToUnityPath(value?.ToString()) : null;
     }
 
     public static string GetRelativeTransformPath(Transform root, Transform target)

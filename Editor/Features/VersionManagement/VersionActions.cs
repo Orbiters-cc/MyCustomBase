@@ -554,7 +554,7 @@ public class VersionActions
                     continue;
                 }
 
-                string originalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath);
+                string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "advanced mesh preload");
                 string absolutePath = Path.GetFullPath(originalFbxPath);
                 if (tasks.ContainsKey(absolutePath))
                 {
@@ -591,7 +591,7 @@ public class VersionActions
                 }
 
                 string binPath = ResolveVersionPatchPath(version, patchFile);
-                string originalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath);
+                string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "advanced mesh preparation");
                 string patchFileName = Path.GetFileName(patchFile.path);
                 Task<byte[]> binDataTask = null;
                 if (!string.IsNullOrWhiteSpace(patchFileName) &&
@@ -1511,13 +1511,13 @@ public class VersionActions
             }
             else
             {
-                ApplyXorBinToFbx(binPath, targetFbxPath);
+                ApplyXorBinToFbx(version, patchFile, binPath, targetFbxPath);
             }
             yield return null;
         }
     }
 
-    private void ApplyXorBinToFbx(string binPath, string fbxPath)
+    private void ApplyXorBinToFbx(CustomBaseVersion version, ModelFileData patchFile, string binPath, string fbxPath)
     {
         if (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath))
             throw new FileNotFoundException("Apply failed: .bin file not found. Please download or build it first.");
@@ -1525,7 +1525,7 @@ public class VersionActions
         if (string.IsNullOrWhiteSpace(fbxPath) || !File.Exists(fbxPath))
             throw new FileNotFoundException("Apply failed: target FBX file not found.", fbxPath);
 
-        string originalFbxPath = EnsureOriginalFbxKeyPath(fbxPath, "XOR FBX patch");
+        string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, fbxPath, "XOR FBX patch");
 
         byte[] baseData = File.ReadAllBytes(originalFbxPath);
         byte[] binData = File.ReadAllBytes(binPath);
@@ -1551,7 +1551,7 @@ public class VersionActions
             throw new FileNotFoundException("Apply failed: target FBX file not found.", fbxPath);
         }
 
-        string originalFbxPath = EnsureOriginalFbxKeyPath(fbxPath, "HDiff FBX patch");
+        string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, fbxPath, "HDiff FBX patch");
         VerifyPatchSourceHash(version, patchFile, originalFbxPath);
 
         string tempOutputPath = HdiffService.CreateTempWorkPath(".fbx");
@@ -1591,15 +1591,28 @@ public class VersionActions
         }
     }
 
-    private string EnsureOriginalFbxKeyPath(string fbxPath, string operation)
+    private string EnsureOriginalFbxKeyPath(CustomBaseVersion version, ModelFileData patchFile, string fbxPath, string operation)
     {
-        string originalFbxPath = fbxPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase)
-            ? fbxPath
-            : fbxPath + FileManagerService.OriginalSuffix;
+        string originalFbxPath = FileManagerService.GetOriginalBasePath(fbxPath);
         if (!File.Exists(originalFbxPath))
         {
+            var sourceFile = ResolveSourceFileForPatch(version, patchFile);
+            string currentHash = fileManagerService.CalculateFileHash(fbxPath);
+            bool currentMatchesReference = sourceFile == null ||
+                                           string.IsNullOrWhiteSpace(sourceFile.hash) ||
+                                           string.Equals(currentHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase);
+            if (!currentMatchesReference)
+            {
+                string sourceLabel = !string.IsNullOrWhiteSpace(sourceFile?.path)
+                    ? sourceFile.path
+                    : Path.GetFileName(fbxPath);
+                throw new FileNotFoundException(
+                    $"Apply failed: original FBX key file is missing for {operation}. Import the original/default FBX source for '{sourceLabel}' so MCB can create {Path.GetFileName(fbxPath)}{FileManagerService.OriginalBaseSuffix}.",
+                    originalFbxPath);
+            }
+
             fileManagerService.CreateBackup(fbxPath);
-            originalFbxPath = fbxPath + FileManagerService.OriginalSuffix;
+            originalFbxPath = FileManagerService.GetOriginalBasePath(fbxPath);
         }
 
         if (!File.Exists(originalFbxPath))
@@ -1639,7 +1652,7 @@ public class VersionActions
             throw new FileNotFoundException("Apply failed: target FBX path for native mesh payload could not be resolved.");
         }
 
-        string originalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath);
+        string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "native mesh payload");
         string binPath = ResolveVersionPatchPath(version, patchFile);
         var routine = NativeMeshPayloadService.ApplyEncryptedPayloadCoroutine(
             editor.customBaseTarget.transform.root,
@@ -1701,7 +1714,19 @@ public class VersionActions
             throw new InvalidDataException("Model file patch is missing required sourcePath metadata.");
         }
 
-        return string.IsNullOrWhiteSpace(sourcePath) ? null : MCBUtils.ToUnityPath(sourcePath);
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return null;
+        }
+
+        int sourceModelFileId = source != null
+            ? source.id
+            : (patchFile?.sourceModelFileId ?? 0);
+        return AvatarPathOverrideService.ResolveLocalTargetPath(
+            editor?.customBaseTarget,
+            sourcePath,
+            sourceModelFileId,
+            source?.hash);
     }
 
     private string ResolveVersionPatchPath(CustomBaseVersion version, ModelFileData patchFile)
@@ -1759,7 +1784,7 @@ public class VersionActions
                 version,
                 patchFile,
                 ResolveVersionPatchPath(version, patchFile),
-                ResolveOriginalFbxKeyPath(targetFbxPath),
+                EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "advanced mesh authoring pose"),
                 fileManagerService);
             NativeMeshPayloadService.ApplyPayloadAuthoringPose(root, payload);
         }
@@ -1767,9 +1792,7 @@ public class VersionActions
 
     private static string ResolveOriginalFbxKeyPath(string targetFbxPath)
     {
-        string originalFbxPath = targetFbxPath.EndsWith(FileManagerService.OriginalSuffix, StringComparison.OrdinalIgnoreCase)
-            ? targetFbxPath
-            : targetFbxPath + FileManagerService.OriginalSuffix;
+        string originalFbxPath = FileManagerService.GetOriginalBasePath(targetFbxPath);
         if (!File.Exists(originalFbxPath))
         {
             originalFbxPath = targetFbxPath;
@@ -2856,8 +2879,9 @@ public class VersionActions
                 continue;
             }
 
-            string sourcePath = MCBUtils.ToUnityPath(sourceFile.path);
-            if (!currentHashesByPath.TryGetValue(sourcePath, out string currentHash))
+            string targetPath = AvatarPathOverrideService.ResolveLocalTargetPath(editor?.customBaseTarget, sourceFile);
+            if (string.IsNullOrWhiteSpace(targetPath) ||
+                !currentHashesByPath.TryGetValue(targetPath, out string currentHash))
             {
                 return false;
             }
