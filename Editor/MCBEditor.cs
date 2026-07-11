@@ -1359,7 +1359,7 @@ public class MCBEditor : UnityEditor.Editor
             EditorUtility.SetDirty(customBaseTarget);
         }
 
-        AvatarPathOverrideService.EnsureInstanceId(customBaseTarget);
+        McbInstanceIdentityService.EnsureIdentity(customBaseTarget);
     }
 
     private void PlayPendingComponentAddedMeshEffect()
@@ -1469,17 +1469,19 @@ public class MCBEditor : UnityEditor.Editor
             selectedAsset.sourceFiles,
             GetDetectedAvatarFbxPaths());
 
-        var paths = selectedAsset.sourceFiles
+        var sourceFiles = selectedAsset.sourceFiles
             .Where(file => file != null
                            && string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase)
                            && string.Equals(file.role, "SOURCE", StringComparison.OrdinalIgnoreCase)
                            && !string.IsNullOrWhiteSpace(file.path))
+            .ToList();
+        var paths = sourceFiles
             .Select(file => AvatarPathOverrideService.ResolveLocalTargetPath(customBaseTarget, file))
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (paths.Count == 0)
+        if (sourceFiles.Count == 0 ||
+            paths.Any(string.IsNullOrWhiteSpace) ||
+            paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != sourceFiles.Count)
         {
             return false;
         }
@@ -1497,7 +1499,7 @@ public class MCBEditor : UnityEditor.Editor
             fbxAssets.Add(fbxAsset);
         }
 
-        if (fbxAssets.Count == 0)
+        if (fbxAssets.Count != sourceFiles.Count)
         {
             return false;
         }

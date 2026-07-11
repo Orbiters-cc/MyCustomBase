@@ -116,6 +116,8 @@ Editor/Services/InteractionService.cs
 Editor/Services/LiveAvatarControllerService.cs
 Editor/Services/MaterialService.cs
 Editor/Services/MCBEditorHealthChecks.cs
+Editor/Services/McbInstanceHistoryClient.cs
+Editor/Services/McbInstanceIdentityService.cs
 Editor/Services/MCBPackageVersionService.cs
 Editor/Services/MCBReFitIntegration.cs
 Editor/Services/ModelFileTransforms.cs
@@ -171,5 +173,7 @@ Runtime/MyCustomBase.cs
 Tests/Editor/AvatarBaseSourceWorkflowTests.cs
 Tests/Editor/ExtraCustomizationUtilsTests.cs
 Tests/Editor/mcb.Editor.Tests.asmdef
+Tests/Editor/McbInstanceIdentityTests.cs
 Tests/Editor/MCBReFitIntegrationTests.cs
 Tests/Editor/UnitGitReleaseApiBindingTests.cs
+Tests/Editor/UserServiceTests.cs

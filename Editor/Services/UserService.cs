@@ -24,6 +24,8 @@ public class UserService
     private static HashSet<int> pendingRequests = new HashSet<int>();
     private static HashSet<int> pendingAvatarDownloads = new HashSet<int>();
     private static HashSet<int> failedRequests = new HashSet<int>();
+    private static HashSet<int> failedAvatarDownloads = new HashSet<int>();
+    private static Dictionary<int, List<Action>> avatarCompletionCallbacks = new Dictionary<int, List<Action>>();
     private static bool repaintQueued;
     
     private static readonly string AVATARS_FOLDER = Path.Combine(MCBUtils.GetMCBDataFolder(), "avatars");
@@ -42,7 +44,7 @@ public class UserService
         // Don't request if already cached
         if (userCache.ContainsKey(userId))
         {
-            onComplete?.Invoke();
+            QueueCompletion(onComplete);
             return;
         }
         
@@ -55,7 +57,6 @@ public class UserService
         // Don't request if previously failed (unless explicitly cleared)
         if (failedRequests.Contains(userId))
         {
-            onComplete?.Invoke();
             return;
         }
         
@@ -69,7 +70,7 @@ public class UserService
         // Don't request if already cached
         if (userCache.ContainsKey(userId))
         {
-            onComplete?.Invoke();
+            QueueCompletion(onComplete);
             return;
         }
         
@@ -82,7 +83,6 @@ public class UserService
         // Don't request if previously failed (unless explicitly cleared)
         if (failedRequests.Contains(userId))
         {
-            onComplete?.Invoke();
             return;
         }
         
@@ -155,8 +155,13 @@ public class UserService
             // Check if avatar already exists locally
             if (File.Exists(localPath))
             {
-                LoadLocalAvatar(uploaderId, localPath);
-                yield break;
+                if (LoadLocalAvatar(uploaderId, localPath))
+                {
+                    failedAvatarDownloads.Remove(uploaderId);
+                    yield break;
+                }
+
+                try { File.Delete(localPath); } catch { }
             }
 
             using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(avatarUrl))
@@ -181,6 +186,7 @@ public class UserService
                             File.WriteAllBytes(localPath, pngData);
 
                             avatarCache[uploaderId] = processed;
+                            failedAvatarDownloads.Remove(uploaderId);
                             MCBConnectivityMonitor.ClearRequestWarning(GetAvatarWarningKey(uploaderId));
                             QueueRepaintAllViews();
 
@@ -192,6 +198,7 @@ public class UserService
                     }
                     catch (Exception ex)
                     {
+                        failedAvatarDownloads.Add(uploaderId);
                         MCBConnectivityMonitor.ReportManagedException(avatarUrl, ex, MCBRequestPolicy.ExternalResource(
                             $"Process user avatar for {uploaderId}",
                             GetAvatarWarningKey(uploaderId),
@@ -201,6 +208,7 @@ public class UserService
                 }
                 else
                 {
+                    failedAvatarDownloads.Add(uploaderId);
                     MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {request.error} (url: {avatarUrl})");
                 }
             }
@@ -208,11 +216,56 @@ public class UserService
         finally
         {
             pendingAvatarDownloads.Remove(uploaderId);
+            CompleteAvatarCallbacks(uploaderId);
+        }
+    }
+
+    public static void RequestUserAvatar(int uploaderId, Action onComplete)
+    {
+        if (uploaderId <= 0)
+        {
+            return;
+        }
+
+        if (avatarCache.ContainsKey(uploaderId))
+        {
+            QueueCompletion(onComplete);
+            return;
+        }
+
+        if (failedAvatarDownloads.Contains(uploaderId))
+        {
+            return;
+        }
+
+        UserInfo info = GetUserInfo(uploaderId);
+        if (info == null || string.IsNullOrWhiteSpace(info.avatarUrl))
+        {
+            return;
+        }
+
+        RegisterAvatarCallback(uploaderId, onComplete);
+
+        string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
+        if (File.Exists(localPath))
+        {
+            if (LoadLocalAvatar(uploaderId, localPath))
+            {
+                CompleteAvatarCallbacks(uploaderId);
+                return;
+            }
+
+            try { File.Delete(localPath); } catch { }
+        }
+
+        if (pendingAvatarDownloads.Add(uploaderId))
+        {
+            EditorCoroutineUtility.StartCoroutineOwnerless(DownloadAvatar(uploaderId, info.avatarUrl));
         }
     }
 
     
-    private static void LoadLocalAvatar(int uploaderId, string localPath)
+    private static bool LoadLocalAvatar(int uploaderId, string localPath)
     {
         try
         {
@@ -228,14 +281,16 @@ public class UserService
                     Object.DestroyImmediate(texture);
                 }
 
-                return;
+                return true;
             }
 
             Object.DestroyImmediate(texture);
+            return false;
         }
         catch (Exception ex)
         {
             MCBLogger.LogError($"[MCB] Failed to load cached avatar for user {uploaderId}: {ex.Message}");
+            return false;
         }
     }
 
@@ -253,7 +308,11 @@ public class UserService
             string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
             if (File.Exists(localPath))
             {
-                LoadLocalAvatar(uploaderId, localPath);
+                if (!LoadLocalAvatar(uploaderId, localPath))
+                {
+                    try { File.Delete(localPath); } catch { }
+                    RequestUserAvatar(uploaderId, null);
+                }
             }
         }
         
@@ -282,6 +341,7 @@ public class UserService
         {
             UserInfo info = userCache.ContainsKey(userId) ? userCache[userId] : new UserInfo();
             bool changed = !userCache.ContainsKey(userId);
+            bool avatarChanged = false;
             if (!string.IsNullOrEmpty(username) && !string.Equals(info.username, username, StringComparison.Ordinal))
             {
                 info.username = username;
@@ -292,15 +352,28 @@ public class UserService
             {
                 info.avatarUrl = avatarUrl;
                 changed = true;
+                avatarChanged = true;
             }
 
             userCache[userId] = info;
 
             failedRequests.Remove(userId);
+            if (avatarChanged)
+            {
+                failedAvatarDownloads.Remove(userId);
+                if (avatarCache.TryGetValue(userId, out var previousAvatar) && previousAvatar != null)
+                {
+                    Object.DestroyImmediate(previousAvatar);
+                }
+                avatarCache.Remove(userId);
+                string previousLocalPath = Path.Combine(AVATARS_FOLDER, $"avatar_{userId}.png");
+                try { if (File.Exists(previousLocalPath)) File.Delete(previousLocalPath); } catch { }
+            }
 
             if (!string.IsNullOrEmpty(info.avatarUrl) &&
                 !avatarCache.ContainsKey(userId) &&
-                !pendingAvatarDownloads.Contains(userId))
+                !pendingAvatarDownloads.Contains(userId) &&
+                !failedAvatarDownloads.Contains(userId))
             {
                 string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{userId}.png");
                 if (!File.Exists(localPath))
@@ -382,6 +455,7 @@ public class UserService
     public static void ClearAllFailedRequests()
     {
         failedRequests.Clear();
+        failedAvatarDownloads.Clear();
     }
 
     // Flush all in-memory user-related caches to force fresh fetching on next requests
@@ -394,6 +468,8 @@ public class UserService
             pendingRequests.Clear();
             pendingAvatarDownloads.Clear();
             failedRequests.Clear();
+            failedAvatarDownloads.Clear();
+            avatarCompletionCallbacks.Clear();
 
             // Trigger UI repaint so views reflect cleared state
             QueueRepaintAllViews();
@@ -415,6 +491,8 @@ public class UserService
             if (pendingRequests.Contains(userId)) pendingRequests.Remove(userId);
             if (pendingAvatarDownloads.Contains(userId)) pendingAvatarDownloads.Remove(userId);
             if (failedRequests.Contains(userId)) failedRequests.Remove(userId);
+            if (failedAvatarDownloads.Contains(userId)) failedAvatarDownloads.Remove(userId);
+            avatarCompletionCallbacks.Remove(userId);
             
             // Delete local file
             string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{userId}.png");
@@ -442,6 +520,53 @@ public class UserService
         {
             repaintQueued = false;
             try { InternalEditorUtility.RepaintAllViews(); } catch { }
+        };
+    }
+
+    private static void RegisterAvatarCallback(int userId, Action callback)
+    {
+        if (callback == null)
+        {
+            return;
+        }
+
+        if (!avatarCompletionCallbacks.TryGetValue(userId, out var callbacks))
+        {
+            callbacks = new List<Action>();
+            avatarCompletionCallbacks[userId] = callbacks;
+        }
+
+        if (!callbacks.Contains(callback))
+        {
+            callbacks.Add(callback);
+        }
+    }
+
+    private static void CompleteAvatarCallbacks(int userId)
+    {
+        if (!avatarCompletionCallbacks.TryGetValue(userId, out var callbacks))
+        {
+            return;
+        }
+
+        avatarCompletionCallbacks.Remove(userId);
+        foreach (Action callback in callbacks)
+        {
+            QueueCompletion(callback);
+        }
+    }
+
+    private static void QueueCompletion(Action callback)
+    {
+        if (callback == null)
+        {
+            return;
+        }
+
+        EditorApplication.delayCall += () =>
+        {
+            try { callback(); }
+            catch (Exception ex) { MCBLogger.LogError($"[MCB] Deferred user callback failed: {ex.Message}"); }
         };
     }
     

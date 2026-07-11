@@ -963,9 +963,9 @@ public partial class VersionListDrawer
                 avatar.Add(initials);
             }
 
-            if (!requestedThisFrame)
+            if (!requestedThisFrame && userInfo != null)
             {
-                UserService.RequestUserInfo(uploaderId, RefreshVersionUi);
+                UserService.RequestUserAvatar(uploaderId, RefreshVersionUi);
             }
         }
         row.Add(avatar);

@@ -122,6 +122,8 @@ public class MyCustomBase : MonoBehaviour
     public List<GameObject> baseFbxFiles = new List<GameObject>();
 
     [HideInInspector] public string mcbInstanceId = "";
+    [HideInInspector] public string mcbComponentId = "";
+    [HideInInspector] public string mcbServerInstanceId = "";
     [HideInInspector] public List<AvatarPathOverrideEntry> avatarPathOverrides = new List<AvatarPathOverrideEntry>();
 
     // --- APPLIED STATE ---

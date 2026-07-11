@@ -510,7 +510,26 @@ public partial class AssetGalleryModule
 
         bool changed = SelectedAsset == null || SelectedAsset.id != asset.id;
         SelectedAsset = asset;
-        editor.SyncBaseFbxFilesFromSelectedAsset();
+        bool synchronized = editor.SyncBaseFbxFilesFromSelectedAsset();
+        if (!string.IsNullOrWhiteSpace(editor.authToken) && editor.customBaseTarget != null)
+        {
+            var availablePaths = editor.GetDetectedAvatarFbxPaths();
+            EditorCoroutineUtility.StartCoroutineOwnerless(McbInstanceHistoryClient.SyncAndRecoverCoroutine(
+                editor.authToken,
+                editor.customBaseTarget,
+                asset,
+                availablePaths,
+                requestSuggestions: !synchronized,
+                onComplete: recovered =>
+                {
+                    if (!recovered) return;
+                    if (editor.SyncBaseFbxFilesFromSelectedAsset())
+                    {
+                        editor.RefreshAccountAndVersions();
+                    }
+                    editor.RefreshUiToolkitSections();
+                }));
+        }
 
         if (changed)
         {
