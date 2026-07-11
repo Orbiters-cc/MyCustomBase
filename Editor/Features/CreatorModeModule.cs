@@ -2221,32 +2221,12 @@ public partial class CreatorModeModule
                 metas = sourceMetas,
                 smrPaths = packageEntry.smrPaths ?? new List<ModelFileSmrPathData>()
             };
-            if (packageEntry.pathOverride != null)
-            {
-                AvatarPathOverrideService.ApplyOverrideMetadata(sourceFileEntry, packageEntry.pathOverride, editor.customBaseTarget);
-            }
             sourceFileEntries.Add(sourceFileEntry);
 
             var modelFileMetadata = new Dictionary<string, object>
             {
                 { "sourcePath", referenceSourcePath }
             };
-            if (!string.Equals(referenceSourcePath, localTargetPath, StringComparison.OrdinalIgnoreCase))
-            {
-                modelFileMetadata[AvatarPathOverrideService.MetadataLocalTargetPath] = localTargetPath;
-                string localTargetGuid = AssetDatabase.AssetPathToGUID(localTargetPath);
-                if (!string.IsNullOrWhiteSpace(localTargetGuid))
-                {
-                    modelFileMetadata[AvatarPathOverrideService.MetadataLocalTargetGuid] = localTargetGuid;
-                }
-            }
-            if (packageEntry.pathOverride != null)
-            {
-                AvatarPathOverrideService.ApplyOverrideMetadata(
-                    new ModelFileData { metadata = modelFileMetadata },
-                    packageEntry.pathOverride,
-                    editor.customBaseTarget);
-            }
             if (!string.IsNullOrWhiteSpace(customFbxPath))
             {
                 modelFileMetadata["customFbxPath"] = customFbxPath;
@@ -2257,7 +2237,7 @@ public partial class CreatorModeModule
             }
             if (!string.IsNullOrWhiteSpace(packageEntry.avatarUnityPath))
             {
-                modelFileMetadata["customAvatarPath"] = packageEntry.avatarUnityPath;
+                modelFileMetadata["customAvatarPath"] = Path.GetFileName(packageEntry.avatarUnityPath);
             }
 
             if (!string.IsNullOrWhiteSpace(packageEntry.binUnityPath))
@@ -2496,18 +2476,25 @@ public partial class CreatorModeModule
             foreach (var versionFile in ver.versionFiles ?? Array.Empty<ModelFileData>())
             {
                 string sourcePath = GetMetadataString(versionFile, "sourcePath");
-                string localTargetPath = GetMetadataString(versionFile, AvatarPathOverrideService.MetadataLocalTargetPath);
-                if (!string.IsNullOrWhiteSpace(localTargetPath))
-                {
-                    versionFilesBySourcePath[MCBUtils.ToUnityPath(localTargetPath)] = versionFile;
-                }
-
                 if (string.IsNullOrWhiteSpace(sourcePath))
                 {
                     continue;
                 }
 
-                versionFilesBySourcePath[MCBUtils.ToUnityPath(sourcePath)] = versionFile;
+                string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
+                versionFilesBySourcePath[normalizedSourcePath] = versionFile;
+                var sourceFile = ver.sourceFiles?.FirstOrDefault(file =>
+                    file != null &&
+                    (versionFile.sourceModelFileId.HasValue && file.id == versionFile.sourceModelFileId.Value ||
+                     string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase)));
+                string localTargetPath = AvatarPathOverrideService.ResolveLocalTargetPath(
+                    editor.customBaseTarget,
+                    sourceFile,
+                    updateStoredPathFromGuid: false);
+                if (!string.IsNullOrWhiteSpace(localTargetPath))
+                {
+                    versionFilesBySourcePath[MCBUtils.ToUnityPath(localTargetPath)] = versionFile;
+                }
             }
 
             for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
@@ -2523,6 +2510,10 @@ public partial class CreatorModeModule
 
                 string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
                 string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
+                if (!string.IsNullOrWhiteSpace(customAvatarPath))
+                {
+                    customAvatarPath = MCBUtils.GetVersionAvatarPath(ver, Path.GetFileName(customAvatarPath));
+                }
                 var restoredCustomFbx = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
                 entryProp.FindPropertyRelative("customFbx").objectReferenceValue = restoredCustomFbx;
                 var externalCustomFbxPath = entryProp.FindPropertyRelative("externalCustomFbxPath");

@@ -211,6 +211,8 @@ public class AdvancedModeModule
 
                 DrawHealthCheckControls();
 
+                DrawPreMcbRecoveryControls();
+
                 DrawOptionalIntegrationDependencyControls();
 
                 DrawUnitGitConnectorControls();
@@ -684,6 +686,52 @@ public class AdvancedModeModule
         if (!string.IsNullOrWhiteSpace(healthCheckStatus))
         {
             EditorGUILayout.HelpBox(healthCheckStatus, healthCheckStatusType);
+        }
+    }
+
+    private void DrawPreMcbRecoveryControls()
+    {
+        var target = editor?.customBaseTarget;
+        if (target == null || !AvatarPathOverrideService.HasRestorablePreMcbBackup(target)) return;
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Local Recovery", EditorStyles.boldLabel);
+        bool hasAppliedVersion = target.appliedCustomBaseVersion != null ||
+                                 target.appliedCustomBaseAssetId > 0 ||
+                                 !string.IsNullOrWhiteSpace(target.appliedCustomBaseVersionString);
+        using (new EditorGUI.DisabledScope(hasAppliedVersion || EditorApplication.isCompiling))
+        {
+            if (GUILayout.Button(
+                    new GUIContent(
+                        "Restore pre-MCB FBX files",
+                        "Restore the dated local backups created when this already-customized avatar was adopted by MCB."),
+                    GUILayout.Width(210f)))
+            {
+                bool confirmed = EditorUtility.DisplayDialog(
+                    "Restore pre-MCB FBX files",
+                    "Restore every available pre-MCB FBX backup for this component? The backups and original-base keys will be kept.",
+                    "Restore",
+                    "Cancel");
+                if (confirmed)
+                {
+                    try
+                    {
+                        int restored = AvatarPathOverrideService.RestorePreMcbBackups(target);
+                        EditorUtility.DisplayDialog("MCB recovery", $"Restored {FormatCount(restored, "FBX file")}.", "OK");
+                        SceneView.RepaintAll();
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Debug.LogError("[AdvancedMode] Pre-MCB restore failed: " + ex);
+                        EditorUtility.DisplayDialog("MCB recovery failed", ex.Message, "OK");
+                    }
+                }
+            }
+        }
+
+        if (hasAppliedVersion)
+        {
+            EditorGUILayout.HelpBox("Reset the applied MCB version to the default base before restoring the pre-MCB files.", MessageType.Info);
         }
     }
 

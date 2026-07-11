@@ -479,6 +479,57 @@ public static class MCBUtils
         return normalized;
     }
 
+    public static bool TryResolveProjectAssetPath(string path, out string unityPath, out string fullPath)
+    {
+        unityPath = null;
+        fullPath = null;
+        if (string.IsNullOrWhiteSpace(path)) return false;
+
+        string normalized = ToUnityPath(path)?.Replace("\\", "/").Trim();
+        if (string.IsNullOrWhiteSpace(normalized) ||
+            Path.IsPathRooted(normalized) ||
+            (!normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) &&
+             !normalized.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        string[] segments = normalized.Split('/');
+        if (segments.Any(segment => string.IsNullOrWhiteSpace(segment) || segment == "." || segment == ".."))
+        {
+            return false;
+        }
+
+        try
+        {
+            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            string candidate = Path.GetFullPath(Path.Combine(projectRoot, normalized));
+            string rootPrefix = projectRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!candidate.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            unityPath = normalized;
+            fullPath = candidate;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static string ResolveProjectAssetFullPath(string path)
+    {
+        if (!TryResolveProjectAssetPath(path, out _, out string fullPath))
+        {
+            throw new ArgumentException($"Path must be a safe Unity project asset path: {path}", nameof(path));
+        }
+
+        return fullPath;
+    }
+
     public static string CombineUnityPath(params string[] segments)
     {
         if (segments == null || segments.Length == 0) return string.Empty;

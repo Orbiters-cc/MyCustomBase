@@ -14,6 +14,24 @@ public class CreatorAvatarBaseOption
 {
     [JsonProperty] public int id;
     [JsonProperty] public string name;
+    [JsonProperty] public List<CreatorAvatarBaseSourceRevisionOption> sourceRevisions = new List<CreatorAvatarBaseSourceRevisionOption>();
+}
+
+public class CreatorAvatarBaseSourceRevisionOption
+{
+    [JsonProperty] public int id;
+    [JsonProperty] public string label;
+    [JsonProperty] public bool isActive = true;
+    [JsonProperty] public List<CreatorAvatarBaseSourceFileOption> sourceFiles = new List<CreatorAvatarBaseSourceFileOption>();
+}
+
+public class CreatorAvatarBaseSourceFileOption
+{
+    [JsonProperty] public int id;
+    [JsonProperty] public string slotKey;
+    [JsonProperty] public string canonicalPath;
+    [JsonProperty] public string hash;
+    [JsonProperty] public int position;
 }
 
 public class CreatorAvatarBasesResponse
@@ -62,6 +80,12 @@ public partial class AssetGalleryModule
         public string localTargetPath;
         public int selectedCandidateIndex = -1;
         public string referenceSourcePath;
+    }
+
+    private sealed class ExistingOriginalBaseKey
+    {
+        public string localTargetPath;
+        public string originalBasePath;
     }
 
     private readonly MCBEditor editor;
@@ -126,6 +150,13 @@ public partial class AssetGalleryModule
     private readonly List<GameObject> targetFbxFiles = new List<GameObject>();
     private readonly List<OriginalSourceKeyCandidate> originalSourceKeyCandidates = new List<OriginalSourceKeyCandidate>();
     private readonly List<OriginalSourceKeyMapping> originalSourceKeyMappings = new List<OriginalSourceKeyMapping>();
+    private readonly List<UnityPackageFbxSourceExtractor.ExtractionResult> originalSourceExtractions = new List<UnityPackageFbxSourceExtractor.ExtractionResult>();
+    private int selectedAvatarBaseSourceRevisionId;
+    private string detectedAvatarBaseStatus;
+    private AvatarBaseDetectionService.DetectionResult detectedOriginalBaseKeySource;
+    private bool createSceneModeExplicitlySelected;
+    private string customBaseCreationRequestId;
+    private string customBaseCreationRequestSignature;
     private bool isLoadingAvatarBases;
     private string avatarBaseLoadError;
     private List<CreatorAvatarBaseOption> avatarBaseOptions = new List<CreatorAvatarBaseOption>();
@@ -505,6 +536,7 @@ public partial class AssetGalleryModule
 
     private void ResetState(bool clearSelection)
     {
+        DisposeOriginalSourceExtractions();
         compatibleAssets.Clear();
         allAssets.Clear();
         hasFetchedCompatibleAssets = false;

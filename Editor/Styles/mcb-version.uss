@@ -259,6 +259,17 @@
     flex-shrink: 0;
 }
 
+.mcb-version-chip-row--details {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin-left: -5px;
+    margin-top: 8px;
+}
+
+.mcb-version-chip-row--details .mcb-version-chip {
+    margin-bottom: 5px;
+}
+
 .mcb-version-chip {
     height: 18px;
     min-height: 18px;

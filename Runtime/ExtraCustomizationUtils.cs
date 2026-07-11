@@ -19,6 +19,22 @@ public static class ExtraCustomizationUtils
             .Any(entry => IsStringFlag(entry, flag));
     }
 
+    public static List<string> GetFlags(IEnumerable<object> entries)
+    {
+        var flags = new List<string>();
+        foreach (object entry in entries ?? Enumerable.Empty<object>())
+        {
+            if (TryGetStringFlag(entry, out string flag))
+            {
+                flags.Add(flag);
+            }
+        }
+
+        return flags
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public static List<object> CloneEntries(IEnumerable<object> entries)
     {
         return (entries ?? Enumerable.Empty<object>())
@@ -124,17 +140,23 @@ public static class ExtraCustomizationUtils
 
     private static bool IsStringFlag(object entry, string flag)
     {
+        return TryGetStringFlag(entry, out string entryFlag) &&
+               string.Equals(entryFlag, flag, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryGetStringFlag(object entry, out string flag)
+    {
+        flag = null;
         if (entry is string text)
         {
-            return string.Equals(text.Trim(), flag, StringComparison.OrdinalIgnoreCase);
+            flag = text.Trim();
         }
-
-        if (entry is JValue value && value.Type == JTokenType.String)
+        else if (entry is JValue value && value.Type == JTokenType.String)
         {
-            return string.Equals(value.ToString().Trim(), flag, StringComparison.OrdinalIgnoreCase);
+            flag = value.ToString().Trim();
         }
 
-        return false;
+        return !string.IsNullOrWhiteSpace(flag);
     }
 
     private static object CloneEntry(object entry)

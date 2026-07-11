@@ -89,6 +89,8 @@ Editor/Services/AsyncTaskManager.cs
 Editor/Services/AsyncVersionService.cs
 Editor/Services/AuthenticationService.cs
 Editor/Services/AvatarAssetDiscoveryService.cs
+Editor/Services/AvatarBaseDetectionService.cs
+Editor/Services/AvatarBaseSourceMatcher.cs
 Editor/Services/AvatarDefinitionGenerationService.cs
 Editor/Services/AvatarParametersService.cs
 Editor/Services/AvatarPathOverrideService.cs
@@ -103,6 +105,7 @@ Editor/Services/BlendShapeLinkService.Planning.cs
 Editor/Services/BlendShapeLinkService.Rewrite.cs
 Editor/Services/BlendShapeLinkService.VariantOps.cs
 Editor/Services/ConnectivityDiagnosticsService.cs
+Editor/Services/CustomBaseSourceSetupTransaction.cs
 Editor/Services/DynamicNormalsService.cs
 Editor/Services/EditorIssueReporter.cs
 Editor/Services/FeatureFlags.cs
@@ -165,6 +168,8 @@ Runtime/mcb.asmdef
 Runtime/MCBLogger.cs
 Runtime/MCBUtils.cs
 Runtime/MyCustomBase.cs
+Tests/Editor/AvatarBaseSourceWorkflowTests.cs
+Tests/Editor/ExtraCustomizationUtilsTests.cs
 Tests/Editor/mcb.Editor.Tests.asmdef
 Tests/Editor/MCBReFitIntegrationTests.cs
 Tests/Editor/UnitGitReleaseApiBindingTests.cs

@@ -166,7 +166,158 @@ public static class SmrPathService
         return RefreshTargetMeshesByCurrentMeshName(avatarRoot, unityFbxPath, fbxRoot, meshNameFilter);
     }
 
-    public static List<ModelFileSmrPathData> ResolveSmrPathsForSource(CustomBaseVersion version, string sourceFbxPath)
+    public static int RestoreTargetStateFromFbx(
+        Transform avatarRoot,
+        string fbxPath,
+        IEnumerable<ModelFileSmrPathData> smrPaths)
+    {
+        if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
+
+        var fbxRoot = GetFbxRoot(MCBUtils.ToUnityPath(fbxPath));
+        return fbxRoot == null
+            ? 0
+            : RestoreTargetStateFromFbxRoot(avatarRoot, fbxRoot.transform, smrPaths);
+    }
+
+    internal static int RestoreTargetStateFromFbxRoot(
+        Transform avatarRoot,
+        Transform fbxRoot,
+        IEnumerable<ModelFileSmrPathData> smrPaths)
+    {
+        if (avatarRoot == null || fbxRoot == null) return 0;
+
+        var mappedEntries = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>())
+            .Where(value => value != null && value.avatarPath != null)
+            .ToList();
+        var plannedTargetIds = new HashSet<int>();
+        var plans = new List<RendererRestorePlan>();
+        if (mappedEntries.Count > 0)
+        {
+            foreach (var entry in mappedEntries)
+            {
+                var targetTransform = FindTransformByRelativePath(avatarRoot, entry.avatarPath);
+                var targetRenderer = targetTransform != null ? targetTransform.GetComponent<SkinnedMeshRenderer>() : null;
+                var sourceRenderer = ResolveFbxRenderer(fbxRoot, entry);
+                if (targetRenderer == null || sourceRenderer == null)
+                {
+                    MCBLogger.LogWarning(
+                        $"[SmrPathService] Could not safely restore mapped renderer avatarPath='{entry.avatarPath}' fbxPath='{entry.fbxMeshPath}'. No renderer state was changed for this FBX.");
+                    return 0;
+                }
+                if (!plannedTargetIds.Add(targetRenderer.GetInstanceID()))
+                {
+                    MCBLogger.LogWarning(
+                        $"[SmrPathService] Mapped renderer avatarPath='{entry.avatarPath}' resolves to a duplicate target. No renderer state was changed for this FBX.");
+                    return 0;
+                }
+
+                if (!TryCreateRendererRestorePlan(avatarRoot, fbxRoot, targetRenderer, sourceRenderer, out var plan))
+                {
+                    return 0;
+                }
+                plans.Add(plan);
+            }
+        }
+        else
+        {
+            // Older versions can have no source smrPaths. The avatar was instantiated from the
+            // source FBX, so hierarchy paths are the authoritative fallback even when the current
+            // mesh is a generated native payload or DynamicNormals asset with a different name.
+            foreach (var sourceRenderer in fbxRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (sourceRenderer == null || sourceRenderer.sharedMesh == null) continue;
+
+                string rendererPath = GetRelativeTransformPath(fbxRoot, sourceRenderer.transform);
+                var targetTransform = FindTransformByRelativePath(avatarRoot, rendererPath);
+                var targetRenderer = targetTransform != null ? targetTransform.GetComponent<SkinnedMeshRenderer>() : null;
+                if (targetRenderer == null)
+                {
+                    targetRenderer = FindUniqueRendererByName(avatarRoot, sourceRenderer.transform.name);
+                }
+
+                if (targetRenderer == null)
+                {
+                    MCBLogger.LogWarning(
+                        $"[SmrPathService] Could not find avatar renderer for source path '{rendererPath}'. No renderer state was changed for this FBX.");
+                    return 0;
+                }
+                if (!plannedTargetIds.Add(targetRenderer.GetInstanceID()))
+                {
+                    MCBLogger.LogWarning(
+                        $"[SmrPathService] Source renderer path '{rendererPath}' resolves to a duplicate avatar target. No renderer state was changed for this FBX.");
+                    return 0;
+                }
+                if (!TryCreateRendererRestorePlan(avatarRoot, fbxRoot, targetRenderer, sourceRenderer, out var plan))
+                {
+                    return 0;
+                }
+                plans.Add(plan);
+            }
+        }
+
+        foreach (var plan in plans)
+        {
+            ApplyRendererRestorePlan(plan);
+        }
+        return plans.Count;
+    }
+
+    public static int RestoreTargetTransformHierarchyFromFbx(Transform avatarRoot, string fbxPath)
+    {
+        if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
+
+        var fbxRoot = GetFbxRoot(MCBUtils.ToUnityPath(fbxPath));
+        return fbxRoot == null
+            ? 0
+            : RestoreTargetTransformHierarchyFromFbxRoot(avatarRoot, fbxRoot.transform);
+    }
+
+    internal static int RestoreTargetTransformHierarchyFromFbxRoot(Transform avatarRoot, Transform fbxRoot)
+    {
+        if (avatarRoot == null || fbxRoot == null) return 0;
+
+        var plans = new List<TransformRestorePlan>();
+        var plannedTargetIds = new HashSet<int>();
+        foreach (var sourceTransform in fbxRoot.GetComponentsInChildren<Transform>(true))
+        {
+            if (sourceTransform == null || sourceTransform == fbxRoot) continue;
+
+            string path = GetRelativeTransformPath(fbxRoot, sourceTransform);
+            var target = FindTransformByRelativePath(avatarRoot, path);
+            if (target == null)
+            {
+                target = FindUniqueTransformByName(avatarRoot, sourceTransform.name);
+            }
+            if (target == null || !plannedTargetIds.Add(target.GetInstanceID()))
+            {
+                MCBLogger.LogWarning(
+                    $"[SmrPathService] Could not safely restore canonical FBX transform '{path}'. No transform pose was changed.");
+                return 0;
+            }
+
+            plans.Add(new TransformRestorePlan
+            {
+                target = target,
+                source = sourceTransform
+            });
+        }
+
+        foreach (var plan in plans)
+        {
+            Undo.RecordObject(plan.target, "Restore FBX Transform State");
+            plan.target.localPosition = plan.source.localPosition;
+            plan.target.localRotation = plan.source.localRotation;
+            plan.target.localScale = plan.source.localScale;
+            EditorUtility.SetDirty(plan.target);
+        }
+
+        return plans.Count;
+    }
+
+    public static List<ModelFileSmrPathData> ResolveSmrPathsForSource(
+        CustomBaseVersion version,
+        string sourceFbxPath,
+        MyCustomBase target = null)
     {
         if (version?.sourceFiles == null || string.IsNullOrWhiteSpace(sourceFbxPath))
         {
@@ -177,15 +328,12 @@ public static class SmrPathService
         var source = version.sourceFiles.FirstOrDefault(file =>
             file != null &&
             (string.Equals(MCBUtils.ToUnityPath(file.path), normalized, StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(GetMetadataString(file, AvatarPathOverrideService.MetadataLocalTargetPath), normalized, StringComparison.OrdinalIgnoreCase)));
+             (target != null && string.Equals(
+                 AvatarPathOverrideService.ResolveLocalTargetPath(target, file, updateStoredPathFromGuid: false),
+                 normalized,
+                 StringComparison.OrdinalIgnoreCase))));
 
         return source?.smrPaths ?? new List<ModelFileSmrPathData>();
-    }
-
-    private static string GetMetadataString(ModelFileData file, string key)
-    {
-        if (file?.metadata == null || string.IsNullOrWhiteSpace(key)) return null;
-        return file.metadata.TryGetValue(key, out object value) ? MCBUtils.ToUnityPath(value?.ToString()) : null;
     }
 
     public static string GetRelativeTransformPath(Transform root, Transform target)
@@ -373,6 +521,12 @@ public static class SmrPathService
     {
         if (fbxRoot == null || entry == null) return null;
 
+        var renderer = ResolveFbxRenderer(fbxRoot, entry);
+        if (renderer != null && renderer.sharedMesh != null)
+        {
+            return renderer.sharedMesh;
+        }
+
         if (!string.IsNullOrWhiteSpace(entry.fbxMeshPath))
         {
             var transform = FindTransformByRelativePath(fbxRoot, entry.fbxMeshPath);
@@ -402,6 +556,179 @@ public static class SmrPathService
         }
 
         return null;
+    }
+
+    private static SkinnedMeshRenderer ResolveFbxRenderer(Transform fbxRoot, ModelFileSmrPathData entry)
+    {
+        if (fbxRoot == null || entry == null) return null;
+
+        if (!string.IsNullOrWhiteSpace(entry.fbxMeshPath))
+        {
+            var transform = FindTransformByRelativePath(fbxRoot, entry.fbxMeshPath);
+            var renderer = transform != null ? transform.GetComponent<SkinnedMeshRenderer>() : null;
+            if (renderer != null)
+            {
+                return renderer;
+            }
+        }
+
+        var renderers = fbxRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        if (!string.IsNullOrWhiteSpace(entry.meshName))
+        {
+            var candidates = renderers
+                .Where(value => value != null &&
+                                value.sharedMesh != null &&
+                                string.Equals(value.sharedMesh.name, entry.meshName, StringComparison.Ordinal))
+                .ToList();
+            var named = candidates.FirstOrDefault(value =>
+                string.Equals(value.transform.name, entry.rendererName, StringComparison.Ordinal));
+            if (named != null || candidates.Count == 1)
+            {
+                return named ?? candidates[0];
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.rendererName))
+        {
+            var candidates = renderers
+                .Where(value => value != null &&
+                                string.Equals(value.transform.name, entry.rendererName, StringComparison.Ordinal))
+                .Take(2)
+                .ToList();
+            return candidates.Count == 1 ? candidates[0] : null;
+        }
+
+        return null;
+    }
+
+    private static SkinnedMeshRenderer FindUniqueRendererByName(Transform avatarRoot, string rendererName)
+    {
+        if (avatarRoot == null || string.IsNullOrWhiteSpace(rendererName)) return null;
+
+        var matches = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .Where(value => value != null &&
+                            string.Equals(value.transform.name, rendererName, StringComparison.Ordinal))
+            .Take(2)
+            .ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    private static bool TryCreateRendererRestorePlan(
+        Transform avatarRoot,
+        Transform fbxRoot,
+        SkinnedMeshRenderer target,
+        SkinnedMeshRenderer source,
+        out RendererRestorePlan plan)
+    {
+        plan = null;
+        if (avatarRoot == null || fbxRoot == null || target == null || source == null || source.sharedMesh == null)
+        {
+            return false;
+        }
+
+        var resolvedBones = new Transform[source.bones?.Length ?? 0];
+        for (int i = 0; i < resolvedBones.Length; i++)
+        {
+            Transform sourceBone = source.bones[i];
+            if (sourceBone == null)
+            {
+                resolvedBones[i] = null;
+                continue;
+            }
+
+            string path = GetRelativeTransformPath(fbxRoot, sourceBone);
+            resolvedBones[i] = sourceBone == fbxRoot
+                ? avatarRoot
+                : FindTransformByRelativePath(avatarRoot, path);
+            if (resolvedBones[i] == null)
+            {
+                resolvedBones[i] = FindUniqueTransformByName(avatarRoot, sourceBone.name);
+            }
+            if (resolvedBones[i] == null)
+            {
+                MCBLogger.LogWarning($"[SmrPathService] Could not safely restore renderer '{target.name}': source bone '{path}' was not found on the avatar.");
+                return false;
+            }
+        }
+
+        if (source.sharedMesh.bindposes != null &&
+            source.sharedMesh.bindposes.Length > 0 &&
+            source.sharedMesh.bindposes.Length != resolvedBones.Length)
+        {
+            MCBLogger.LogWarning(
+                $"[SmrPathService] Could not safely restore renderer '{target.name}': source mesh has {source.sharedMesh.bindposes.Length} bindposes but the renderer has {resolvedBones.Length} bones.");
+            return false;
+        }
+
+        Transform resolvedRootBone = null;
+        if (source.rootBone != null)
+        {
+            string rootBonePath = GetRelativeTransformPath(fbxRoot, source.rootBone);
+            resolvedRootBone = source.rootBone == fbxRoot
+                ? avatarRoot
+                : FindTransformByRelativePath(avatarRoot, rootBonePath);
+            if (resolvedRootBone == null)
+            {
+                resolvedRootBone = FindUniqueTransformByName(avatarRoot, source.rootBone.name);
+            }
+            if (resolvedRootBone == null)
+            {
+                MCBLogger.LogWarning($"[SmrPathService] Could not safely restore renderer '{target.name}': source root bone '{rootBonePath}' was not found on the avatar.");
+                return false;
+            }
+        }
+
+        plan = new RendererRestorePlan
+        {
+            target = target,
+            source = source,
+            resolvedBones = resolvedBones,
+            resolvedRootBone = resolvedRootBone
+        };
+        return true;
+    }
+
+    private static void ApplyRendererRestorePlan(RendererRestorePlan plan)
+    {
+        if (plan?.target == null || plan.source == null) return;
+
+        Undo.RecordObject(plan.target.transform, "Restore FBX Renderer Transform");
+        plan.target.transform.localPosition = plan.source.transform.localPosition;
+        plan.target.transform.localRotation = plan.source.transform.localRotation;
+        plan.target.transform.localScale = plan.source.transform.localScale;
+        EditorUtility.SetDirty(plan.target.transform);
+
+        Undo.RecordObject(plan.target, "Restore FBX Renderer State");
+        plan.target.sharedMesh = plan.source.sharedMesh;
+        plan.target.localBounds = plan.source.localBounds;
+        plan.target.bones = plan.resolvedBones;
+        plan.target.rootBone = plan.resolvedRootBone;
+        EditorUtility.SetDirty(plan.target);
+    }
+
+    private sealed class RendererRestorePlan
+    {
+        public SkinnedMeshRenderer target;
+        public SkinnedMeshRenderer source;
+        public Transform[] resolvedBones;
+        public Transform resolvedRootBone;
+    }
+
+    private sealed class TransformRestorePlan
+    {
+        public Transform target;
+        public Transform source;
+    }
+
+    private static Transform FindUniqueTransformByName(Transform avatarRoot, string transformName)
+    {
+        if (avatarRoot == null || string.IsNullOrWhiteSpace(transformName)) return null;
+
+        var matches = avatarRoot.GetComponentsInChildren<Transform>(true)
+            .Where(value => value != null && string.Equals(value.name, transformName, StringComparison.Ordinal))
+            .Take(2)
+            .ToList();
+        return matches.Count == 1 ? matches[0] : null;
     }
 
     private static Mesh ResolveMeshFromTransform(Transform transform)

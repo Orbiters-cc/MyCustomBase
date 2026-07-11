@@ -464,7 +464,7 @@ public class AdjustMaterialModule
         var targetFbxPaths = GetTargetFbxPaths();
         if (NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
         {
-            return NativeMeshPayloadService.ResolveRenderersForSourcePaths(root, version, targetFbxPaths);
+            return NativeMeshPayloadService.ResolveRenderersForSourcePaths(root, version, targetFbxPaths, editor?.customBaseTarget);
         }
 
         return materialService.GetSkinnedMeshRenderersForFbxPaths(targetFbxPaths);

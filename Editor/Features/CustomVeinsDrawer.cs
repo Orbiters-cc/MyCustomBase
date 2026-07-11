@@ -483,7 +483,7 @@ public partial class CustomVeinsDrawer
     private List<SkinnedMeshRenderer> ResolveAdvancedMeshRenderers(CustomBaseVersion appliedVersion, IEnumerable<string> sourcePaths)
     {
         return NativeMeshPayloadService
-            .ResolveRenderersForSourcePaths(cachedRoot, appliedVersion, sourcePaths)
+            .ResolveRenderersForSourcePaths(cachedRoot, appliedVersion, sourcePaths, editor?.customBaseTarget)
             .Where(renderer => renderer?.sharedMaterial != null)
             .GroupBy(renderer => renderer.GetInstanceID())
             .Select(group => group.First())

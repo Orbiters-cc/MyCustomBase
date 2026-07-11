@@ -657,6 +657,18 @@ public partial class VersionListDrawer
             details.Add(CreateUserInfoUIToolkit(ver.uploaderId, false));
         }
 
+        var extraCustomizationFlags = ExtraCustomizationUtils.GetFlags(ver?.extraCustomization);
+        if (extraCustomizationFlags.Count > 0)
+        {
+            var chips = CreateChipRow();
+            chips.AddToClassList("mcb-version-chip-row--details");
+            foreach (string flag in extraCustomizationFlags)
+            {
+                chips.Add(CreateChip(flag, new Color(0.45f, 0.85f, 1f), lowercase: false));
+            }
+            details.Add(chips);
+        }
+
         return details;
     }
 
@@ -717,7 +729,8 @@ public partial class VersionListDrawer
 
     private static bool HasVersionDetails(CustomBaseVersion ver)
     {
-        return !string.IsNullOrWhiteSpace(ver?.changelog);
+        return !string.IsNullOrWhiteSpace(ver?.changelog) ||
+               ExtraCustomizationUtils.GetFlags(ver?.extraCustomization).Count > 0;
     }
 
     private bool IsEditingVersion(CustomBaseVersion ver)
@@ -1044,9 +1057,10 @@ public partial class VersionListDrawer
         return row;
     }
 
-    private static Label CreateChip(string text, Color textColor)
+    private static Label CreateChip(string text, Color textColor, bool lowercase = true)
     {
-        var label = CreateLabel((text ?? string.Empty).ToLowerInvariant(), 11, FontStyle.Bold, textColor);
+        string labelText = text ?? string.Empty;
+        var label = CreateLabel(lowercase ? labelText.ToLowerInvariant() : labelText, 11, FontStyle.Bold, textColor);
         label.AddToClassList("mcb-version-chip");
         label.style.borderTopColor = textColor;
         label.style.borderRightColor = textColor;

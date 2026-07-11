@@ -5,9 +5,24 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using UnityEditor;
 
 public static class UnityPackageFbxSourceExtractor
 {
+    private const int TarBlockSize = 512;
+    private const int MaxPathnameBytes = 64 * 1024;
+    private const long MaxSingleFbxBytes = 1024L * 1024L * 1024L;
+    private const long MaxExtractedFbxBytes = 2L * 1024L * 1024L * 1024L;
+    private const long MaxTarUncompressedBytes = 8L * 1024L * 1024L * 1024L;
+    private const int MaxTarEntries = 100000;
+    private static readonly HashSet<ExtractionResult> ActiveExtractions = new HashSet<ExtractionResult>();
+
+    static UnityPackageFbxSourceExtractor()
+    {
+        CleanupStaleExtractionRoots();
+        AssemblyReloadEvents.beforeAssemblyReload += DisposeActiveExtractions;
+    }
+
     public sealed class ExtractedFbx
     {
         public string publishedSourcePath;
@@ -16,13 +31,61 @@ public static class UnityPackageFbxSourceExtractor
         public string packagePath;
     }
 
-    private sealed class PackageObject
+    public sealed class ExtractionResult : IDisposable
     {
-        public string pathname;
-        public byte[] assetBytes;
+        public readonly List<ExtractedFbx> entries;
+        public readonly string extractionRoot;
+        private bool disposed;
+
+        internal ExtractionResult(string root, List<ExtractedFbx> extractedEntries)
+        {
+            extractionRoot = root;
+            entries = extractedEntries;
+            ActiveExtractions.Add(this);
+        }
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            ActiveExtractions.Remove(this);
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(extractionRoot) && Directory.Exists(extractionRoot))
+                {
+                    Directory.Delete(extractionRoot, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogWarning($"[UnityPackageFbxSourceExtractor] Could not remove temporary source files: {ex.Message}");
+            }
+        }
     }
 
-    public static List<ExtractedFbx> ExtractFbxEntries(string unityPackagePath)
+    private static void DisposeActiveExtractions()
+    {
+        foreach (var extraction in ActiveExtractions.ToArray()) extraction.Dispose();
+    }
+
+    private static void CleanupStaleExtractionRoots()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "mcb_source_keys");
+        if (!Directory.Exists(root)) return;
+        foreach (string directory in Directory.GetDirectories(root))
+        {
+            try
+            {
+                if (Directory.GetLastWriteTimeUtc(directory) < DateTime.UtcNow.AddDays(-1))
+                {
+                    Directory.Delete(directory, true);
+                }
+            }
+            catch { }
+        }
+    }
+
+    public static ExtractionResult ExtractFbxEntries(string unityPackagePath)
     {
         if (string.IsNullOrWhiteSpace(unityPackagePath))
         {
@@ -38,114 +101,166 @@ public static class UnityPackageFbxSourceExtractor
         string extractionRoot = Path.Combine(Path.GetTempPath(), "mcb_source_keys", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(extractionRoot);
 
-        var objects = ReadUnityPackageObjects(packageFullPath);
-        var result = new List<ExtractedFbx>();
-        foreach (var entry in objects.Values)
+        try
         {
-            string publishedPath = NormalizePackagePath(entry.pathname);
-            if (string.IsNullOrWhiteSpace(publishedPath) ||
-                !publishedPath.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase) ||
-                entry.assetBytes == null ||
-                entry.assetBytes.Length == 0)
-            {
-                continue;
-            }
-
-            string outputPath = Path.Combine(extractionRoot, SanitizePathForFileName(publishedPath));
-            File.WriteAllBytes(outputPath, entry.assetBytes);
-            result.Add(new ExtractedFbx
-            {
-                publishedSourcePath = publishedPath,
-                tempPath = outputPath,
-                hash = MCBUtils.CalculateFileHash(outputPath),
-                packagePath = unityPackagePath
-            });
+            Dictionary<string, string> fbxPathsByObjectId = ReadFbxPathnames(packageFullPath);
+            var extractedByObjectId = ExtractSelectedAssets(packageFullPath, extractionRoot, fbxPathsByObjectId);
+            var entries = extractedByObjectId
+                .Select(pair => new ExtractedFbx
+                {
+                    publishedSourcePath = fbxPathsByObjectId[pair.Key],
+                    tempPath = pair.Value,
+                    hash = MCBUtils.CalculateFileHash(pair.Value),
+                    packagePath = unityPackagePath
+                })
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.hash))
+                .OrderBy(entry => entry.publishedSourcePath, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return new ExtractionResult(extractionRoot, entries);
         }
-
-        return result
-            .Where(entry => !string.IsNullOrWhiteSpace(entry.hash))
-            .OrderBy(entry => entry.publishedSourcePath, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        catch
+        {
+            try { Directory.Delete(extractionRoot, true); } catch { }
+            throw;
+        }
     }
 
-    private static Dictionary<string, PackageObject> ReadUnityPackageObjects(string packageFullPath)
+    private static Dictionary<string, string> ReadFbxPathnames(string packageFullPath)
     {
-        var result = new Dictionary<string, PackageObject>(StringComparer.OrdinalIgnoreCase);
-        using (var file = File.OpenRead(packageFullPath))
-        using (var gzip = new GZipStream(file, CompressionMode.Decompress))
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var objectIdByPublishedPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        ProcessTar(packageFullPath, (name, size, stream) =>
         {
-            foreach (var entry in ReadTarEntries(gzip))
+            if (!TrySplitObjectEntry(name, out string objectId, out string leafName) ||
+                !string.Equals(leafName, "pathname", StringComparison.OrdinalIgnoreCase))
             {
-                string normalizedName = entry.Name.Replace('\\', '/').Trim('/');
-                int slash = normalizedName.IndexOf('/');
-                if (slash <= 0)
-                {
-                    continue;
-                }
-
-                string objectId = normalizedName.Substring(0, slash);
-                string leafName = normalizedName.Substring(slash + 1);
-                if (!result.TryGetValue(objectId, out var packageObject))
-                {
-                    packageObject = new PackageObject();
-                    result[objectId] = packageObject;
-                }
-
-                if (string.Equals(leafName, "pathname", StringComparison.OrdinalIgnoreCase))
-                {
-                    packageObject.pathname = Encoding.UTF8.GetString(entry.Bytes).Trim('\0', '\r', '\n', ' ');
-                }
-                else if (string.Equals(leafName, "asset", StringComparison.OrdinalIgnoreCase))
-                {
-                    packageObject.assetBytes = entry.Bytes;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    private static IEnumerable<TarEntry> ReadTarEntries(Stream stream)
-    {
-        byte[] header = new byte[512];
-        while (true)
-        {
-            int read = ReadExactly(stream, header, 0, header.Length);
-            if (read == 0 || IsZeroBlock(header))
-            {
-                yield break;
+                SkipExactly(stream, size);
+                return;
             }
 
-            if (read != header.Length)
+            if (size > MaxPathnameBytes)
             {
-                throw new InvalidDataException("Unexpected end of unitypackage TAR header.");
-            }
-
-            string name = ReadNullTerminatedString(header, 0, 100);
-            long size = ReadOctal(header, 124, 12);
-            if (size > int.MaxValue)
-            {
-                throw new InvalidDataException($"unitypackage TAR entry is too large to read in memory: {name}");
+                throw new InvalidDataException($"unitypackage pathname is too large for object {objectId}.");
             }
 
             byte[] bytes = new byte[(int)size];
-            if (size > 0)
+            ReadExactlyOrThrow(stream, bytes, 0, bytes.Length, $"pathname for {objectId}");
+            string publishedPath = Encoding.UTF8.GetString(bytes).Trim('\0', '\r', '\n', ' ');
+            if (!TryNormalizePublishedFbxPath(publishedPath, out string normalizedPath)) return;
+
+            if (objectIdByPublishedPath.TryGetValue(normalizedPath, out string existingObjectId) &&
+                !string.Equals(existingObjectId, objectId, StringComparison.OrdinalIgnoreCase))
             {
-                int dataRead = ReadExactly(stream, bytes, 0, bytes.Length);
-                if (dataRead != bytes.Length)
+                throw new InvalidDataException($"unitypackage contains duplicate FBX pathname '{normalizedPath}'.");
+            }
+            if (result.ContainsKey(objectId))
+            {
+                throw new InvalidDataException($"unitypackage contains more than one pathname for object '{objectId}'.");
+            }
+
+            result[objectId] = normalizedPath;
+            objectIdByPublishedPath[normalizedPath] = objectId;
+        });
+        return result;
+    }
+
+    private static Dictionary<string, string> ExtractSelectedAssets(
+        string packageFullPath,
+        string extractionRoot,
+        IReadOnlyDictionary<string, string> fbxPathsByObjectId)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        long totalBytes = 0;
+        ProcessTar(packageFullPath, (name, size, stream) =>
+        {
+            if (!TrySplitObjectEntry(name, out string objectId, out string leafName) ||
+                !string.Equals(leafName, "asset", StringComparison.OrdinalIgnoreCase) ||
+                !fbxPathsByObjectId.ContainsKey(objectId))
+            {
+                SkipExactly(stream, size);
+                return;
+            }
+
+            if (size <= 0 || size > MaxSingleFbxBytes || totalBytes + size > MaxExtractedFbxBytes)
+            {
+                throw new InvalidDataException($"unitypackage FBX extraction limit exceeded for '{fbxPathsByObjectId[objectId]}'.");
+            }
+            if (result.ContainsKey(objectId))
+            {
+                throw new InvalidDataException($"unitypackage contains more than one asset entry for '{fbxPathsByObjectId[objectId]}'.");
+            }
+
+            string outputPath = Path.Combine(extractionRoot, objectId + ".fbx");
+            using (var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                CopyExactly(stream, output, size);
+            }
+
+            totalBytes += size;
+            result[objectId] = outputPath;
+        });
+        return result;
+    }
+
+    private static void ProcessTar(string packageFullPath, Action<string, long, Stream> handleEntry)
+    {
+        using (var file = File.OpenRead(packageFullPath))
+        using (var gzip = new GZipStream(file, CompressionMode.Decompress))
+        {
+            byte[] header = new byte[TarBlockSize];
+            int entryCount = 0;
+            long totalUncompressedBytes = 0;
+            while (true)
+            {
+                int read = ReadExactly(gzip, header, 0, header.Length);
+                if (read == 0 || IsZeroBlock(header)) return;
+                if (read != header.Length) throw new InvalidDataException("Unexpected end of unitypackage TAR header.");
+                if (++entryCount > MaxTarEntries) throw new InvalidDataException("unitypackage contains too many TAR entries.");
+
+                string name = ReadNullTerminatedString(header, 0, 100);
+                string prefix = ReadNullTerminatedString(header, 345, 155);
+                if (!string.IsNullOrWhiteSpace(prefix)) name = prefix.TrimEnd('/') + "/" + name.TrimStart('/');
+                long size = ReadOctal(header, 124, 12);
+                if (size < 0) throw new InvalidDataException($"Invalid TAR size for '{name}'.");
+                if (size > MaxTarUncompressedBytes - totalUncompressedBytes)
                 {
-                    throw new InvalidDataException($"Unexpected end of unitypackage TAR data for '{name}'.");
+                    throw new InvalidDataException("unitypackage expanded data exceeds the extraction limit.");
                 }
-            }
+                totalUncompressedBytes += size;
 
-            long padding = (512 - (size % 512)) % 512;
-            if (padding > 0)
-            {
-                SkipExactly(stream, padding);
+                handleEntry(name, size, gzip);
+                long padding = (TarBlockSize - (size % TarBlockSize)) % TarBlockSize;
+                if (padding > 0) SkipExactly(gzip, padding);
             }
-
-            yield return new TarEntry { Name = name, Bytes = bytes };
         }
+    }
+
+    private static bool TrySplitObjectEntry(string name, out string objectId, out string leafName)
+    {
+        objectId = null;
+        leafName = null;
+        string normalized = (name ?? string.Empty).Replace('\\', '/').Trim('/');
+        int slash = normalized.IndexOf('/');
+        if (slash <= 0 || normalized.IndexOf('/', slash + 1) >= 0) return false;
+
+        string candidateId = normalized.Substring(0, slash);
+        if (candidateId.Any(character => !char.IsLetterOrDigit(character) && character != '-' && character != '_')) return false;
+
+        objectId = candidateId;
+        leafName = normalized.Substring(slash + 1);
+        return true;
+    }
+
+    private static bool TryNormalizePublishedFbxPath(string path, out string normalizedPath)
+    {
+        normalizedPath = null;
+        string candidate = path?.Replace('\\', '/').Trim();
+        if (string.IsNullOrWhiteSpace(candidate) || !candidate.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!MCBUtils.TryResolveProjectAssetPath(candidate, out normalizedPath, out _))
+        {
+            throw new InvalidDataException($"unitypackage contains an unsafe FBX pathname: '{path}'.");
+        }
+        return true;
     }
 
     private static int ReadExactly(Stream stream, byte[] buffer, int offset, int count)
@@ -154,88 +269,62 @@ public static class UnityPackageFbxSourceExtractor
         while (total < count)
         {
             int read = stream.Read(buffer, offset + total, count - total);
-            if (read <= 0)
-            {
-                break;
-            }
-
+            if (read <= 0) break;
             total += read;
         }
-
         return total;
+    }
+
+    private static void ReadExactlyOrThrow(Stream stream, byte[] buffer, int offset, int count, string label)
+    {
+        if (ReadExactly(stream, buffer, offset, count) != count)
+        {
+            throw new InvalidDataException($"Unexpected end of unitypackage TAR data for {label}.");
+        }
+    }
+
+    private static void CopyExactly(Stream source, Stream destination, long byteCount)
+    {
+        byte[] buffer = new byte[1024 * 1024];
+        long remaining = byteCount;
+        while (remaining > 0)
+        {
+            int read = source.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+            if (read <= 0) throw new InvalidDataException("Unexpected end of unitypackage FBX data.");
+            destination.Write(buffer, 0, read);
+            remaining -= read;
+        }
     }
 
     private static void SkipExactly(Stream stream, long byteCount)
     {
-        byte[] buffer = new byte[Math.Min(8192, (int)Math.Max(1, byteCount))];
+        byte[] buffer = new byte[8192];
         long remaining = byteCount;
         while (remaining > 0)
         {
-            int toRead = (int)Math.Min(buffer.Length, remaining);
-            int read = stream.Read(buffer, 0, toRead);
-            if (read <= 0)
-            {
-                throw new InvalidDataException("Unexpected end of unitypackage TAR padding.");
-            }
-
+            int read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+            if (read <= 0) throw new InvalidDataException("Unexpected end of unitypackage TAR data.");
             remaining -= read;
         }
     }
 
     private static bool IsZeroBlock(byte[] block)
     {
-        for (int i = 0; i < block.Length; i++)
-        {
-            if (block[i] != 0) return false;
-        }
-
-        return true;
+        return block.All(value => value == 0);
     }
 
     private static string ReadNullTerminatedString(byte[] buffer, int offset, int length)
     {
         int end = offset;
         int max = offset + length;
-        while (end < max && buffer[end] != 0)
-        {
-            end++;
-        }
-
+        while (end < max && buffer[end] != 0) end++;
         return Encoding.UTF8.GetString(buffer, offset, end - offset);
     }
 
     private static long ReadOctal(byte[] buffer, int offset, int length)
     {
         string text = ReadNullTerminatedString(buffer, offset, length).Trim();
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return 0;
-        }
-
-        return Convert.ToInt64(text, 8);
-    }
-
-    private static string NormalizePackagePath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return null;
-        return path.Replace('\\', '/').TrimStart('/');
-    }
-
-    private static string SanitizePathForFileName(string path)
-    {
-        string value = NormalizePackagePath(path) ?? "source.fbx";
-        foreach (char c in Path.GetInvalidFileNameChars())
-        {
-            value = value.Replace(c, '_');
-        }
-
-        return value.Replace('/', '_');
-    }
-
-    private sealed class TarEntry
-    {
-        public string Name;
-        public byte[] Bytes;
+        return string.IsNullOrWhiteSpace(text) ? 0 : Convert.ToInt64(text, 8);
     }
 }
 #endif

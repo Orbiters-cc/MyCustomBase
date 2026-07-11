@@ -442,17 +442,7 @@ public static class AvatarAssetDiscoveryService
 
     private static async Task<ModelFileData> BuildProjectFileDataAsync(string path)
     {
-        string normalizedPath = NormalizeUnityPath(path);
-        string fullPath;
-        try
-        {
-            fullPath = Path.GetFullPath(normalizedPath);
-        }
-        catch
-        {
-            return null;
-        }
-
+        if (!MCBUtils.TryResolveProjectAssetPath(path, out string normalizedPath, out string fullPath)) return null;
         if (!File.Exists(fullPath)) return null;
 
         string hash = await AsyncHashService.Instance.CalculateFileHashAsync(fullPath, null, true);

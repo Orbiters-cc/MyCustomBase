@@ -127,6 +127,45 @@ public class AsyncHashService
         }
     }
 
+    public async Task<string> CalculateFileHashFreshAsync(string filePath)
+    {
+        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+        {
+            MCBLogger.LogError($"[AsyncHashService] File not found: {filePath}");
+            return null;
+        }
+
+        string normalizedPath = Path.GetFullPath(filePath);
+        try
+        {
+            var before = new FileInfo(normalizedPath);
+            long expectedLength = before.Length;
+            long expectedWriteTicks = before.LastWriteTimeUtc.Ticks;
+            string hash = await Task.Run(() =>
+                CalculateHashInternal(normalizedPath, null, AsyncTaskManager.Instance, false));
+
+            var after = new FileInfo(normalizedPath);
+            if (!after.Exists ||
+                after.Length != expectedLength ||
+                after.LastWriteTimeUtc.Ticks != expectedWriteTicks)
+            {
+                MCBLogger.LogWarning($"[AsyncHashService] Discarded stale hash because '{Path.GetFileName(normalizedPath)}' changed during calculation.");
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(hash))
+            {
+                PersistentCache.Instance.CacheHash(normalizedPath, hash);
+            }
+            return hash;
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogError($"[AsyncHashService] Fresh hash calculation failed for '{Path.GetFileName(normalizedPath)}': {ex.Message}");
+            return null;
+        }
+    }
+
     private string CalculateHashInternal(string filePath, string taskId, AsyncTaskManager taskManager, bool reportProgress)
     {
         var fileInfo = new FileInfo(filePath);

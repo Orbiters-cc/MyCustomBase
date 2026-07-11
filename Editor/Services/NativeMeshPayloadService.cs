@@ -757,13 +757,18 @@ public static class NativeMeshPayloadService
         completed?.Invoke(payload);
     }
 
-    public static void RestoreOriginalMeshesFromFbx(Transform avatarRoot, CustomBaseVersion version, IEnumerable<string> sourceFbxPaths)
+    public static int RestoreOriginalMeshesFromFbx(
+        Transform avatarRoot,
+        CustomBaseVersion version,
+        IEnumerable<string> sourceFbxPaths,
+        MyCustomBase target = null)
     {
         if (avatarRoot == null)
         {
-            return;
+            return 0;
         }
 
+        int restoredTotal = 0;
         foreach (string rawPath in sourceFbxPaths ?? Enumerable.Empty<string>())
         {
             if (string.IsNullOrWhiteSpace(rawPath))
@@ -772,19 +777,27 @@ public static class NativeMeshPayloadService
             }
 
             string sourcePath = MCBUtils.ToUnityPath(rawPath);
-            ApplySourceBoneTransforms(avatarRoot, sourcePath);
-            var smrPaths = SmrPathService.ResolveSmrPathsForSource(version, sourcePath);
-            SmrPathService.RefreshTargetMeshesFromFbx(avatarRoot, sourcePath, smrPaths);
+            var smrPaths = SmrPathService.ResolveSmrPathsForSource(version, sourcePath, target);
+            int restored = SmrPathService.RestoreTargetStateFromFbx(avatarRoot, sourcePath, smrPaths);
+            restoredTotal += restored;
+            if (restored == 0)
+            {
+                throw new InvalidOperationException(
+                    $"No renderer could be safely restored from '{sourcePath}'. The existing mesh and bone bindings were left together unchanged.");
+            }
         }
+
+        return restoredTotal;
     }
 
-    public static void RestoreOriginalAuthoringPoseFromFbx(Transform avatarRoot, IEnumerable<string> sourceFbxPaths)
+    public static int RestoreOriginalAuthoringPoseFromFbx(Transform avatarRoot, IEnumerable<string> sourceFbxPaths)
     {
         if (avatarRoot == null)
         {
-            return;
+            return 0;
         }
 
+        int restoredTotal = 0;
         foreach (string rawPath in sourceFbxPaths ?? Enumerable.Empty<string>())
         {
             if (string.IsNullOrWhiteSpace(rawPath))
@@ -792,10 +805,14 @@ public static class NativeMeshPayloadService
                 continue;
             }
 
-            ApplySourceBoneTransforms(avatarRoot, MCBUtils.ToUnityPath(rawPath));
+            restoredTotal += SmrPathService.RestoreTargetTransformHierarchyFromFbx(avatarRoot, MCBUtils.ToUnityPath(rawPath));
         }
 
-        RefreshAvatarSkinnedRenderers(avatarRoot);
+        if (restoredTotal > 0)
+        {
+            RefreshAvatarSkinnedRenderers(avatarRoot);
+        }
+        return restoredTotal;
     }
 
     public static bool IsVersionApplied(Transform avatarRoot, CustomBaseVersion version)
@@ -889,7 +906,8 @@ public static class NativeMeshPayloadService
     public static List<SkinnedMeshRenderer> ResolveRenderersForSourcePaths(
         Transform avatarRoot,
         CustomBaseVersion version,
-        IEnumerable<string> sourceFbxPaths)
+        IEnumerable<string> sourceFbxPaths,
+        MyCustomBase target = null)
     {
         var renderers = new List<SkinnedMeshRenderer>();
         var seen = new HashSet<int>();
@@ -903,7 +921,7 @@ public static class NativeMeshPayloadService
             string sourcePath = MCBUtils.ToUnityPath(rawPath);
             var source = version?.sourceFiles?.FirstOrDefault(file =>
                 file != null &&
-                SourceFileMatchesPath(file, sourcePath));
+                SourceFileMatchesPath(file, sourcePath, target));
             foreach (var renderer in ResolveRenderersForSource(avatarRoot, source))
             {
                 if (renderer != null && seen.Add(renderer.GetInstanceID()))
@@ -2809,37 +2827,6 @@ public static class NativeMeshPayloadService
         return null;
     }
 
-    private static void ApplySourceBoneTransforms(Transform avatarRoot, string sourceFbxPath)
-    {
-        var source = AssetDatabase.LoadAssetAtPath<GameObject>(MCBUtils.ToUnityPath(sourceFbxPath));
-        if (avatarRoot == null || source == null)
-        {
-            return;
-        }
-
-        Transform sourceRoot = source.transform;
-        foreach (var sourceTransform in source.GetComponentsInChildren<Transform>(true))
-        {
-            if (sourceTransform == null || sourceTransform == sourceRoot)
-            {
-                continue;
-            }
-
-            string path = GetRelativeTransformPath(sourceRoot, sourceTransform);
-            var target = ResolveAvatarTransform(avatarRoot, path);
-            if (target == null)
-            {
-                continue;
-            }
-
-            Undo.RecordObject(target, "Restore Native Mesh Bone Pose");
-            target.localPosition = sourceTransform.localPosition;
-            target.localRotation = sourceTransform.localRotation;
-            target.localScale = sourceTransform.localScale;
-            EditorUtility.SetDirty(target);
-        }
-    }
-
     private static IEnumerable<ModelFileData> GetSourceFilesForPatch(CustomBaseVersion version, ModelFileData patch)
     {
         if (version?.sourceFiles == null || patch == null)
@@ -3256,7 +3243,10 @@ public static class NativeMeshPayloadService
             : normalized;
     }
 
-    private static bool SourceFileMatchesPath(ModelFileData file, string normalizedPath)
+    private static bool SourceFileMatchesPath(
+        ModelFileData file,
+        string normalizedPath,
+        MyCustomBase target = null)
     {
         if (file == null || string.IsNullOrWhiteSpace(normalizedPath))
         {
@@ -3269,13 +3259,10 @@ public static class NativeMeshPayloadService
             return true;
         }
 
-        if (file.metadata != null &&
-            file.metadata.TryGetValue(AvatarPathOverrideService.MetadataLocalTargetPath, out object localTargetPath))
-        {
-            return string.Equals(MCBUtils.ToUnityPath(localTargetPath?.ToString()), normalizedPath, StringComparison.OrdinalIgnoreCase);
-        }
-
-        return false;
+        return target != null && string.Equals(
+            AvatarPathOverrideService.ResolveLocalTargetPath(target, file, updateStoredPathFromGuid: false),
+            normalizedPath,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildUniqueSubAssetName(string baseName, HashSet<string> usedNames)

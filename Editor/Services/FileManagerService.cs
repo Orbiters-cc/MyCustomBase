@@ -119,8 +119,22 @@ public class FileManagerService
             return false;
         }
 
-        File.Copy(customFullPath, targetFullPath, true);
-        return true;
+        string pendingPath = targetFullPath + ".pending-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.Copy(customFullPath, pendingPath, false);
+            if (!FilesAreEqual(customFullPath, pendingPath))
+            {
+                throw new InvalidDataException("The staged FBX replacement failed integrity verification.");
+            }
+
+            File.Replace(pendingPath, targetFullPath, null);
+            return true;
+        }
+        finally
+        {
+            if (File.Exists(pendingPath)) File.Delete(pendingPath);
+        }
     }
 
     private static bool FilesAreEqual(string firstPath, string secondPath)
@@ -214,7 +228,7 @@ public class FileManagerService
 
     public static string GetPreMcbBackupPath(string fbxPath, string token)
     {
-        if (string.IsNullOrWhiteSpace(fbxPath) || string.IsNullOrWhiteSpace(token)) return null;
+        if (string.IsNullOrWhiteSpace(fbxPath) || !IsSafeBackupToken(token)) return null;
         return fbxPath + PreMcbBackupPrefix + token;
     }
 
@@ -225,6 +239,10 @@ public class FileManagerService
         string tokenBase = string.IsNullOrWhiteSpace(preferredToken)
             ? CreatePreMcbBackupToken()
             : preferredToken.Trim();
+        if (!IsSafeBackupToken(tokenBase))
+        {
+            throw new ArgumentException("Pre-MCB backup token contains unsupported characters.", nameof(preferredToken));
+        }
         string token = tokenBase;
         string backupPath = GetPreMcbBackupPath(fbxPath, token);
         int attempt = 1;
@@ -236,6 +254,98 @@ public class FileManagerService
 
         File.Copy(fbxPath, backupPath);
         return token;
+    }
+
+    public bool EnsureOriginalBaseKey(string targetUnityPath, string sourceFilePath, string expectedHash)
+    {
+        if (!MCBUtils.TryResolveProjectAssetPath(targetUnityPath, out _, out string targetFullPath))
+        {
+            throw new ArgumentException($"Target FBX path is outside the Unity project: {targetUnityPath}", nameof(targetUnityPath));
+        }
+        if (!File.Exists(targetFullPath))
+        {
+            throw new FileNotFoundException("Target FBX file was not found.", targetFullPath);
+        }
+
+        string sourceFullPath = Path.GetFullPath(sourceFilePath ?? string.Empty);
+        if (!File.Exists(sourceFullPath))
+        {
+            throw new FileNotFoundException("Original/default source FBX was not found.", sourceFullPath);
+        }
+
+        string normalizedExpectedHash = expectedHash?.Trim().ToLowerInvariant();
+        string sourceHash = CalculateFileHash(sourceFullPath);
+        if (string.IsNullOrWhiteSpace(normalizedExpectedHash) ||
+            normalizedExpectedHash.Length != 64 ||
+            !normalizedExpectedHash.All(Uri.IsHexDigit) ||
+            !string.Equals(sourceHash, normalizedExpectedHash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("The selected original/default FBX changed after it was mapped.");
+        }
+
+        string originalBaseFullPath = GetOriginalBasePath(targetFullPath);
+        if (File.Exists(originalBaseFullPath))
+        {
+            string existingHash = CalculateFileHash(originalBaseFullPath);
+            if (!string.Equals(existingHash, normalizedExpectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"Existing original-base key has a different hash and was not overwritten: {GetOriginalBasePath(targetUnityPath)}");
+            }
+            return false;
+        }
+
+        string temporaryPath = originalBaseFullPath + ".pending-" + Guid.NewGuid().ToString("N");
+        bool created = true;
+        try
+        {
+            File.Copy(sourceFullPath, temporaryPath, false);
+            if (!string.Equals(CalculateFileHash(temporaryPath), normalizedExpectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("The staged original-base key failed hash verification.");
+            }
+
+            try
+            {
+                File.Move(temporaryPath, originalBaseFullPath);
+            }
+            catch (IOException) when (File.Exists(originalBaseFullPath))
+            {
+                string existingHash = CalculateFileHash(originalBaseFullPath);
+                if (!string.Equals(existingHash, normalizedExpectedHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException($"Original-base key was created concurrently with different content: {GetOriginalBasePath(targetUnityPath)}");
+                }
+                created = false;
+            }
+            return created;
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    public void RestorePreMcbBackup(string targetUnityPath, string token)
+    {
+        if (!MCBUtils.TryResolveProjectAssetPath(targetUnityPath, out string normalizedTargetPath, out string targetFullPath))
+        {
+            throw new ArgumentException($"Target FBX path is outside the Unity project: {targetUnityPath}", nameof(targetUnityPath));
+        }
+
+        string backupFullPath = GetPreMcbBackupPath(targetFullPath, token);
+        if (!File.Exists(backupFullPath))
+        {
+            throw new FileNotFoundException("Pre-MCB backup was not found.", backupFullPath);
+        }
+
+        File.Copy(backupFullPath, targetFullPath, true);
+        AssetDatabase.ImportAsset(normalizedTargetPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+    }
+
+    private static bool IsSafeBackupToken(string token)
+    {
+        return !string.IsNullOrWhiteSpace(token) &&
+               token.All(character => char.IsLetterOrDigit(character) || character == '-');
     }
     
     public void DeleteVersionFolder(string path)
