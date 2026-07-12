@@ -94,6 +94,7 @@ Editor/Services/AvatarBaseSourceMatcher.cs
 Editor/Services/AvatarDefinitionGenerationService.cs
 Editor/Services/AvatarParametersService.cs
 Editor/Services/AvatarPathOverrideService.cs
+Editor/Services/AvatarSceneMeshProvenanceService.cs
 Editor/Services/BlenderAddonService.cs
 Editor/Services/BlenderInstallService.cs
 Editor/Services/BlenderProjectService.cs
@@ -171,6 +172,7 @@ Runtime/MCBLogger.cs
 Runtime/MCBUtils.cs
 Runtime/MyCustomBase.cs
 Tests/Editor/AvatarBaseSourceWorkflowTests.cs
+Tests/Editor/AvatarSceneMeshProvenanceTests.cs
 Tests/Editor/ExtraCustomizationUtilsTests.cs
 Tests/Editor/mcb.Editor.Tests.asmdef
 Tests/Editor/McbInstanceIdentityTests.cs

@@ -50,6 +50,7 @@ internal class AvatarAssetDiscoveryRequest
 {
     [JsonProperty] public List<string> paths;
     [JsonProperty] public List<ModelFileData> files;
+    [JsonProperty] public List<ModelFileData> originalBaseFiles;
     [JsonProperty] public List<AvatarPathOverrideService.DiscoveryPathOverridePayload> pathOverrides;
     [JsonProperty] public bool filterOnlyCompatible;
 }
@@ -164,23 +165,33 @@ public static class AvatarAssetDiscoveryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var inventoryTask = BuildProjectFileInventoryAsync(normalizedPaths);
-        while (!inventoryTask.IsCompleted)
+        var inventoryTask = BuildProjectFileInventoryAsync(normalizedPaths, useOriginalBaseSidecars: false);
+        var originalBaseInventoryTask = BuildProjectFileInventoryAsync(normalizedPaths, useOriginalBaseSidecars: true);
+        while (!inventoryTask.IsCompleted || !originalBaseInventoryTask.IsCompleted)
         {
             yield return null;
         }
 
-        if (inventoryTask.IsFaulted)
+        if (inventoryTask.IsFaulted || originalBaseInventoryTask.IsFaulted)
         {
-            string error = inventoryTask.Exception?.GetBaseException().Message ?? "Unknown inventory error.";
+            string error = inventoryTask.Exception?.GetBaseException().Message ??
+                           originalBaseInventoryTask.Exception?.GetBaseException().Message ??
+                           "Unknown inventory error.";
             MCBLogger.LogError($"[AvatarAssetDiscovery] Failed to build project file inventory: {error}");
             CompleteDiscoveryRequest(null, null, $"Failed to prepare avatar asset discovery: {error}", onComplete);
             yield break;
         }
 
         var projectFiles = inventoryTask.Result;
+        var originalBaseFiles = originalBaseInventoryTask.Result;
         var pathOverrides = AvatarPathOverrideService.BuildDiscoveryPayload(customBaseTarget);
-        string cacheKey = BuildDiscoveryCacheKey(authToken, normalizedPaths, projectFiles, pathOverrides, filterOnlyCompatible);
+        string cacheKey = BuildDiscoveryCacheKey(
+            authToken,
+            normalizedPaths,
+            projectFiles,
+            originalBaseFiles,
+            pathOverrides,
+            filterOnlyCompatible);
         AvatarAssetDiscoveryResponse cachedResponse;
         if (TryGetCachedDiscoveryResponse(cacheKey, filterOnlyCompatible, out cachedResponse))
         {
@@ -197,6 +208,7 @@ public static class AvatarAssetDiscoveryService
         {
             paths = normalizedPaths,
             files = projectFiles,
+            originalBaseFiles = originalBaseFiles,
             pathOverrides = pathOverrides,
             filterOnlyCompatible = filterOnlyCompatible
         };
@@ -349,11 +361,13 @@ public static class AvatarAssetDiscoveryService
         string authToken,
         IEnumerable<string> paths,
         IEnumerable<ModelFileData> files,
+        IEnumerable<ModelFileData> originalBaseFiles,
         IEnumerable<AvatarPathOverrideService.DiscoveryPathOverridePayload> pathOverrides,
         bool filterOnlyCompatible)
     {
         string pathSignature = BuildAvatarSignature(paths);
         string fileSignature = BuildModelFileSignature(files);
+        string originalBaseSignature = BuildModelFileSignature(originalBaseFiles);
         string overrideSignature = BuildPathOverrideSignature(pathOverrides);
         string signature = string.IsNullOrWhiteSpace(fileSignature)
             ? pathSignature
@@ -361,6 +375,10 @@ public static class AvatarAssetDiscoveryService
         if (!string.IsNullOrWhiteSpace(overrideSignature))
         {
             signature += "|overrides:" + overrideSignature;
+        }
+        if (!string.IsNullOrWhiteSpace(originalBaseSignature))
+        {
+            signature += "|originalbase:" + originalBaseSignature;
         }
         if (string.IsNullOrWhiteSpace(signature))
         {
@@ -419,14 +437,16 @@ public static class AvatarAssetDiscoveryService
         }
     }
 
-    private static async Task<List<ModelFileData>> BuildProjectFileInventoryAsync(IEnumerable<string> paths)
+    private static async Task<List<ModelFileData>> BuildProjectFileInventoryAsync(
+        IEnumerable<string> paths,
+        bool useOriginalBaseSidecars)
     {
         var tasks = new List<Task<ModelFileData>>();
         foreach (string path in paths ?? Enumerable.Empty<string>())
         {
             if (string.IsNullOrWhiteSpace(path)) continue;
 
-            tasks.Add(BuildProjectFileDataAsync(path));
+            tasks.Add(BuildProjectFileDataAsync(path, useOriginalBaseSidecars));
         }
 
         if (tasks.Count == 0)
@@ -440,9 +460,14 @@ public static class AvatarAssetDiscoveryService
             .ToList();
     }
 
-    private static async Task<ModelFileData> BuildProjectFileDataAsync(string path)
+    private static async Task<ModelFileData> BuildProjectFileDataAsync(string path, bool useOriginalBaseSidecar)
     {
         if (!MCBUtils.TryResolveProjectAssetPath(path, out string normalizedPath, out string fullPath)) return null;
+        if (useOriginalBaseSidecar)
+        {
+            string originalBasePath = FileManagerService.GetOriginalBasePath(normalizedPath);
+            if (!MCBUtils.TryResolveProjectAssetPath(originalBasePath, out _, out fullPath)) return null;
+        }
         if (!File.Exists(fullPath)) return null;
 
         string hash = await AsyncHashService.Instance.CalculateFileHashAsync(fullPath, null, true);

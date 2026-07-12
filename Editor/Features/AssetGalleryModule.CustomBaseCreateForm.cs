@@ -225,10 +225,17 @@ public partial class AssetGalleryModule
         });
         panel.Add(dropdown);
 
+        bool hasValidatedKeys = HasValidatedExistingOriginalBaseKeys();
         string helpText = createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized
-            ? "This scene is the custom base you want to share. Import the original/default FBX files so MCB can create the encryption keys."
+            ? (hasValidatedKeys
+                ? "This scene is the custom base you want to share. MCB validated the original/default FBX files already available in this project, so no source import is required."
+                : "This scene is the custom base you want to share. Import the original/default FBX files so MCB can create the encryption keys.")
             : "You will customize the selected default base after creating the asset. Photoshoot is skipped because the scene is not the final custom base yet.";
         panel.Add(CreateMessageLabel(helpText, new Color(0.70f, 0.78f, 0.86f)));
+        if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized && hasValidatedKeys)
+        {
+            panel.Add(CreateTextButton("Use different original files", UseDifferentOriginalSourceFiles));
+        }
         if (!string.IsNullOrWhiteSpace(detectedAvatarBaseStatus))
         {
             panel.Add(CreateMessageLabel(detectedAvatarBaseStatus, new Color(0.48f, 0.86f, 0.66f)));
@@ -422,10 +429,18 @@ public partial class AssetGalleryModule
             createError = null;
         }
 
+        bool hasValidatedKeys = HasValidatedExistingOriginalBaseKeys();
         string helpText = createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized
-            ? "This scene is the custom base you want to share. Import the original/default FBX files so MCB can create the encryption keys."
+            ? (hasValidatedKeys
+                ? "This scene is the custom base you want to share. MCB validated the original/default FBX files already available in this project, so no source import is required."
+                : "This scene is the custom base you want to share. Import the original/default FBX files so MCB can create the encryption keys.")
             : "You will customize the selected default base after creating the asset. Photoshoot is skipped because the scene is not the final custom base yet.";
         EditorGUILayout.HelpBox(helpText, MessageType.Info);
+        if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized && hasValidatedKeys &&
+            GUILayout.Button("Use different original files"))
+        {
+            UseDifferentOriginalSourceFiles();
+        }
         if (!string.IsNullOrWhiteSpace(detectedAvatarBaseStatus))
         {
             EditorGUILayout.HelpBox(detectedAvatarBaseStatus, MessageType.Info);
@@ -971,8 +986,34 @@ public partial class AssetGalleryModule
         selectedAvatarBaseIndex = detection.baseIndex;
         selectedAvatarBaseSourceRevisionId = detection.sourceRevisionId;
         detectedOriginalBaseKeySource = null;
+        var detectedTargetPaths = (detection.matches ?? new List<AvatarBaseSourceMatcher.Match>())
+            .Select(match => AvatarPathOverrideService.NormalizeUnityPath(match?.local?.path))
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var replacedRenderers = AvatarSceneMeshProvenanceService.FindReplacedBaseRenderers(
+            editor?.customBaseTarget != null ? editor.customBaseTarget.transform.root : null,
+            detectedTargetPaths);
         int excludedTargetCount = KeepOnlyDetectedTargetFbxFiles(detection);
         string baseName = avatarBaseOptions[detection.baseIndex].name ?? "avatar base";
+        if (replacedRenderers.Count > 0)
+        {
+            detectedOriginalBaseKeySource = BuildLiveOriginalBaseKeyDetection(detection);
+            string rendererSummary = string.Join(", ", replacedRenderers
+                .Select(renderer => string.IsNullOrWhiteSpace(renderer.rendererName) ? renderer.rendererPath : renderer.rendererName)
+                .Distinct(StringComparer.Ordinal)
+                .Take(3));
+            detectedAvatarBaseStatus =
+                $"Detected original/default {baseName} FBX files, but {replacedRenderers.Count} base renderer mesh assignment(s) differ in the scene" +
+                (string.IsNullOrWhiteSpace(rendererSummary) ? "." : $": {rendererSummary}.") +
+                " This may already be the custom base you want to share. Choose the scene mode that matches your intent.";
+            if (!createSceneModeExplicitlySelected)
+            {
+                SetCreateSceneMode(CreateCustomBaseSceneMode.AlreadyCustomized, explicitlySelected: false);
+            }
+            return;
+        }
+
         detectedAvatarBaseStatus = excludedTargetCount > 0
             ? $"Detected original/default {baseName} from the FBX hashes and excluded {excludedTargetCount} unrelated avatar FBX file(s)."
             : $"Detected original/default {baseName} from the FBX hashes.";
@@ -1035,8 +1076,46 @@ public partial class AssetGalleryModule
         if (explicitlySelected)
         {
             createSceneModeExplicitlySelected = true;
-            detectedAvatarBaseStatus = null;
         }
+    }
+
+    private AvatarBaseDetectionService.DetectionResult BuildLiveOriginalBaseKeyDetection(
+        AvatarBaseDetectionService.DetectionResult detection)
+    {
+        return new AvatarBaseDetectionService.DetectionResult
+        {
+            baseIndex = detection.baseIndex,
+            avatarBaseId = detection.avatarBaseId,
+            sourceRevisionId = detection.sourceRevisionId,
+            matches = (detection.matches ?? new List<AvatarBaseSourceMatcher.Match>())
+                .Select(match => new AvatarBaseSourceMatcher.Match
+                {
+                    source = match.source,
+                    local = new AvatarBaseSourceMatcher.LocalFile
+                    {
+                        path = match.local.path,
+                        hash = match.local.hash,
+                        tag = new ExistingOriginalBaseKey
+                        {
+                            localTargetPath = match.local.path,
+                            originalBasePath = match.local.path
+                        }
+                    },
+                    provenance = match.provenance
+                })
+                .ToList()
+        };
+    }
+
+    private void UseDifferentOriginalSourceFiles()
+    {
+        detectedOriginalBaseKeySource = null;
+        DisposeOriginalSourceExtractions();
+        originalSourceKeyCandidates.Clear();
+        originalSourceKeyMappings.Clear();
+        detectedAvatarBaseStatus = "Provide and map the original/default FBX files you want MCB to use instead.";
+        editor.RefreshUiToolkitSections();
+        editor.Repaint();
     }
 
     private bool HasValidatedExistingOriginalBaseKeys()
