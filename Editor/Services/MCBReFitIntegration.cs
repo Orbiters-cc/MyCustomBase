@@ -179,6 +179,124 @@ public static class MCBReFitIntegration
         return entry != null && entry.refitMesh != null && smr.sharedMesh == entry.refitMesh;
     }
 
+    /// <summary>
+    /// Registers a successful standalone ReFit operation so MCB can synchronize its transferred blendshapes
+    /// and restore the original renderer state from the ReFit frame.
+    /// </summary>
+    public static bool RegisterStandaloneRefit(
+        GameObject targetAvatar,
+        SkinnedMeshRenderer renderer,
+        object originalRendererState,
+        Mesh refitMesh,
+        string refitMeshAssetPath,
+        string[] sourceShapeNames,
+        string[] generatedShapeNames)
+    {
+        if (renderer == null || refitMesh == null || originalRendererState == null) return false;
+
+        var mcb = renderer.GetComponentInParent<MyCustomBase>(true);
+        if (mcb == null && targetAvatar != null)
+            mcb = targetAvatar.GetComponentInChildren<MyCustomBase>(true);
+        if (mcb == null) return false;
+
+        var root = mcb.transform.root;
+        if (!renderer.transform.IsChildOf(root)) return false;
+
+        string rendererPath = GetRendererPath(root, renderer.transform);
+        var entry = FindEntry(mcb, rendererPath);
+        Undo.RecordObject(mcb, "Register standalone ReFit");
+        if (entry == null)
+        {
+            entry = CaptureStandaloneRendererState(root, rendererPath, originalRendererState);
+            if (entry == null) return false;
+            if (mcb.appliedRefits == null) mcb.appliedRefits = new List<RefitAppliedMeshEntry>();
+            mcb.appliedRefits.Add(entry);
+        }
+
+        entry.refitMesh = refitMesh;
+        entry.refitMeshAssetPath = refitMeshAssetPath;
+        UpdateTransferredBlendShapeMap(entry, sourceShapeNames, generatedShapeNames);
+        SyncTransferredBlendShapeWeightsFromAvatar(entry, mcb, renderer);
+        EditorUtility.SetDirty(mcb);
+        return true;
+    }
+
+    private static RefitAppliedMeshEntry CaptureStandaloneRendererState(
+        Transform root, string rendererPath, object snapshot)
+    {
+        var entry = new RefitAppliedMeshEntry
+        {
+            rendererPath = rendererPath,
+            originalMesh = ReFitApi.GetMemberValue(snapshot, "mesh") as Mesh,
+            originalRootBoneCaptured = true,
+            originalRootBone = ReFitApi.GetMemberValue(snapshot, "rootBone") as Transform,
+            originalRootBonePath = ConvertSnapshotPath(root, snapshot,
+                ReFitApi.GetMemberValue(snapshot, "rootBonePath") as string,
+                ReFitApi.GetMemberValue(snapshot, "rootBone") as Transform),
+            originalUpdateWhenOffscreenCaptured = true,
+            originalUpdateWhenOffscreen = GetReflectedValue(snapshot, "updateWhenOffscreen", false),
+            originalLocalBoundsCaptured = true,
+            originalLocalBounds = GetReflectedValue(snapshot, "localBounds", default(Bounds))
+        };
+
+        var bones = ReFitApi.GetMemberValue(snapshot, "bones") as Transform[];
+        var bonePaths = ReFitApi.GetMemberValue(snapshot, "bonePaths") as string[];
+        int boneCount = Math.Max(bones?.Length ?? 0, bonePaths?.Length ?? 0);
+        for (int i = 0; i < boneCount; i++)
+        {
+            var bone = bones != null && i < bones.Length ? bones[i] : null;
+            string path = bonePaths != null && i < bonePaths.Length ? bonePaths[i] : null;
+            entry.originalBones.Add(bone);
+            entry.originalBonePaths.Add(ConvertSnapshotPath(root, snapshot, path, bone));
+        }
+
+        var shapeNames = ReFitApi.GetMemberValue(snapshot, "blendShapeNames") as string[];
+        var shapeWeights = ReFitApi.GetMemberValue(snapshot, "blendShapeWeights") as float[];
+        if (shapeNames != null) entry.originalBlendShapeNames.AddRange(shapeNames);
+        if (shapeWeights != null) entry.originalBlendShapeWeights.AddRange(shapeWeights);
+
+        if (ReFitApi.GetMemberValue(snapshot, "transformStates") is IEnumerable transformStates)
+        {
+            foreach (var state in transformStates)
+            {
+                if (state == null) continue;
+                var transform = ReFitApi.GetMemberValue(state, "transform") as Transform;
+                string snapshotPath = ReFitApi.GetMemberValue(state, "path") as string;
+                entry.originalTransformStates.Add(new RefitTransformState
+                {
+                    transform = transform,
+                    path = ConvertSnapshotPath(root, snapshot, snapshotPath, transform),
+                    localPosition = GetReflectedValue(state, "localPosition", Vector3.zero),
+                    localRotation = GetReflectedValue(state, "localRotation", Quaternion.identity),
+                    localScale = GetReflectedValue(state, "localScale", Vector3.one)
+                });
+            }
+        }
+
+        return entry;
+    }
+
+    private static T GetReflectedValue<T>(object source, string memberName, T fallback)
+    {
+        object value = ReFitApi.GetMemberValue(source, memberName);
+        return value is T typed ? typed : fallback;
+    }
+
+    private static string ConvertSnapshotPath(Transform root, object snapshot, string snapshotPath, Transform transform)
+    {
+        if (TryGetPathUnderRoot(root, transform, out string actualPath)) return actualPath;
+
+        var snapshotRoot = ReFitApi.GetMemberValue(snapshot, "snapshotRoot") as Transform;
+        if (snapshotRoot == root) return snapshotPath;
+        if (snapshotRoot != null && snapshotRoot.IsChildOf(root) &&
+            TryGetPathUnderRoot(root, snapshotRoot, out string prefix))
+        {
+            return string.IsNullOrEmpty(snapshotPath) ? prefix : prefix + "/" + snapshotPath;
+        }
+
+        return snapshotPath;
+    }
+
     // ------------------------------------------------------------------
     // Reset restore (works without ReFit installed)
     // ------------------------------------------------------------------
@@ -387,24 +505,51 @@ public static class MCBReFitIntegration
         if (string.IsNullOrEmpty(sourceBlendShapeName)) return names;
 
         names.Add(sourceBlendShapeName);
-        if (target?.appliedRefits == null) return names;
-
-        foreach (var entry in target.appliedRefits)
+        if (target?.appliedRefits != null)
         {
-            if (entry?.transferredBlendShapeSourceNames == null || entry.transferredBlendShapeNames == null) continue;
-            int count = Math.Min(entry.transferredBlendShapeSourceNames.Count, entry.transferredBlendShapeNames.Count);
-            for (int i = 0; i < count; i++)
+            foreach (var entry in target.appliedRefits)
             {
-                if (!string.Equals(entry.transferredBlendShapeSourceNames[i], sourceBlendShapeName, StringComparison.Ordinal))
-                    continue;
+                if (entry?.transferredBlendShapeSourceNames == null || entry.transferredBlendShapeNames == null) continue;
+                int count = Math.Min(entry.transferredBlendShapeSourceNames.Count, entry.transferredBlendShapeNames.Count);
+                for (int i = 0; i < count; i++)
+                {
+                    if (!string.Equals(entry.transferredBlendShapeSourceNames[i], sourceBlendShapeName, StringComparison.OrdinalIgnoreCase))
+                        continue;
 
-                string generatedName = entry.transferredBlendShapeNames[i];
-                if (!string.IsNullOrEmpty(generatedName) && !names.Contains(generatedName))
-                    names.Add(generatedName);
+                    AddUniqueBlendShapeName(names, entry.transferredBlendShapeNames[i]);
+                }
+            }
+        }
+
+        // Standalone ReFit uses "refit_" by default. Detect the actual mesh name so older or
+        // unregistered standalone results still participate in version and slider synchronization.
+        if (target != null)
+        {
+            string expectedSuffix = sourceBlendShapeName;
+            foreach (var renderer in target.transform.root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                var mesh = renderer != null ? renderer.sharedMesh : null;
+                if (mesh == null) continue;
+                for (int i = 0; i < mesh.blendShapeCount; i++)
+                {
+                    string candidate = mesh.GetBlendShapeName(i);
+                    if (candidate != null && candidate.StartsWith("refit_", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(candidate.Substring("refit_".Length), expectedSuffix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddUniqueBlendShapeName(names, candidate);
+                    }
+                }
             }
         }
 
         return names;
+    }
+
+    private static void AddUniqueBlendShapeName(List<string> names, string candidate)
+    {
+        if (string.IsNullOrEmpty(candidate) ||
+            names.Any(name => string.Equals(name, candidate, StringComparison.OrdinalIgnoreCase))) return;
+        names.Add(candidate);
     }
 
     public static bool ApplyBlendShapeWeightWithTransferredReFit(MyCustomBase target,
@@ -872,6 +1017,59 @@ public static class MCBReFitIntegration
         if (changed) EditorUtility.SetDirty(targetRenderer);
     }
 
+    private static void SyncTransferredBlendShapeWeightsFromAvatar(
+        RefitAppliedMeshEntry entry, MyCustomBase mcb, SkinnedMeshRenderer targetRenderer)
+    {
+        if (entry?.transferredBlendShapeSourceNames == null ||
+            entry.transferredBlendShapeNames == null ||
+            mcb == null || targetRenderer == null || targetRenderer.sharedMesh == null) return;
+
+        var renderers = mcb.transform.root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        var baseMeshes = BuildBaseMeshMap(mcb);
+        bool changed = false;
+        int count = Math.Min(entry.transferredBlendShapeSourceNames.Count, entry.transferredBlendShapeNames.Count);
+        for (int i = 0; i < count; i++)
+        {
+            string sourceName = entry.transferredBlendShapeSourceNames[i];
+            string generatedName = entry.transferredBlendShapeNames[i];
+            int generatedIndex = targetRenderer.sharedMesh.GetBlendShapeIndex(generatedName);
+            if (string.IsNullOrEmpty(sourceName) || generatedIndex < 0) continue;
+
+            var sourceRenderer = FindBlendShapeSourceRenderer(
+                renderers, targetRenderer, sourceName, baseMeshes, true) ??
+                FindBlendShapeSourceRenderer(renderers, targetRenderer, sourceName, baseMeshes, false);
+            if (sourceRenderer != null)
+            {
+                int sourceIndex = sourceRenderer.sharedMesh.GetBlendShapeIndex(sourceName);
+                if (!changed)
+                {
+                    Undo.RecordObject(targetRenderer, "MCB ReFit blendshape sync");
+                    changed = true;
+                }
+                targetRenderer.SetBlendShapeWeight(generatedIndex, sourceRenderer.GetBlendShapeWeight(sourceIndex));
+            }
+        }
+
+        if (changed) EditorUtility.SetDirty(targetRenderer);
+    }
+
+    private static SkinnedMeshRenderer FindBlendShapeSourceRenderer(
+        IEnumerable<SkinnedMeshRenderer> renderers,
+        SkinnedMeshRenderer targetRenderer,
+        string sourceName,
+        Dictionary<string, Mesh> baseMeshes,
+        bool requireBodyRenderer)
+    {
+        foreach (var renderer in renderers)
+        {
+            if (renderer == null || renderer == targetRenderer || renderer.sharedMesh == null) continue;
+            if (requireBodyRenderer && !IsBodyRenderer(renderer, baseMeshes)) continue;
+            if (renderer.sharedMesh.GetBlendShapeIndex(sourceName) >= 0) return renderer;
+        }
+
+        return null;
+    }
+
     /// <summary>Restores a single asset renderer to its original renderer state and drops it from the tracking list.</summary>
     public static void RestoreAsset(MyCustomBase mcb, string rendererPath)
     {
@@ -1220,21 +1418,21 @@ public static class MCBReFitIntegration
             }
 
             var type = target.GetType();
-            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (field != null)
             {
                 field.SetValue(target, value);
                 return;
             }
 
-            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (property != null && property.CanWrite)
             {
                 property.SetValue(target, value);
             }
         }
 
-        private static object GetMemberValue(object target, string name)
+        public static object GetMemberValue(object target, string name)
         {
             if (target == null || string.IsNullOrEmpty(name))
             {
@@ -1242,13 +1440,13 @@ public static class MCBReFitIntegration
             }
 
             var type = target.GetType();
-            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (field != null)
             {
                 return field.GetValue(target);
             }
 
-            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             return property != null && property.CanRead ? property.GetValue(target) : null;
         }
 

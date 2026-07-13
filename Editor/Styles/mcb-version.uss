@@ -9,7 +9,7 @@
 }
 
 .mcb-version--asset-view {
-    margin-top: -18px;
+    margin-top: -42px;
     padding-top: 0;
     position: relative;
 }
