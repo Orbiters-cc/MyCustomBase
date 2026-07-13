@@ -233,7 +233,6 @@ public class VersionActions
         }
         else
         {
-            editor.selectedVersionForAction = null;
             // Handle access denied specially (error encoded as ACCESS_DENIED:{assetId})
             if (!string.IsNullOrEmpty(error) && error.StartsWith("ACCESS_DENIED:"))
             {
@@ -241,15 +240,14 @@ public class VersionActions
                 editor.warningsModule.Clear(); // Do not show generic error box
                 editor.serverVersions.Clear();
                 editor.recommendedVersion = null;
-                UpdateAppliedVersionAndState(); // Clear state on error too
             }
             else
             {
                 MCBLogger.LogError($"[VersionActions] Version fetch failed. currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash} | error={error}");
                 editor.warningsModule.AddWarning(error, MessageType.Error, "Fetch failed");
-                editor.serverVersions.Clear();
-                editor.recommendedVersion = null;
-                UpdateAppliedVersionAndState(); // Clear state on error too
+                // A transient backend failure must not discard the last known version metadata
+                // or recalculate applied state from an unchanged FBX hash. Local imported data and
+                // the persisted applied marker remain authoritative while offline.
             }
         }
         
@@ -2712,7 +2710,7 @@ public class VersionActions
             if (string.IsNullOrEmpty(currentFileHash))
             {
                 var pendingMarkerVersion = ResolvePersistedAppliedVersion();
-                if (pendingMarkerVersion != null && NativeMeshPayloadService.VersionUsesAdvancedMesh(pendingMarkerVersion))
+                if (pendingMarkerVersion != null && IsAdvancedMeshVersionApplied(pendingMarkerVersion))
                 {
                     MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state before hash is ready: {pendingMarkerVersion.version}");
                     editor.isCustomBase = true;
@@ -2743,13 +2741,11 @@ public class VersionActions
             return;
         }
 
-        var matchingVersion = FindMatchingAppliedVersion(candidateVersions, currentFileHash);
-
         if (editor?.customBaseTarget == null) return;
         Undo.RecordObject(editor.customBaseTarget, "Update MCB State");
 
         var markerVersion = ResolvePersistedAppliedVersion(candidateVersions);
-        if (markerVersion != null && NativeMeshPayloadService.VersionUsesAdvancedMesh(markerVersion))
+        if (markerVersion != null && IsAdvancedMeshVersionApplied(markerVersion))
         {
             MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state: {markerVersion.version}");
             editor.isCustomBase = true;
@@ -2760,6 +2756,8 @@ public class VersionActions
             EditorUtility.SetDirty(editor.customBaseTarget);
             return;
         }
+
+        var matchingVersion = FindMatchingAppliedVersion(candidateVersions, currentFileHash);
 
         if (matchingVersion != null)
         {
@@ -2857,11 +2855,6 @@ public class VersionActions
         }
 
         var applied = editor.customBaseTarget.appliedCustomBaseVersion;
-        if (applied != null && applied != VersionListDrawer.RESET_VERSION)
-        {
-            return applied;
-        }
-
         string versionString = editor.customBaseTarget.appliedCustomBaseVersionString;
         var candidates = new List<CustomBaseVersion>();
         if (candidateVersions != null) candidates.AddRange(candidateVersions.Where(v => v != null));
@@ -2875,10 +2868,20 @@ public class VersionActions
             .Select(group => group.First())
             .ToList();
 
+        var inferredAdvanced = InferAdvancedVersionFromGeneratedMeshPaths(candidates);
+        if (inferredAdvanced != null)
+        {
+            return inferredAdvanced;
+        }
+
+        if (applied != null && applied != VersionListDrawer.RESET_VERSION)
+        {
+            return applied;
+        }
+
         if (string.IsNullOrWhiteSpace(versionString))
         {
-            return InferAdvancedVersionFromGeneratedMeshPaths(candidates)
-                   ?? candidates.FirstOrDefault(v =>
+            return candidates.FirstOrDefault(v =>
                        v != null &&
                        NativeMeshPayloadService.VersionUsesAdvancedMesh(v) &&
                        NativeMeshPayloadService.HasAnyAdvancedMeshApplied(editor.customBaseTarget.transform.root, v));
@@ -2895,47 +2898,103 @@ public class VersionActions
 
     private CustomBaseVersion InferAdvancedVersionFromGeneratedMeshPaths(IReadOnlyList<CustomBaseVersion> candidates)
     {
-        if (editor?.customBaseTarget == null || candidates == null || candidates.Count == 0)
+        if (editor?.customBaseTarget == null ||
+            !NativeMeshPayloadService.TryGetAppliedGeneratedMeshVersion(
+                editor.customBaseTarget.transform.root,
+                out int assetId,
+                out string versionString))
         {
             return null;
         }
 
-        const string prefix = "Assets/MCB/generated/advancedMeshPayloads/";
-        foreach (var renderer in editor.customBaseTarget.transform.root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        var available = new List<CustomBaseVersion>();
+        if (candidates != null)
         {
-            if (renderer?.sharedMesh == null)
-            {
-                continue;
-            }
-
-            string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
-            if (string.IsNullOrWhiteSpace(meshPath) ||
-                !meshPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            string remainder = meshPath.Substring(prefix.Length);
-            string[] parts = remainder.Split('/');
-            if (parts.Length < 2 || !int.TryParse(parts[0], out int assetId))
-            {
-                continue;
-            }
-
-            string versionString = parts[1];
-            var match = candidates.FirstOrDefault(v =>
-                v != null &&
-                NativeMeshPayloadService.VersionUsesAdvancedMesh(v) &&
-                v.assetId == assetId &&
-                string.Equals(v.version, versionString, StringComparison.Ordinal));
-            if (match != null)
-            {
-                MCBLogger.Log($"[VersionActions] Inferred native mesh applied version {match.version} from generated mesh path: {meshPath}");
-                return match;
-            }
+            available.AddRange(candidates.Where(v => v != null));
         }
 
-        return null;
+        var local = VersionRepository.Scan();
+        available.AddRange(local.imported.Where(v => v != null));
+        available.AddRange(local.unsubmitted.Where(v => v != null));
+        var match = available.FirstOrDefault(v =>
+            v.assetId == assetId &&
+            string.Equals(v.version, versionString, StringComparison.Ordinal));
+        if (match == null)
+        {
+            return null;
+        }
+
+        if (match.isUnsubmitted)
+        {
+            if (editor.unsubmittedVersions != null &&
+                !editor.unsubmittedVersions.Any(v => v != null && v.Equals(match)))
+            {
+                editor.unsubmittedVersions.Add(match);
+            }
+        }
+        else if (editor.importedVersions != null &&
+                 !editor.importedVersions.Any(v => v != null && v.Equals(match)))
+        {
+            editor.importedVersions.Add(match);
+        }
+
+        MCBLogger.Log($"[VersionActions] Inferred native mesh applied version {match.version} from generated mesh provenance.");
+        return match;
+    }
+
+    private bool IsAdvancedMeshVersionApplied(CustomBaseVersion version)
+    {
+        if (editor?.customBaseTarget == null || version == null)
+        {
+            return false;
+        }
+
+        bool isAdvanced = NativeMeshPayloadService.VersionUsesAdvancedMesh(version) ||
+                          string.Equals(
+                              editor.customBaseTarget.appliedCustomBaseDeliveryMode,
+                              AdvancedMeshDeliveryMode,
+                              StringComparison.Ordinal);
+        return isAdvanced &&
+               NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
+                   editor.customBaseTarget.transform.root,
+                   version).Count > 0;
+    }
+
+    public bool IsVersionCurrentlyApplied(CustomBaseVersion version)
+    {
+        if (version == null || version == VersionListDrawer.RESET_VERSION || editor?.customBaseTarget == null)
+        {
+            return false;
+        }
+
+        if (NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
+                editor.customBaseTarget.transform.root,
+                version).Count > 0)
+        {
+            return true;
+        }
+
+        var applied = ResolvePersistedAppliedVersion();
+        return applied != null && version.Equals(applied);
+    }
+
+    public bool HasAppliedCustomBaseEvidence()
+    {
+        if (editor?.customBaseTarget == null)
+        {
+            return false;
+        }
+
+        return NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
+                   editor.customBaseTarget.transform.root).Count > 0 ||
+               ResolvePersistedAppliedVersion() != null ||
+               editor.isCustomBase ||
+               editor.currentIsCustom;
+    }
+
+    public bool IsDefaultBaseCurrentlyApplied()
+    {
+        return !HasAppliedCustomBaseEvidence();
     }
 
     private void SyncAppliedVersionBlendshapeLinkCache(CustomBaseVersion version)

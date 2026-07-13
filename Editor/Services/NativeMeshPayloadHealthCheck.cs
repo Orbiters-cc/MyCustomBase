@@ -124,6 +124,10 @@ public static class NativeMeshPayloadHealthCheck
             ThrowIf(Mathf.Abs(targetRenderer.sharedMesh.vertices[2].y - 1.35f) > 0.0001f, "Applied mesh vertices do not match the custom mesh.");
             ThrowIf(targetRenderer.sharedMesh.name.IndexOf("DynamicNormals", StringComparison.OrdinalIgnoreCase) < 0, "DynamicNormals payload mesh name was not preserved.");
             ThrowIf(Vector3.Distance(targetRenderer.transform.localPosition, new Vector3(0.15f, 0.05f, -0.02f)) > 0.0001f, "Renderer transform was not applied.");
+            var generatedRenderers = NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(avatarRoot.transform, version);
+            ThrowIf(generatedRenderers.Count != 1 || generatedRenderers[0] != targetRenderer, "Applied generated-mesh provenance did not resolve the target renderer.");
+            ThrowIf(!NativeMeshPayloadService.TryGetAppliedGeneratedMeshVersion(avatarRoot.transform, out int generatedAssetId, out string generatedVersion), "Applied generated-mesh version identity was not detected.");
+            ThrowIf(generatedAssetId != HealthCheckAssetId || !string.Equals(generatedVersion, HealthCheckVersion, StringComparison.Ordinal), "Applied generated-mesh version identity is incorrect.");
 
             var targetBone = avatarRoot.transform.Find("Armature/Hips");
             ThrowIf(targetBone == null, "Target bone was not found.");

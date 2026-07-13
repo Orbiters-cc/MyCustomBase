@@ -903,6 +903,97 @@ public static class NativeMeshPayloadService
         return false;
     }
 
+    public static List<SkinnedMeshRenderer> ResolveAppliedGeneratedMeshRenderers(
+        Transform avatarRoot,
+        CustomBaseVersion version = null)
+    {
+        var renderers = new List<SkinnedMeshRenderer>();
+        if (avatarRoot == null)
+        {
+            return renderers;
+        }
+
+        foreach (var renderer in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (renderer == null || renderer.sharedMesh == null)
+            {
+                continue;
+            }
+
+            string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
+            if (!TryParseGeneratedMeshAssetPath(meshPath, out int assetId, out string versionString))
+            {
+                continue;
+            }
+
+            if (version != null &&
+                (version.assetId != assetId ||
+                 !string.Equals(version.version, versionString, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            renderers.Add(renderer);
+        }
+
+        return renderers;
+    }
+
+    public static bool TryGetAppliedGeneratedMeshVersion(
+        Transform avatarRoot,
+        out int assetId,
+        out string versionString)
+    {
+        assetId = 0;
+        versionString = null;
+        if (avatarRoot == null)
+        {
+            return false;
+        }
+
+        foreach (var renderer in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            string meshPath = renderer != null && renderer.sharedMesh != null
+                ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh))
+                : null;
+            if (TryParseGeneratedMeshAssetPath(meshPath, out assetId, out versionString))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static bool TryParseGeneratedMeshAssetPath(
+        string meshAssetPath,
+        out int assetId,
+        out string versionString)
+    {
+        assetId = 0;
+        versionString = null;
+        string normalized = MCBUtils.ToUnityPath(meshAssetPath);
+        string prefix = GeneratedFolder + "/";
+        if (string.IsNullOrWhiteSpace(normalized) ||
+            !normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string[] parts = normalized.Substring(prefix.Length).Split('/');
+        if (parts.Length < 3 ||
+            !int.TryParse(parts[0], out assetId) ||
+            assetId <= 0 ||
+            string.IsNullOrWhiteSpace(parts[1]))
+        {
+            assetId = 0;
+            return false;
+        }
+
+        versionString = parts[1];
+        return true;
+    }
+
     public static List<SkinnedMeshRenderer> ResolveRenderersForSourcePaths(
         Transform avatarRoot,
         CustomBaseVersion version,

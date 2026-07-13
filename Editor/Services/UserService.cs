@@ -339,6 +339,7 @@ public class UserService
     {
         try
         {
+            avatarUrl = MCBUtils.ResolveApiUrl(avatarUrl);
             UserInfo info = userCache.ContainsKey(userId) ? userCache[userId] : new UserInfo();
             bool changed = !userCache.ContainsKey(userId);
             bool avatarChanged = false;

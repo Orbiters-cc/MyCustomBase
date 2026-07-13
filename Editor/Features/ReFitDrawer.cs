@@ -21,6 +21,10 @@ public class ReFitDrawer
     private readonly MCBEditor editor;
     private readonly VersionApplyProgressState progress = new VersionApplyProgressState();
     private readonly HashSet<string> selectedPaths = new HashSet<string>();
+    private readonly Dictionary<string, SkinnedMeshRenderer> renderedRenderers = new Dictionary<string, SkinnedMeshRenderer>();
+    private readonly Dictionary<string, Toggle> renderedToggles = new Dictionary<string, Toggle>();
+    private readonly Dictionary<string, Label> renderedLabels = new Dictionary<string, Label>();
+    private VisualElement statusHost;
     private bool initializedSelection;
     private bool isRunning;
     private bool lastFailed;
@@ -67,7 +71,12 @@ public class ReFitDrawer
         }
 
         var card = AvatarOptionsModule.CreateOptionCard("mcb-avatar-refit");
+        card.Add(CreateReFitIcon());
         card.Add(AvatarOptionsModule.CreateOptionTitle("ReFit"));
+
+        renderedRenderers.Clear();
+        renderedToggles.Clear();
+        renderedLabels.Clear();
 
         // Toggle list of asset meshes.
         var pathOf = new Dictionary<SkinnedMeshRenderer, string>();
@@ -97,6 +106,10 @@ public class ReFitDrawer
             label.style.marginLeft = 4;
             row.Add(label);
 
+            renderedRenderers[path] = smr;
+            renderedToggles[path] = toggle;
+            renderedLabels[path] = label;
+
             card.Add(row);
         }
 
@@ -123,19 +136,70 @@ public class ReFitDrawer
         button.style.height = 32;
         card.Add(button);
 
-        // Only surface a message when something went wrong (no info bubble in the nominal case).
-        if (lastFailed && !string.IsNullOrEmpty(lastMessage))
-        {
-            card.Add(AvatarOptionsModule.CreateOptionHelpBox(lastMessage, HelpBoxMessageType.Warning));
-        }
+        statusHost = new VisualElement();
+        statusHost.AddToClassList("mcb-avatar-refit__status");
+        card.Add(statusHost);
+        RefreshRenderedState();
 
         root.Add(card);
         return true;
     }
 
+    private static VisualElement CreateReFitIcon()
+    {
+        var icon = new VisualElement();
+        icon.AddToClassList("mcb-avatar-refit__icon");
+        foreach (string barClass in new[]
+                 {
+                     "mcb-avatar-refit__icon-top",
+                     "mcb-avatar-refit__icon-middle",
+                     "mcb-avatar-refit__icon-bottom-left",
+                     "mcb-avatar-refit__icon-bottom-center",
+                     "mcb-avatar-refit__icon-bottom-right"
+                 })
+        {
+            var bar = new VisualElement();
+            bar.AddToClassList("mcb-avatar-refit__icon-bar");
+            bar.AddToClassList(barClass);
+            icon.Add(bar);
+        }
+
+        return icon;
+    }
+
+    private void RefreshRenderedState()
+    {
+        var mcb = editor.customBaseTarget;
+        foreach (var pair in renderedRenderers)
+        {
+            bool applied = mcb != null && MCBReFitIntegration.IsRefitApplied(mcb, pair.Value);
+            if (renderedLabels.TryGetValue(pair.Key, out var label) && label != null && pair.Value != null)
+            {
+                label.text = applied ? pair.Value.name + "  (re-fitted)" : pair.Value.name;
+            }
+
+            if (renderedToggles.TryGetValue(pair.Key, out var toggle) && toggle != null)
+            {
+                toggle.SetEnabled(!isRunning);
+            }
+        }
+
+        if (statusHost != null)
+        {
+            statusHost.Clear();
+            if (lastFailed && !string.IsNullOrEmpty(lastMessage))
+            {
+                statusHost.Add(AvatarOptionsModule.CreateOptionHelpBox(lastMessage, HelpBoxMessageType.Warning));
+            }
+        }
+
+        editor.Repaint();
+    }
+
     private void BuildInstallPromptUIToolkit(VisualElement root)
     {
         var card = AvatarOptionsModule.CreateOptionCard("mcb-avatar-refit");
+        card.Add(CreateReFitIcon());
         card.Add(AvatarOptionsModule.CreateOptionTitle("ReFit"));
 
         var description = AvatarOptionsModule.CreateOptionLabel(
@@ -242,13 +306,14 @@ public class ReFitDrawer
         {
             lastFailed = false;
             lastMessage = null;
-            AvatarOptionsModule.RefreshEditorUi(editor);
+            RefreshRenderedState();
             return;
         }
 
         isRunning = true;
         lastMessage = null;
         lastFailed = false;
+        RefreshRenderedState();
         EditorCoroutineUtility.StartCoroutineOwnerless(RunCoroutine(toRefit));
     }
 
@@ -260,7 +325,7 @@ public class ReFitDrawer
             lastMessage = success ? null : message;
         });
         isRunning = false;
-        AvatarOptionsModule.RefreshEditorUi(editor);
+        RefreshRenderedState();
     }
 }
 #endif

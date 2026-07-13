@@ -195,7 +195,7 @@ public partial class VersionManagementModule
         bool isResetSelected = selectedVersion == VersionListDrawer.RESET_VERSION;
         var action = GetActionType();
 
-        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isCustomBase;
+        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || actions.HasAppliedCustomBaseEvidence();
         bool buttonDisabled;
         if (action == ActionType.SWITCH_TO_CUSTOM)
         {
@@ -204,7 +204,7 @@ public partial class VersionManagementModule
         else
         {
             buttonDisabled = !selectionIsValid ||
-                             (!isResetSelected && selectedVersion.Equals(editor.customBaseTarget.appliedCustomBaseVersion)) ||
+                             (!isResetSelected && actions.IsVersionCurrentlyApplied(selectedVersion)) ||
                              (isResetSelected && !canReset);
         }
 

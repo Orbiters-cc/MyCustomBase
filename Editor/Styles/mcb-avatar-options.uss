@@ -25,6 +25,61 @@
     overflow: hidden;
 }
 
+.mcb-avatar-refit {
+    position: relative;
+}
+
+.mcb-avatar-refit__icon {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    width: 19.5px;
+    height: 17.5px;
+}
+
+.mcb-avatar-refit__icon-bar {
+    position: absolute;
+    background-color: #d9d9d9;
+}
+
+.mcb-avatar-refit__icon-top {
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1.859px;
+}
+
+.mcb-avatar-refit__icon-middle {
+    left: 0;
+    right: 0;
+    top: 6.346px;
+    height: 4.936px;
+}
+
+.mcb-avatar-refit__icon-bottom-left,
+.mcb-avatar-refit__icon-bottom-center,
+.mcb-avatar-refit__icon-bottom-right {
+    bottom: 0;
+    width: 4.637px;
+    height: 1.539px;
+}
+
+.mcb-avatar-refit__icon-bottom-left {
+    left: 0;
+}
+
+.mcb-avatar-refit__icon-bottom-center {
+    left: 7.495px;
+}
+
+.mcb-avatar-refit__icon-bottom-right {
+    right: 0;
+}
+
+.mcb-avatar-refit > .mcb-avatar-option__title {
+    margin-right: 30px;
+}
+
 .mcb-avatar-option__title {
     margin-bottom: 10px;
 }

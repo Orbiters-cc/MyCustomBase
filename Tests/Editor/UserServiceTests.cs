@@ -22,4 +22,31 @@ public class UserServiceTests
         }
     }
 }
+
+public sealed class NativeMeshPayloadPathTests
+{
+    [Test]
+    public void GeneratedMeshPathExposesAppliedVersionIdentity()
+    {
+        bool parsed = NativeMeshPayloadService.TryParseGeneratedMeshAssetPath(
+            "Assets/MCB/generated/advancedMeshPayloads/14/0.4.0/body_hash.asset",
+            out int assetId,
+            out string version);
+
+        Assert.That(parsed, Is.True);
+        Assert.That(assetId, Is.EqualTo(14));
+        Assert.That(version, Is.EqualTo("0.4.0"));
+    }
+
+    [Test]
+    public void UnrelatedMeshPathIsNotAdvancedMeshProvenance()
+    {
+        bool parsed = NativeMeshPayloadService.TryParseGeneratedMeshAssetPath(
+            "Assets/MasculineCanine/FX/MasculineCanine.v1.5.fbx",
+            out _,
+            out _);
+
+        Assert.That(parsed, Is.False);
+    }
+}
 #endif

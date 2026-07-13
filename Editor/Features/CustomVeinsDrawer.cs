@@ -475,9 +475,19 @@ public partial class CustomVeinsDrawer
         // Advanced mesh swaps renderer.sharedMesh away from the FBX asset, so fall back to
         // the version source mapping if the editor FBX object list is stale or path-normalized differently.
         var sourcePaths = GetVersionSourcePaths(appliedVersion);
-        return sourcePaths.Count > 0
+        renderers = sourcePaths.Count > 0
             ? ResolveAdvancedMeshRenderers(appliedVersion, sourcePaths)
             : renderers;
+        if (renderers.Count > 0)
+        {
+            return renderers;
+        }
+
+        // Imported native-mesh versions can legitimately omit smrPaths. In that case the
+        // generated mesh asset folder is the durable source of renderer provenance.
+        return NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(cachedRoot, appliedVersion)
+            .Where(renderer => renderer?.sharedMaterial != null)
+            .ToList();
     }
 
     private List<SkinnedMeshRenderer> ResolveAdvancedMeshRenderers(CustomBaseVersion appliedVersion, IEnumerable<string> sourcePaths)

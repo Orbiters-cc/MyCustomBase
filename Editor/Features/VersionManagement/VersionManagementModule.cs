@@ -168,7 +168,7 @@ public partial class VersionManagementModule
         var action = GetActionType();
 
         // Main Apply/Update/Downgrade/Reset/SWITCH_TO_CUSTOM Button
-        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isCustomBase;
+        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || actions.HasAppliedCustomBaseEvidence();
         bool buttonDisabled;
         if (action == ActionType.SWITCH_TO_CUSTOM)
         {
@@ -177,7 +177,7 @@ public partial class VersionManagementModule
         else
         {
             buttonDisabled = !selectionIsValid ||
-                             (!isResetSelected && selectedVersion.Equals(editor.customBaseTarget.appliedCustomBaseVersion)) ||
+                             (!isResetSelected && actions.IsVersionCurrentlyApplied(selectedVersion)) ||
                              (isResetSelected && !canReset);
         }
 
@@ -240,7 +240,12 @@ public partial class VersionManagementModule
 
         var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
 
-        if (!editor.isCustomBase)
+        if (actions.IsVersionCurrentlyApplied(editor.selectedVersionForAction))
+        {
+            return ActionType.UNAVAILABLE;
+        }
+
+        if (!actions.HasAppliedCustomBaseEvidence())
         {
             if (appliedVersion != null)
             {
@@ -353,8 +358,7 @@ public partial class VersionManagementModule
     {
         return action == ActionType.UNAVAILABLE &&
                selectedVersion != null &&
-               editor?.customBaseTarget?.appliedCustomBaseVersion != null &&
-               selectedVersion.Equals(editor.customBaseTarget.appliedCustomBaseVersion);
+               actions.IsVersionCurrentlyApplied(selectedVersion);
     }
 
     private static Color GetActionButtonColor(ActionType action, bool isInstalledAction)

@@ -293,7 +293,7 @@ public partial class VersionListDrawer
         string versionFolderPath = MCBUtils.GetVersionDataPath(ver);
         bool hasLocalContent = !string.IsNullOrEmpty(versionFolderPath) && Directory.Exists(Path.GetFullPath(versionFolderPath));
         bool isSelected = ver.Equals(editor.selectedVersionForAction);
-        bool isApplied = ver.Equals(editor.customBaseTarget.appliedCustomBaseVersion);
+        bool isApplied = actions.IsVersionCurrentlyApplied(ver);
         string stateKey = GetVersionStateKey(ver);
         bool hasVersionDetails = HasVersionDetails(ver);
         bool detailsExpanded = hasVersionDetails && IsVersionDetailsExpanded(ver);
@@ -400,8 +400,8 @@ public partial class VersionListDrawer
     {
         bool isSelected = RESET_VERSION.Equals(editor.selectedVersionForAction);
         var fileManagerService = new FileManagerService();
-        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || editor.isCustomBase;
-        bool isApplied = !editor.isCustomBase && !editor.currentIsCustom;
+        bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || actions.HasAppliedCustomBaseEvidence();
+        bool isApplied = actions.IsDefaultBaseCurrentlyApplied();
 
         string resetTitle = string.IsNullOrWhiteSpace(editor.GetSelectedAssetDisplayName())
             ? "Base Default"
