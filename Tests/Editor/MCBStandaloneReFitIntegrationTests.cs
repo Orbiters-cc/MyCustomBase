@@ -46,6 +46,17 @@ public sealed class MCBStandaloneReFitIntegrationTests
         var originalMesh = CreateMeshWithBlendShape("Original", "OriginalShape");
         var bodyMesh = CreateMeshWithBlendShape("Body", "Smile");
         var refitMesh = CreateMeshWithBlendShape("Jacket_ReFit", "refit_Smile");
+        int stateChangeCount = 0;
+        string changedPath = null;
+        Action<MyCustomBase, string> stateChanged = (changedMcb, path) =>
+        {
+            if (changedMcb == root.GetComponent<MyCustomBase>())
+            {
+                stateChangeCount++;
+                changedPath = path;
+            }
+        };
+        MCBReFitIntegration.RefitStateChanged += stateChanged;
 
         try
         {
@@ -63,14 +74,18 @@ public sealed class MCBStandaloneReFitIntegrationTests
                 new[] { "Smile" }, new[] { "refit_Smile" }), Is.True);
             Assert.That(MCBReFitIntegration.IsRefitApplied(mcb, asset), Is.True);
             Assert.That(asset.GetBlendShapeWeight(0), Is.EqualTo(42f));
+            Assert.That(stateChangeCount, Is.EqualTo(1));
+            Assert.That(changedPath, Is.EqualTo("Jacket"));
 
             MCBReFitIntegration.RestoreAsset(mcb, "Jacket");
 
             Assert.That(asset.sharedMesh, Is.SameAs(originalMesh));
             Assert.That(mcb.appliedRefits, Is.Empty);
+            Assert.That(stateChangeCount, Is.EqualTo(2));
         }
         finally
         {
+            MCBReFitIntegration.RefitStateChanged -= stateChanged;
             UnityEngine.Object.DestroyImmediate(originalMesh);
             UnityEngine.Object.DestroyImmediate(bodyMesh);
             UnityEngine.Object.DestroyImmediate(refitMesh);

@@ -17,6 +17,9 @@ using UnityEngine;
 /// </summary>
 public static class MCBReFitIntegration
 {
+    /// <summary>Raised after the persisted ReFit state of one renderer changes.</summary>
+    public static event Action<MyCustomBase, string> RefitStateChanged;
+
     private const string XRayGizmosObjectNamePrefix = "__XRayGizmos_";
     private const string XRayGizmosMeshNamePrefix = "XRayArmatureMesh";
     private const string XRayGizmosMeshEdgesSuffix = "_XRayMeshEdges";
@@ -218,6 +221,7 @@ public static class MCBReFitIntegration
         UpdateTransferredBlendShapeMap(entry, sourceShapeNames, generatedShapeNames);
         SyncTransferredBlendShapeWeightsFromAvatar(entry, mcb, renderer);
         EditorUtility.SetDirty(mcb);
+        RefitStateChanged?.Invoke(mcb, rendererPath);
         return true;
     }
 
@@ -1086,6 +1090,7 @@ public static class MCBReFitIntegration
         Undo.RecordObject(mcb, "MCB ReFit restore");
         mcb.appliedRefits.Remove(entry);
         EditorUtility.SetDirty(mcb);
+        RefitStateChanged?.Invoke(mcb, rendererPath);
     }
 
     private static string SaveAvatarScene(GameObject avatarRoot)

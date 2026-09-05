@@ -141,6 +141,17 @@ public class ReFitDrawer
         card.Add(statusHost);
         RefreshRenderedState();
 
+        void HandleRefitStateChanged(MyCustomBase changedMcb, string rendererPath)
+        {
+            if (changedMcb == mcb && renderedRenderers.ContainsKey(rendererPath))
+                RefreshRenderedState();
+        }
+
+        card.RegisterCallback<AttachToPanelEvent>(_ =>
+            MCBReFitIntegration.RefitStateChanged += HandleRefitStateChanged);
+        card.RegisterCallback<DetachFromPanelEvent>(_ =>
+            MCBReFitIntegration.RefitStateChanged -= HandleRefitStateChanged);
+
         root.Add(card);
         return true;
     }
