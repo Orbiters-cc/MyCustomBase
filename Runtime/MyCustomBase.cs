@@ -190,8 +190,7 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public Avatar customBaseAvatarForCreatorProp;
     [HideInInspector] public List<CreatorModelFileBuildEntry> modelFileBuildEntries = new List<CreatorModelFileBuildEntry>();
     [HideInInspector] public GameObject avatarLogicPrefab;
-    [HideInInspector] public bool useAdvancedMeshReplacementForCreator = false;
-    [HideInInspector] public bool compressAdvancedMeshPayloadForCreator = false;
+    [HideInInspector] public bool useAdvancedMeshReplacementForCreator = true;
     [HideInInspector] public bool useHdiffFbxDeltaForCreator = true;
     [HideInInspector] public bool includeCustomVeinsForCreator = false;
     [HideInInspector] public Texture2D customVeinsNormalMap;

@@ -94,6 +94,7 @@ public class CustomBaseVersion
     [JsonProperty] public Dictionary<string, string> dependencies;
     [JsonProperty] public ModelFileData[] sourceFiles;
     [JsonProperty] public ModelFileData[] versionFiles;
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public MCBDeliveryVariant[] deliveryVariants;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int uploaderId;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string parentVersion;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int assetId;

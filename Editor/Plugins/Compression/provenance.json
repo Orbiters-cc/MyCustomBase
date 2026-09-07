@@ -1,0 +1,46 @@
+[
+  {
+    "package": "lz4.nativebinaries",
+    "version": "1.9.21",
+    "url": "https://api.nuget.org/v3-flatcontainer/lz4.nativebinaries/1.9.21/lz4.nativebinaries.1.9.21.nupkg",
+    "sha256": "381d64320e87dc899b824dce81fba17d52e97387d3cb1b40e7fb8a2f0c3132c6",
+    "files": [
+      {
+        "path": "win-x64/mcb_lz4.dll",
+        "sha256": "435f92c8d8da939dbfb3b87dd5c2c325f363903dc812527d9e704a5d15fa58c0"
+      },
+      {
+        "path": "linux-x64/libmcb_lz4.so",
+        "sha256": "1041cfa8492d78f0e292623f322812fa43f6b7a49df7741efbf926036fb3139d"
+      },
+      {
+        "path": "osx-x64/libmcb_lz4.dylib",
+        "sha256": "9bf38ff0a8dbbaf95edb7d6cd40f82fbab5909b5546c572e3ccd10ba9f06ac2d"
+      }
+    ]
+  },
+  {
+    "package": "zstdnet",
+    "version": "1.5.7",
+    "url": "https://api.nuget.org/v3-flatcontainer/zstdnet/1.5.7/zstdnet.1.5.7.nupkg",
+    "sha256": "ab7bfbebd1bd50081bc8be6a881ee2a3fd949f035e98845a2f00c4c7d1be5442",
+    "files": [
+      {
+        "path": "win-x64/mcb_zstd.dll",
+        "sha256": "89bca20b4c22c5a5300ce382451bc19e8852d52a41ec2dd8e7f0b60f729987e1"
+      },
+      {
+        "path": "linux-x64/libmcb_zstd.so",
+        "sha256": "aa150295df3b63bcab9c434ccd1f78cb33f54090df2aa8c775598a54ac4d6ca7"
+      },
+      {
+        "path": "osx-x64/libmcb_zstd.dylib",
+        "sha256": "1947274ec6269652a52489f195f68ee7f60bfe860f180846b276cd6afe64c0eb"
+      },
+      {
+        "path": "osx-arm64/libmcb_zstd.dylib",
+        "sha256": "6699a5f3341cd9bcd5d1b4ee65e2756befc204097f7ed32c39e0c4f25c7ba6f3"
+      }
+    ]
+  }
+]

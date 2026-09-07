@@ -326,17 +326,8 @@ public partial class CreatorModeModule
 
             if (editor.useAdvancedMeshReplacementForCreatorProp.boolValue)
             {
-                if (editor.compressAdvancedMeshPayloadForCreatorProp != null)
-                {
-                    EditorGUILayout.PropertyField(
-                        editor.compressAdvancedMeshPayloadForCreatorProp,
-                        new GUIContent(
-                            "GZip Native Mesh Payload",
-                            "Compress the native mesh payload before XOR encryption. This reduces upload size but adds build and first-cache decode cost. Leave disabled for fastest apply."));
-                }
-
                 EditorGUILayout.HelpBox(
-                    "The uploaded file is still only an XOR .bin encrypted with the original base FBX. Users will apply the native mesh payload from version metadata, not from their local experimental flags.",
+                    "MCB builds the available LZ4 and Zstd options automatically. Each user downloads one option, selected for their connection and computer. Meshes and skin weights are preserved exactly.",
                     MessageType.Info);
             }
         }
@@ -372,65 +363,6 @@ public partial class CreatorModeModule
             }
         }
     }
-
-    private static bool ShouldCompressAdvancedMeshPayload(CustomBaseVersion version)
-    {
-        bool foundAdvancedPayload = false;
-        bool shouldCompress = false;
-        foreach (var versionFile in version?.versionFiles ?? Array.Empty<ModelFileData>())
-        {
-            if (versionFile == null ||
-                !string.Equals(versionFile.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            foundAdvancedPayload = true;
-            string compression = versionFile.compression;
-            string metadataCompression = null;
-            if (versionFile.metadata != null &&
-                versionFile.metadata.TryGetValue(NativeMeshPayloadService.PayloadCompressionMetadataKey, out object metadataCompressionValue) &&
-                metadataCompressionValue != null)
-            {
-                metadataCompression = metadataCompressionValue.ToString();
-            }
-
-            if (string.IsNullOrWhiteSpace(compression) || string.IsNullOrWhiteSpace(metadataCompression))
-            {
-                throw new InvalidDataException("Advanced mesh payload must include both compression and payloadCompression.");
-            }
-
-            string normalizedCompression = NormalizeAdvancedMeshPayloadCompression(compression);
-            string normalizedMetadataCompression = NormalizeAdvancedMeshPayloadCompression(metadataCompression);
-            if (!string.Equals(normalizedCompression, normalizedMetadataCompression, StringComparison.Ordinal))
-            {
-                throw new InvalidDataException("Advanced mesh payload compression metadata is inconsistent.");
-            }
-
-            if (string.Equals(normalizedCompression, NativeMeshPayloadService.PayloadCompressionGZip, StringComparison.Ordinal))
-            {
-                shouldCompress = true;
-            }
-        }
-
-        return foundAdvancedPayload && shouldCompress;
-    }
-
-    private static string NormalizeAdvancedMeshPayloadCompression(string compression)
-    {
-        if (string.Equals(compression, NativeMeshPayloadService.PayloadCompressionNone, StringComparison.OrdinalIgnoreCase))
-        {
-            return NativeMeshPayloadService.PayloadCompressionNone;
-        }
-
-        if (string.Equals(compression, NativeMeshPayloadService.PayloadCompressionGZip, StringComparison.OrdinalIgnoreCase))
-        {
-            return NativeMeshPayloadService.PayloadCompressionGZip;
-        }
-
-        throw new InvalidDataException($"Unsupported advanced mesh payload compression: {compression}");
-    }
-    
 
     private void OnBlendshapeSearchInputChanged(string searchString)
     {
@@ -589,57 +521,9 @@ public partial class CreatorModeModule
         GameObject targetFbx,
         GameObject customFbx = null)
     {
-        var smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, targetPath);
-        var targeted = FilterSmrPathsToSourceRendererNames(smrPaths, targetFbx);
-        if (targeted.Count > 0)
-        {
-            return targeted;
-        }
-
-        if (smrPaths.Count > 0)
-        {
-            return smrPaths;
-        }
-
-        if (customFbx == null)
-        {
-            return smrPaths;
-        }
-
-        string customPath = AssetDatabase.GetAssetPath(customFbx);
-        if (string.IsNullOrWhiteSpace(customPath))
-        {
-            return smrPaths;
-        }
-
-        var customSmrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, customPath);
-        var targetedCustom = FilterSmrPathsToSourceRendererNames(customSmrPaths, targetFbx);
-        return targetedCustom.Count > 0 ? targetedCustom : customSmrPaths;
+        return SmrPathService.CollectModelRendererBindings(avatarRoot, targetPath, targetFbx, customFbx);
     }
 
-    private static List<ModelFileSmrPathData> FilterSmrPathsToSourceRendererNames(IEnumerable<ModelFileSmrPathData> smrPaths, GameObject sourceFbx)
-    {
-        var entries = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>())
-            .Where(entry => entry != null)
-            .ToList();
-        if (entries.Count <= 1 || sourceFbx == null)
-        {
-            return entries;
-        }
-
-        var sourceRendererNames = new HashSet<string>(
-            sourceFbx.GetComponentsInChildren<SkinnedMeshRenderer>(true)
-                .Where(renderer => renderer != null)
-                .Select(renderer => renderer.transform.name)
-                .Where(name => !string.IsNullOrWhiteSpace(name)),
-            StringComparer.Ordinal);
-
-        return sourceRendererNames.Count == 0
-            ? entries
-            : entries
-                .Where(entry => sourceRendererNames.Contains(entry.rendererName))
-                .ToList();
-    }
 
     private void ApplyCustomAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, Avatar customAvatar)
     {
@@ -2161,10 +2045,6 @@ public partial class CreatorModeModule
             FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
             editor.useAdvancedMeshReplacementForCreatorProp != null &&
             editor.useAdvancedMeshReplacementForCreatorProp.boolValue;
-        bool compressAdvancedMeshPayload =
-            useAdvancedMeshReplacement &&
-            editor.compressAdvancedMeshPayloadForCreatorProp != null &&
-            editor.compressAdvancedMeshPayloadForCreatorProp.boolValue;
         bool useHdiffFbxDelta =
             !useAdvancedMeshReplacement &&
             editor.useHdiffFbxDeltaForCreatorProp != null &&
@@ -2247,6 +2127,7 @@ public partial class CreatorModeModule
                 {
                     rawModelFileMetadata["payloadFormat"] = NativeMeshPayloadService.PayloadFormat;
                     rawModelFileMetadata[NativeMeshPayloadService.PayloadCompressionMetadataKey] = packageEntry.payloadCompression;
+                    rawModelFileMetadata["deliveryVariants"] = packageEntry.payloadVariants;
                 }
                 else if (packageEntry.usedHdiffFbxDelta && packageEntry.hdiffBuildInfo != null)
                 {
@@ -2359,7 +2240,6 @@ public partial class CreatorModeModule
             customVeinsTexture,
             shouldIncludeDynamicNormalsBody,
             shouldIncludeDynamicNormalsFlexing,
-            compressAdvancedMeshPayload,
             fixedByAnimationAssetPaths,
             metadataFactory,
             ComputeFormSignature());
@@ -2384,7 +2264,6 @@ public partial class CreatorModeModule
         canonical.Append('|').Append(editor.includeDynamicNormalsBodyForCreatorProp.boolValue);
         canonical.Append('|').Append(editor.includeDynamicNormalsFlexingForCreatorProp.boolValue);
         canonical.Append('|').Append(editor.useAdvancedMeshReplacementForCreatorProp != null && editor.useAdvancedMeshReplacementForCreatorProp.boolValue);
-        canonical.Append('|').Append(editor.compressAdvancedMeshPayloadForCreatorProp != null && editor.compressAdvancedMeshPayloadForCreatorProp.boolValue);
         canonical.Append('|').Append(editor.useHdiffFbxDeltaForCreatorProp != null && editor.useHdiffFbxDeltaForCreatorProp.boolValue);
         canonical.Append('|').Append(HasSuggestRealisticPayload()
             ? string.Join(",", GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp))
@@ -2528,10 +2407,6 @@ public partial class CreatorModeModule
             if (editor.useAdvancedMeshReplacementForCreatorProp != null)
             {
                 editor.useAdvancedMeshReplacementForCreatorProp.boolValue = NativeMeshPayloadService.VersionUsesAdvancedMesh(ver);
-            }
-            if (editor.compressAdvancedMeshPayloadForCreatorProp != null)
-            {
-                editor.compressAdvancedMeshPayloadForCreatorProp.boolValue = ShouldCompressAdvancedMeshPayload(ver);
             }
             editor.avatarLogicPrefabProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(ver.logicPrefabPath);
 

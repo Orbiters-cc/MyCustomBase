@@ -14,7 +14,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public static class NativeMeshPayloadService
+public static partial class NativeMeshPayloadService
 {
     public const string ExtraCustomizationKey = "advancedMeshReplacement";
     public const string TransformName = "XOR_BIN_TO_UNITY_ASSET";
@@ -28,8 +28,6 @@ public static class NativeMeshPayloadService
     private const float SparseVectorEpsilon = 0.00001f;
     private const string GeneratedFolder = "Assets/MCB/generated/advancedMeshPayloads";
     private const string BuildTempFolder = "Assets/MCB/generated/advancedMeshBuildTemp";
-    private const int ParallelXorThresholdBytes = 16 * 1024 * 1024;
-    private const int ParallelXorChunkBytes = 1024 * 1024;
 
     public sealed class GeneratedPayloadStorageInfo
     {
@@ -115,6 +113,8 @@ public static class NativeMeshPayloadService
 
     private static string NormalizePayloadCompression(string payloadCompression)
     {
+        if (string.Equals(payloadCompression, MCBCompression.Lz4, StringComparison.OrdinalIgnoreCase)) return MCBCompression.Lz4;
+        if (string.Equals(payloadCompression, MCBCompression.Zstd, StringComparison.OrdinalIgnoreCase)) return MCBCompression.Zstd;
         if (string.Equals(payloadCompression, PayloadCompressionNone, StringComparison.OrdinalIgnoreCase))
         {
             return PayloadCompressionNone;
@@ -130,6 +130,7 @@ public static class NativeMeshPayloadService
 
     public sealed class NativeMeshPayloadBuildResult
     {
+        public List<MCBPayloadVariant> variants;
         public string payloadHash;
         public string binHash;
         public string payloadCompression;
@@ -185,7 +186,8 @@ public static class NativeMeshPayloadService
         bool includeDynamicNormalsBody = true,
         bool includeDynamicNormalsFlexing = true,
         bool compressPayload = false,
-        Transform sourcePoseRoot = null)
+        Transform sourcePoseRoot = null,
+        bool createDeliveryVariants = false)
     {
         if (string.IsNullOrWhiteSpace(sourceFbxPath))
         {
@@ -214,69 +216,73 @@ public static class NativeMeshPayloadService
         }
 
         GameObject payloadSource = customFbx;
-        GameObject temporaryPayloadSource = null;
-        try
+        byte[] baseData = File.ReadAllBytes(fullSourcePath);
+        var rendererSources = ResolvePayloadRendererSources(payloadSource, smrPaths);
+        if (rendererSources.Count == 0)
         {
-            if (bakeDynamicNormals)
+            throw new InvalidOperationException("The custom FBX did not provide any matching skinned mesh data for the native mesh payload.");
+        }
+        if (bakeDynamicNormals)
+        {
+            var body = MeshFinder.FindMeshPrioritizingRoot(customFbx.transform, "Body");
+            var bodySource = rendererSources.FirstOrDefault(source => source.renderer == body);
+            if (bodySource != null)
             {
-                payloadSource = CreateDynamicNormalsPayloadSource(customFbx, includeDynamicNormalsBody, includeDynamicNormalsFlexing);
-                temporaryPayloadSource = payloadSource != customFbx ? payloadSource : null;
+                var shapes = Enumerable.Range(0, body.sharedMesh.blendShapeCount)
+                    .Select(body.sharedMesh.GetBlendShapeName)
+                    .Where(name => (includeDynamicNormalsBody && name.IndexOf("muscle", StringComparison.OrdinalIgnoreCase) >= 0)
+                        || (includeDynamicNormalsFlexing && name.IndexOf("flex", StringComparison.OrdinalIgnoreCase) >= 0))
+                    .ToList();
+                if (shapes.Count > 0) bodySource.normalFrames = DynamicNormals.CaptureNormalFrames(body, shapes);
             }
+        }
 
-            byte[] baseData = File.ReadAllBytes(fullSourcePath);
-            var rendererSources = ResolvePayloadRendererSources(payloadSource, smrPaths);
-            if (rendererSources.Count == 0)
-            {
-                throw new InvalidOperationException("The custom FBX did not provide any matching skinned mesh data for the native mesh payload.");
-            }
+        string outputFullPath = Path.GetFullPath(outputBinPath);
+        string outputDirectory = Path.GetDirectoryName(outputFullPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            Directory.CreateDirectory(outputDirectory);
+        }
 
-            string outputFullPath = Path.GetFullPath(outputBinPath);
-            string outputDirectory = Path.GetDirectoryName(outputFullPath);
-            if (!string.IsNullOrWhiteSpace(outputDirectory))
-            {
-                Directory.CreateDirectory(outputDirectory);
-            }
+        var metrics = new NativeMeshPayloadBuildMetrics();
+        if (createDeliveryVariants)
+            return WriteDeliveryVariants(sourceFbxPath, payloadSource, rendererSources, baseData, outputFullPath, metrics, sourcePoseRoot);
 
-            var metrics = new NativeMeshPayloadBuildMetrics();
-            using (var payloadSha = SHA256.Create())
-            using (var binSha = SHA256.Create())
-            using (var output = File.Create(outputFullPath))
-            using (var binHashStream = new HashingWriteStream(output, binSha, leaveOpen: false))
-            using (var xorStream = new XorWriteStream(binHashStream, baseData, leaveOpen: false))
-            using (var payloadHashStream = new HashingWriteStream(xorStream, payloadSha, leaveOpen: false))
+        using (var payloadSha = MCBHashing.CreateSha256())
+        using (var binSha = MCBHashing.CreateSha256())
+        using (var output = File.Create(outputFullPath))
+        using (var binHashStream = new HashingWriteStream(output, binSha, leaveOpen: false))
+        using (var xorStream = new XorWriteStream(binHashStream, baseData, leaveOpen: false))
+        using (var payloadHashStream = new HashingWriteStream(xorStream, payloadSha, leaveOpen: false))
+        {
+            using (var buffered = new BufferedStream(payloadHashStream, 256 * 1024))
             {
-                CreateBinaryPayload(sourceFbxPath, payloadSource, rendererSources, payloadHashStream, metrics, compressPayload, sourcePoseRoot);
+                CreateBinaryPayload(sourceFbxPath, payloadSource, rendererSources, buffered, metrics, compressPayload, sourcePoseRoot);
+                buffered.Flush();
                 payloadHashStream.CompleteHash();
                 xorStream.Flush();
                 binHashStream.CompleteHash();
-
-                var result = new NativeMeshPayloadBuildResult
-                {
-                    payloadHash = BytesToHex(payloadSha.Hash),
-                    binHash = BytesToHex(binSha.Hash),
-                    payloadCompression = compressPayload ? PayloadCompressionGZip : PayloadCompressionNone,
-                    rendererCount = rendererSources.Count,
-                    payloadBytes = payloadHashStream.BytesWritten,
-                    blendShapeVertexBytes = metrics.blendShapeVertexBytes,
-                    blendShapeNormalBytes = metrics.blendShapeNormalBytes,
-                    blendShapeTangentBytes = metrics.blendShapeTangentBytes,
-                    skippedBlendShapeNormalBytes = metrics.skippedBlendShapeNormalBytes,
-                    skippedBlendShapeTangentBytes = metrics.skippedBlendShapeTangentBytes
-                };
-
-                MCBLogger.Log(
-                    $"[NativeMeshPayload] Built native mesh payload: renderers={result.rendererCount}, compression={result.payloadCompression}, payloadBytes={FormatBytes(result.payloadBytes)}, " +
-                    $"blendshapeVertices={FormatBytes(result.blendShapeVertexBytes)}, blendshapeNormals={FormatBytes(result.blendShapeNormalBytes)}, blendshapeTangents={FormatBytes(result.blendShapeTangentBytes)}, " +
-                    $"skippedNormals={FormatBytes(result.skippedBlendShapeNormalBytes)}, skippedTangents={FormatBytes(result.skippedBlendShapeTangentBytes)}");
-                return result;
             }
-        }
-        finally
-        {
-            if (temporaryPayloadSource != null)
+
+            var result = new NativeMeshPayloadBuildResult
             {
-                UnityEngine.Object.DestroyImmediate(temporaryPayloadSource);
-            }
+                payloadHash = BytesToHex(payloadSha.Hash),
+                binHash = BytesToHex(binSha.Hash),
+                payloadCompression = compressPayload ? PayloadCompressionGZip : PayloadCompressionNone,
+                rendererCount = rendererSources.Count,
+                payloadBytes = payloadHashStream.BytesWritten,
+                blendShapeVertexBytes = metrics.blendShapeVertexBytes,
+                blendShapeNormalBytes = metrics.blendShapeNormalBytes,
+                blendShapeTangentBytes = metrics.blendShapeTangentBytes,
+                skippedBlendShapeNormalBytes = metrics.skippedBlendShapeNormalBytes,
+                skippedBlendShapeTangentBytes = metrics.skippedBlendShapeTangentBytes
+            };
+
+            MCBLogger.Log(
+                $"[NativeMeshPayload] Built native mesh payload: renderers={result.rendererCount}, compression={result.payloadCompression}, payloadBytes={FormatBytes(result.payloadBytes)}, " +
+                $"blendshapeVertices={FormatBytes(result.blendShapeVertexBytes)}, blendshapeNormals={FormatBytes(result.blendShapeNormalBytes)}, blendshapeTangents={FormatBytes(result.blendShapeTangentBytes)}, " +
+                $"skippedNormals={FormatBytes(result.skippedBlendShapeNormalBytes)}, skippedTangents={FormatBytes(result.skippedBlendShapeTangentBytes)}");
+            return result;
         }
     }
 
@@ -334,49 +340,6 @@ public static class NativeMeshPayloadService
         string fullPath = Path.GetFullPath(normalized);
         if (File.Exists(fullPath)) File.Delete(fullPath);
         if (File.Exists(fullPath + ".meta")) File.Delete(fullPath + ".meta");
-    }
-
-    private static GameObject CreateDynamicNormalsPayloadSource(GameObject customFbx, bool includeBody, bool includeFlexing)
-    {
-        var instance = UnityEngine.Object.Instantiate(customFbx);
-        instance.name = $"{customFbx.name}_NativeMeshPayloadBuild";
-        instance.hideFlags = HideFlags.HideAndDontSave;
-
-        var bodyRenderer = MeshFinder.FindMeshPrioritizingRoot(instance.transform, "Body");
-        if (bodyRenderer?.sharedMesh == null)
-        {
-            MCBLogger.LogWarning("[NativeMeshPayload] Dynamic normals bake was requested, but the custom payload source has no Body renderer.");
-            return instance;
-        }
-
-        var targetBlendshapes = new List<string>();
-        Mesh mesh = bodyRenderer.sharedMesh;
-        for (int i = 0; i < mesh.blendShapeCount; i++)
-        {
-            string name = mesh.GetBlendShapeName(i);
-            string lower = name.ToLowerInvariant();
-            if ((includeBody && lower.Contains("muscle")) ||
-                (includeFlexing && lower.Contains("flex")))
-            {
-                targetBlendshapes.Add(name);
-            }
-        }
-
-        if (targetBlendshapes.Count == 0)
-        {
-            MCBLogger.LogWarning("[NativeMeshPayload] Dynamic normals bake was requested, but no Body blendshapes matched the selected dynamic normals filters.");
-            return instance;
-        }
-
-        DynamicNormals.ForRoot(instance.transform)
-            .limitToMeshes(new[] { bodyRenderer })
-            .applyToBlendshapes(targetBlendshapes)
-            .enable(true)
-            .saveAsAsset(false)
-            .Apply();
-
-        MCBLogger.Log($"[NativeMeshPayload] Baked DynamicNormals into creator payload for {targetBlendshapes.Count} Body blendshape(s).");
-        return instance;
     }
 
     public static NativeMeshPayloadAsset ApplyEncryptedPayload(
@@ -1106,7 +1069,7 @@ public static class NativeMeshPayloadService
             var sourceRenderer = ResolveCustomRenderer(customRoot, entry);
             if (sourceRenderer == null || sourceRenderer.sharedMesh == null)
             {
-                continue;
+                throw new InvalidDataException($"Custom model is missing mesh '{entry.fbxMeshPath}' for avatar renderer '{entry.avatarPath}'. No partial advanced mesh payload was built.");
             }
 
             if (!seenRenderers.Add(sourceRenderer.GetInstanceID()))
@@ -1196,7 +1159,7 @@ public static class NativeMeshPayloadService
                 WriteVector3(writer, renderer.transform.localScale);
                 writer.Write(rootBonePath ?? "");
                 WriteStringList(writer, bonePaths);
-                WriteMesh(writer, mesh, uniqueMeshName, metrics);
+                WriteMesh(writer, mesh, uniqueMeshName, metrics, source.normalFrames);
 
                 rendererRecordsForBones.Add(new NativeMeshPayloadRenderer
                 {
@@ -1369,14 +1332,18 @@ public static class NativeMeshPayloadService
             }
         }
 
+        AssetDatabase.SetMainObject(payload, normalizedPath);
         EditorUtility.SetDirty(payload);
-        AssetDatabase.SaveAssets();
+        AssetDatabase.SaveAssetIfDirty(payload);
 
         return payload;
     }
 
     private static NativeMeshPayloadAsset ReadBinaryPayloadAsset(byte[] payloadBytes, string assetName, string payloadHash, string payloadCompression)
     {
+        VerifyPayloadHash(payloadBytes, payloadHash);
+        if (payloadCompression == MCBCompression.Lz4 || payloadCompression == MCBCompression.Zstd)
+            payloadBytes = MCBCompression.Decode(payloadBytes, payloadCompression);
         if (payloadBytes == null || payloadBytes.Length == 0)
         {
             throw new InvalidDataException("Native mesh payload is empty.");
@@ -1493,7 +1460,8 @@ public static class NativeMeshPayloadService
         return payload;
     }
 
-    private static void WriteMesh(BinaryWriter writer, Mesh mesh, string meshName, NativeMeshPayloadBuildMetrics metrics)
+    private static void WriteMesh(BinaryWriter writer, Mesh mesh, string meshName, NativeMeshPayloadBuildMetrics metrics,
+        Dictionary<(string shape, int frame), DynamicNormals.NormalFrame> normalFrames = null)
     {
         if (mesh == null)
         {
@@ -1537,12 +1505,17 @@ public static class NativeMeshPayloadService
             for (int shape = 0; shape < mesh.blendShapeCount; shape++)
             {
                 string shapeName = mesh.GetBlendShapeName(shape) ?? "";
-                bool includeNormalTangents = ShouldSerializeBlendShapeNormalTangents(mesh, shapeName);
+                bool includeNormalTangents = ShouldSerializeBlendShapeNormalTangents(mesh, shapeName)
+                    || (normalFrames != null && (shapeName.IndexOf("muscle", StringComparison.OrdinalIgnoreCase) >= 0
+                        || shapeName.IndexOf("flex", StringComparison.OrdinalIgnoreCase) >= 0));
                 writer.Write(shapeName);
                 int frameCount = mesh.GetBlendShapeFrameCount(shape);
                 writer.Write(frameCount);
                 for (int frame = 0; frame < frameCount; frame++)
                 {
+                    DynamicNormals.NormalFrame bakedFrame = null;
+                    normalFrames?.TryGetValue((shapeName, frame), out bakedFrame);
+                    bool writeNormalTangents = includeNormalTangents || bakedFrame != null;
                     Array.Clear(deltaVertices, 0, deltaVertices.Length);
                     Array.Clear(deltaNormals, 0, deltaNormals.Length);
                     Array.Clear(deltaTangents, 0, deltaTangents.Length);
@@ -1553,16 +1526,16 @@ public static class NativeMeshPayloadService
                         includeNormalTangents ? deltaNormals : null,
                         includeNormalTangents ? deltaTangents : null);
                     writer.Write(mesh.GetBlendShapeFrameWeight(shape, frame));
-                    long vertexBytes = WriteSparseVector3Array(writer, deltaVertices);
-                    writer.Write(includeNormalTangents);
-                    long normalBytes = includeNormalTangents ? WriteSparseVector3Array(writer, deltaNormals) : 0L;
-                    writer.Write(includeNormalTangents);
-                    long tangentBytes = includeNormalTangents ? WriteSparseVector3Array(writer, deltaTangents) : 0L;
+                    long vertexBytes = WriteSparseVector3Array(writer, deltaVertices, exact: true);
+                    writer.Write(writeNormalTangents);
+                    long normalBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.normals ?? deltaNormals) : 0L;
+                    writer.Write(writeNormalTangents);
+                    long tangentBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.tangents ?? deltaTangents) : 0L;
                     if (metrics != null)
                     {
                         metrics.blendShapeVertexBytes += vertexBytes;
-                        metrics.skippedBlendShapeNormalBytes += includeNormalTangents ? 0L : EstimateSparseVector3ArrayWorstCaseBytes(vertexCount);
-                        metrics.skippedBlendShapeTangentBytes += includeNormalTangents ? 0L : EstimateSparseVector3ArrayWorstCaseBytes(vertexCount);
+                        metrics.skippedBlendShapeNormalBytes += writeNormalTangents ? 0L : EstimateSparseVector3ArrayWorstCaseBytes(vertexCount);
+                        metrics.skippedBlendShapeTangentBytes += writeNormalTangents ? 0L : EstimateSparseVector3ArrayWorstCaseBytes(vertexCount);
                         metrics.blendShapeNormalBytes += normalBytes;
                         metrics.blendShapeTangentBytes += tangentBytes;
                     }
@@ -1703,54 +1676,8 @@ public static class NativeMeshPayloadService
         float startProgress,
         float endProgress)
     {
-        if (baseData == null || baseData.Length == 0)
-        {
-            throw new InvalidDataException("Original FBX key data is empty.");
-        }
-
-        byte[] transformedData = new byte[keyData.Length];
-        if (keyData.Length >= ParallelXorThresholdBytes && Environment.ProcessorCount > 1)
-        {
-            int chunkCount = (keyData.Length + ParallelXorChunkBytes - 1) / ParallelXorChunkBytes;
-            int completedChunks = 0;
-            var options = new ParallelOptions
-            {
-                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
-            };
-
-            Parallel.For(0, chunkCount, options, chunkIndex =>
-            {
-                int start = chunkIndex * ParallelXorChunkBytes;
-                int end = Math.Min(start + ParallelXorChunkBytes, keyData.Length);
-                int baseLength = baseData.Length;
-                for (int i = start; i < end; i++)
-                {
-                    transformedData[i] = (byte)(keyData[i] ^ baseData[i % baseLength]);
-                }
-
-                int done = Interlocked.Increment(ref completedChunks);
-                if (done == chunkCount || done % 4 == 0)
-                {
-                    float local = chunkCount > 0 ? done / (float)chunkCount : 1f;
-                    status.Report(Lerp(startProgress, endProgress, local), "Decrypting advanced mesh payload...");
-                }
-            });
-
-            return transformedData;
-        }
-
-        const int progressStride = 4 * 1024 * 1024;
-        for (int i = 0; i < keyData.Length; i++)
-        {
-            transformedData[i] = (byte)(keyData[i] ^ baseData[i % baseData.Length]);
-            if (i > 0 && i % progressStride == 0)
-            {
-                float local = keyData.Length > 0 ? i / (float)keyData.Length : 1f;
-                status.Report(Lerp(startProgress, endProgress, local), "Decrypting advanced mesh payload...");
-            }
-        }
-
-        return transformedData;
+        return MCBXor.Transform(baseData, keyData, progress =>
+            status.Report(Lerp(startProgress, endProgress, progress), "Decrypting advanced mesh payload..."));
     }
 
     private static PreparedPayloadAssetData ReadPreparedPayloadAsset(
@@ -1762,6 +1689,9 @@ public static class NativeMeshPayloadService
         float startProgress,
         float endProgress)
     {
+        VerifyPayloadHash(payloadBytes, payloadHash);
+        if (payloadCompression == MCBCompression.Lz4 || payloadCompression == MCBCompression.Zstd)
+            payloadBytes = MCBCompression.Decode(payloadBytes, payloadCompression);
         if (payloadBytes == null || payloadBytes.Length == 0)
         {
             throw new InvalidDataException("Native mesh payload is empty.");
@@ -1977,9 +1907,13 @@ public static class NativeMeshPayloadService
                 localRotation = preparedRenderer.localRotation,
                 localScale = preparedRenderer.localScale,
                 rootBonePath = preparedRenderer.rootBonePath,
-                bonePaths = preparedRenderer.bonePaths ?? new List<string>(),
-                mesh = CreateMeshFromPreparedData(preparedRenderer.mesh)
+                bonePaths = preparedRenderer.bonePaths ?? new List<string>()
             };
+            var createMesh = CreateMeshFromPreparedDataCoroutine(preparedRenderer.mesh,
+                mesh => renderer.mesh = mesh,
+                progress => reportProgress?.Invoke((i + progress) / Math.Max(1, rendererCount) * 0.72f,
+                    $"Creating Unity mesh {i + 1}/{rendererCount}..."));
+            while (createMesh.MoveNext()) yield return createMesh.Current;
             payload.renderers.Add(renderer);
             reportProgress?.Invoke(rendererCount > 0 ? (i + 1f) / rendererCount * 0.72f : 0.72f, $"Creating Unity mesh {i + 1}/{rendererCount}...");
             yield return null;
@@ -2001,6 +1935,7 @@ public static class NativeMeshPayloadService
                 }
             }
 
+            AssetDatabase.SetMainObject(payload, normalizedPath);
             EditorUtility.SetDirty(payload);
         }
         finally
@@ -2018,6 +1953,15 @@ public static class NativeMeshPayloadService
     }
 
     private static Mesh CreateMeshFromPreparedData(PreparedMeshData data)
+    {
+        Mesh result = null;
+        var create = CreateMeshFromPreparedDataCoroutine(data, mesh => result = mesh, null, false);
+        while (create.MoveNext()) { }
+        return result;
+    }
+
+    private static IEnumerator CreateMeshFromPreparedDataCoroutine(PreparedMeshData data,
+        Action<Mesh> completed, Action<float> progress, bool yieldToEditor = true)
     {
         var mesh = new Mesh();
         mesh.name = data.name;
@@ -2049,15 +1993,39 @@ public static class NativeMeshPayloadService
         }
 
         mesh.bounds = data.bounds;
-        foreach (var blendShape in data.blendShapes ?? new List<PreparedBlendShapeData>())
+        int frameCount = data.blendShapes?.Sum(shape => shape.frames?.Count ?? 0) ?? 0;
+        int framesAdded = 0;
+        var budget = System.Diagnostics.Stopwatch.StartNew();
+        var call = new System.Diagnostics.Stopwatch();
+        double maximumCallMs = 0;
+        bool finished = false;
+        try
         {
-            foreach (var frame in blendShape.frames ?? new List<PreparedBlendShapeFrameData>())
+            foreach (var blendShape in data.blendShapes ?? new List<PreparedBlendShapeData>())
             {
-                mesh.AddBlendShapeFrame(blendShape.name, frame.weight, frame.deltaVertices, frame.deltaNormals, frame.deltaTangents);
+                foreach (var frame in blendShape.frames ?? new List<PreparedBlendShapeFrameData>())
+                {
+                    call.Restart();
+                    mesh.AddBlendShapeFrame(blendShape.name, frame.weight, frame.deltaVertices, frame.deltaNormals, frame.deltaTangents);
+                    maximumCallMs = Math.Max(maximumCallMs, call.Elapsed.TotalMilliseconds);
+                    framesAdded++;
+                    if (yieldToEditor && budget.Elapsed.TotalMilliseconds >= 8)
+                    {
+                        progress?.Invoke(framesAdded / (float)Math.Max(1, frameCount));
+                        yield return null;
+                        budget.Restart();
+                    }
+                }
             }
+            progress?.Invoke(1f);
+            UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Created mesh={data.name} frames={framesAdded} maxBlendShapeCallMs={maximumCallMs:F1} frameBudgeted={yieldToEditor}");
+            completed?.Invoke(mesh);
+            finished = true;
         }
-
-        return mesh;
+        finally
+        {
+            if (!finished) UnityEngine.Object.DestroyImmediate(mesh);
+        }
     }
 
     private static float Lerp(float from, float to, float value)
@@ -2235,7 +2203,7 @@ public static class NativeMeshPayloadService
         return values;
     }
 
-    private static long WriteSparseVector3Array(BinaryWriter writer, Vector3[] values)
+    private static long WriteSparseVector3Array(BinaryWriter writer, Vector3[] values, bool exact = false)
     {
         int length = values?.Length ?? 0;
         writer.Write(length);
@@ -2249,7 +2217,8 @@ public static class NativeMeshPayloadService
         for (int i = 0; i < length; i++)
         {
             Vector3 value = values[i];
-            if (Mathf.Abs(value.x) <= SparseVectorEpsilon &&
+            if (exact ? value.x == 0f && value.y == 0f && value.z == 0f :
+                Mathf.Abs(value.x) <= SparseVectorEpsilon &&
                 Mathf.Abs(value.y) <= SparseVectorEpsilon &&
                 Mathf.Abs(value.z) <= SparseVectorEpsilon)
             {
@@ -2480,6 +2449,7 @@ public static class NativeMeshPayloadService
 
     private sealed class PayloadRendererSource
     {
+        public Dictionary<(string shape, int frame), DynamicNormals.NormalFrame> normalFrames;
         public ModelFileSmrPathData entry;
         public SkinnedMeshRenderer renderer;
     }
@@ -2538,6 +2508,19 @@ public static class NativeMeshPayloadService
         if (avatarRoot == null || payload == null)
         {
             return;
+        }
+
+        // Reject incomplete associations before assigning any mesh. Positional bone
+        // fallback can silently bind a skin weight to the wrong joint after rig edits.
+        foreach (var record in payload.renderers ?? new List<NativeMeshPayloadRenderer>())
+        {
+            if (record?.mesh == null) throw new InvalidDataException("Advanced mesh payload contains a missing mesh.");
+            var renderer = ResolveAvatarRenderer(avatarRoot, record);
+            if (renderer == null) throw new InvalidOperationException($"Cannot resolve advanced mesh target '{record.avatarPath}'.");
+            var bones = ResolveBoneArray(avatarRoot, record.bonePaths, renderer);
+            if (bones.Length != (record.bonePaths?.Count ?? 0)
+                || (record.mesh.bindposes.Length > 0 && bones.Length != record.mesh.bindposes.Length))
+                throw new InvalidOperationException($"Cannot safely associate all skin bones for '{record.avatarPath}'.");
         }
 
         var total = System.Diagnostics.Stopwatch.StartNew();
@@ -2849,13 +2832,6 @@ public static class NativeMeshPayloadService
             {
                 bone = ResolveBoneByName(targetRenderer, GetLastPathSegment(path));
             }
-            if (bone == null &&
-                targetRenderer != null &&
-                targetRenderer.bones != null &&
-                i < targetRenderer.bones.Length)
-            {
-                bone = targetRenderer.bones[i];
-            }
             if (bone == null)
             {
                 return Array.Empty<Transform>();
@@ -2874,8 +2850,9 @@ public static class NativeMeshPayloadService
             return null;
         }
 
-        return (renderer.bones ?? Array.Empty<Transform>())
-            .FirstOrDefault(bone => bone != null && string.Equals(bone.name, boneName, StringComparison.Ordinal));
+        var matches = (renderer.bones ?? Array.Empty<Transform>())
+            .Where(bone => bone != null && string.Equals(bone.name, boneName, StringComparison.Ordinal)).Distinct().Take(2).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
     }
 
     private static SkinnedMeshRenderer ResolveAvatarRenderer(Transform avatarRoot, NativeMeshPayloadRenderer record)

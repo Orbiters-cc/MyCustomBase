@@ -1,0 +1,283 @@
+{
+  "startedUtc": "2026-09-07T14:24:15.7681391Z",
+  "finishedUtc": "2026-09-07T14:24:33.0154596Z",
+  "unity": "2022.3.22f1",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700K",
+  "gpu": "NVIDIA GeForce RTX 4080",
+  "logicalCores": 20,
+  "memoryMB": 65320,
+  "rendererCount": 5,
+  "vertices": 0,
+  "blendshapeFrames": 0,
+  "serializationMode": "ForceText",
+  "payloadSha256": "ce480a7cb0154fb41eb6e0e3bf253d75927e65f2dbb837d6f6eea5f96443d11d",
+  "error": null,
+  "sceneDirtyBefore": false,
+  "sceneDirtyAfter": false,
+  "sourceAssetBytes": 584902097,
+  "payloadBytes": 82892731,
+  "keyBytes": 21737020,
+  "processPeakWorkingSetBytes": null,
+  "longestEditorTickGapMs": 1684.1746000000057,
+  "measurements": [
+    {
+      "stage": "production_xor_words_4_workers",
+      "iteration": 0,
+      "milliseconds": 117.5475,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_encode",
+      "iteration": 0,
+      "milliseconds": 551.0423000000001,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 53261560,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_decode",
+      "iteration": 0,
+      "milliseconds": 112.66980000000001,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_encode",
+      "iteration": 0,
+      "milliseconds": 1569.5018,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 29186202,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_decode",
+      "iteration": 0,
+      "milliseconds": 112.86330000000001,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_xor_words_4_workers",
+      "iteration": 1,
+      "milliseconds": 33.5679,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_encode",
+      "iteration": 1,
+      "milliseconds": 1312.9940000000001,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 29186202,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_decode",
+      "iteration": 1,
+      "milliseconds": 144.0515,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_encode",
+      "iteration": 1,
+      "milliseconds": 357.399,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 53261560,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_decode",
+      "iteration": 1,
+      "milliseconds": 39.7548,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_xor_words_4_workers",
+      "iteration": 2,
+      "milliseconds": 135.3063,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_encode",
+      "iteration": 2,
+      "milliseconds": 419.3643,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 53261560,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_decode",
+      "iteration": 2,
+      "milliseconds": 23.191200000000002,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_encode",
+      "iteration": 2,
+      "milliseconds": 1314.0093000000002,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 29186202,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_decode",
+      "iteration": 2,
+      "milliseconds": 106.46140000000001,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_xor_words_4_workers",
+      "iteration": 3,
+      "milliseconds": 49.6223,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_encode",
+      "iteration": 3,
+      "milliseconds": 1480.6141,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 29186202,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_ZSTD_decode",
+      "iteration": 3,
+      "milliseconds": 155.1193,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_encode",
+      "iteration": 3,
+      "milliseconds": 320.3252,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 53261560,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "production_LZ4_decode",
+      "iteration": 3,
+      "milliseconds": 42.4617,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 82892731,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_LZ4_encode",
+      "iteration": 1,
+      "milliseconds": 77.5751,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 50000000,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_LZ4_encode",
+      "iteration": 1,
+      "milliseconds": 445.3501,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 150000000,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_LZ4_decode",
+      "iteration": 1,
+      "milliseconds": 47.1304,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 50000000,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_LZ4_decode",
+      "iteration": 1,
+      "milliseconds": 89.4955,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 150000000,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_ZSTD_encode",
+      "iteration": 1,
+      "milliseconds": 1162.9237,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 50000000,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_ZSTD_encode",
+      "iteration": 1,
+      "milliseconds": 3181.7766,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 150000000,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_ZSTD_decode",
+      "iteration": 1,
+      "milliseconds": 67.7048,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 50000000,
+      "verified": true,
+      "note": null
+    },
+    {
+      "stage": "calibration_ZSTD_decode",
+      "iteration": 1,
+      "milliseconds": 177.92770000000002,
+      "allocatedBytesCurrentThread": null,
+      "bytes": 150000000,
+      "verified": true,
+      "note": null
+    }
+  ],
+  "notes": [
+    "Iteration 0 is warmup; measured iterations are >= 1. File reads use the normal Windows cache; no cold-disk claim.",
+    "Allocated bytes cover the executing thread only, excluding parallel worker allocations and Unity native allocations. Process peak is whole-editor lifetime, not benchmark-exclusive.",
+    "The current runtime allocation counter is unavailable; allocation fields are null, not zero allocations.",
+    "No scene version switch or real network transfer is performed. UI intro/completion timing is preserved and excluded.",
+    "Production codecs use independent 4 MiB MCC1 blocks; results include allocation and interop, and are not directly comparable with the earlier standalone monolithic codec benchmark."
+  ]
+}

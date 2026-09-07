@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+[PreferBinarySerialization]
 public class NativeMeshPayloadAsset : ScriptableObject
 {
     public int payloadVersion = 1;

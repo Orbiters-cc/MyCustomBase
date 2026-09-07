@@ -1,0 +1,174 @@
+{
+  "date": "2026-09-07",
+  "unity": "2022.3.22f1",
+  "status": "local, unreleased",
+  "fixture": {
+    "renderers": 5,
+    "vertices": 100203,
+    "blendshapeFrames": 530,
+    "bodyBlendshapes": 497,
+    "bonesPerRenderer": 95
+  },
+  "method": "Single complete workflow observations in the existing Editor and OS cache; no upload or network time included in build/apply timings. Scene-work timers exclude intentional presentation delays.",
+  "buildMs": {
+    "baseline": 207385.4,
+    "directNormalsSamePayload": 15915.3,
+    "directNormalsExactPositionEncoding": 10417.5573
+  },
+  "dynamicNormalsMs": {
+    "baseline": 198751.8,
+    "directCapture": 1389.5
+  },
+  "payloadBytes": {
+    "ZSTD": 35188590,
+    "LZ4": 71459360
+  },
+  "applySceneMs": {
+    "firstWithFrameBudget": 22077.1,
+    "cached": 469.8,
+    "resetFirst": 325.5,
+    "resetRepeat": 291.2
+  },
+  "applyWallMs": {
+    "firstWithFrameBudget": 23451.3435,
+    "cached": 1474.8857
+  },
+  "maxSingleBlendshapeCallMs": 82.6,
+  "comparison": [
+    {
+      "renderer": "Body",
+      "vertices": 89166,
+      "blendshapes": 497,
+      "frames": 497,
+      "boneCount": 95,
+      "geometryExact": true,
+      "skinWeightsExact": true,
+      "bonePathsExact": true,
+      "blendshapeFramesExact": false,
+      "blendshapeLayoutExact": true,
+      "blendshapePositionsWithinUnityPrecision": true,
+      "maximumBlendshapePositionError": 9.999881513067521e-06,
+      "missingBlendshapes": [],
+      "Passed": true
+    },
+    {
+      "renderer": "ManeHair",
+      "vertices": 4120,
+      "blendshapes": 8,
+      "frames": 8,
+      "boneCount": 95,
+      "geometryExact": true,
+      "skinWeightsExact": true,
+      "bonePathsExact": true,
+      "blendshapeFramesExact": false,
+      "blendshapeLayoutExact": true,
+      "blendshapePositionsWithinUnityPrecision": true,
+      "maximumBlendshapePositionError": 9.953442713594995e-06,
+      "missingBlendshapes": [],
+      "Passed": true
+    },
+    {
+      "renderer": "MohawkHair",
+      "vertices": 2727,
+      "blendshapes": 7,
+      "frames": 7,
+      "boneCount": 95,
+      "geometryExact": true,
+      "skinWeightsExact": true,
+      "bonePathsExact": true,
+      "blendshapeFramesExact": false,
+      "blendshapeLayoutExact": true,
+      "blendshapePositionsWithinUnityPrecision": true,
+      "maximumBlendshapePositionError": 9.431681974092498e-06,
+      "missingBlendshapes": [],
+      "Passed": true
+    },
+    {
+      "renderer": "Tail1",
+      "vertices": 523,
+      "blendshapes": 11,
+      "frames": 11,
+      "boneCount": 95,
+      "geometryExact": true,
+      "skinWeightsExact": true,
+      "bonePathsExact": true,
+      "blendshapeFramesExact": false,
+      "blendshapeLayoutExact": true,
+      "blendshapePositionsWithinUnityPrecision": true,
+      "maximumBlendshapePositionError": 8.071950105659198e-06,
+      "missingBlendshapes": [],
+      "Passed": true
+    },
+    {
+      "renderer": "Tail2",
+      "vertices": 3667,
+      "blendshapes": 7,
+      "frames": 7,
+      "boneCount": 95,
+      "geometryExact": true,
+      "skinWeightsExact": true,
+      "bonePathsExact": true,
+      "blendshapeFramesExact": false,
+      "blendshapeLayoutExact": true,
+      "blendshapePositionsWithinUnityPrecision": true,
+      "maximumBlendshapePositionError": 9.82266828941647e-06,
+      "missingBlendshapes": [],
+      "Passed": true
+    }
+  ],
+  "deformationAtCurrentWeights": [
+    {
+      "renderer": "Body",
+      "vertices": 89166,
+      "maxPositionError": 8.97155132406624e-06,
+      "rmsPositionError": 3.3861299978237126e-07
+    },
+    {
+      "renderer": "ManeHair",
+      "vertices": 4120,
+      "maxPositionError": 0.0,
+      "rmsPositionError": 0.0
+    },
+    {
+      "renderer": "MohawkHair",
+      "vertices": 2727,
+      "maxPositionError": 3.5801571129923104e-07,
+      "rmsPositionError": 1.2129427341712965e-07
+    },
+    {
+      "renderer": "Tail1",
+      "vertices": 523,
+      "maxPositionError": 0.0,
+      "rmsPositionError": 0.0
+    },
+    {
+      "renderer": "Tail2",
+      "vertices": 3667,
+      "maxPositionError": 3.6171780948279775e-07,
+      "rmsPositionError": 1.21410546931701e-07
+    }
+  ],
+  "preservation": {
+    "fbxHash": true,
+    "metaHash": true,
+    "originalHash": true,
+    "preexistingStagedDiffUnchanged": true
+  },
+  "tests": {
+    "mcbPassed": 52,
+    "unitGitPassed": 29,
+    "deterministicHealthChecks": "both packages passed"
+  },
+  "limitations": [
+    "Source blendshape normals/tangents follow the existing selective dynamic-normal policy.",
+    "Unity removes near-zero deltas during Mesh.AddBlendShapeFrame; exact equality and maximum error are reported separately.",
+    "First-use mesh construction remains a cost; yielding improves responsiveness, not total time.",
+    "No new version was uploaded. Published incomplete versions require a corrected build."
+  ],
+  "gallery": {
+    "publishedEntrySurvivesLocalDeletion": true,
+    "redownloadWithStaleUiHash": true,
+    "downloadedMetadataInLocalScan": true,
+    "publishedBadgeUsesServerScope": true
+  }
+}

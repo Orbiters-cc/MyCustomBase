@@ -33,7 +33,7 @@ public class MCBEditor : UnityEditor.Editor
     public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
                                customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
                                modelFileBuildEntriesProp,
-                               useAdvancedMeshReplacementForCreatorProp, compressAdvancedMeshPayloadForCreatorProp,
+                               useAdvancedMeshReplacementForCreatorProp,
                                useHdiffFbxDeltaForCreatorProp,
                                includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
                                includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp,
@@ -184,6 +184,7 @@ public class MCBEditor : UnityEditor.Editor
         MCBConnectivityMonitor.EnsureCheckStarted(authToken);
         MCBPackageVersionService.StatusChanged += RepaintFromPackageVersionStatus;
         MCBPackageVersionService.EnsureCheckStarted(authToken);
+        MCBPerformance.EnsureStarted(this);
         
         // Ensure modules are enabled
         versionModule.OnEnable();
@@ -739,6 +740,7 @@ public class MCBEditor : UnityEditor.Editor
 
     private void StartAsyncInitialization()
     {
+        MCBPerformance.EnsureStarted(this);
         // Skip async initialization if already in progress or if we're submitting/building
         if (isFetching || isSubmitting || ShouldDeferBackgroundNetworkRefresh()) return;
 
@@ -1331,7 +1333,6 @@ public class MCBEditor : UnityEditor.Editor
         modelFileBuildEntriesProp = serializedObject.FindProperty("modelFileBuildEntries");
         avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
         useAdvancedMeshReplacementForCreatorProp = serializedObject.FindProperty("useAdvancedMeshReplacementForCreator");
-        compressAdvancedMeshPayloadForCreatorProp = serializedObject.FindProperty("compressAdvancedMeshPayloadForCreator");
         useHdiffFbxDeltaForCreatorProp = serializedObject.FindProperty("useHdiffFbxDeltaForCreator");
         customBlendshapesForCreatorProp = serializedObject.FindProperty("customBlendshapesForCreator");
         includeCustomVeinsForCreatorProp = serializedObject.FindProperty("includeCustomVeinsForCreator");
@@ -1403,42 +1404,9 @@ public class MCBEditor : UnityEditor.Editor
                 .ToList();
         }
 
-        // Merge sources while letting local variants override matching server entries.
-        var merged = new Dictionary<string, CustomBaseVersion>(StringComparer.Ordinal);
         int selectedAssetId = GetSelectedAsset()?.id ?? 0;
-
-        foreach (var version in serverVersions)
-        {
-            if (!BelongsToSelectedAsset(version, selectedAssetId)) continue;
-            if (version == null) continue;
-            merged[GetVersionKey(version)] = version;
-        }
-
-        foreach (var version in importedVersions)
-        {
-            if (!BelongsToSelectedAsset(version, selectedAssetId)) continue;
-            if (version == null) continue;
-            merged[GetVersionKey(version)] = version;
-        }
-
-        foreach (var version in unsubmittedVersions)
-        {
-            if (!BelongsToSelectedAsset(version, selectedAssetId)) continue;
-            if (version == null) continue;
-            merged[GetVersionKey(version)] = version;
-        }
-
-        return merged.Values.OrderByDescending(v => ParseVersion(v.version)).ToList();
-    }
-
-    private static bool BelongsToSelectedAsset(CustomBaseVersion version, int selectedAssetId)
-    {
-        return version != null && selectedAssetId > 0 && version.assetId == selectedAssetId;
-    }
-
-    private static string GetVersionKey(CustomBaseVersion version)
-    {
-        return $"{version.assetId}|{version.version}|{version.defaultAviVersion}";
+        return VersionRepository.MergeAvailableVersions(selectedAssetId, serverVersions, importedVersions, unsubmittedVersions)
+            .OrderByDescending(v => ParseVersion(v.version)).ToList();
     }
     
     public Version ParseVersion(string v)
@@ -1519,6 +1487,7 @@ public class MCBEditor : UnityEditor.Editor
         serializedObject.ApplyModifiedProperties();
         InvalidateDetectedAvatarFbxCache();
         MCBLogger.Log($"[MCBEditor] Synced {baseFbxFilesProp.arraySize} target FBX file(s) from selected custom base source ModelFiles.");
+        versionModule?.actions?.UpdateCurrentBaseFbxHash();
         return true;
     }
 

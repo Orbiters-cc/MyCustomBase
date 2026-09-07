@@ -1074,7 +1074,7 @@ public partial class CreatorModeModule
         var advancedText = new VisualElement();
         advancedText.AddToClassList("mcb-creator-advanced");
         advancedText.Add(advancedToggle);
-        var advancedDescription = CreateMutedLabel("Improves the user experience by dividing apply time by two, but takes a bit more time to upload.");
+        var advancedDescription = CreateMutedLabel("Delivers edited meshes directly, with automatic compression selection and a fast local cache.");
         advancedDescription.AddToClassList("mcb-creator-advanced__description");
         advancedText.Add(advancedDescription);
         var advancedRow = CreateIconFieldRow(new MCBCreatorChipIconElement(), advancedText);
@@ -1083,20 +1083,8 @@ public partial class CreatorModeModule
 
         if (editor.useAdvancedMeshReplacementForCreatorProp.boolValue)
         {
-            if (editor.compressAdvancedMeshPayloadForCreatorProp != null)
-            {
-                card.Add(CreateToggle(
-                    "GZip Native Mesh Payload",
-                    "Compress the native mesh payload before XOR encryption. This reduces upload size but adds build and first-cache decode cost. Leave disabled for fastest apply.",
-                    editor.compressAdvancedMeshPayloadForCreatorProp.boolValue,
-                    evt =>
-                    {
-                        ApplyCreatorChange(() => editor.compressAdvancedMeshPayloadForCreatorProp.boolValue = evt.newValue, false);
-                    }));
-            }
-
             card.Add(CreateHelpBox(
-                "The uploaded file is still only an XOR .bin encrypted with the original base FBX. Users will apply the native mesh payload from version metadata, not from their local experimental flags.",
+                "MCB builds the available LZ4 and Zstd options automatically. Each user downloads one option, selected for their connection and computer. Meshes and skin weights are preserved exactly.",
                 HelpBoxMessageType.Info));
         }
 

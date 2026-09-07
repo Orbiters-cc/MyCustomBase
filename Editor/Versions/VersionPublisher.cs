@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -192,8 +193,16 @@ public static class VersionPublisher
             {
                 uploadSucceeded = true;
                 VersionRepository.MarkPublished(artifact);
+                // A confirmed upload is authoritative remote availability. Update the
+                // gallery and its shared cache before disk scans and checkpoint work.
+                version.isUnsubmitted = false;
+                editor.serverVersions = editor.serverVersions
+                    .Where(item => !item.Equals(version)).Append(version).ToList();
+                PersistentCache.Instance.CacheVersions(editor.currentBaseFbxHash,
+                    editor.serverVersions, editor.recommendedVersion, editor.authToken, version.assetId);
                 editor.LoadUnsubmittedVersions(true);
                 editor.LoadImportedVersions(true);
+                editor.RefreshUiToolkitSections();
                 onPublished?.Invoke();
                 new VersionActions(editor, networkService, fileManagerService).StartVersionFetch();
             }
@@ -228,7 +237,7 @@ public static class VersionPublisher
                 ? "\n\nA Unit Git release checkpoint commit was created."
                 : (string.IsNullOrWhiteSpace(checkpointMessage)
                     ? string.Empty
-                    : $"\n\nNo Unit Git release checkpoint was created: {checkpointMessage}");
+                    : "\n\nThe upload succeeded, but Unit Git could not create its local release checkpoint. See the Console for details.");
             EditorUtility.DisplayDialog("Publish Successful", $"Custom base version {version.version} has been uploaded.{checkpointInfo}", "OK");
         }
 

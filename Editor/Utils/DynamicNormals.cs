@@ -167,10 +167,35 @@ namespace MCBEditorUtils
             }
         }
 
-        private static void RecalculateNormalsOf(SkinnedMeshRenderer smr, List<string> smrBlendShapes, List<string> applicableBlendShapes, List<string> eraseCustomSplitNormalsBlendShapes, Dictionary<string, Quaternion> boneRotations, Dictionary<string, Vector3> boneTranslations, bool saveAsAsset)
+        internal sealed class NormalFrame
+        {
+            public Vector3[] normals;
+            public Vector3[] tangents;
+        }
+
+        internal static Dictionary<(string shape, int frame), NormalFrame> CaptureNormalFrames(
+            SkinnedMeshRenderer renderer, IEnumerable<string> selectedShapes)
+        {
+            var result = new Dictionary<(string, int), NormalFrame>();
+            var names = Enumerable.Range(0, renderer.sharedMesh.blendShapeCount)
+                .Select(renderer.sharedMesh.GetBlendShapeName).ToList();
+            RecalculateNormalsOf(renderer, names, selectedShapes.ToList(), new List<string>(), null, null, false,
+                (name, frame, normals, tangents) => result.Add((name, frame), new NormalFrame
+                {
+                    normals = (Vector3[])normals.Clone(), tangents = (Vector3[])tangents.Clone()
+                }));
+            return result;
+        }
+
+        private static void RecalculateNormalsOf(SkinnedMeshRenderer smr, List<string> smrBlendShapes, List<string> applicableBlendShapes, List<string> eraseCustomSplitNormalsBlendShapes, Dictionary<string, Quaternion> boneRotations, Dictionary<string, Vector3> boneTranslations, bool saveAsAsset,
+            Action<string, int, Vector3[], Vector3[]> captureFrame = null)
         {
             var originalMesh = smr.sharedMesh;
             if (originalMesh == null) return;
+            int vertexCount = originalMesh.vertexCount;
+            var profile = System.Diagnostics.Stopwatch.StartNew();
+            double bakeMs = 0, normalsMs = 0, addMs = 0, readMs = 0;
+            var step = new System.Diagnostics.Stopwatch();
 
             var baker = Object.Instantiate(smr);
             baker.sharedMesh = originalMesh;
@@ -260,9 +285,12 @@ namespace MCBEditorUtils
                         }
                     }
                      
-                    var newMesh = Object.Instantiate(originalMesh);
-                    newMesh.name = $"{originalMesh.name} (DynamicNormals)";
-                    newMesh.ClearBlendShapes();
+                    var newMesh = captureFrame == null ? Object.Instantiate(originalMesh) : null;
+                    if (newMesh != null)
+                    {
+                        newMesh.name = $"{originalMesh.name} (DynamicNormals)";
+                        newMesh.ClearBlendShapes();
+                    }
 
                     for (var shapeIndex = 0; shapeIndex < originalMesh.blendShapeCount; shapeIndex++)
                     {
@@ -276,18 +304,26 @@ namespace MCBEditorUtils
                             var frameWeight = originalMesh.GetBlendShapeFrameWeight(shapeIndex, frameIndex);
                             if (!recalculateFrame)
                             {
+                                if (captureFrame != null) continue;
+                                step.Restart();
                                 originalMesh.GetBlendShapeFrameVertices(shapeIndex, frameIndex, copyVertices, copyNormals, copyTangents);
+                                readMs += step.Elapsed.TotalMilliseconds;
+                                step.Restart();
                                 newMesh.AddBlendShapeFrame(blendShape, frameWeight, copyVertices, copyNormals, copyTangents);
+                                addMs += step.Elapsed.TotalMilliseconds;
                                 continue;
                             }
 
                             var bakedMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
                             try
                             {
+                                step.Restart();
                                 baker.SetBlendShapeWeight(shapeIndex, frameWeight);
                                 baker.BakeMesh(bakedMesh);
                                 baker.SetBlendShapeWeight(shapeIndex, 0f);
+                                bakeMs += step.Elapsed.TotalMilliseconds;
 
+                                step.Restart();
                                 var indicesInBaked = StoreIndicesWithSamePositionAndNormal(bakedMesh);
                                 bakedMesh.RecalculateNormals();
                                 ReRecalculateNormalsInUVSeams(bakedMesh, indicesInBaked);
@@ -297,7 +333,7 @@ namespace MCBEditorUtils
                                 var bakedTangents = bakedMesh.tangents;
 
                                 originalMesh.GetBlendShapeFrameVertices(shapeIndex, frameIndex, deltaVertices, ignored, ignored);
-                                for (var i = 0; i < originalMesh.vertexCount; i++)
+                                for (var i = 0; i < vertexCount; i++)
                                 {
                                     deltaNormals[i] = bakedNormals[i] - baseNormals[i];
                                     deltaTangents[i] = (Vector3)(bakedTangents[i] - baseTangents[i]);
@@ -307,7 +343,7 @@ namespace MCBEditorUtils
                                 {
                                     var nonZero = 0;
                                     var zero = 0;
-                                    for (var i = 0; i < originalMesh.vertexCount; i++)
+                                    for (var i = 0; i < vertexCount; i++)
                                     {
                                         if (deltaVertices[i] != Vector3.zero || deltaNormals[i] != Vector3.zero)
                                         {
@@ -324,7 +360,11 @@ namespace MCBEditorUtils
                                     Debug.Log($"({nameof(DynamicNormals)}) Erasing custom split normals on blendshape {blendShape} in SMR {smr.name} resulted in {nonZero} non-zero vertices and {zero} zero vertices");
                                 }
 
-                                newMesh.AddBlendShapeFrame(blendShape, frameWeight, deltaVertices, deltaNormals, deltaTangents);
+                                normalsMs += step.Elapsed.TotalMilliseconds;
+                                step.Restart();
+                                if (captureFrame != null) captureFrame(blendShape, frameIndex, deltaNormals, deltaTangents);
+                                else newMesh.AddBlendShapeFrame(blendShape, frameWeight, deltaVertices, deltaNormals, deltaTangents);
+                                addMs += step.Elapsed.TotalMilliseconds;
                             }
                             finally
                             {
@@ -333,6 +373,12 @@ namespace MCBEditorUtils
                         }
                     }
                      
+                    if (captureFrame != null)
+                    {
+                        Debug.Log($"[DynamicNormalsProfile] Captured normal frames directly: mesh={smr.name} vertices={vertexCount} selected={applicableBlendShapes.Count} totalMs={profile.Elapsed.TotalMilliseconds:F1} bakeMs={bakeMs:F1} normalsMs={normalsMs:F1}");
+                        return;
+                    }
+
                     // Save as asset if we have a valid path
                     if (!string.IsNullOrEmpty(assetPath))
                     {
@@ -348,6 +394,7 @@ namespace MCBEditorUtils
                     }
                     
                     smr.sharedMesh = newMesh;
+                    Debug.Log($"[DynamicNormalsProfile] mesh={smr.name} vertices={vertexCount} shapes={smrBlendShapes.Count} selected={applicableBlendShapes.Count} totalMs={profile.Elapsed.TotalMilliseconds:F1} bakeMs={bakeMs:F1} normalsMs={normalsMs:F1} addFramesMs={addMs:F1} readFramesMs={readMs:F1}");
                 }
                 finally
                 {

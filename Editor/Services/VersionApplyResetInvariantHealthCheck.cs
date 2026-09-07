@@ -173,78 +173,90 @@ public static class VersionApplyResetInvariantHealthCheck
 
     private static void RunVersionPathResolutionInvariantCheck()
     {
-        const string firstFbx = "Assets/MCB/HealthChecks/BaseA.fbx";
-        const string secondFbx = "Assets/MCB/HealthChecks/BaseB.fbx";
-        const string thirdFbx = "Assets/MCB/HealthChecks/BaseC.fbx";
-        var version = new CustomBaseVersion
+        string folder = "Assets/MCB/HealthChecks/path-resolution-" + Guid.NewGuid().ToString("N");
+        string fullFolder = Path.GetFullPath(folder);
+        string firstFbx = folder + "/BaseA.fbx";
+        string secondFbx = folder + "/BaseB.fbx";
+        string thirdFbx = folder + "/BaseC.fbx";
+        Directory.CreateDirectory(fullFolder);
+        try
         {
-            assetId = 42,
-            version = "health",
-            defaultAviVersion = "1.0.0",
-            sourceFiles = new[]
+            foreach (string file in new[] { firstFbx, secondFbx, thirdFbx }) File.WriteAllText(file, "path-resolution fixture");
+            var version = new CustomBaseVersion
             {
-                new ModelFileData { id = 1, path = firstFbx, type = "FBX", role = "SOURCE" },
-                new ModelFileData { id = 2, path = secondFbx, type = "FBX", role = "SOURCE" },
-                new ModelFileData { id = 3, path = thirdFbx, type = "FBX", role = "SOURCE" }
-            },
-            versionFiles = new[]
-            {
-                new ModelFileData
+                assetId = 42,
+                version = "health",
+                defaultAviVersion = "1.0.0",
+                sourceFiles = new[]
                 {
-                    id = 10,
-                    path = "first.bin",
-                    role = "PATCH",
-                    transform = ModelFileTransforms.XorBinToFbx,
-                    sourceModelFileId = 1
+                    new ModelFileData { id = 1, path = firstFbx, type = "FBX", role = "SOURCE" },
+                    new ModelFileData { id = 2, path = secondFbx, type = "FBX", role = "SOURCE" },
+                    new ModelFileData { id = 3, path = thirdFbx, type = "FBX", role = "SOURCE" }
                 },
-                new ModelFileData
+                versionFiles = new[]
                 {
-                    id = 11,
-                    path = "second.bin",
-                    role = "PATCH",
-                    transform = ModelFileTransforms.XorBinToUnityAsset,
-                    metadata = new Dictionary<string, object> { { "sourcePath", secondFbx } }
-                },
-                new ModelFileData
-                {
-                    id = 12,
-                    path = "direct.asset",
-                    role = "PATCH",
-                    transform = ModelFileTransforms.DirectAsset,
-                    sourceModelFileId = 2
-                },
-                new ModelFileData
-                {
-                    id = 14,
-                    path = "third.bin",
-                    role = "PATCH",
-                    transform = ModelFileTransforms.HdiffXorBinToFbx,
-                    sourceModelFileId = 3
+                    new ModelFileData
+                    {
+                        id = 10,
+                        path = "first.bin",
+                        role = "PATCH",
+                        transform = ModelFileTransforms.XorBinToFbx,
+                        sourceModelFileId = 1
+                    },
+                    new ModelFileData
+                    {
+                        id = 11,
+                        path = "second.bin",
+                        role = "PATCH",
+                        transform = ModelFileTransforms.XorBinToUnityAsset,
+                        metadata = new Dictionary<string, object> { { "sourcePath", secondFbx } }
+                    },
+                    new ModelFileData
+                    {
+                        id = 12,
+                        path = "direct.asset",
+                        role = "PATCH",
+                        transform = ModelFileTransforms.DirectAsset,
+                        sourceModelFileId = 2
+                    },
+                    new ModelFileData
+                    {
+                        id = 14,
+                        path = "third.bin",
+                        role = "PATCH",
+                        transform = ModelFileTransforms.HdiffXorBinToFbx,
+                        sourceModelFileId = 3
+                    }
                 }
-            }
-        };
+            };
 
-        var actions = new VersionActions(null, null, new FileManagerService());
+            var actions = new VersionActions(null, null, new FileManagerService());
 
-        var affected = (List<string>)InvokePrivate(actions, "GetAffectedFbxPaths", version, null);
-        AssertSamePaths(affected, new[] { firstFbx, secondFbx, thirdFbx }, "Affected FBX paths should be resolved from source file ids and metadata.");
+            var affected = (List<string>)InvokePrivate(actions, "GetAffectedFbxPaths", version, null);
+            AssertSamePaths(affected, new[] { firstFbx, secondFbx, thirdFbx }, "Affected FBX paths should be resolved from source file ids and metadata.");
 
-        var importPaths = (List<string>)InvokePrivate(actions, "GetFbxImportPaths", version, null);
-        AssertSamePaths(importPaths, new[] { firstFbx, thirdFbx }, "FBX replacement patches should trigger FBX imports.");
+            var importPaths = (List<string>)InvokePrivate(actions, "GetFbxImportPaths", version, null);
+            AssertSamePaths(importPaths, new[] { firstFbx, thirdFbx }, "FBX replacement patches should trigger FBX imports.");
 
-        var resetPaths = (List<string>)InvokePrivate(actions, "GetResetAffectedFbxPaths", version, "Assets/MCB/HealthChecks/Fallback.fbx");
-        AssertSamePaths(resetPaths, new[] { firstFbx, secondFbx, thirdFbx }, "Reset should prefer version source paths over the fallback FBX.");
+            var resetPaths = (List<string>)InvokePrivate(actions, "GetResetAffectedFbxPaths", version, "Assets/MCB/HealthChecks/Fallback.fbx");
+            AssertSamePaths(resetPaths, new[] { firstFbx, secondFbx, thirdFbx }, "Reset should prefer version source paths over the fallback FBX.");
 
-        var missingSourcePatch = new ModelFileData
+            var missingSourcePatch = new ModelFileData
+            {
+                id = 13,
+                path = "missing.bin",
+                role = "PATCH",
+                transform = ModelFileTransforms.XorBinToFbx
+            };
+            AssertThrows<InvalidDataException>(
+                () => InvokePrivate(actions, "ResolveTargetFbxPath", version, missingSourcePatch, firstFbx),
+                "Patch metadata without a source path should fail instead of silently using the fallback FBX.");
+        }
+        finally
         {
-            id = 13,
-            path = "missing.bin",
-            role = "PATCH",
-            transform = ModelFileTransforms.XorBinToFbx
-        };
-        AssertThrows<InvalidDataException>(
-            () => InvokePrivate(actions, "ResolveTargetFbxPath", version, missingSourcePatch, firstFbx),
-            "Patch metadata without a source path should fail instead of silently using the fallback FBX.");
+            // This unique folder belongs solely to this synchronous file-existence fixture.
+            if (Directory.Exists(fullFolder)) Directory.Delete(fullFolder, true);
+        }
     }
 
     private static void RunResetRequiresBackupInvariantCheck()

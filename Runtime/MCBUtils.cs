@@ -232,7 +232,7 @@ public static class MCBUtils
             return null;
         }
 
-        using (var sha256 = SHA256.Create())
+        using (var sha256 = MCBHashing.CreateSha256())
         {
             using (var stream = File.OpenRead(filePath))
             {

@@ -213,6 +213,9 @@ public class VersionActions
         }
 
         string currentFbxPath = GetCurrentFBXPath();
+        int requestedAssetId = selectedAsset.id;
+        string requestedToken = editor.authToken;
+        string requestedBaseHash = editor.currentBaseFbxHash;
         string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={editor.currentBaseFbxHash}&t={editor.authToken}";
         string sanitizedUrl = System.Text.RegularExpressions.Regex.Replace(url, @"([?&]t=)([^&]+)", "$1<redacted>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         MCBLogger.Log($"[VersionActions] Starting version fetch. assetId={selectedAsset.id} | url={sanitizedUrl} | currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash}");
@@ -224,10 +227,18 @@ public class VersionActions
         }
         
         var (success, response, error) = fetchTask.Result;
+        if (editor.GetSelectedAsset()?.id != requestedAssetId || editor.authToken != requestedToken ||
+            editor.currentBaseFbxHash != requestedBaseHash)
+        {
+            editor.isFetching = false;
+            yield break;
+        }
         if (success)
         {
             editor.serverVersions = response?.versions ?? new System.Collections.Generic.List<CustomBaseVersion>();
-            editor.recommendedVersion = editor.serverVersions.FirstOrDefault(v => v.version == response.recommendedVersion);
+            editor.recommendedVersion = editor.serverVersions.FirstOrDefault(v => v.version == response?.recommendedVersion);
+            PersistentCache.Instance.CacheVersions(requestedBaseHash, editor.serverVersions,
+                editor.recommendedVersion, requestedToken, requestedAssetId);
             UpdateAppliedVersionAndState();
             SmartSelectVersion();
         }
@@ -252,11 +263,13 @@ public class VersionActions
         }
         
         editor.isFetching = false;
+        editor.RefreshUiToolkitSections();
         editor.Repaint();
     }
     
     private IEnumerator DownloadVersionCoroutine(CustomBaseVersion version, bool applyAfter)
     {
+        MCBPerformance.PauseForeground();
         if (editor.isDownloading) yield break;
         editor.isDownloading = true;
         if (applyAfter)
@@ -276,8 +289,31 @@ public class VersionActions
             yield break;
         }
         
+        // Inspector initialization may first detect a garment before the selected
+        // asset's source mapping is loaded. Never use that stale UI hash to download.
+        string requestedSourcePath = GetCurrentFBXPath();
+        string requestedToken = editor.authToken;
+        var sourceHashesTask = AsyncHashService.Instance.CalculateFBXHashesAsync(requestedSourcePath);
+        while (!sourceHashesTask.IsCompleted) yield return null;
+        var sourceHashes = sourceHashesTask.Result;
+        string requestBaseHash = fileManagerService.BackupExists(requestedSourcePath)
+            ? sourceHashes.originalHash : sourceHashes.currentHash;
+        if (editor.GetSelectedAsset()?.id != selectedAsset.id || editor.authToken != requestedToken ||
+            !string.Equals(requestedSourcePath, GetCurrentFBXPath(), StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(requestBaseHash))
+        {
+            editor.isDownloading = false;
+            if (applyAfter) FinishApplyProgress(false);
+            editor.warningsModule.AddWarning("The source model changed or could not be read. Select the version again to retry.", MessageType.Warning, "Download paused");
+            editor.RefreshUiToolkitSections();
+            yield break;
+        }
+        editor.currentBaseFbxHash = requestBaseHash;
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={requestBaseHash}&t={requestedToken}";
+        var deliveryDecision = MCBPerformance.Choose(version.deliveryVariants);
+        var delivery = version.deliveryVariants?.FirstOrDefault(v => v.codec == deliveryDecision.codec);
+        if (delivery != null) url += "&codec=" + Uri.EscapeDataString(delivery.codec);
         bool advancedMeshApply = applyAfter && NativeMeshPayloadService.VersionUsesAdvancedMesh(version);
         advancedMeshPreparationPreloads.Clear();
         var originalFbxPreloadTasks = advancedMeshApply
@@ -288,7 +324,9 @@ public class VersionActions
         string advancedMeshPipelineDecision = null;
         if (advancedMeshApply)
         {
-            var sizeTask = networkService.GetDownloadContentLengthAsync(url);
+            var sizeTask = delivery != null
+                ? Task.FromResult((success: true, contentLength: delivery.packageBytes, error: (string)null))
+                : networkService.GetDownloadContentLengthAsync(url);
             while (!sizeTask.IsCompleted)
             {
                 if (applyAfter)
@@ -416,6 +454,8 @@ public class VersionActions
             MCBLogger.LogError($"[VersionActions] Download task failed unexpectedly: {ex}");
         }
         bool extractionSucceeded = false;
+        MCBPerformance.RecordDownload(deliveryDecision, (long)downloadedBytes,
+            (EditorApplication.timeSinceStartup - downloadStartedAt) * 1000, success);
         string tempExtractPath = null;
         
         try
@@ -448,6 +488,11 @@ public class VersionActions
                     fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest);
                 }
 
+                MCBVersionDelivery.ApplyLocalDelivery(version);
+                // The server archive excludes local repository metadata. Persist the
+                // authorized, codec-adjusted version so reload/offline scans find it.
+                VersionRepository.SaveVersionJson(finalDest, version);
+                editor.LoadImportedVersions(true);
                 extractionSucceeded = true;
                 if (advancedMeshApply)
                 {
@@ -780,6 +825,7 @@ public class VersionActions
         }
 
         editor.isDeleting = false;
+        editor.RefreshUiToolkitSections();
         editor.Repaint();
     }
 
@@ -977,6 +1023,8 @@ public class VersionActions
 
     private IEnumerator ApplyOrResetCoreCoroutine(CustomBaseVersion version, bool isReset)
     {
+        MCBPerformance.PauseForeground();
+        if (!isReset) MCBVersionDelivery.ApplyLocalDelivery(version);
         float startingProgress = applyProgressBase > 0f
             ? 0f
             : (ApplyProgress.IsRunning ? Mathf.Max(ApplyProgress.Progress, 0.18f) : 0f);
@@ -1044,10 +1092,7 @@ public class VersionActions
                 RestoreBackupsForVersion(versionForAssets, fbxPath, !versionUsesAdvancedMesh);
                 if (versionUsesAdvancedMesh)
                 {
-                    if (!ApplyDefaultAvatarImportsForReset(root, versionForAssets))
-                    {
-                        throw new InvalidOperationException("Advanced mesh reset could not restore the default FBX avatar importer settings.");
-                    }
+                    ApplyDefaultAvatarToRootForReset(root, versionForAssets);
                     int restoredTransforms = NativeMeshPayloadService.RestoreOriginalAuthoringPoseFromFbx(root, new[] { fbxPath });
                     if (restoredTransforms == 0)
                     {
@@ -1083,7 +1128,8 @@ public class VersionActions
                 if (isAdvancedTransition)
                 {
                     ReportApplyProgress(0.10f, "Restoring original FBX state...");
-                    RestoreOriginalFbxStateForTransition(root, transitionVersions, fbxPath);
+                    RestoreOriginalFbxStateForTransition(root, transitionVersions, fbxPath,
+                        previousVersion != null && !previousUsesAdvancedMesh);
                     profile.Mark("Restored original FBX renderer and armature state for advanced mesh transition");
                 }
 
@@ -1505,10 +1551,7 @@ public class VersionActions
         // Force a recalculation of current/default FBX hashes after every switch. Advanced
         // transitions can restore .originalbase bytes even though the visible mesh is a native
         // payload, and the persisted advanced marker keeps version detection authoritative.
-        int completedApplyGeneration = applyProgressGeneration;
         int hashGeneration = ++fbxHashRecalculationGeneration;
-        EditorCoroutineUtility.StartCoroutineOwnerless(
-            RecalculateCurrentFbxHashCoroutine(hashGeneration, completedApplyGeneration));
         profile.Mark(isAdvancedTransition
             ? "Started asynchronous FBX hash/state recalculation after advanced transition"
             : "Started asynchronous FBX hash/state recalculation");
@@ -1526,6 +1569,9 @@ public class VersionActions
         }
         editor.Repaint();
         FinishApplyProgress(true);
+        // Completion advances the visual generation; it must not cancel its own refresh.
+        EditorCoroutineUtility.StartCoroutineOwnerless(
+            RecalculateCurrentFbxHashCoroutine(hashGeneration, applyProgressGeneration));
         profile.Done();
     }
 
@@ -2311,7 +2357,8 @@ public class VersionActions
     private void RestoreOriginalFbxStateForTransition(
         Transform root,
         IEnumerable<CustomBaseVersion> transitionVersions,
-        string fallbackFbxPath)
+        string fallbackFbxPath,
+        bool restoreImporter = true)
     {
         if (root == null)
         {
@@ -2337,10 +2384,14 @@ public class VersionActions
             fileManagerService.ForceRestoreBackupAtPath(path);
         }
 
-        if (!ApplyDefaultAvatarImportsForReset(root, versions.LastOrDefault()))
+        // Native versions assign the Animator Avatar directly. Repointing the FBX
+        // importer to another identical per-version Avatar copy forces an FBX import.
+        // Only an actual transition from an FBX-based version needs importer repair.
+        if (restoreImporter && !ApplyDefaultAvatarImportsForReset(root, versions.LastOrDefault()))
         {
             throw new InvalidOperationException("Advanced mesh transition could not restore the default FBX avatar importer settings.");
         }
+        if (!restoreImporter) ApplyDefaultAvatarToRootForReset(root, versions.LastOrDefault());
 
         string canonicalFbxPath = !string.IsNullOrWhiteSpace(fallbackFbxPath)
             ? MCBUtils.ToUnityPath(fallbackFbxPath)
@@ -2556,6 +2607,8 @@ public class VersionActions
         {
             // Missing cache - start async hash calculation and use placeholder for now
             editor.currentBaseFbxHash = null; // Will be updated when async calculation completes
+            var requestedTarget = editor.target;
+            int? requestedAssetId = editor.GetSelectedAsset()?.id;
             
             // Start async hash calculation in background
             _ = System.Threading.Tasks.Task.Run(async () =>
@@ -2578,6 +2631,9 @@ public class VersionActions
                     // Update on main thread when calculation completes
                     AsyncTaskManager.Instance.ExecuteOnMainThread(() =>
                     {
+                        if (editor == null || editor.target != requestedTarget ||
+                            editor.GetSelectedAsset()?.id != requestedAssetId ||
+                            !GetCurrentFBXPaths().SequenceEqual(paths, StringComparer.OrdinalIgnoreCase)) return;
                         editor.currentAppliedFbxHash = currentHash;
                         editor.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
                         UpdateAppliedVersionAndState(currentHash);

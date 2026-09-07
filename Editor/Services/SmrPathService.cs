@@ -117,6 +117,44 @@ public static class SmrPathService
         return map.TryGetValue(unityPath, out var entries) ? entries : new List<ModelFileSmrPathData>();
     }
 
+    // Renderer ownership must survive a mesh swap. A Body with generated dynamic normals
+    // or a native payload no longer has an FBX mesh asset path, even though it is still
+    // the same renderer from that model. Build from the model hierarchy, then overlay
+    // proven live bindings for renamed/moved renderers.
+    public static List<ModelFileSmrPathData> CollectModelRendererBindings(
+        Transform avatarRoot, string fbxPath, GameObject sourceFbx, GameObject customFbx = null)
+    {
+        if (avatarRoot == null || sourceFbx == null) return new List<ModelFileSmrPathData>();
+        var live = CollectSmrPathsForFbx(avatarRoot, fbxPath);
+        if (customFbx != null)
+            live.AddRange(CollectSmrPathsForFbx(avatarRoot, AssetDatabase.GetAssetPath(customFbx)));
+        var result = new List<ModelFileSmrPathData>();
+        var targets = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var source in sourceFbx.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (source.sharedMesh == null) continue;
+            string modelPath = GetRelativeTransformPath(sourceFbx.transform, source.transform);
+            var binding = live.FirstOrDefault(entry => entry.fbxMeshPath == modelPath);
+            Transform target = binding != null ? FindTransformByRelativePath(avatarRoot, binding.avatarPath) : null;
+            if (target == null) target = FindTransformByRelativePath(avatarRoot, modelPath);
+            if (target == null) target = FindUniqueTransformByName(avatarRoot, source.name);
+            var renderer = target != null ? target.GetComponent<SkinnedMeshRenderer>() : null;
+            if (renderer == null)
+                throw new InvalidOperationException($"Cannot locate target renderer '{modelPath}' from '{fbxPath}'. Resolve its avatar association before building.");
+            string avatarPath = GetRelativeTransformPath(avatarRoot, target);
+            if (!targets.Add(avatarPath))
+                throw new InvalidOperationException($"Multiple model renderers resolve to '{avatarPath}'. Resolve the ambiguous avatar association before building.");
+            result.Add(new ModelFileSmrPathData
+            {
+                avatarPath = avatarPath,
+                fbxMeshPath = modelPath,
+                meshName = source.sharedMesh.name,
+                rendererName = source.name
+            });
+        }
+        return result;
+    }
+
     public static int RefreshTargetMeshesFromFbx(
         Transform avatarRoot,
         string fbxPath,
@@ -700,9 +738,10 @@ public static class SmrPathService
 
         Undo.RecordObject(plan.target, "Restore FBX Renderer State");
         plan.target.sharedMesh = plan.source.sharedMesh;
-        plan.target.localBounds = plan.source.localBounds;
         plan.target.bones = plan.resolvedBones;
         plan.target.rootBone = plan.resolvedRootBone;
+        // Bounds validation requires the restored bone palette to match this mesh.
+        plan.target.localBounds = plan.source.localBounds;
         EditorUtility.SetDirty(plan.target);
     }
 

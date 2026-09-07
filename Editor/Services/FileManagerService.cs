@@ -41,6 +41,7 @@ public class FileManagerService
         public string outputHash;
         public string patchTransform;
         public string payloadCompression;
+        public List<MCBPayloadVariant> payloadVariants;
         public int advancedRendererCount;
         public HdiffService.BuildInfo hdiffBuildInfo;
         public string hdiffFallbackReason;
@@ -49,7 +50,7 @@ public class FileManagerService
     public string CalculateFileHash(string path)
     {
         if (!File.Exists(path)) return null;
-        using (var sha256 = SHA256.Create())
+        using (var sha256 = MCBHashing.CreateSha256())
         using (var stream = File.OpenRead(path))
         {
             byte[] hash = sha256.ComputeHash(stream);
@@ -357,14 +358,7 @@ public class FileManagerService
 
     public byte[] XorTransform(byte[] baseData, byte[] keyData)
     {
-        // The XOR key should be the BASE data, and the TARGET data is what's being 'encrypted'.
-        // The provided code has keyData (the .bin) as the main loop, this is correct for decryption.
-        byte[] transformedData = new byte[keyData.Length];
-        for (int i = 0; i < keyData.Length; i++)
-        {
-            transformedData[i] = (byte)(keyData[i] ^ baseData[i % baseData.Length]);
-        }
-        return transformedData;
+        return MCBXor.Transform(baseData, keyData);
     }
 
     public void UnzipAndMove(string zipPath, string extractPath, string finalDestinationPath)
@@ -815,7 +809,6 @@ public class FileManagerService
         Texture2D customVeinsTexture,
         bool includeDynamicNormalsBody,
         bool includeDynamicNormalsFlexing,
-        bool compressAdvancedMeshPayload,
         IEnumerable<string> additionalAnimationAssetPaths = null)
     {
         string newVersionDataPath = versionFolderUnityPath;
@@ -881,9 +874,10 @@ public class FileManagerService
                                 includeDynamicNormalsBody || includeDynamicNormalsFlexing,
                                 includeDynamicNormalsBody,
                                 includeDynamicNormalsFlexing,
-                                compressAdvancedMeshPayload);
+                                createDeliveryVariants: true);
                             entry.outputHash = payloadResult.payloadHash;
                             entry.payloadCompression = payloadResult.payloadCompression;
+                            entry.payloadVariants = payloadResult.variants;
                             entry.advancedRendererCount = payloadResult.rendererCount;
                             entry.binUnityPath = binUnityPath;
                             entry.binHash = payloadResult.binHash;
@@ -1010,7 +1004,9 @@ public class FileManagerService
                 {
                     if (output == null || string.IsNullOrWhiteSpace(output.path)) continue;
                     string sourcePath = Path.Combine(folderFullPath, output.path.Replace('/', Path.DirectorySeparatorChar));
-                    zip.CreateEntryFromFile(sourcePath, output.path, CompressionLevel.Optimal);
+                    zip.CreateEntryFromFile(sourcePath, output.path,
+                        output.path.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)
+                            ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
                 }
             }
 

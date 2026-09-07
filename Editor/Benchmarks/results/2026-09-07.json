@@ -1,0 +1,2399 @@
+{
+  "date": "2026-09-07",
+  "source_commit": "b4224c9d87fa5d4d043dd65d81d904b955c0752d",
+  "production_modified": false,
+  "fixture": {
+    "unity": "2022.3.22f1",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700K",
+    "gpu": "NVIDIA GeForce RTX 4080",
+    "logicalCores": 20,
+    "memoryMB": 65320,
+    "rendererCount": 5,
+    "vertices": 100203,
+    "blendshapeFrames": 530,
+    "serializationMode": "ForceText",
+    "sourceAssetBytes": 584902097,
+    "payloadBytes": 82892731,
+    "keyBytes": 21737020
+  },
+  "notes": [
+    "Local, explicitly invoked experiments; no production rollout or real network transfer.",
+    "One warmup plus three measured iterations per timed variant. Medians are descriptive, not a population estimate.",
+    "Windows file cache and Unity import caches are warm; no clean-project or restart claim.",
+    "Allocation and process-memory counters were unavailable; original zero readings are represented as null.",
+    "Cache verification compares mesh counts and the MCB serialized mesh fingerprint, not every possible Unity field.",
+    "UI intro and completion animation timings are unchanged and excluded."
+  ],
+  "runs": [
+    {
+      "id": "20260907-123101-527205",
+      "startedUtc": "2026-09-07T12:31:01.0485167Z",
+      "finishedUtc": "2026-09-07T12:39:05.3536182Z",
+      "error": null,
+      "sceneDirtyBefore": true,
+      "sceneDirtyAfter": true,
+      "notes": [
+        "Iteration 0 is warmup; measured iterations are >= 1. File reads use the normal Windows cache; no cold-disk claim.",
+        "Allocated bytes cover the executing thread only, excluding parallel worker allocations and Unity native allocations. Process peak is whole-editor lifetime, not benchmark-exclusive.",
+        "No scene version switch or real network transfer is performed. UI intro/completion timing is preserved and excluded.",
+        "Blendshape arrays=566; dense winners=37; current sparse encoded bytes=72252832; dense working bytes approx=571309652; adaptive encoded bytes incl one-byte tags=69432338. Sizes are computed from real arrays, not codec throughput measurements."
+      ],
+      "measurements": [
+        {
+          "stage": "original_key_sha256",
+          "iteration": 0,
+          "milliseconds": 1069.069,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "payload_file_read_warm_os_cache",
+          "iteration": 0,
+          "milliseconds": 28.9779,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_current_parallel_modulo",
+          "iteration": 0,
+          "milliseconds": 61.523900000000005,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_1",
+          "iteration": 0,
+          "milliseconds": 235.5531,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_4",
+          "iteration": 0,
+          "milliseconds": 26.4435,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_8",
+          "iteration": 0,
+          "milliseconds": 54.572300000000006,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256",
+          "iteration": 1,
+          "milliseconds": 1042.2651,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "payload_file_read_warm_os_cache",
+          "iteration": 1,
+          "milliseconds": 30.133200000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_current_parallel_modulo",
+          "iteration": 1,
+          "milliseconds": 57.6558,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_1",
+          "iteration": 1,
+          "milliseconds": 220.36270000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_4",
+          "iteration": 1,
+          "milliseconds": 18.6169,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_8",
+          "iteration": 1,
+          "milliseconds": 36.821400000000004,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256",
+          "iteration": 2,
+          "milliseconds": 1056.6264,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "payload_file_read_warm_os_cache",
+          "iteration": 2,
+          "milliseconds": 21.0748,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_current_parallel_modulo",
+          "iteration": 2,
+          "milliseconds": 51.648500000000006,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_1",
+          "iteration": 2,
+          "milliseconds": 239.989,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_4",
+          "iteration": 2,
+          "milliseconds": 15.9617,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_8",
+          "iteration": 2,
+          "milliseconds": 42.237100000000005,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256",
+          "iteration": 3,
+          "milliseconds": 1053.3366,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "payload_file_read_warm_os_cache",
+          "iteration": 3,
+          "milliseconds": 19.1709,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_current_parallel_modulo",
+          "iteration": 3,
+          "milliseconds": 42.1636,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_1",
+          "iteration": 3,
+          "milliseconds": 227.7056,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_4",
+          "iteration": 3,
+          "milliseconds": 18.209300000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "xor_contiguous_words_workers_8",
+          "iteration": 3,
+          "milliseconds": 33.3468,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_current",
+          "iteration": 0,
+          "milliseconds": 18935.5367,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_256KiB",
+          "iteration": 0,
+          "milliseconds": 12932.4508,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_256KiB",
+          "iteration": 1,
+          "milliseconds": 12786.596000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_current",
+          "iteration": 1,
+          "milliseconds": 18902.5521,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_current",
+          "iteration": 2,
+          "milliseconds": 18763.4764,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_256KiB",
+          "iteration": 2,
+          "milliseconds": 12783.742400000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_256KiB",
+          "iteration": 3,
+          "milliseconds": 12668.5916,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_current",
+          "iteration": 3,
+          "milliseconds": 18965.3995,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "parse_current_dense_preparation",
+          "iteration": 0,
+          "milliseconds": 1177.2146,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "parse_current_dense_preparation",
+          "iteration": 1,
+          "milliseconds": 1163.7234,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "parse_current_dense_preparation",
+          "iteration": 2,
+          "milliseconds": 1160.0607,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "parse_current_dense_preparation",
+          "iteration": 3,
+          "milliseconds": 1218.6452000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_meshes_current",
+          "iteration": 0,
+          "milliseconds": 12922.7296,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_meshes_current",
+          "iteration": 1,
+          "milliseconds": 11904.956100000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_meshes_current",
+          "iteration": 2,
+          "milliseconds": 12135.7972,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_meshes_current",
+          "iteration": 3,
+          "milliseconds": 12076.1006,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_text",
+          "iteration": 0,
+          "milliseconds": 11473.1344,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 584902022,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_text_warm_os_cache",
+          "iteration": 0,
+          "milliseconds": 5729.9804,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_text",
+          "iteration": 0,
+          "milliseconds": 0.19870000000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_binary",
+          "iteration": 0,
+          "milliseconds": 713.8085,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364168,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_binary_warm_os_cache",
+          "iteration": 0,
+          "milliseconds": 142.6599,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_binary",
+          "iteration": 0,
+          "milliseconds": 0.0533,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_binary",
+          "iteration": 1,
+          "milliseconds": 637.3737,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364164,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_binary_warm_os_cache",
+          "iteration": 1,
+          "milliseconds": 138.31980000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_binary",
+          "iteration": 1,
+          "milliseconds": 0.0732,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_text",
+          "iteration": 1,
+          "milliseconds": 12445.267300000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 584902018,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_text_warm_os_cache",
+          "iteration": 1,
+          "milliseconds": 5706.7181,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_text",
+          "iteration": 1,
+          "milliseconds": 0.059800000000000006,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_text",
+          "iteration": 2,
+          "milliseconds": 11161.7916,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 584902022,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_text_warm_os_cache",
+          "iteration": 2,
+          "milliseconds": 5701.2565,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_text",
+          "iteration": 2,
+          "milliseconds": 0.0665,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_binary",
+          "iteration": 2,
+          "milliseconds": 628.0099,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364168,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_binary_warm_os_cache",
+          "iteration": 2,
+          "milliseconds": 164.5471,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_binary",
+          "iteration": 2,
+          "milliseconds": 0.0608,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_binary",
+          "iteration": 3,
+          "milliseconds": 612.806,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364164,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_binary_warm_os_cache",
+          "iteration": 3,
+          "milliseconds": 173.95770000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_binary",
+          "iteration": 3,
+          "milliseconds": 0.0654,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_register_save_text",
+          "iteration": 3,
+          "milliseconds": 10708.847600000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 584902020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_reload_text_warm_os_cache",
+          "iteration": 3,
+          "milliseconds": 5641.9516,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "cache_already_loaded_lookup_text",
+          "iteration": 3,
+          "milliseconds": 0.0558,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        }
+      ],
+      "summary": {
+        "original_key_sha256": {
+          "median_ms": 1053.3366,
+          "min_ms": 1042.2651,
+          "max_ms": 1056.6264,
+          "samples": 3,
+          "bytes": 21737020,
+          "verified": true
+        },
+        "payload_file_read_warm_os_cache": {
+          "median_ms": 21.0748,
+          "min_ms": 19.1709,
+          "max_ms": 30.133200000000002,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "xor_current_parallel_modulo": {
+          "median_ms": 51.648500000000006,
+          "min_ms": 42.1636,
+          "max_ms": 57.6558,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "xor_contiguous_words_workers_1": {
+          "median_ms": 227.7056,
+          "min_ms": 220.36270000000002,
+          "max_ms": 239.989,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "xor_contiguous_words_workers_4": {
+          "median_ms": 18.209300000000002,
+          "min_ms": 15.9617,
+          "max_ms": 18.6169,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "xor_contiguous_words_workers_8": {
+          "median_ms": 36.821400000000004,
+          "min_ms": 33.3468,
+          "max_ms": 42.237100000000005,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "mesh_packaging_buffered_256KiB": {
+          "median_ms": 12783.742400000001,
+          "min_ms": 12668.5916,
+          "max_ms": 12786.596000000001,
+          "samples": 3,
+          "bytes": 82842236,
+          "verified": true
+        },
+        "mesh_packaging_current": {
+          "median_ms": 18902.5521,
+          "min_ms": 18763.4764,
+          "max_ms": 18965.3995,
+          "samples": 3,
+          "bytes": 82842236,
+          "verified": true
+        },
+        "parse_current_dense_preparation": {
+          "median_ms": 1163.7234,
+          "min_ms": 1160.0607,
+          "max_ms": 1218.6452000000002,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "create_meshes_current": {
+          "median_ms": 12076.1006,
+          "min_ms": 11904.956100000001,
+          "max_ms": 12135.7972,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "cache_register_save_binary": {
+          "median_ms": 628.0099,
+          "min_ms": 612.806,
+          "max_ms": 637.3737,
+          "samples": 3,
+          "bytes": 151364164,
+          "verified": true
+        },
+        "cache_reload_binary_warm_os_cache": {
+          "median_ms": 164.5471,
+          "min_ms": 138.31980000000001,
+          "max_ms": 173.95770000000002,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "cache_already_loaded_lookup_binary": {
+          "median_ms": 0.0654,
+          "min_ms": 0.0608,
+          "max_ms": 0.0732,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "cache_register_save_text": {
+          "median_ms": 11161.7916,
+          "min_ms": 10708.847600000001,
+          "max_ms": 12445.267300000001,
+          "samples": 3,
+          "bytes": 584902018,
+          "verified": true
+        },
+        "cache_reload_text_warm_os_cache": {
+          "median_ms": 5701.2565,
+          "min_ms": 5641.9516,
+          "max_ms": 5706.7181,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "cache_already_loaded_lookup_text": {
+          "median_ms": 0.059800000000000006,
+          "min_ms": 0.0558,
+          "max_ms": 0.0665,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        }
+      }
+    },
+    {
+      "id": "20260907-124230-af0c81",
+      "startedUtc": "2026-09-07T12:42:30.8577086Z",
+      "finishedUtc": "2026-09-07T12:44:21.8706747Z",
+      "error": null,
+      "sceneDirtyBefore": true,
+      "sceneDirtyAfter": true,
+      "notes": [
+        "Iteration 0 is warmup; measured iterations are >= 1. File reads use the normal Windows cache; no cold-disk claim.",
+        "Allocated bytes cover the executing thread only, excluding parallel worker allocations and Unity native allocations. Process peak is whole-editor lifetime, not benchmark-exclusive.",
+        "The current runtime allocation counter is unavailable; allocation fields are null, not zero allocations.",
+        "No scene version switch or real network transfer is performed. UI intro/completion timing is preserved and excluded.",
+        "Current provider: System.Security.Cryptography.SHA256Managed",
+        "Binary-cache codec sample is a benchmark container with editor-local references; it is NOT a validated distribution format or an AssetBundle."
+      ],
+      "measurements": [
+        {
+          "stage": "original_key_sha256_managed",
+          "iteration": 0,
+          "milliseconds": 1099.5832,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256_windows_cng",
+          "iteration": 0,
+          "milliseconds": 9.6461,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256_windows_cng",
+          "iteration": 1,
+          "milliseconds": 9.8713,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256_managed",
+          "iteration": 1,
+          "milliseconds": 1067.7440000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256_managed",
+          "iteration": 2,
+          "milliseconds": 1172.1698000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256_windows_cng",
+          "iteration": 2,
+          "milliseconds": 9.8558,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256_windows_cng",
+          "iteration": 3,
+          "milliseconds": 9.789100000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "original_key_sha256_managed",
+          "iteration": 3,
+          "milliseconds": 1124.0127,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 21737020,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_windows_cng",
+          "iteration": 0,
+          "milliseconds": 4762.2033,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_windows_cng",
+          "iteration": 1,
+          "milliseconds": 4685.7864,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_windows_cng",
+          "iteration": 2,
+          "milliseconds": 4767.3649000000005,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "mesh_packaging_buffered_windows_cng",
+          "iteration": 3,
+          "milliseconds": 4800.1465,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82842236,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Body",
+          "iteration": 0,
+          "milliseconds": 8.7332,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Body",
+          "iteration": 0,
+          "milliseconds": 12410.36,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_ManeHair",
+          "iteration": 0,
+          "milliseconds": 0.4319,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_ManeHair",
+          "iteration": 0,
+          "milliseconds": 0.4152,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_MohawkHair",
+          "iteration": 0,
+          "milliseconds": 0.18660000000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_MohawkHair",
+          "iteration": 0,
+          "milliseconds": 0.1937,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail1",
+          "iteration": 0,
+          "milliseconds": 0.101,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail1",
+          "iteration": 0,
+          "milliseconds": 0.1307,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail2",
+          "iteration": 0,
+          "milliseconds": 0.2315,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail2",
+          "iteration": 0,
+          "milliseconds": 0.1572,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Body",
+          "iteration": 1,
+          "milliseconds": 4.9689000000000005,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Body",
+          "iteration": 1,
+          "milliseconds": 12499.6767,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_ManeHair",
+          "iteration": 1,
+          "milliseconds": 0.2466,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_ManeHair",
+          "iteration": 1,
+          "milliseconds": 0.201,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_MohawkHair",
+          "iteration": 1,
+          "milliseconds": 0.20620000000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_MohawkHair",
+          "iteration": 1,
+          "milliseconds": 0.2199,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail1",
+          "iteration": 1,
+          "milliseconds": 0.1032,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail1",
+          "iteration": 1,
+          "milliseconds": 0.1443,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail2",
+          "iteration": 1,
+          "milliseconds": 0.2786,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail2",
+          "iteration": 1,
+          "milliseconds": 0.1557,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Body",
+          "iteration": 2,
+          "milliseconds": 5.2312,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Body",
+          "iteration": 2,
+          "milliseconds": 12390.3026,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_ManeHair",
+          "iteration": 2,
+          "milliseconds": 0.33,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_ManeHair",
+          "iteration": 2,
+          "milliseconds": 0.2218,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_MohawkHair",
+          "iteration": 2,
+          "milliseconds": 0.19920000000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_MohawkHair",
+          "iteration": 2,
+          "milliseconds": 0.1723,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail1",
+          "iteration": 2,
+          "milliseconds": 0.10930000000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail1",
+          "iteration": 2,
+          "milliseconds": 0.1323,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail2",
+          "iteration": 2,
+          "milliseconds": 0.191,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail2",
+          "iteration": 2,
+          "milliseconds": 0.1531,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Body",
+          "iteration": 3,
+          "milliseconds": 4.5143,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Body",
+          "iteration": 3,
+          "milliseconds": 12940.7931,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_ManeHair",
+          "iteration": 3,
+          "milliseconds": 0.30720000000000003,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_ManeHair",
+          "iteration": 3,
+          "milliseconds": 0.2474,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_MohawkHair",
+          "iteration": 3,
+          "milliseconds": 0.19870000000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_MohawkHair",
+          "iteration": 3,
+          "milliseconds": 0.1966,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail1",
+          "iteration": 3,
+          "milliseconds": 0.1022,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail1",
+          "iteration": 3,
+          "milliseconds": 0.1375,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "create_geometry_Tail2",
+          "iteration": 3,
+          "milliseconds": 0.20650000000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "add_blendshapes_Tail2",
+          "iteration": 3,
+          "milliseconds": 0.1661,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 0,
+          "verified": true,
+          "note": null
+        }
+      ],
+      "summary": {
+        "original_key_sha256_windows_cng": {
+          "median_ms": 9.8558,
+          "min_ms": 9.789100000000001,
+          "max_ms": 9.8713,
+          "samples": 3,
+          "bytes": 21737020,
+          "verified": true
+        },
+        "original_key_sha256_managed": {
+          "median_ms": 1124.0127,
+          "min_ms": 1067.7440000000001,
+          "max_ms": 1172.1698000000001,
+          "samples": 3,
+          "bytes": 21737020,
+          "verified": true
+        },
+        "mesh_packaging_buffered_windows_cng": {
+          "median_ms": 4767.3649000000005,
+          "min_ms": 4685.7864,
+          "max_ms": 4800.1465,
+          "samples": 3,
+          "bytes": 82842236,
+          "verified": true
+        },
+        "create_geometry_Body": {
+          "median_ms": 4.9689000000000005,
+          "min_ms": 4.5143,
+          "max_ms": 5.2312,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "add_blendshapes_Body": {
+          "median_ms": 12499.6767,
+          "min_ms": 12390.3026,
+          "max_ms": 12940.7931,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "create_geometry_ManeHair": {
+          "median_ms": 0.30720000000000003,
+          "min_ms": 0.2466,
+          "max_ms": 0.33,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "add_blendshapes_ManeHair": {
+          "median_ms": 0.2218,
+          "min_ms": 0.201,
+          "max_ms": 0.2474,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "create_geometry_MohawkHair": {
+          "median_ms": 0.19920000000000002,
+          "min_ms": 0.19870000000000002,
+          "max_ms": 0.20620000000000002,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "add_blendshapes_MohawkHair": {
+          "median_ms": 0.1966,
+          "min_ms": 0.1723,
+          "max_ms": 0.2199,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "create_geometry_Tail1": {
+          "median_ms": 0.1032,
+          "min_ms": 0.1022,
+          "max_ms": 0.10930000000000001,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "add_blendshapes_Tail1": {
+          "median_ms": 0.1375,
+          "min_ms": 0.1323,
+          "max_ms": 0.1443,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "create_geometry_Tail2": {
+          "median_ms": 0.20650000000000002,
+          "min_ms": 0.191,
+          "max_ms": 0.2786,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        },
+        "add_blendshapes_Tail2": {
+          "median_ms": 0.1557,
+          "min_ms": 0.1531,
+          "max_ms": 0.1661,
+          "samples": 3,
+          "bytes": 0,
+          "verified": true
+        }
+      }
+    },
+    {
+      "id": "20260907-125140-d08236",
+      "startedUtc": "2026-09-07T12:51:40.8029231Z",
+      "finishedUtc": "2026-09-07T12:52:49.6186835Z",
+      "error": null,
+      "sceneDirtyBefore": true,
+      "sceneDirtyAfter": true,
+      "notes": [
+        "Iteration 0 is warmup; measured iterations are >= 1. File reads use the normal Windows cache; no cold-disk claim.",
+        "Allocated bytes cover the executing thread only, excluding parallel worker allocations and Unity native allocations. Process peak is whole-editor lifetime, not benchmark-exclusive.",
+        "The current runtime allocation counter is unavailable; allocation fields are null, not zero allocations.",
+        "No scene version switch or real network transfer is performed. UI intro/completion timing is preserved and excluded.",
+        "Native Unity codec versions: LZ4=10904; Zstd=10505. DLL paths explicitly supplied by developer; no production integration.",
+        "Codec timings include managed output allocation and native calls. Compression includes trimming the result. Hash verification is outside timers. Decoders use identical pinned-array binding and allocation policy.",
+        "Fresh-path import includes file copy, synchronous AssetDatabase import and load, with a warm Windows file cache. It does not establish cross-project, cross-Unity-version or build-target portability."
+      ],
+      "measurements": [
+        {
+          "stage": "unity_compress_payload_lz4",
+          "iteration": 0,
+          "milliseconds": 113.6803,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 53255015,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_lz4",
+          "iteration": 0,
+          "milliseconds": 32.8933,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_3",
+          "iteration": 0,
+          "milliseconds": 476.6352,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32328596,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_3",
+          "iteration": 0,
+          "milliseconds": 81.67,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_9",
+          "iteration": 0,
+          "milliseconds": 1130.0639,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26450418,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_9",
+          "iteration": 0,
+          "milliseconds": 83.85000000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_9",
+          "iteration": 1,
+          "milliseconds": 1094.0072,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26450418,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_9",
+          "iteration": 1,
+          "milliseconds": 118.80720000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_3",
+          "iteration": 1,
+          "milliseconds": 282.2865,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32328596,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_3",
+          "iteration": 1,
+          "milliseconds": 90.3545,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_lz4",
+          "iteration": 1,
+          "milliseconds": 131.31220000000002,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 53255015,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_lz4",
+          "iteration": 1,
+          "milliseconds": 24.8979,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_lz4",
+          "iteration": 2,
+          "milliseconds": 119.3378,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 53255015,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_lz4",
+          "iteration": 2,
+          "milliseconds": 22.142200000000003,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_3",
+          "iteration": 2,
+          "milliseconds": 446.2212,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32328596,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_3",
+          "iteration": 2,
+          "milliseconds": 79.5561,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_9",
+          "iteration": 2,
+          "milliseconds": 1052.0566000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26450418,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_9",
+          "iteration": 2,
+          "milliseconds": 88.6876,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_9",
+          "iteration": 3,
+          "milliseconds": 1192.512,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26450418,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_9",
+          "iteration": 3,
+          "milliseconds": 113.54190000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_zstd_3",
+          "iteration": 3,
+          "milliseconds": 326.2731,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32328596,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_zstd_3",
+          "iteration": 3,
+          "milliseconds": 85.6131,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_payload_lz4",
+          "iteration": 3,
+          "milliseconds": 131.8231,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 53255015,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_payload_lz4",
+          "iteration": 3,
+          "milliseconds": 25.4389,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 82892731,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_lz4",
+          "iteration": 0,
+          "milliseconds": 372.7577,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 55661427,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_lz4",
+          "iteration": 0,
+          "milliseconds": 55.1165,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_3",
+          "iteration": 0,
+          "milliseconds": 537.1560000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32112259,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_3",
+          "iteration": 0,
+          "milliseconds": 121.058,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_9",
+          "iteration": 0,
+          "milliseconds": 1419.9319,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26505757,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_9",
+          "iteration": 0,
+          "milliseconds": 147.8547,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_9",
+          "iteration": 1,
+          "milliseconds": 1356.1661000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26505757,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_9",
+          "iteration": 1,
+          "milliseconds": 92.63000000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_3",
+          "iteration": 1,
+          "milliseconds": 367.1033,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32112259,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_3",
+          "iteration": 1,
+          "milliseconds": 286.7379,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_lz4",
+          "iteration": 1,
+          "milliseconds": 171.3709,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 55661427,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_lz4",
+          "iteration": 1,
+          "milliseconds": 41.8577,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_lz4",
+          "iteration": 2,
+          "milliseconds": 318.3636,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 55661427,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_lz4",
+          "iteration": 2,
+          "milliseconds": 42.8831,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_3",
+          "iteration": 2,
+          "milliseconds": 380.8564,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32112259,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_3",
+          "iteration": 2,
+          "milliseconds": 283.7235,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_9",
+          "iteration": 2,
+          "milliseconds": 1379.7989,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26505757,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_9",
+          "iteration": 2,
+          "milliseconds": 91.85170000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_9",
+          "iteration": 3,
+          "milliseconds": 1551.5457000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 26505757,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_9",
+          "iteration": 3,
+          "milliseconds": 92.6482,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_zstd_3",
+          "iteration": 3,
+          "milliseconds": 328.343,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 32112259,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_zstd_3",
+          "iteration": 3,
+          "milliseconds": 268.4438,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_compress_binary_cache_lz4",
+          "iteration": 3,
+          "milliseconds": 179.291,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 55661427,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "unity_decode_binary_cache_lz4",
+          "iteration": 3,
+          "milliseconds": 45.6946,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "binary_cache_copy_import_load_fresh_path",
+          "iteration": 0,
+          "milliseconds": 803.471,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "binary_cache_copy_import_load_fresh_path",
+          "iteration": 1,
+          "milliseconds": 558.3666000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "binary_cache_copy_import_load_fresh_path",
+          "iteration": 2,
+          "milliseconds": 701.1043000000001,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        },
+        {
+          "stage": "binary_cache_copy_import_load_fresh_path",
+          "iteration": 3,
+          "milliseconds": 1093.6609,
+          "allocatedBytesCurrentThread": null,
+          "bytes": 151364184,
+          "verified": true,
+          "note": null
+        }
+      ],
+      "summary": {
+        "unity_compress_payload_zstd_9": {
+          "median_ms": 1094.0072,
+          "min_ms": 1052.0566000000001,
+          "max_ms": 1192.512,
+          "samples": 3,
+          "bytes": 26450418,
+          "verified": true
+        },
+        "unity_decode_payload_zstd_9": {
+          "median_ms": 113.54190000000001,
+          "min_ms": 88.6876,
+          "max_ms": 118.80720000000001,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "unity_compress_payload_zstd_3": {
+          "median_ms": 326.2731,
+          "min_ms": 282.2865,
+          "max_ms": 446.2212,
+          "samples": 3,
+          "bytes": 32328596,
+          "verified": true
+        },
+        "unity_decode_payload_zstd_3": {
+          "median_ms": 85.6131,
+          "min_ms": 79.5561,
+          "max_ms": 90.3545,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "unity_compress_payload_lz4": {
+          "median_ms": 131.31220000000002,
+          "min_ms": 119.3378,
+          "max_ms": 131.8231,
+          "samples": 3,
+          "bytes": 53255015,
+          "verified": true
+        },
+        "unity_decode_payload_lz4": {
+          "median_ms": 24.8979,
+          "min_ms": 22.142200000000003,
+          "max_ms": 25.4389,
+          "samples": 3,
+          "bytes": 82892731,
+          "verified": true
+        },
+        "unity_compress_binary_cache_zstd_9": {
+          "median_ms": 1379.7989,
+          "min_ms": 1356.1661000000001,
+          "max_ms": 1551.5457000000001,
+          "samples": 3,
+          "bytes": 26505757,
+          "verified": true
+        },
+        "unity_decode_binary_cache_zstd_9": {
+          "median_ms": 92.63000000000001,
+          "min_ms": 91.85170000000001,
+          "max_ms": 92.6482,
+          "samples": 3,
+          "bytes": 151364184,
+          "verified": true
+        },
+        "unity_compress_binary_cache_zstd_3": {
+          "median_ms": 367.1033,
+          "min_ms": 328.343,
+          "max_ms": 380.8564,
+          "samples": 3,
+          "bytes": 32112259,
+          "verified": true
+        },
+        "unity_decode_binary_cache_zstd_3": {
+          "median_ms": 283.7235,
+          "min_ms": 268.4438,
+          "max_ms": 286.7379,
+          "samples": 3,
+          "bytes": 151364184,
+          "verified": true
+        },
+        "unity_compress_binary_cache_lz4": {
+          "median_ms": 179.291,
+          "min_ms": 171.3709,
+          "max_ms": 318.3636,
+          "samples": 3,
+          "bytes": 55661427,
+          "verified": true
+        },
+        "unity_decode_binary_cache_lz4": {
+          "median_ms": 42.8831,
+          "min_ms": 41.8577,
+          "max_ms": 45.6946,
+          "samples": 3,
+          "bytes": 151364184,
+          "verified": true
+        },
+        "binary_cache_copy_import_load_fresh_path": {
+          "median_ms": 701.1043000000001,
+          "min_ms": 558.3666000000001,
+          "max_ms": 1093.6609,
+          "samples": 3,
+          "bytes": 151364184,
+          "verified": true
+        }
+      }
+    }
+  ],
+  "standalone_codecs": {
+    "payload": {
+      "python": "3.10.11",
+      "zstandard": "0.19.0",
+      "lz4_version_number": 10904,
+      "payload_bytes": 82892731,
+      "repetitions": 3,
+      "notes": [
+        "Native codecs through Python; these are not Unity runtime codec timings.",
+        "No real network benchmark. Transfer seconds are payload ZIP bytes * 8 / link bitrate; exclude latency, logic files, and protocol overhead.",
+        "Iteration 0 is excluded warmup. All decoded payloads are SHA-256 verified.",
+        "LZ4 uses a single block and out-of-band uncompressed length; a shipping format needs a header/chunk manifest."
+      ],
+      "results": [
+        {
+          "codec": "none",
+          "samples": [
+            {
+              "compress_ms": 0.001600012183189392,
+              "decode_ms": 0.000200001522898674
+            },
+            {
+              "compress_ms": 0.001800013706088066,
+              "decode_ms": 0.000500003807246685
+            },
+            {
+              "compress_ms": 0.00200001522898674,
+              "decode_ms": 0.000300002284348011
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 82892731,
+          "outer_zip_stored_ms": 56.206499924883246,
+          "outer_zip_stored_bytes": 82892851,
+          "outer_zip_deflate_ms": 1716.3620999781415,
+          "outer_zip_deflate_bytes": 82013113,
+          "compress_median_ms": 0.001800013706088066,
+          "decode_median_ms": 0.000300002284348011
+        },
+        {
+          "codec": "gzip_6",
+          "samples": [
+            {
+              "compress_ms": 3629.0407000342384,
+              "decode_ms": 343.9653000095859
+            },
+            {
+              "compress_ms": 3568.995099980384,
+              "decode_ms": 350.72059999220073
+            },
+            {
+              "compress_ms": 3609.268300002441,
+              "decode_ms": 364.2027999740094
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 39663509,
+          "outer_zip_stored_ms": 29.922900022938848,
+          "outer_zip_stored_bytes": 39663629,
+          "outer_zip_deflate_ms": 770.0178000377491,
+          "outer_zip_deflate_bytes": 39675475,
+          "compress_median_ms": 3609.268300002441,
+          "decode_median_ms": 350.72059999220073
+        },
+        {
+          "codec": "zstd_1",
+          "samples": [
+            {
+              "compress_ms": 164.4298000028357,
+              "decode_ms": 101.62940004374832
+            },
+            {
+              "compress_ms": 217.3516999464482,
+              "decode_ms": 93.38259999640286
+            },
+            {
+              "compress_ms": 148.4952000901103,
+              "decode_ms": 100.12710001319647
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 38044434,
+          "outer_zip_stored_ms": 32.6704999897629,
+          "outer_zip_stored_bytes": 38044554,
+          "outer_zip_deflate_ms": 719.9843999696895,
+          "outer_zip_deflate_bytes": 38056138,
+          "compress_median_ms": 164.4298000028357,
+          "decode_median_ms": 100.12710001319647
+        },
+        {
+          "codec": "zstd_3",
+          "samples": [
+            {
+              "compress_ms": 258.8222000049427,
+              "decode_ms": 94.2092000041157
+            },
+            {
+              "compress_ms": 258.2577000139281,
+              "decode_ms": 95.4085000557825
+            },
+            {
+              "compress_ms": 248.90340003184974,
+              "decode_ms": 93.26260001398623
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 32328596,
+          "outer_zip_stored_ms": 22.98420004080981,
+          "outer_zip_stored_bytes": 32328716,
+          "outer_zip_deflate_ms": 615.3092000167817,
+          "outer_zip_deflate_bytes": 32338548,
+          "compress_median_ms": 258.2577000139281,
+          "decode_median_ms": 94.2092000041157
+        },
+        {
+          "codec": "zstd_6",
+          "samples": [
+            {
+              "compress_ms": 631.9362000795081,
+              "decode_ms": 105.75730004347861
+            },
+            {
+              "compress_ms": 627.1821999689564,
+              "decode_ms": 94.04829994309694
+            },
+            {
+              "compress_ms": 615.7398000359535,
+              "decode_ms": 94.33830005582422
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 30730140,
+          "outer_zip_stored_ms": 22.362199961207807,
+          "outer_zip_stored_bytes": 30730260,
+          "outer_zip_deflate_ms": 579.4274000218138,
+          "outer_zip_deflate_bytes": 30739635,
+          "compress_median_ms": 627.1821999689564,
+          "decode_median_ms": 94.33830005582422
+        },
+        {
+          "codec": "zstd_9",
+          "samples": [
+            {
+              "compress_ms": 987.0198999997228,
+              "decode_ms": 96.3618999812752
+            },
+            {
+              "compress_ms": 1419.2054000450298,
+              "decode_ms": 99.14649999700487
+            },
+            {
+              "compress_ms": 996.519000036642,
+              "decode_ms": 96.75279993098229
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 26435735,
+          "outer_zip_stored_ms": 18.5096999630332,
+          "outer_zip_stored_bytes": 26435855,
+          "outer_zip_deflate_ms": 495.4244000837207,
+          "outer_zip_deflate_bytes": 26443920,
+          "compress_median_ms": 996.519000036642,
+          "decode_median_ms": 96.75279993098229
+        },
+        {
+          "codec": "zstd_15",
+          "samples": [
+            {
+              "compress_ms": 7295.877300086431,
+              "decode_ms": 93.18799991160631
+            },
+            {
+              "compress_ms": 7089.028400019743,
+              "decode_ms": 91.40709997154772
+            },
+            {
+              "compress_ms": 6954.395500011742,
+              "decode_ms": 94.44769995752722
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 26222762,
+          "outer_zip_stored_ms": 18.4550000121817,
+          "outer_zip_stored_bytes": 26222882,
+          "outer_zip_deflate_ms": 501.0033999569714,
+          "outer_zip_deflate_bytes": 26230882,
+          "compress_median_ms": 7089.028400019743,
+          "decode_median_ms": 93.18799991160631
+        },
+        {
+          "codec": "lz4_block",
+          "samples": [
+            {
+              "compress_ms": 130.33200008794665,
+              "decode_ms": 51.08730006031692
+            },
+            {
+              "compress_ms": 141.96469995658845,
+              "decode_ms": 56.770000024698675
+            },
+            {
+              "compress_ms": 132.54310004413128,
+              "decode_ms": 50.23240006994456
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 53255015,
+          "outer_zip_stored_ms": 35.569399944506586,
+          "outer_zip_stored_bytes": 53255135,
+          "outer_zip_deflate_ms": 1125.3761999541894,
+          "outer_zip_deflate_bytes": 53149250,
+          "compress_median_ms": 132.54310004413128,
+          "decode_median_ms": 51.08730006031692
+        }
+      ]
+    },
+    "binary_cache": {
+      "python": "3.10.11",
+      "zstandard": "0.19.0",
+      "lz4_version_number": 10904,
+      "payload_bytes": 151364184,
+      "repetitions": 3,
+      "notes": [
+        "Native codecs through Python; these are not Unity runtime codec timings.",
+        "No real network benchmark. Transfer seconds are payload ZIP bytes * 8 / link bitrate; exclude latency, logic files, and protocol overhead.",
+        "Iteration 0 is excluded warmup. All decoded payloads are SHA-256 verified.",
+        "LZ4 uses a single block and out-of-band uncompressed length; a shipping format needs a header/chunk manifest."
+      ],
+      "results": [
+        {
+          "codec": "none",
+          "samples": [
+            {
+              "compress_ms": 0.002200016751885414,
+              "decode_ms": 0.000300002284348011
+            },
+            {
+              "compress_ms": 0.002100015990436077,
+              "decode_ms": 0.000300002284348011
+            },
+            {
+              "compress_ms": 0.001700012944638729,
+              "decode_ms": 0.000300002284348011
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 151364184,
+          "outer_zip_stored_ms": 93.01669988781214,
+          "outer_zip_stored_bytes": 151364304,
+          "outer_zip_deflate_ms": 3295.8109999308363,
+          "outer_zip_deflate_bytes": 142979709,
+          "compress_median_ms": 0.002100015990436077,
+          "decode_median_ms": 0.000300002284348011
+        },
+        {
+          "codec": "gzip_6",
+          "samples": [
+            {
+              "compress_ms": 3563.4751999750733,
+              "decode_ms": 469.34059995692223
+            },
+            {
+              "compress_ms": 3489.4226000178605,
+              "decode_ms": 453.7754999473691
+            },
+            {
+              "compress_ms": 3539.018700015731,
+              "decode_ms": 445.49980002921075
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 40839828,
+          "outer_zip_stored_ms": 38.79120002966374,
+          "outer_zip_stored_bytes": 40839948,
+          "outer_zip_deflate_ms": 826.2310000136495,
+          "outer_zip_deflate_bytes": 40852374,
+          "compress_median_ms": 3539.018700015731,
+          "decode_median_ms": 453.7754999473691
+        },
+        {
+          "codec": "zstd_1",
+          "samples": [
+            {
+              "compress_ms": 180.39840005803853,
+              "decode_ms": 127.56769999396056
+            },
+            {
+              "compress_ms": 191.91709998995066,
+              "decode_ms": 130.44929993338883
+            },
+            {
+              "compress_ms": 204.96130001265556,
+              "decode_ms": 124.00369998067617
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 36564048,
+          "outer_zip_stored_ms": 29.057700070552528,
+          "outer_zip_stored_bytes": 36564168,
+          "outer_zip_deflate_ms": 784.4319000141695,
+          "outer_zip_deflate_bytes": 36575299,
+          "compress_median_ms": 191.91709998995066,
+          "decode_median_ms": 127.56769999396056
+        },
+        {
+          "codec": "zstd_3",
+          "samples": [
+            {
+              "compress_ms": 353.16319996491075,
+              "decode_ms": 119.08089998178184
+            },
+            {
+              "compress_ms": 322.83039996400476,
+              "decode_ms": 241.50280002504587
+            },
+            {
+              "compress_ms": 366.2631999468431,
+              "decode_ms": 149.0265999455005
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 32112259,
+          "outer_zip_stored_ms": 24.373100022785366,
+          "outer_zip_stored_bytes": 32112379,
+          "outer_zip_deflate_ms": 671.1908000288531,
+          "outer_zip_deflate_bytes": 32122179,
+          "compress_median_ms": 353.16319996491075,
+          "decode_median_ms": 149.0265999455005
+        },
+        {
+          "codec": "zstd_6",
+          "samples": [
+            {
+              "compress_ms": 862.970000016503,
+              "decode_ms": 175.3101999638602
+            },
+            {
+              "compress_ms": 795.0210999697447,
+              "decode_ms": 166.20410000905395
+            },
+            {
+              "compress_ms": 870.5854000290856,
+              "decode_ms": 132.85900000482798
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 31005149,
+          "outer_zip_stored_ms": 22.27920002769679,
+          "outer_zip_stored_bytes": 31005269,
+          "outer_zip_deflate_ms": 611.8159000761807,
+          "outer_zip_deflate_bytes": 31014729,
+          "compress_median_ms": 862.970000016503,
+          "decode_median_ms": 166.20410000905395
+        },
+        {
+          "codec": "zstd_9",
+          "samples": [
+            {
+              "compress_ms": 1454.1196000063792,
+              "decode_ms": 153.49020005669445
+            },
+            {
+              "compress_ms": 1304.614800028503,
+              "decode_ms": 113.4161000372842
+            },
+            {
+              "compress_ms": 1508.1441999645904,
+              "decode_ms": 219.65750004164875
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 26495125,
+          "outer_zip_stored_ms": 28.48209999501705,
+          "outer_zip_stored_bytes": 26495245,
+          "outer_zip_deflate_ms": 545.8323999773711,
+          "outer_zip_deflate_bytes": 26503330,
+          "compress_median_ms": 1454.1196000063792,
+          "decode_median_ms": 153.49020005669445
+        },
+        {
+          "codec": "zstd_15",
+          "samples": [
+            {
+              "compress_ms": 10059.484499972314,
+              "decode_ms": 117.84219997934997
+            },
+            {
+              "compress_ms": 10600.453899940476,
+              "decode_ms": 134.8062000470236
+            },
+            {
+              "compress_ms": 11552.261000033468,
+              "decode_ms": 181.49029999040067
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 26263570,
+          "outer_zip_stored_ms": 21.41080005094409,
+          "outer_zip_stored_bytes": 26263690,
+          "outer_zip_deflate_ms": 552.1698000375181,
+          "outer_zip_deflate_bytes": 26271705,
+          "compress_median_ms": 10600.453899940476,
+          "decode_median_ms": 134.8062000470236
+        },
+        {
+          "codec": "lz4_block",
+          "samples": [
+            {
+              "compress_ms": 208.42610008548945,
+              "decode_ms": 106.28730000462383
+            },
+            {
+              "compress_ms": 208.60180002637208,
+              "decode_ms": 113.13630000222474
+            },
+            {
+              "compress_ms": 213.71270006056875,
+              "decode_ms": 113.20460005663335
+            }
+          ],
+          "verified": true,
+          "encoded_bytes": 55661427,
+          "outer_zip_stored_ms": 44.398500001989305,
+          "outer_zip_stored_bytes": 55661547,
+          "outer_zip_deflate_ms": 1129.4912999728695,
+          "outer_zip_deflate_bytes": 55543390,
+          "compress_median_ms": 208.60180002637208,
+          "decode_median_ms": 113.13630000222474
+        }
+      ]
+    }
+  },
+  "network_model": {
+    "unit": "seconds",
+    "description": "Ideal serial transfer of one stored ZIP payload plus measured Unity decode. Excludes all other apply stages, latency, protocol overhead and server congestion. Not a real network measurement.",
+    "by_effective_mbps": {
+      "100": {
+        "lz4": 4.2853087,
+        "zstd_3": 2.67191038,
+        "zstd_9": 2.22958494
+      },
+      "1000": {
+        "lz4": 0.45093898,
+        "zstd_3": 0.344242828,
+        "zstd_9": 0.325146204
+      },
+      "10000": {
+        "lz4": 0.067502008,
+        "zstd_3": 0.11147607279999999,
+        "zstd_9": 0.13470233040000001
+      }
+    }
+  },
+  "health_checks": {
+    "all_deterministic": "failed",
+    "hdiff": "passed before failure",
+    "native_mesh": "passed before failure",
+    "apply_reset": "stopped at RunVersionPathResolutionInvariantCheck",
+    "message": "Affected FBX paths should be resolved from source file ids and metadata. Expected 3 paths, got 0.",
+    "diagnosis": "The fixture supplies fictional paths without creating files; AvatarPathOverrideService.ResolveLocalTargetPath requires a file to exist and returns null. Production and health-check source files were not changed.",
+    "later_apply_reset_checks": "not reached",
+    "native_mesh_console": "Bones do not match bindpose, emitted while NativeMeshPayloadHealthCheck restored renderer bounds through SmrPathService. The check returned without throwing."
+  }
+}

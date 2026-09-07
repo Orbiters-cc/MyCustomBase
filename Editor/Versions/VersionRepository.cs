@@ -200,6 +200,24 @@ public static class VersionRepository
         cachedUnsubmitted = null;
     }
 
+    /// <summary>Remote availability and metadata win over a downloaded copy. A
+    /// deliberately unsubmitted local build remains a draft until publication.</summary>
+    public static List<CustomBaseVersion> MergeAvailableVersions(int assetId,
+        IEnumerable<CustomBaseVersion> server, IEnumerable<CustomBaseVersion> imported,
+        IEnumerable<CustomBaseVersion> unsubmitted)
+    {
+        var merged = new Dictionary<CustomBaseVersion, CustomBaseVersion>();
+        foreach (var source in new[] { imported, server, unsubmitted })
+        {
+            foreach (var version in source ?? Enumerable.Empty<CustomBaseVersion>())
+            {
+                if (version == null || assetId <= 0 || version.assetId != assetId) continue;
+                merged[version] = version;
+            }
+        }
+        return merged.Values.ToList();
+    }
+
     // ------------------------------------------------------------------ artifact access
 
     public static VersionArtifact GetArtifact(CustomBaseVersion version)
@@ -456,6 +474,7 @@ public static class VersionRepository
         if (artifact?.Manifest == null || !artifact.FolderExists) return;
         artifact.Manifest.unsubmitted = false;
         artifact.Manifest.Save(artifact.FolderUnityPath);
+        artifact.Metadata.isUnsubmitted = false;
         InvalidateCache();
     }
 
@@ -463,6 +482,7 @@ public static class VersionRepository
     {
         string fullPath = Path.Combine(Path.GetFullPath(folderUnityPath), "version.json");
         File.WriteAllText(fullPath, JsonConvert.SerializeObject(metadata, Formatting.Indented, new StringEnumConverter()));
+        InvalidateCache();
     }
 
     public static CustomBaseVersion LoadVersionJson(string folderUnityPath)

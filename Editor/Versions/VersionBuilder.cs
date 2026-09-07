@@ -32,19 +32,27 @@ public static class VersionBuilder
         Texture2D customVeinsTexture,
         bool includeDynamicNormalsBody,
         bool includeDynamicNormalsFlexing,
-        bool compressAdvancedMeshPayload,
         IEnumerable<string> additionalAnimationAssetPaths,
         Func<CustomBaseVersion> metadataFactory,
         string formSignature)
     {
         if (fileManagerService == null) throw new ArgumentNullException(nameof(fileManagerService));
         if (metadataFactory == null) throw new ArgumentNullException(nameof(metadataFactory));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        double last = 0;
+        void Mark(string phase)
+        {
+            double now = timer.Elapsed.TotalMilliseconds;
+            MCBLogger.Log($"[VersionBuildProfile] version={versionString} phase={phase} stepMs={now - last:F1} totalMs={now:F1}");
+            last = now;
+        }
 
         var animationPaths = (additionalAnimationAssetPaths ?? Enumerable.Empty<string>()).ToList();
 
         // Inputs are hashed before packaging so the drift baseline reflects exactly
         // what this build consumed.
         var inputs = CollectInputs(packageEntries, logicPrefab, includeCustomVeins ? customVeinsTexture : null, animationPaths);
+        Mark("Hash inputs");
 
         string staging = VersionRepository.CreateStagingFolder(assetId, versionString, defaultAviVersion);
         try
@@ -57,8 +65,8 @@ public static class VersionBuilder
                 customVeinsTexture,
                 includeDynamicNormalsBody,
                 includeDynamicNormalsFlexing,
-                compressAdvancedMeshPayload,
                 animationPaths);
+            Mark("Package model and logic");
 
             var metadata = metadataFactory();
             if (metadata == null)
@@ -67,8 +75,12 @@ public static class VersionBuilder
             }
 
             metadata.isUnsubmitted = true;
+            Mark("Create metadata");
             var manifest = VersionRepository.CreateManifestFromFolder(staging, metadata, unsubmitted: true, formSignature: formSignature, inputs: inputs);
-            return VersionRepository.CommitStaging(staging, metadata, manifest);
+            Mark("Hash outputs and manifest");
+            var result = VersionRepository.CommitStaging(staging, metadata, manifest);
+            Mark("Commit local artifact");
+            return result;
         }
         catch (Exception)
         {

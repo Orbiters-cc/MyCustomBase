@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-07",
+  "releaseState": "local source changes; not deployed",
+  "unityVersion": "2022.3.22f1",
+  "platform": "Windows x64",
+  "unityEditMode": { "total": 49, "passed": 49, "failed": 0, "skipped": 0 },
+  "deterministicHealthChecks": {
+    "passed": true,
+    "coverage": ["HDiff", "native mesh", "both delivery codecs", "corrupted payload rejection", "direct Apply", "RAM preload and coroutine Apply", "binary cache reuse", "geometry", "bind poses", "skin weights", "bone references", "blendshape frames", "asset/version provenance", "Reset", "original source path invariants"]
+  },
+  "backendNodeVersion": "24.19.0",
+  "backendTests": { "total": 541, "passed": 527, "failed": 0, "skipped": 14 },
+  "frontendTests": { "passed": 2, "failed": 0 },
+  "frontendProductionBuild": "passed",
+  "postgresql": { "version": 16, "isolatedDisposableContainer": true, "freshTwoBoots": "passed", "populatedUpgradeTwoBoots": "passed", "rowAndAssociationPreservation": "passed", "retentionAndAggregateQueries": "passed", "indexIdempotence": "passed" },
+  "codecBenchmark": { "evidence": "2026-09-07-adaptive.json", "observations": 28, "verified": 28 },
+  "remainingReleaseChecks": ["Native plugin validation on Linux and macOS", "Apple Silicon currently has Zstd only", "Authenticated upload/download with deployed private storage configuration", "Coordinated backend and client release"]
+}

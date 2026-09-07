@@ -42,6 +42,12 @@ public class AdvancedModeModule
             170f,
             NativeMeshPayloadHealthCheck.RunOrThrow),
         new HealthCheckDefinition(
+            "Adaptive Delivery",
+            "Adaptive delivery rig health check",
+            "Validate both codecs, binary cache reuse, skin weights, bone association, blendshapes and reset.",
+            150f,
+            MCBDeliveryHealthCheck.RunOrThrow),
+        new HealthCheckDefinition(
             "Version Apply/Reset",
             "Version Apply/Reset invariant health check",
             "Validate version apply/reset FBX backup and advanced mesh source-path invariants.",
