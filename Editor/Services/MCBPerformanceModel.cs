@@ -56,13 +56,13 @@ public static class MCBPerformanceModel
     public static MCBDeliveryDecision Choose(MCBDeliveryVariant[] variants, MCBPerformanceProfile profile, Func<string, bool> supported)
     {
         var available = (variants ?? Array.Empty<MCBDeliveryVariant>()).Where(v => v != null
-            && v.packageBytes > 0 && v.decodedBytes > 0 && supported(v.codec)).ToArray();
+            && v.packageBytes > 0 && v.decodedBytes >= 0 && supported(v.codec)).ToArray();
         var decision = new MCBDeliveryDecision();
         if (available.Length == 0) return decision;
         bool calibrated = profile != null && profile.network?.Count > 0;
         foreach (var variant in available) {
             var calibration = profile?.codecs?.FirstOrDefault(c => c.codec == variant.codec);
-            double decode = Predict(calibration?.decode, variant.decodedBytes);
+            double decode = variant.decodedBytes == 0 ? 0 : Predict(calibration?.decode, variant.decodedBytes);
             double transfer = Predict(profile?.network, variant.packageBytes);
             if (double.IsNaN(decode) || double.IsNaN(transfer)) calibrated = false;
             decision.candidates.Add(new MCBDeliveryEstimate { codec = variant.codec, packageBytes = variant.packageBytes,

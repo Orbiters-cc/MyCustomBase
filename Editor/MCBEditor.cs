@@ -583,7 +583,7 @@ public class MCBEditor : UnityEditor.Editor
         }
     }
 
-    private static void LoadUiToolkitStyleSheets(VisualElement root)
+    internal static void LoadUiToolkitStyleSheets(VisualElement root)
     {
         if (root == null)
         {
@@ -631,6 +631,7 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         RefreshUiToolkitSections();
+        creatorModule.OpenWindow();
         Repaint();
     }
 

@@ -218,6 +218,17 @@ public static class VersionRepository
         return merged.Values.ToList();
     }
 
+    /// <summary>Published parent candidates also remain available from saved/applied metadata.</summary>
+    public static List<CustomBaseVersion> GetCreatorParentVersions(int assetId,
+        IEnumerable<CustomBaseVersion> server, IEnumerable<CustomBaseVersion> imported, CustomBaseVersion applied)
+    {
+        var local = (imported ?? Enumerable.Empty<CustomBaseVersion>())
+            .Concat(applied != null ? new[] { applied } : Array.Empty<CustomBaseVersion>())
+            .Where(v => v != null && !v.isUnsubmitted);
+        return MergeAvailableVersions(assetId, server, local, null)
+            .Where(v => !v.isUnsubmitted && !string.IsNullOrWhiteSpace(v.version)).ToList();
+    }
+
     // ------------------------------------------------------------------ artifact access
 
     public static VersionArtifact GetArtifact(CustomBaseVersion version)

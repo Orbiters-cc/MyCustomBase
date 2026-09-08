@@ -8,10 +8,11 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-public static class MCBDeliveryHealthCheck
+public static partial class MCBDeliveryHealthCheck
 {
     public static void RunOrThrow()
     {
+        RunReuseCheck();
         string id = Guid.NewGuid().ToString("N");
         string folder = Path.Combine(Path.GetTempPath(), "mcb-delivery-health-" + id);
         Directory.CreateDirectory(folder);

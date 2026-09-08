@@ -1,3 +1,15 @@
+.mcb-creator-window {
+    background-color: rgb(36, 36, 36);
+    flex-grow: 1;
+}
+
+.mcb-creator-window__scroll { flex-grow: 1; }
+
+.mcb-creator.mcb-creator--window {
+    padding: 12px;
+    margin: 0;
+}
+
 .mcb-creator {
     background-color: rgba(0,0,0,0);
     padding: 10px 24px 20px 24px;

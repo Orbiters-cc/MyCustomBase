@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEngine;
 
 public static partial class NativeMeshPayloadService
@@ -18,6 +19,25 @@ public static partial class NativeMeshPayloadService
         List<PayloadRendererSource> renderers, byte[] key, string outputPath,
         NativeMeshPayloadBuildMetrics metrics, Transform sourcePoseRoot)
     {
+        if (renderers.Count > 1)
+        {
+            var parts = new List<NativeMeshPayloadBuildResult>();
+            for (int i = 0; i < renderers.Count; i++)
+            {
+                string partPath = i == 0 ? outputPath : Path.Combine(Path.GetDirectoryName(outputPath),
+                    Path.GetFileNameWithoutExtension(outputPath) + "_" + i + ".bin");
+                parts.Add(WriteDeliveryVariants(sourcePath, source, new List<PayloadRendererSource> { renderers[i] },
+                    key, partPath, new NativeMeshPayloadBuildMetrics(), sourcePoseRoot));
+            }
+            var first = parts[0];
+            return new NativeMeshPayloadBuildResult { parts = parts, variants = first.variants,
+                contentHash = first.contentHash, payloadHash = first.payloadHash, binHash = first.binHash,
+                payloadCompression = first.payloadCompression, rendererCount = parts.Sum(p => p.rendererCount),
+                payloadBytes = parts.Sum(p => p.payloadBytes), blendShapeVertexBytes = parts.Sum(p => p.blendShapeVertexBytes),
+                blendShapeNormalBytes = parts.Sum(p => p.blendShapeNormalBytes), blendShapeTangentBytes = parts.Sum(p => p.blendShapeTangentBytes),
+                skippedBlendShapeNormalBytes = parts.Sum(p => p.skippedBlendShapeNormalBytes),
+                skippedBlendShapeTangentBytes = parts.Sum(p => p.skippedBlendShapeTangentBytes) };
+        }
         byte[] plain;
         using (var stream = new MemoryStream()) {
             using (var buffered = new BufferedStream(stream, 256 * 1024)) {
@@ -50,10 +70,12 @@ public static partial class NativeMeshPayloadService
                     codec = codec, path = Path.GetFileName(path), hash = binHash,
                     outputHash = outputHash, bytes = encoded.Length, decodedBytes = plain.Length
                 });
+                MCBMeshDelivery.StoreVerifiedBlob(variants[variants.Count - 1], path);
             }
             if (variants.Count == 0) throw new PlatformNotSupportedException("No MCB mesh codec is available for this Editor platform.");
             var primary = variants[0];
             return new NativeMeshPayloadBuildResult {
+                contentHash = HashBytes(plain),
                 variants = variants, payloadHash = primary.outputHash, binHash = primary.hash,
                 payloadCompression = primary.codec, rendererCount = renderers.Count, payloadBytes = primary.bytes,
                 blendShapeVertexBytes = metrics.blendShapeVertexBytes,

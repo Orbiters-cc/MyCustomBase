@@ -130,6 +130,8 @@ public static partial class NativeMeshPayloadService
 
     public sealed class NativeMeshPayloadBuildResult
     {
+        public List<NativeMeshPayloadBuildResult> parts;
+        public string contentHash;
         public List<MCBPayloadVariant> variants;
         public string payloadHash;
         public string binHash;
@@ -509,7 +511,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
         }
 
-        string payloadHash = patchFile.outputHash;
+        string payloadHash = GetPayloadIdentity(patchFile);
         string payloadCompression = ResolvePayloadCompression(patchFile);
         string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
         var existing = LoadPayloadAsset(payloadAssetPath);
@@ -576,7 +578,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
         }
 
-        string payloadHash = patchFile.outputHash;
+        string payloadHash = GetPayloadIdentity(patchFile);
         string payloadCompression = ResolvePayloadCompression(patchFile);
         string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
         var existing = LoadPayloadAsset(payloadAssetPath);
@@ -651,7 +653,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
         }
 
-        string payloadHash = patchFile.outputHash;
+        string payloadHash = GetPayloadIdentity(patchFile);
         string payloadCompression = ResolvePayloadCompression(patchFile);
         string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
         var existing = LoadPayloadAsset(payloadAssetPath);
@@ -724,7 +726,8 @@ public static partial class NativeMeshPayloadService
         Transform avatarRoot,
         CustomBaseVersion version,
         IEnumerable<string> sourceFbxPaths,
-        MyCustomBase target = null)
+        MyCustomBase target = null,
+        CustomBaseVersion preserveVersion = null)
     {
         if (avatarRoot == null)
         {
@@ -741,7 +744,8 @@ public static partial class NativeMeshPayloadService
 
             string sourcePath = MCBUtils.ToUnityPath(rawPath);
             var smrPaths = SmrPathService.ResolveSmrPathsForSource(version, sourcePath, target);
-            int restored = SmrPathService.RestoreTargetStateFromFbx(avatarRoot, sourcePath, smrPaths);
+            int restored = SmrPathService.RestoreTargetStateFromFbx(avatarRoot, sourcePath, smrPaths,
+                renderer => preserveVersion != null && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), preserveVersion));
             restoredTotal += restored;
             if (restored == 0)
             {
@@ -790,6 +794,12 @@ public static partial class NativeMeshPayloadService
         {
             return false;
         }
+        if (advancedPatches.Any(p => GetPayloadIdentity(p)?.StartsWith("raw:", StringComparison.Ordinal) == true))
+        {
+            var state = avatarRoot.GetComponentsInChildren<MyCustomBase>(true).FirstOrDefault(m =>
+                m.appliedCustomBaseAssetId == version.assetId && m.appliedCustomBaseVersionString == version.version);
+            if (state == null) return false;
+        }
 
         foreach (var patch in advancedPatches)
         {
@@ -807,7 +817,7 @@ public static partial class NativeMeshPayloadService
                     string meshName = renderer.sharedMesh != null ? renderer.sharedMesh.name : null;
                     string shortHash = ShortHash(patch.outputHash);
                     if ((!string.IsNullOrWhiteSpace(meshPath) &&
-                         meshPath.IndexOf(patch.outputHash, StringComparison.OrdinalIgnoreCase) >= 0) ||
+                         meshPath == GetGeneratedPayloadPath(version, patch, GetPayloadIdentity(patch))) ||
                         (!string.IsNullOrWhiteSpace(meshName) &&
                          meshName.IndexOf(shortHash, StringComparison.OrdinalIgnoreCase) >= 0))
                     {
@@ -853,7 +863,7 @@ public static partial class NativeMeshPayloadService
                     string meshName = renderer.sharedMesh != null ? renderer.sharedMesh.name : null;
                     string shortHash = ShortHash(patch.outputHash);
                     if ((!string.IsNullOrWhiteSpace(meshPath) &&
-                         meshPath.IndexOf(patch.outputHash, StringComparison.OrdinalIgnoreCase) >= 0) ||
+                         meshPath == GetGeneratedPayloadPath(version, patch, GetPayloadIdentity(patch))) ||
                         (!string.IsNullOrWhiteSpace(meshName) &&
                          meshName.IndexOf(shortHash, StringComparison.OrdinalIgnoreCase) >= 0))
                     {
@@ -884,6 +894,7 @@ public static partial class NativeMeshPayloadService
             }
 
             string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
+            if (IsSharedMeshForVersion(meshPath, version)) { renderers.Add(renderer); continue; }
             if (!TryParseGeneratedMeshAssetPath(meshPath, out int assetId, out string versionString))
             {
                 continue;
@@ -919,6 +930,10 @@ public static partial class NativeMeshPayloadService
             string meshPath = renderer != null && renderer.sharedMesh != null
                 ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh))
                 : null;
+            if (IsSharedMeshForVersion(meshPath, null)) {
+                var state = avatarRoot.GetComponentsInChildren<MyCustomBase>(true).FirstOrDefault(m => m.appliedCustomBaseAssetId > 0 && !string.IsNullOrEmpty(m.appliedCustomBaseVersionString));
+                if (state != null) { assetId = state.appliedCustomBaseAssetId; versionString = state.appliedCustomBaseVersionString; return true; }
+            }
             if (TryParseGeneratedMeshAssetPath(meshPath, out assetId, out versionString))
             {
                 return true;
@@ -1025,13 +1040,7 @@ public static partial class NativeMeshPayloadService
 
     public static GeneratedPayloadStorageInfo DeleteAllGeneratedPayloads()
     {
-        GeneratedPayloadStorageInfo storageInfo = GetGeneratedPayloadStorageInfo();
-        if (storageInfo.HasContent)
-        {
-            DeleteGeneratedPayloadFolder(GeneratedFolder);
-        }
-
-        return storageInfo;
+        return DeleteUnreferencedGeneratedPayloads();
     }
 
     private static List<PayloadRendererSource> ResolvePayloadRendererSources(
@@ -1341,9 +1350,10 @@ public static partial class NativeMeshPayloadService
 
     private static NativeMeshPayloadAsset ReadBinaryPayloadAsset(byte[] payloadBytes, string assetName, string payloadHash, string payloadCompression)
     {
-        VerifyPayloadHash(payloadBytes, payloadHash);
+        if (!payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash);
         if (payloadCompression == MCBCompression.Lz4 || payloadCompression == MCBCompression.Zstd)
             payloadBytes = MCBCompression.Decode(payloadBytes, payloadCompression);
+        if (payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash.Substring(4));
         if (payloadBytes == null || payloadBytes.Length == 0)
         {
             throw new InvalidDataException("Native mesh payload is empty.");
@@ -1689,9 +1699,10 @@ public static partial class NativeMeshPayloadService
         float startProgress,
         float endProgress)
     {
-        VerifyPayloadHash(payloadBytes, payloadHash);
+        if (!payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash);
         if (payloadCompression == MCBCompression.Lz4 || payloadCompression == MCBCompression.Zstd)
             payloadBytes = MCBCompression.Decode(payloadBytes, payloadCompression);
+        if (payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash.Substring(4));
         if (payloadBytes == null || payloadBytes.Length == 0)
         {
             throw new InvalidDataException("Native mesh payload is empty.");
@@ -2578,8 +2589,10 @@ public static partial class NativeMeshPayloadService
                 targetRenderer.rootBone = rootBone;
             }
 
-            targetRenderer.sharedMesh = record.mesh;
-            RefreshSkinnedRenderer(targetRenderer, record.mesh);
+            if (targetRenderer.sharedMesh != record.mesh) {
+                targetRenderer.sharedMesh = record.mesh;
+                RefreshSkinnedRenderer(targetRenderer, record.mesh);
+            }
             EditorUtility.SetDirty(targetRenderer);
             UnityEngine.Debug.Log(
                 $"[NativeMeshPayloadProfile] Applied renderer {rendererIndex}/{rendererTotal} '{targetRenderer.name}' " +
@@ -2659,7 +2672,7 @@ public static partial class NativeMeshPayloadService
             applied++;
         }
 
-        RefreshAvatarSkinnedRenderers(avatarRoot);
+        RefreshAvatarSkinnedRenderers(avatarRoot, payload.payloadHash != null && payload.payloadHash.StartsWith("raw:", StringComparison.Ordinal));
         MCBLogger.Log($"[NativeMeshPayload] Applied authoring pose deltas to {applied}/{payload.authoringPoseBones.Count} transforms.");
     }
 
@@ -2715,7 +2728,7 @@ public static partial class NativeMeshPayloadService
         renderer.updateWhenOffscreen = previousUpdateWhenOffscreen;
     }
 
-    private static void RefreshAvatarSkinnedRenderers(Transform avatarRoot)
+    private static void RefreshAvatarSkinnedRenderers(Transform avatarRoot, bool preserveSharedMeshes = false)
     {
         if (avatarRoot == null)
         {
@@ -2726,6 +2739,11 @@ public static partial class NativeMeshPayloadService
         {
             if (renderer != null)
             {
+                if (preserveSharedMeshes && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), null))
+                {
+                    renderer.localBounds = renderer.sharedMesh.bounds;
+                    continue;
+                }
                 RefreshSkinnedRenderer(renderer, renderer.sharedMesh);
             }
         }
@@ -3043,6 +3061,9 @@ public static partial class NativeMeshPayloadService
 
     private static string GetGeneratedPayloadPath(CustomBaseVersion version, ModelFileData patchFile, string payloadHash)
     {
+        if (payloadHash.StartsWith("raw:", StringComparison.Ordinal))
+            return MCBUtils.CombineUnityPath(GeneratedFolder, version.assetId.ToString(),
+                "shared-" + SanitizeFileName(Application.unityVersion), payloadHash.Substring(4) + ".asset");
         string sourceName = "nativeMesh";
         if (patchFile?.metadata != null &&
             patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue) &&
@@ -3247,6 +3268,8 @@ public static partial class NativeMeshPayloadService
 
         try
         {
+            if (payloadHash.StartsWith("raw:", StringComparison.Ordinal))
+                return payload.renderers != null && payload.renderers.Count > 0 && payload.renderers.All(r => r?.mesh != null);
             return string.Equals(
                 NormalizePayloadCompression(payload.payloadCompression),
                 NormalizePayloadCompression(payloadCompression),

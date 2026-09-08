@@ -25,7 +25,7 @@ public static class MCBVersionDelivery
     {
         if (version == null || json == null || json.Length > 128 * 1024) throw new InvalidDataException("Invalid delivery manifest.");
         var manifest = JsonConvert.DeserializeObject<Manifest>(json);
-        if (manifest == null || manifest.schema != 1 || manifest.files == null
+        if (manifest == null || (manifest.schema != 1 && manifest.schema != 2) || manifest.files == null
             || (manifest.codec != MCBCompression.Lz4 && manifest.codec != MCBCompression.Zstd)) throw new InvalidDataException("Invalid delivery manifest.");
         var patches = (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(p => p != null
             && p.transform == NativeMeshPayloadService.TransformName).ToArray();
@@ -35,9 +35,9 @@ public static class MCBVersionDelivery
             var matches = manifest.files.Where(v => v != null && v.path == patch.path).ToArray();
             if (matches.Length != 1) throw new InvalidDataException("Delivery manifest has a missing or repeated mesh.");
             var selected = matches[0];
-            var expected = GetVariants(patch).SingleOrDefault(v => v.codec == manifest.codec);
+            var expected = GetVariants(patch).SingleOrDefault(v => v.codec == (manifest.schema == 2 ? selected.codec : manifest.codec));
             if (expected == null || expected.hash != selected.hash || expected.outputHash != selected.outputHash
-                || expected.bytes != selected.bytes || expected.decodedBytes != selected.decodedBytes || selected.codec != manifest.codec)
+                || expected.bytes != selected.bytes || expected.decodedBytes != selected.decodedBytes || (manifest.schema == 1 && selected.codec != manifest.codec))
                 throw new InvalidDataException("Delivery manifest does not match the authorized mesh variant.");
             changes.Add((patch, expected));
         }

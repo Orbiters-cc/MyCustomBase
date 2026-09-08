@@ -14,6 +14,33 @@ public partial class CreatorModeModule
     private const int MaxToolkitSuggestionCount = 8;
 
     private VisualElement creatorRoot;
+    private MCBCreatorWindow creatorWindow;
+
+    public void OpenWindow()
+    {
+        if (!IsSelectedAssetOwnedByCurrentUser()) return;
+        if (creatorWindow == null) creatorWindow = MCBCreatorWindow.Open(editor, this);
+        creatorWindow.Show();
+        creatorWindow.Focus();
+    }
+
+    internal void AttachWindow(MCBCreatorWindow window, VisualElement root)
+    {
+        creatorWindow = window;
+        creatorRoot = root;
+        RefreshUIToolkit();
+    }
+
+    internal void WindowClosed()
+    {
+        creatorRoot = null;
+        creatorWindow = null;
+        if (editor == null || editor.customBaseTarget == null) return;
+        editor.serializedObject.Update();
+        editor.isCreatorModeProp.boolValue = false;
+        editor.serializedObject.ApplyModifiedProperties();
+        editor.RefreshUiToolkitSections();
+    }
     private string blendshapeSearchText = string.Empty;
     private bool hasAttemptedToolkitSubmit;
     private bool wasToolkitCreatorModeVisible;
@@ -31,19 +58,28 @@ public partial class CreatorModeModule
 
     public void AttachUIToolkit(VisualElement root)
     {
-        creatorRoot = root;
-        RefreshUIToolkit();
+        // The inspector keeps the version timeline; the form lives only in its window.
+        root.Clear();
+        root.style.display = DisplayStyle.None;
     }
 
     public void DetachUIToolkit()
     {
         creatorRoot = null;
+        if (creatorWindow != null) creatorWindow.DetachAndClose();
+        creatorWindow = null;
     }
 
     public void RefreshUIToolkit()
     {
         if (creatorRoot == null)
         {
+            return;
+        }
+
+        if (!creatorWindow.MatchesContext(editor) || !editor.isCreatorModeProp.boolValue)
+        {
+            creatorWindow.Close();
             return;
         }
 
@@ -62,7 +98,7 @@ public partial class CreatorModeModule
     {
         creatorRoot.Clear();
         creatorRoot.AddToClassList("mcb-creator");
-        creatorRoot.EnableInClassList("mcb-creator--asset-view", editor.GetSelectedAsset() != null);
+        creatorRoot.AddToClassList("mcb-creator--window");
 
         if (!editor.isAuthenticated ||
             !editor.HasServerAccess ||
@@ -110,7 +146,7 @@ public partial class CreatorModeModule
             previouslySelectedVersion = editor.selectedVersionForAction;
         }
 
-        var content = CreateCreatorPanel();
+        var content = new VisualElement();
         content.AddToClassList("mcb-creator__content");
         content.SetEnabled(!editor.isSubmitting);
         creatorRoot.Add(content);

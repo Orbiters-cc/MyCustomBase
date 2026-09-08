@@ -559,7 +559,7 @@ public partial class VersionListDrawer
             }
         }
         
-        if (hasLocalContent && editor.customBaseTarget != null && editor.customBaseTarget.isCreatorMode)
+        if (hasLocalContent)
         {
             var exportIcon = EditorGUIUtility.IconContent("SaveAs");
             Rect exportRect = GUILayoutUtility.GetRect(22, 22, GUILayout.Width(22), GUILayout.Height(22));

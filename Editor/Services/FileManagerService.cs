@@ -42,6 +42,7 @@ public class FileManagerService
         public string patchTransform;
         public string payloadCompression;
         public List<MCBPayloadVariant> payloadVariants;
+        public List<NativeMeshPayloadService.NativeMeshPayloadBuildResult> payloadParts;
         public int advancedRendererCount;
         public HdiffService.BuildInfo hdiffBuildInfo;
         public string hdiffFallbackReason;
@@ -878,6 +879,7 @@ public class FileManagerService
                             entry.outputHash = payloadResult.payloadHash;
                             entry.payloadCompression = payloadResult.payloadCompression;
                             entry.payloadVariants = payloadResult.variants;
+                            entry.payloadParts = payloadResult.parts ?? new List<NativeMeshPayloadService.NativeMeshPayloadBuildResult> { payloadResult };
                             entry.advancedRendererCount = payloadResult.rendererCount;
                             entry.binUnityPath = binUnityPath;
                             entry.binHash = payloadResult.binHash;

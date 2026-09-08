@@ -155,7 +155,6 @@ public partial class VersionListDrawer
             !editor.HasServerAccess ||
             MCBPackageVersionService.RequiresMajorUpdate ||
             editor.isCreatorModeProp == null ||
-            editor.isCreatorModeProp.boolValue ||
             !selectedAsset.ownerId.HasValue)
         {
             return false;
@@ -558,7 +557,7 @@ public partial class VersionListDrawer
             }));
         }
 
-        if (hasLocalContent && editor.customBaseTarget != null && editor.customBaseTarget.isCreatorMode)
+        if (hasLocalContent)
         {
             actionsRow.Add(CreateInteractionIconButton(MCBInteractionIconKind.Save, "Export offline version", () =>
             {

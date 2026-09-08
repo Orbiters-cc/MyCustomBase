@@ -322,7 +322,7 @@ public class VersionActions
 
         bool useInMemoryPackage = false;
         string advancedMeshPipelineDecision = null;
-        if (advancedMeshApply)
+        if (advancedMeshApply && version.meshDelivery != 1)
         {
             var sizeTask = delivery != null
                 ? Task.FromResult((success: true, contentLength: delivery.packageBytes, error: (string)null))
@@ -365,7 +365,13 @@ public class VersionActions
         float visibleDownloadProgress = DownloadApplyProgressStart;
         Task<(bool success, string error)> diskDownloadTask = null;
         Task<(bool success, byte[] data, string error)> memoryDownloadTask = null;
-        if (useInMemoryPackage)
+        if (version.meshDelivery == 1)
+        {
+            useInMemoryPackage = false;
+            diskDownloadTask = MCBMeshDelivery.DownloadAsync(networkService, url, version, tempZipPath,
+                progress => downloadProgress = Mathf.Clamp01(progress), bytes => downloadedBytes = bytes);
+        }
+        else if (useInMemoryPackage)
         {
             MCBLogger.Log(
                 "[VersionActions] Advanced mesh reconstruction preparation path: RAM. " +
@@ -454,7 +460,7 @@ public class VersionActions
             MCBLogger.LogError($"[VersionActions] Download task failed unexpectedly: {ex}");
         }
         bool extractionSucceeded = false;
-        MCBPerformance.RecordDownload(deliveryDecision, (long)downloadedBytes,
+        if (version.meshDelivery != 1) MCBPerformance.RecordDownload(deliveryDecision, (long)downloadedBytes,
             (EditorApplication.timeSinceStartup - downloadStartedAt) * 1000, success);
         string tempExtractPath = null;
         
@@ -1129,7 +1135,7 @@ public class VersionActions
                 {
                     ReportApplyProgress(0.10f, "Restoring original FBX state...");
                     RestoreOriginalFbxStateForTransition(root, transitionVersions, fbxPath,
-                        previousVersion != null && !previousUsesAdvancedMesh);
+                        previousVersion != null && !previousUsesAdvancedMesh, version);
                     profile.Mark("Restored original FBX renderer and armature state for advanced mesh transition");
                 }
 
@@ -2358,7 +2364,8 @@ public class VersionActions
         Transform root,
         IEnumerable<CustomBaseVersion> transitionVersions,
         string fallbackFbxPath,
-        bool restoreImporter = true)
+        bool restoreImporter = true,
+        CustomBaseVersion preserveVersion = null)
     {
         if (root == null)
         {
@@ -2413,7 +2420,7 @@ public class VersionActions
                 root,
                 transitionVersion,
                 affectedPathsByVersion[transitionVersion],
-                editor.customBaseTarget);
+                editor.customBaseTarget, preserveVersion);
         }
 
         if (restoredRenderers == 0)

@@ -597,11 +597,11 @@ public class AdvancedModeModule
         {
             EditorGUILayout.BeginHorizontal();
             GUILayout.Space(EditorGUI.indentLevel * 15);
-            if (GUILayout.Button("Delete all generated advanced meshes", GUILayout.Width(300f)))
+            if (GUILayout.Button("Delete unused generated meshes", GUILayout.Width(300f)))
             {
                 bool confirmed = EditorUtility.DisplayDialog(
                     "Delete Generated Advanced Meshes",
-                    $"Delete all generated advanced mesh cache assets?\n\nThis will free {storage.FormattedSize}. They will be regenerated when needed.",
+                    "Delete unused generated mesh cache assets?\n\nMeshes referenced by open avatars or saved assets are kept. Deleted meshes will be regenerated when needed.",
                     "Delete",
                     "Cancel");
 

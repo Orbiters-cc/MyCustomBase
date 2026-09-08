@@ -38,6 +38,16 @@ public class MCBAdaptiveDeliveryTests
         Assert.That(MCBPerformanceModel.Choose(Variants(), Profile(100), c => c == "ZSTD").codec, Is.EqualTo("ZSTD"));
         Assert.That(MCBPerformanceModel.Choose(Variants(), Profile(100), _ => false).codec, Is.Null);
     }
+    [Test] public void FullyCachedMeshesChooseAValidCodecWithZeroDecodeTime()
+    {
+        var variants = Variants();
+        foreach (var variant in variants) { variant.packageBytes = 2000; variant.decodedBytes = 0; }
+        var decision = MCBPerformanceModel.Choose(variants, Profile(1000), _ => true);
+        Assert.That(decision.codec, Is.Not.Null);
+        Assert.That(decision.calibrated, Is.True);
+        Assert.That(decision.candidates.Count, Is.EqualTo(2));
+        foreach (var candidate in decision.candidates) Assert.That(candidate.predictedMilliseconds, Is.EqualTo(.02).Within(.0001));
+    }
     [Test] public void CurveIncludesLatencyAndRejectsInvalidMeasurements()
     {
         Assert.That(MCBPerformanceModel.Predict(new[] { Point(25, 300), Point(100, 1050) }, 50), Is.EqualTo(550).Within(.001));

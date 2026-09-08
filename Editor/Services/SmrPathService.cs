@@ -207,20 +207,22 @@ public static class SmrPathService
     public static int RestoreTargetStateFromFbx(
         Transform avatarRoot,
         string fbxPath,
-        IEnumerable<ModelFileSmrPathData> smrPaths)
+        IEnumerable<ModelFileSmrPathData> smrPaths,
+        Func<SkinnedMeshRenderer, bool> preserveMesh = null)
     {
         if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
 
         var fbxRoot = GetFbxRoot(MCBUtils.ToUnityPath(fbxPath));
         return fbxRoot == null
             ? 0
-            : RestoreTargetStateFromFbxRoot(avatarRoot, fbxRoot.transform, smrPaths);
+            : RestoreTargetStateFromFbxRoot(avatarRoot, fbxRoot.transform, smrPaths, preserveMesh);
     }
 
     internal static int RestoreTargetStateFromFbxRoot(
         Transform avatarRoot,
         Transform fbxRoot,
-        IEnumerable<ModelFileSmrPathData> smrPaths)
+        IEnumerable<ModelFileSmrPathData> smrPaths,
+        Func<SkinnedMeshRenderer, bool> preserveMesh = null)
     {
         if (avatarRoot == null || fbxRoot == null) return 0;
 
@@ -295,7 +297,7 @@ public static class SmrPathService
 
         foreach (var plan in plans)
         {
-            ApplyRendererRestorePlan(plan);
+            if (preserveMesh == null || !preserveMesh(plan.target)) ApplyRendererRestorePlan(plan);
         }
         return plans.Count;
     }

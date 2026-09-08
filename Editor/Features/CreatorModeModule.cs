@@ -53,9 +53,6 @@ public partial class CreatorModeModule
     private int selectedParentVersionIndex = -1;
     private CustomBaseVersion selectedParentVersionObject = null;
     private CustomBaseVersion previouslySelectedVersion = null;
-    private List<CustomBaseVersion> lastServerVersionsRef;
-    private int lastServerVersionsCount = -1;
-    private string lastAppliedParentVersionKey;
     private const string CustomVeinsKey = "customVeins";
     private const string DynamicNormalBodyKey = "dynamicNormalBody";
     private const string DynamicNormalFlexingKey = "dynamicNormalFlexing";
@@ -1874,35 +1871,24 @@ public partial class CreatorModeModule
     private void PopulateParentVersionDropdown()
     {
         var applied = editor.customBaseTarget.appliedCustomBaseVersion;
-        string appliedKey = applied != null ? (applied.version + "|" + applied.defaultAviVersion) : string.Empty;
-        if (ReferenceEquals(lastServerVersionsRef, editor.serverVersions) &&
-            lastServerVersionsCount == editor.serverVersions.Count &&
-            string.Equals(lastAppliedParentVersionKey, appliedKey, StringComparison.Ordinal) &&
-            compatibleParentVersions != null &&
-            parentVersionDisplayOptions != null)
-        {
-            return;
-        }
-
-        compatibleParentVersions = editor.serverVersions.OrderByDescending(v => editor.ParseVersion(v.version)).ToList();
+        compatibleParentVersions = VersionRepository.GetCreatorParentVersions(
+                editor.GetSelectedAsset()?.id ?? 0, editor.serverVersions, editor.importedVersions, applied)
+            .OrderByDescending(v => editor.ParseVersion(v.version)).ToList();
         parentVersionDisplayOptions = compatibleParentVersions.Select(v => $"{v.version} ({v.scope})").ToList();
         parentVersionDisplayOptionsArray = parentVersionDisplayOptions.ToArray();
-        lastServerVersionsRef = editor.serverVersions;
-        lastServerVersionsCount = editor.serverVersions.Count;
-        lastAppliedParentVersionKey = appliedKey;
-
-        if (applied != null)
+        defaultParentIndex = compatibleParentVersions.FindIndex(v => v.Equals(applied));
+        if (defaultParentIndex < 0) defaultParentIndex = compatibleParentVersions.Count > 0 ? 0 : -1;
+        // A refresh can reorder or replace DTOs without changing the selected version.
+        selectedParentVersionIndex = compatibleParentVersions.FindIndex(v => v.Equals(selectedParentVersionObject));
+        if (selectedParentVersionIndex >= 0)
+            selectedParentVersionObject = compatibleParentVersions[selectedParentVersionIndex];
+        else if (defaultParentIndex >= 0)
         {
-            defaultParentIndex = compatibleParentVersions.FindIndex(v => v.Equals(applied));
-            if (defaultParentIndex == -1) defaultParentIndex = 0;
-        }
-        else { defaultParentIndex = 0; }
-        
-        if (selectedParentVersionIndex == -1 && defaultParentIndex < compatibleParentVersions.Count && defaultParentIndex >= 0)
-        {
+            selectedParentVersionIndex = defaultParentIndex;
             selectedParentVersionObject = compatibleParentVersions[defaultParentIndex];
-            SetDefaultVersionNumbers(selectedParentVersionObject);
+            SetDefaultVersionNumbers(compatibleParentVersions[0]);
         }
+        else selectedParentVersionObject = null;
     }
 
     private bool IsNewVersionValid(string newVersionString)
@@ -1914,7 +1900,7 @@ public partial class CreatorModeModule
 
     private bool RequiresParentVersion()
     {
-        return editor.serverVersions != null && editor.serverVersions.Count > 0;
+        return compatibleParentVersions != null && compatibleParentVersions.Count > 0;
     }
 
     /// <summary>
@@ -2223,7 +2209,7 @@ public partial class CreatorModeModule
             customAviHash = versionFileEntries.FirstOrDefault()?.hash,
             appliedCustomAviHash = versionFileEntries.FirstOrDefault()?.outputHash,
             sourceFiles = sourceFileEntries.ToArray(),
-            versionFiles = versionFileEntries.ToArray()
+            versionFiles = NativeMeshPayloadService.ExpandRendererParts(versionFileEntries, packageEntries)
         };
 
         return metadata;
