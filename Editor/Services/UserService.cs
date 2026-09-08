@@ -23,15 +23,18 @@ public class UserService
     private static Dictionary<int, Texture2D> avatarCache = new Dictionary<int, Texture2D>();
     private static HashSet<int> pendingRequests = new HashSet<int>();
     private static HashSet<int> pendingAvatarDownloads = new HashSet<int>();
-    private static HashSet<int> failedRequests = new HashSet<int>();
-    private static HashSet<int> failedAvatarDownloads = new HashSet<int>();
+    private static MCBImageRetryGate<int> failedRequests = new MCBImageRetryGate<int>();
+    private static MCBImageRetryGate<int> failedAvatarDownloads = new MCBImageRetryGate<int>();
     private static Dictionary<int, List<Action>> avatarCompletionCallbacks = new Dictionary<int, List<Action>>();
     private static bool repaintQueued;
+
+    private static bool HasLiveAvatar(int userId) => MCBImageCache.TryGetLive(avatarCache, userId, out _);
     
     private static readonly string AVATARS_FOLDER = Path.Combine(MCBUtils.GetMCBDataFolder(), "avatars");
     
     static UserService()
     {
+        AssemblyReloadEvents.beforeAssemblyReload += () => MCBImageCache.ReleaseAll(avatarCache);
         // Ensure avatars folder exists
         if (!Directory.Exists(AVATARS_FOLDER))
         {
@@ -145,7 +148,7 @@ public class UserService
     {
         try
         {
-            if (avatarCache.ContainsKey(uploaderId))
+            if (HasLiveAvatar(uploaderId))
             {
                 yield break;
             }
@@ -185,7 +188,7 @@ public class UserService
                             byte[] pngData = processed.EncodeToPNG();
                             File.WriteAllBytes(localPath, pngData);
 
-                            avatarCache[uploaderId] = processed;
+                            avatarCache[uploaderId] = MCBImageCache.Retain(processed);
                             failedAvatarDownloads.Remove(uploaderId);
                             MCBConnectivityMonitor.ClearRequestWarning(GetAvatarWarningKey(uploaderId));
                             QueueRepaintAllViews();
@@ -227,7 +230,7 @@ public class UserService
             return;
         }
 
-        if (avatarCache.ContainsKey(uploaderId))
+        if (HasLiveAvatar(uploaderId))
         {
             QueueCompletion(onComplete);
             return;
@@ -274,7 +277,7 @@ public class UserService
             if (texture.LoadImage(fileData))
             {
                 Texture2D processed = MakeCircularAvatar(texture) ?? texture;
-                avatarCache[uploaderId] = processed;
+                avatarCache[uploaderId] = MCBImageCache.Retain(processed);
                 QueueRepaintAllViews();
                 if (!ReferenceEquals(processed, texture))
                 {
@@ -303,7 +306,7 @@ public class UserService
     public static Texture2D GetUserAvatar(int uploaderId)
     {
         // Try to load from disk if not in memory cache
-        if (!avatarCache.ContainsKey(uploaderId))
+        if (!HasLiveAvatar(uploaderId))
         {
             string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
             if (File.Exists(localPath))
@@ -316,7 +319,9 @@ public class UserService
             }
         }
         
-        return avatarCache.ContainsKey(uploaderId) ? avatarCache[uploaderId] : null;
+        if (MCBImageCache.TryGetLive(avatarCache, uploaderId, out var texture)) return texture;
+        RequestUserAvatar(uploaderId, null);
+        return null;
     }
 
     public static string GetUserAvatarLocalPath(int uploaderId)
@@ -339,7 +344,7 @@ public class UserService
     {
         try
         {
-            avatarUrl = MCBUtils.ResolveApiUrl(avatarUrl);
+            avatarUrl = MCBUtils.ResolveImageUrl(avatarUrl);
             UserInfo info = userCache.ContainsKey(userId) ? userCache[userId] : new UserInfo();
             bool changed = !userCache.ContainsKey(userId);
             bool avatarChanged = false;
@@ -372,7 +377,7 @@ public class UserService
             }
 
             if (!string.IsNullOrEmpty(info.avatarUrl) &&
-                !avatarCache.ContainsKey(userId) &&
+                !HasLiveAvatar(userId) &&
                 !pendingAvatarDownloads.Contains(userId) &&
                 !failedAvatarDownloads.Contains(userId))
             {
@@ -465,7 +470,7 @@ public class UserService
         try
         {
             userCache.Clear();
-            avatarCache.Clear();
+            MCBImageCache.ReleaseAll(avatarCache);
             pendingRequests.Clear();
             pendingAvatarDownloads.Clear();
             failedRequests.Clear();
@@ -488,7 +493,8 @@ public class UserService
         try
         {
             if (userCache.ContainsKey(userId)) userCache.Remove(userId);
-            if (avatarCache.ContainsKey(userId)) avatarCache.Remove(userId);
+            if (avatarCache.TryGetValue(userId, out var oldAvatar) && oldAvatar != null) Object.DestroyImmediate(oldAvatar);
+            avatarCache.Remove(userId);
             if (pendingRequests.Contains(userId)) pendingRequests.Remove(userId);
             if (pendingAvatarDownloads.Contains(userId)) pendingAvatarDownloads.Remove(userId);
             if (failedRequests.Contains(userId)) failedRequests.Remove(userId);

@@ -16,13 +16,15 @@
     flex-direction: row;
     flex-wrap: wrap;
     align-items: flex-start;
-    margin-right: -16px;
+    justify-content: center;
+    min-width: 0;
 }
 
 .mcb-card {
     width: 174px;
     height: 267px;
-    margin-right: 16px;
+    margin-left: 8px;
+    margin-right: 8px;
     margin-bottom: 16px;
     background-color: #191919;
     border-radius: 18px;

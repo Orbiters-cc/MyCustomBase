@@ -304,7 +304,7 @@ public partial class AssetGalleryModule
         if (selectedAsset != null && selectedAsset.ownerId.HasValue && selectedAsset.ownerId.Value > 0)
         {
             UserService.UpdateUserInfo(selectedAsset.ownerId.Value, selectedAsset.ownerUsername, selectedAsset.ownerAvatarUrl);
-            avatarImage.image = UserService.GetUserAvatar(selectedAsset.ownerId.Value);
+            UserAvatarImage.Bind(avatarImage, selectedAsset.ownerId.Value);
             ownerAvatarImages[selectedAsset.id] = avatarImage;
         }
         avatarFrame.Add(avatarImage);

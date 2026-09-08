@@ -118,12 +118,33 @@ public static class MCBUtils
         }
 
         Uri absoluteUri;
-        if (Uri.TryCreate(pathOrUrl, UriKind.Absolute, out absoluteUri))
+        if (Uri.TryCreate(pathOrUrl, UriKind.Absolute, out absoluteUri) &&
+            (absoluteUri.Scheme == Uri.UriSchemeHttp || absoluteUri.Scheme == Uri.UriSchemeHttps))
         {
+            if (isDevEnvironment && string.Equals(absoluteUri.Host, "dev.api.orbiters.cc", StringComparison.OrdinalIgnoreCase))
+            {
+                return new UriBuilder(absoluteUri) { Scheme = apiRoot.Scheme, Host = apiRoot.Host,
+                    Port = apiRoot.IsDefaultPort ? -1 : apiRoot.Port }.Uri.ToString();
+            }
             return NormalizeApiOrigin(absoluteUri, apiRoot);
         }
 
         return new Uri(apiRoot, pathOrUrl.TrimStart('/')).ToString();
+    }
+
+    public static string ResolveImageUrl(string pathOrUrl)
+    {
+        string url = ResolveApiUrl(pathOrUrl);
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return url;
+        var api = new Uri(getApiUrl(string.Empty));
+        bool backend = uri.Host == api.Host && uri.Port == api.Port;
+        if (!backend || (uri.AbsolutePath.IndexOf("/files/serve/", StringComparison.OrdinalIgnoreCase) < 0 &&
+            !uri.AbsolutePath.EndsWith("/mcb-banner", StringComparison.OrdinalIgnoreCase))) return url;
+        string query = uri.Query.TrimStart('?');
+        query = System.Text.RegularExpressions.Regex.Replace(query, @"(^|&)format=[^&]*", "$1format=png", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(query, @"(^|&)format=", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            query += (query.Length == 0 ? "" : "&") + "format=png";
+        return new UriBuilder(uri) { Query = query }.Uri.ToString();
     }
 
     private static string NormalizeApiOrigin(Uri uri, Uri apiRoot)

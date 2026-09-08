@@ -67,7 +67,7 @@ public static class AvatarAssetDiscoveryService
     private static readonly Dictionary<string, PendingDiscoveryRequest> PendingDiscoveryRequests = new Dictionary<string, PendingDiscoveryRequest>(StringComparer.Ordinal);
     private static readonly HashSet<int> LoggedMissingBannerAssets = new HashSet<int>();
     private static readonly HashSet<string> LoggedInsecureImageUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> FailedImageDownloads = new HashSet<string>(StringComparer.Ordinal);
+    private static readonly MCBImageRetryGate<string> FailedImageDownloads = new MCBImageRetryGate<string>();
     private static bool repaintQueued;
 
     static AvatarAssetDiscoveryService()
@@ -79,6 +79,7 @@ public static class AvatarAssetDiscoveryService
 
         AssemblyReloadEvents.beforeAssemblyReload += () =>
         {
+            MCBImageCache.ReleaseAll(ThumbnailCache);
             EditorApplication.delayCall -= RepaintAllViews;
             PendingThumbnailDownloads.Clear();
             PendingDiscoveryRequests.Clear();
@@ -558,7 +559,6 @@ public static class AvatarAssetDiscoveryService
         }
 
         url = ExpandImageUrl(url);
-        url = PrepareUnityImageUrl(url, "banner");
         url = NormalizeImageUrl(url, "banner", asset.id);
         if (string.IsNullOrWhiteSpace(url))
         {
@@ -577,7 +577,6 @@ public static class AvatarAssetDiscoveryService
         }
 
         url = ExpandImageUrl(url);
-        url = PrepareUnityImageUrl(url, kind);
         url = NormalizeImageUrl(url, kind, assetId);
         if (string.IsNullOrWhiteSpace(url) || IsDefaultPlaceholderImageUrl(url))
         {
@@ -585,7 +584,7 @@ public static class AvatarAssetDiscoveryService
         }
 
         string cacheKey = GetImageCacheKey(kind, assetId, url);
-        if (ThumbnailCache.TryGetValue(cacheKey, out var cachedTexture))
+        if (MCBImageCache.TryGetLive(ThumbnailCache, cacheKey, out var cachedTexture))
         {
             return cachedTexture;
         }
@@ -680,7 +679,7 @@ public static class AvatarAssetDiscoveryService
                 File.WriteAllBytes(localPath, pngData);
                 FailedImageDownloads.Remove(cacheKey);
                 MCBConnectivityMonitor.ClearRequestWarning($"asset-image:{kind}:{assetId}");
-                ThumbnailCache[cacheKey] = texture;
+                ThumbnailCache[cacheKey] = MCBImageCache.Retain(texture);
                 if (string.Equals(kind, "banner", StringComparison.Ordinal))
                 {
                     MCBLogger.Log($"[AvatarAssetDiscovery] Cached banner for assetId={assetId} at {localPath}");
@@ -741,52 +740,12 @@ public static class AvatarAssetDiscoveryService
 
     private static string ExpandImageUrl(string url)
     {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return null;
-        }
-
-        if (Uri.TryCreate(url, UriKind.Absolute, out _))
-        {
-            return url;
-        }
-
-        if (!Uri.TryCreate(MCBUtils.getApiUrl(string.Empty), UriKind.Absolute, out var apiRoot))
-        {
-            return url;
-        }
-
-        return new Uri(apiRoot, url.TrimStart('/')).ToString();
+        return MCBUtils.ResolveImageUrl(url);
     }
 
     private static string BuildAssetImageUrl(int assetId, string imageName)
     {
         return $"{MCBUtils.getApiUrl("assets")}/{assetId}/{imageName}";
-    }
-
-    private static string PrepareUnityImageUrl(string url, string kind)
-    {
-        if (string.IsNullOrWhiteSpace(url) ||
-            url.IndexOf("format=", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            !Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return url;
-        }
-
-        bool shouldRequestPng =
-            string.Equals(kind, "thumb", StringComparison.Ordinal) &&
-            uri.AbsolutePath.IndexOf("/files/serve/", StringComparison.OrdinalIgnoreCase) >= 0;
-
-        shouldRequestPng |=
-            string.Equals(kind, "banner", StringComparison.Ordinal) &&
-            uri.AbsolutePath.EndsWith("/mcb-banner", StringComparison.OrdinalIgnoreCase);
-
-        if (!shouldRequestPng)
-        {
-            return url;
-        }
-
-        return $"{url}{(url.Contains("?") ? "&" : "?")}format=png";
     }
 
     private static string NormalizeImageUrl(string url, string kind, int assetId)
@@ -865,7 +824,7 @@ public static class AvatarAssetDiscoveryService
             {
                 texture.wrapMode = TextureWrapMode.Clamp;
                 texture.filterMode = FilterMode.Bilinear;
-                return texture;
+                return MCBImageCache.Retain(texture);
             }
 
             Object.DestroyImmediate(texture);
@@ -886,7 +845,6 @@ public static class AvatarAssetDiscoveryService
         }
 
         url = ExpandImageUrl(url);
-        url = PrepareUnityImageUrl(url, kind);
         url = NormalizeImageUrl(url, kind, assetId);
         if (string.IsNullOrWhiteSpace(url) || IsDefaultPlaceholderImageUrl(url))
         {
@@ -923,7 +881,7 @@ public static class AvatarAssetDiscoveryService
 
         PendingThumbnailDownloads.Remove(cacheKey);
         FailedImageDownloads.Remove(cacheKey);
-        ThumbnailCache[cacheKey] = cachedTexture;
+        ThumbnailCache[cacheKey] = MCBImageCache.Retain(cachedTexture);
         QueueRepaintAllViews();
         return cachedTexture;
     }

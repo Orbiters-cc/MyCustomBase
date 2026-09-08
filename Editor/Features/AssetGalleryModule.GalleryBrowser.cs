@@ -259,7 +259,7 @@ public partial class AssetGalleryModule
         avatarImage.AddToClassList("mcb-card__avatar-image");
         if (asset.ownerId.HasValue)
         {
-            avatarImage.image = UserService.GetUserAvatar(asset.ownerId.Value);
+            UserAvatarImage.Bind(avatarImage, asset.ownerId.Value);
             ownerAvatarImages[asset.id] = avatarImage;
         }
         avatarFrame.Add(avatarImage);

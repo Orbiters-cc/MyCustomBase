@@ -85,7 +85,7 @@ public partial class AssetGalleryModule
         var avatarImage = new Image { scaleMode = ScaleMode.ScaleAndCrop };
         if (comment != null && comment.fromUserId > 0)
         {
-            avatarImage.image = UserService.GetUserAvatar(comment.fromUserId);
+            UserAvatarImage.Bind(avatarImage, comment.fromUserId);
         }
         avatarImage.AddToClassList("mcb-comment__avatar-image");
         avatar.Add(avatarImage);

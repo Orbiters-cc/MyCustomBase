@@ -72,19 +72,18 @@ public class AccountModule
 
         var avatarFrame = new VisualElement();
         avatarFrame.AddToClassList("mcb-account__avatar");
-        if (avatarTexture != null)
-        {
-            var avatarImage = new Image { image = avatarTexture, scaleMode = ScaleMode.ScaleAndCrop };
-            avatarImage.AddToClassList("mcb-account__avatar-image");
-            avatarFrame.Add(avatarImage);
-        }
-        else
-        {
-            avatarFrame.style.backgroundColor = avatarFallbackColor;
-            var initials = new Label(GetInitials(userName));
-            initials.AddToClassList("mcb-account__avatar-initials");
-            avatarFrame.Add(initials);
-        }
+        avatarFrame.style.backgroundColor = avatarFallbackColor;
+        var avatarImage = new Image { image = avatarTexture, scaleMode = ScaleMode.ScaleAndCrop };
+        avatarImage.AddToClassList("mcb-account__avatar-image");
+        avatarFrame.Add(avatarImage);
+        var initials = new Label(GetInitials(userName));
+        initials.AddToClassList("mcb-account__avatar-initials");
+        avatarFrame.Add(initials);
+        if (accountUserId.HasValue) UserAvatarImage.Bind(avatarImage, accountUserId.Value, texture => {
+            avatarTexture = texture;
+            initials.style.display = texture == null ? DisplayStyle.Flex : DisplayStyle.None;
+            avatarImage.style.display = texture == null ? DisplayStyle.None : DisplayStyle.Flex;
+        });
         if (HasAvatarLoadWarning())
         {
             var warning = new Label("!");
