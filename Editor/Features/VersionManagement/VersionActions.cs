@@ -2784,12 +2784,7 @@ public class VersionActions
                 if (pendingMarkerVersion != null && IsAdvancedMeshVersionApplied(pendingMarkerVersion))
                 {
                     MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state before hash is ready: {pendingMarkerVersion.version}");
-                    editor.isCustomBase = true;
-                    editor.currentIsCustom = false;
-                    editor.customBaseTarget.appliedCustomBaseVersion = pendingMarkerVersion;
-                    SyncAppliedVersionBlendshapeLinkCache(pendingMarkerVersion);
-                    SyncAppliedVersionAnimationPositionOffsetCache(pendingMarkerVersion);
-                    EditorUtility.SetDirty(editor.customBaseTarget);
+                    PersistAppliedVersionState(pendingMarkerVersion);
                     return;
                 }
 
@@ -2819,12 +2814,7 @@ public class VersionActions
         if (markerVersion != null && IsAdvancedMeshVersionApplied(markerVersion))
         {
             MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state: {markerVersion.version}");
-            editor.isCustomBase = true;
-            editor.currentIsCustom = false;
-            editor.customBaseTarget.appliedCustomBaseVersion = markerVersion;
-            SyncAppliedVersionBlendshapeLinkCache(markerVersion);
-            SyncAppliedVersionAnimationPositionOffsetCache(markerVersion);
-            EditorUtility.SetDirty(editor.customBaseTarget);
+            PersistAppliedVersionState(markerVersion);
             return;
         }
 
@@ -2900,6 +2890,7 @@ public class VersionActions
         SyncAppliedVersionBlendshapeLinkCache(version);
         SyncAppliedVersionAnimationPositionOffsetCache(version);
         EditorUtility.SetDirty(editor.customBaseTarget);
+        editor.serializedObject.Update();
     }
 
     private void ClearAppliedVersionState()
@@ -2945,7 +2936,12 @@ public class VersionActions
             return inferredAdvanced;
         }
 
-        if (applied != null && applied != VersionListDrawer.RESET_VERSION)
+        // Shared meshes without an unambiguous identity must not revive a stale marker.
+        if (NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
+                editor.customBaseTarget.transform.root).Count > 0)
+            return null;
+
+        if (applied != null && !string.IsNullOrWhiteSpace(applied.version) && applied != VersionListDrawer.RESET_VERSION)
         {
             return applied;
         }
@@ -2969,11 +2965,7 @@ public class VersionActions
 
     private CustomBaseVersion InferAdvancedVersionFromGeneratedMeshPaths(IReadOnlyList<CustomBaseVersion> candidates)
     {
-        if (editor?.customBaseTarget == null ||
-            !NativeMeshPayloadService.TryGetAppliedGeneratedMeshVersion(
-                editor.customBaseTarget.transform.root,
-                out int assetId,
-                out string versionString))
+        if (editor?.customBaseTarget == null)
         {
             return null;
         }
@@ -2987,9 +2979,10 @@ public class VersionActions
         var local = VersionRepository.Scan();
         available.AddRange(local.imported.Where(v => v != null));
         available.AddRange(local.unsubmitted.Where(v => v != null));
-        var match = available.FirstOrDefault(v =>
-            v.assetId == assetId &&
-            string.Equals(v.version, versionString, StringComparison.Ordinal));
+        var target = editor.customBaseTarget;
+        var match = NativeMeshPayloadService.ResolveAppliedMeshVersion(
+            target.transform.root, available, target.appliedCustomBaseAssetId,
+            target.appliedCustomBaseVersionString, target.appliedCustomBaseDefaultAviVersion);
         if (match == null)
         {
             return null;
@@ -3036,13 +3029,6 @@ public class VersionActions
         if (version == null || version == VersionListDrawer.RESET_VERSION || editor?.customBaseTarget == null)
         {
             return false;
-        }
-
-        if (NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
-                editor.customBaseTarget.transform.root,
-                version).Count > 0)
-        {
-            return true;
         }
 
         var applied = ResolvePersistedAppliedVersion();

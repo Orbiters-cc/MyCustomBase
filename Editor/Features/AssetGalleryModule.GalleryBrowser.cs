@@ -153,6 +153,11 @@ public partial class AssetGalleryModule
     {
         var grid = new VisualElement();
         grid.AddToClassList("mcb-gallery-grid");
+        grid.RegisterCallback<GeometryChangedEvent>(evt =>
+        {
+            if (Mathf.Abs(evt.newRect.width - evt.oldRect.width) > 0.01f)
+                ResizeGalleryCards(grid);
+        });
         root.Add(grid);
 
         foreach (var asset in assets)
@@ -168,6 +173,24 @@ public partial class AssetGalleryModule
         if (includeCreateCard)
         {
             grid.Add(CreateCreateCustomBaseCardUIToolkit());
+        }
+        grid.schedule.Execute(() => ResizeGalleryCards(grid));
+    }
+
+    private static void ResizeGalleryCards(VisualElement grid)
+    {
+        float width = grid.contentRect.width;
+        if (float.IsNaN(width) || float.IsInfinity(width) || width <= 16f) return;
+        const float spacing = 16f; // Two 8px card margins, also used at the outer edges.
+        int columns = Mathf.Max(1, Mathf.FloorToInt(width / (174f + spacing)));
+        // Round down to UI Toolkit's layout precision to avoid accidental wrapping at a breakpoint.
+        float cardWidth = Mathf.Floor((width / columns - spacing) * 64f) / 64f;
+        foreach (var card in grid.Children())
+        {
+            card.style.width = cardWidth;
+            card.style.height = cardWidth + 93f;
+            var media = card.Q<VisualElement>(className: "mcb-card__media");
+            if (media != null) media.style.height = cardWidth - 2f;
         }
     }
 

@@ -58,6 +58,35 @@ public static partial class NativeMeshPayloadService
             p?.transform == TransformName && GetGeneratedPayloadPath(version, p, GetPayloadIdentity(p)) == path);
     }
 
+    internal static CustomBaseVersion ResolveAppliedMeshVersion(Transform root,
+        IEnumerable<CustomBaseVersion> candidates, int assetId, string version, string defaultVersion)
+    {
+        var paths = ResolveAppliedGeneratedMeshRenderers(root)
+            .Select(r => MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(r.sharedMesh)));
+        return ResolveAppliedMeshVersionFromPaths(paths, candidates, assetId, version, defaultVersion);
+    }
+
+    internal static CustomBaseVersion ResolveAppliedMeshVersionFromPaths(IEnumerable<string> meshPaths,
+        IEnumerable<CustomBaseVersion> candidates, int assetId, string version, string defaultVersion)
+    {
+        var paths = meshPaths.Distinct(StringComparer.Ordinal).ToArray();
+        if (paths.Length == 0) return null;
+        var matches = (candidates ?? Enumerable.Empty<CustomBaseVersion>())
+            .Where(v => v != null && !string.IsNullOrWhiteSpace(v.version))
+            .GroupBy(v => new { v.assetId, v.version, v.defaultAviVersion })
+            .Select(g => g.First())
+            .Where(v => paths.All(path => IsSharedMeshForVersion(path, v) ||
+                (TryParseGeneratedMeshAssetPath(path, out int owner, out string revision) &&
+                 owner == v.assetId && revision == v.version)))
+            .ToArray();
+
+        // Identical meshes can belong to different releases with different options.
+        // Preserve the explicit installed identity; never choose the newest by mesh alone.
+        var persisted = matches.FirstOrDefault(v => v.assetId == assetId && v.version == version &&
+            (string.IsNullOrEmpty(defaultVersion) || v.defaultAviVersion == defaultVersion));
+        return persisted ?? (matches.Length == 1 ? matches[0] : null);
+    }
+
     static GeneratedPayloadStorageInfo DeleteUnreferencedGeneratedPayloads()
     {
         if (!AssetDatabase.IsValidFolder(GeneratedFolder)) return new GeneratedPayloadStorageInfo(0, 0, 0);

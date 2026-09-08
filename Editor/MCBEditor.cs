@@ -356,6 +356,12 @@ public class MCBEditor : UnityEditor.Editor
             RefreshConnectivityDiagnosticsUIToolkit();
             assetGalleryModule?.RefreshUIToolkit();
             creatorModule?.RefreshUIToolkit();
+            // The full version DTO is not Unity-serialized. Rehydrate it from local/server
+            // metadata before both the action button and avatar options read the state.
+            if (customBaseTarget != null &&
+                (customBaseTarget.appliedCustomBaseVersion == null || !isCustomBase) &&
+                !string.IsNullOrEmpty(customBaseTarget.appliedCustomBaseVersionString))
+                versionModule?.actions.UpdateAppliedVersionAndState();
             versionModule?.RefreshUIToolkit();
             avatarOptionsModule?.RefreshUIToolkit();
             RefreshStatusMessagesUIToolkit();
