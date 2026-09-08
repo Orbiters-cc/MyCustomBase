@@ -15,7 +15,7 @@ using UnityEngine;
 /// reset to the default base restores them (this part works even without ReFit installed), and commits the
 /// generated files through Unit Git when available.
 /// </summary>
-public static class MCBReFitIntegration
+public static partial class MCBReFitIntegration
 {
     /// <summary>Raised after the persisted ReFit state of one renderer changes.</summary>
     public static event Action<MyCustomBase, string> RefitStateChanged;
@@ -321,6 +321,7 @@ public static class MCBReFitIntegration
             var t = root.Find(entry.rendererPath);
             var smr = t != null ? t.GetComponent<SkinnedMeshRenderer>() : null;
             if (smr == null) continue;
+            if (smr.sharedMesh != entry.refitMesh) continue;
             if (RestoreRendererState(root, smr, entry, "MCB ReFit restore")) restored++;
         }
         Undo.RecordObject(target, "MCB ReFit restore");
@@ -430,7 +431,7 @@ public static class MCBReFitIntegration
             restored = true;
         }
 
-        if (entry.originalBonePaths != null && entry.originalBonePaths.Count > 0)
+        if (entry.originalBonePaths != null)
         {
             var bones = new Transform[entry.originalBonePaths.Count];
             for (int i = 0; i < bones.Length; i++)
@@ -949,6 +950,10 @@ public static class MCBReFitIntegration
                     ReFitApi.GetSecondarySourceShapeNames(result),
                     ReFitApi.GetSecondaryShapeNames(result));
                 SyncTransferredBlendShapeWeights(existing, targetBody, renderer);
+                SaveVersionFits(mcb, GetAppliedRefitVersion(mcb));
+                string savedFitFolder = GetVersionRefitFolder(mcb, GetAppliedRefitVersion(mcb));
+                if (savedFitFolder != null)
+                    changedPaths.Add(savedFitFolder + "/" + CacheKey(rendererPath) + ".asset");
                 if (!string.IsNullOrEmpty(existing.refitMeshAssetPath)) changedPaths.Add(existing.refitMeshAssetPath);
                 EditorUtility.SetDirty(mcb);
             }
@@ -1080,6 +1085,7 @@ public static class MCBReFitIntegration
         if (mcb == null) return;
         var entry = FindEntry(mcb, rendererPath);
         if (entry == null) return;
+        DisableSavedFit(mcb, rendererPath);
         var root = mcb.transform.root;
         var t = root.Find(rendererPath);
         var smr = t != null ? t.GetComponent<SkinnedMeshRenderer>() : null;

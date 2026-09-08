@@ -1072,6 +1072,10 @@ public class VersionActions
                 editor);
         }
 
+        MCBReFitIntegration.SaveVersionFits(editor.customBaseTarget, previousVersion);
+        MCBReFitIntegration.RestoreOriginalAssetMeshes(editor.customBaseTarget);
+        editor.serializedObject.Update();
+
         var previousAffectedFbxPaths = GetResetAffectedFbxPaths(previousVersion ?? versionForAssets, fbxPath);
         if (!isAdvancedTransition)
         {
@@ -1115,9 +1119,6 @@ public class VersionActions
                     }
                 }
 
-                // Resetting to the default original base: restore any asset meshes modified by ReFit
-                // back to their original meshes (tracked on the MyCustomBase component).
-                MCBReFitIntegration.RestoreOriginalAssetMeshes(editor.customBaseTarget);
             }
             catch (Exception e)
             {
@@ -1447,6 +1448,13 @@ public class VersionActions
             ReportApplyProgress(0.93f, hasCustomVeins ? "Applied custom veins..." : "Updated material state...");
             profile.Mark(hasCustomVeins ? "Applied custom veins materials" : "Removed custom veins materials");
             
+            if (!isReset && version != null)
+            {
+                int restoredRefits = MCBReFitIntegration.RestoreVersionFits(editor.customBaseTarget, version);
+                editor.serializedObject.Update();
+                profile.Mark($"Restored {restoredRefits} saved accessory ReFits");
+            }
+
             // Restore blendshape values by name after all mesh swaps are complete.
             if (!isReset && version != null)
             {
