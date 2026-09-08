@@ -343,6 +343,7 @@ public class MCBEditor : UnityEditor.Editor
     {
         if (uiToolkitRoot == null)
         {
+            if (creatorWindowAsset != null) creatorModule?.RefreshUIToolkit();
             return;
         }
 
@@ -612,7 +613,7 @@ public class MCBEditor : UnityEditor.Editor
 
     public bool ShouldShowGalleryOnly()
     {
-        return assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly();
+        return creatorWindowAsset == null && assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly();
     }
 
     public void StartCreateNewVersion()
@@ -1430,8 +1431,11 @@ public class MCBEditor : UnityEditor.Editor
 
     public AvatarDiscoveredAsset GetSelectedAsset()
     {
-        return assetGalleryModule != null ? assetGalleryModule.SelectedAsset : null;
+        return creatorWindowAsset ?? (assetGalleryModule != null ? assetGalleryModule.SelectedAsset : null);
     }
+
+    private AvatarDiscoveredAsset creatorWindowAsset;
+    internal void SetCreatorWindowAsset(AvatarDiscoveredAsset asset) { creatorWindowAsset = asset; }
 
     public bool SyncBaseFbxFilesFromSelectedAsset()
     {

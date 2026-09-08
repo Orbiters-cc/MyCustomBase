@@ -19,9 +19,9 @@ public partial class CreatorModeModule
     public void OpenWindow()
     {
         if (!IsSelectedAssetOwnedByCurrentUser()) return;
-        if (creatorWindow == null) creatorWindow = MCBCreatorWindow.Open(editor, this);
-        creatorWindow.Show();
-        creatorWindow.Focus();
+        var window = creatorWindow != null ? creatorWindow : MCBCreatorWindow.Open(editor, this);
+        window.Show();
+        window.Focus();
     }
 
     internal void AttachWindow(MCBCreatorWindow window, VisualElement root)
@@ -134,6 +134,12 @@ public partial class CreatorModeModule
         }
 
         creatorModeFoldout = true;
+
+        if (creatorWindow.showBuildSuccess)
+        {
+            BuildSuccessUIToolkit();
+            return;
+        }
 
         PopulateParentVersionDropdown();
         if (editor.selectedVersionForAction != previouslySelectedVersion)

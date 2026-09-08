@@ -2605,6 +2605,8 @@ public partial class CreatorModeModule
                 // The artifact (version folder + version.json + manifest) is already
                 // committed and persisted as unsubmitted by VersionBuilder.
                 var metadata = builtArtifact.Metadata;
+                creatorWindow?.Built(metadata);
+                RememberPendingBuild(metadata, builtArtifact.Manifest?.formSignature);
                 editor.LoadUnsubmittedVersions(true);
                 var versionActions = new VersionActions(editor, networkService, fileManagerService);
 
@@ -2631,11 +2633,7 @@ public partial class CreatorModeModule
             editor.Repaint();
         }
 
-        if (buildError == null)
-        {
-            EditorUtility.DisplayDialog("Build Complete", $"Version {builtArtifact.Metadata.version} has been built and applied locally as a temporary version. Review it, then click Publish to upload it" + (UnitGitReleasePublisher.IsUnitGitAvailable ? " and create a Unit Git release checkpoint." : "."), "OK");
-        }
-
+        RefreshSiblingVersionLists();
         RefreshEditorUi();
     }
 
@@ -2675,6 +2673,21 @@ public partial class CreatorModeModule
                     ClearBuiltPendingVersion();
                 }
             });
+        RefreshSiblingVersionLists();
+        RefreshEditorUi();
+    }
+
+    private void RefreshSiblingVersionLists()
+    {
+        foreach (var other in Resources.FindObjectsOfTypeAll<MCBEditor>())
+        {
+            if (other == editor || other.target == null || other.GetSelectedAsset()?.id != editor.GetSelectedAsset()?.id) continue;
+            other.LoadUnsubmittedVersions(true);
+            other.LoadImportedVersions(true);
+            other.serverVersions = editor.serverVersions.ToList();
+            other.serializedObject.Update();
+            other.RefreshUiToolkitSections();
+        }
     }
 }
 #endif

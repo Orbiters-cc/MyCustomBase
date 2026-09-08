@@ -1,3 +1,10 @@
+.mcb-build-success__title { font-size: 24px; -unity-font-style: bold; color: rgb(0, 218, 109); margin-top: 18px; margin-bottom: 12px; }
+.mcb-build-success__description { white-space: normal; margin-bottom: 20px; }
+.mcb-build-success__upload { height: 56px; font-size: 17px; margin-bottom: 12px; }
+.mcb-build-success__create { height: 36px; margin-bottom: 28px; }
+.mcb-build-success__row { padding: 10px 0; border-bottom-width: 1px; border-bottom-color: rgb(60, 60, 60); align-items: center; }
+.mcb-build-success__version { flex-grow: 1; white-space: normal; margin-right: 12px; }
+
 .mcb-creator-window {
     background-color: rgb(36, 36, 36);
     flex-grow: 1;
