@@ -217,7 +217,7 @@ public static class MCBManagedRequest
 }
 
 [InitializeOnLoad]
-public static class MCBConnectivityMonitor
+public static partial class MCBConnectivityMonitor
 {
     private const string SessionKey = "MCB.PackageConnectivity.Started";
     private const string ReachabilityKey = "MCB.PackageConnectivity.Reachable";
@@ -245,6 +245,7 @@ public static class MCBConnectivityMonitor
         FailureReport = SessionState.GetString(FailureReportKey, string.Empty);
         LastCheckedUrl = SessionState.GetString(LastUrlKey, string.Empty);
         EditorApplication.delayCall += OnInitialDelayCall;
+        EditorApplication.update += PollRecovery;
     }
 
     private static void OnInitialDelayCall()
@@ -294,6 +295,8 @@ public static class MCBConnectivityMonitor
 
     public static void MarkServerReachable()
     {
+        nextRecoveryAt = 0;
+        recoveryAttempts = 0;
         failureReportGeneration++;
         bool changed = !HasCompleted || !CanReachServer || !string.IsNullOrEmpty(FailureReport);
 

@@ -183,7 +183,9 @@ public static class MCBPackageVersionService
         {
             EditorApplication.delayCall += () =>
             {
-                CurrentStatus = statusToPublish;
+                // A transient outage must not erase an already received support restriction.
+                if (IsConnectedState(statusToPublish.connectionState) || CurrentStatus == null || !CurrentStatus.hasChecked)
+                    CurrentStatus = statusToPublish;
                 isChecking = false;
                 MaybeShowMinorUpdatePopup(statusToPublish);
                 StatusChanged?.Invoke();
@@ -199,7 +201,7 @@ public static class MCBPackageVersionService
         }
     }
 
-    private static PackageVersionStatus BuildStatus(string currentVersion, NetworkService.CheckConnectionResponse response)
+    internal static PackageVersionStatus BuildStatus(string currentVersion, NetworkService.CheckConnectionResponse response)
     {
         var status = PackageVersionStatus.CreateDefault(currentVersion);
         if (response == null)
@@ -217,6 +219,9 @@ public static class MCBPackageVersionService
             return status;
         }
 
+        status.isDeprecated = string.Equals(response.supportStatus, "deprecated", StringComparison.Ordinal);
+        status.requiresMajorUpdate = string.Equals(response.supportStatus, "unsupported", StringComparison.Ordinal);
+
         Version current = ParseVersion(currentVersion);
         Version latest = ParseVersion(status.latestVersion);
         if (current == null || latest == null)
@@ -225,7 +230,6 @@ public static class MCBPackageVersionService
         }
 
         status.hasMinorUpdate = latest.Major == current.Major && latest.Minor > current.Minor;
-        status.requiresMajorUpdate = latest.Major > current.Major;
         return status;
     }
 
@@ -373,10 +377,11 @@ public static class MCBPackageVersionService
 
     private static async System.Threading.Tasks.Task<NetworkService.CheckConnectionResponse> FetchRealResponseAsync(string authToken)
     {
-        string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT;
+        string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT
+            + "?packageVersion=" + Uri.EscapeDataString(ReadCurrentPackageVersion());
         if (!string.IsNullOrEmpty(authToken))
         {
-            url += "?t=" + Uri.EscapeDataString(authToken);
+            url += "&t=" + Uri.EscapeDataString(authToken);
         }
 
         return await networkService.CheckConnectionDetailedAsync(url, authToken);
@@ -444,6 +449,7 @@ public sealed class PackageVersionStatus
     public string updateMessage;
     public bool hasMinorUpdate;
     public bool requiresMajorUpdate;
+    public bool isDeprecated;
 
     public static PackageVersionStatus CreateDefault(string currentVersion)
     {

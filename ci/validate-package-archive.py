@@ -25,6 +25,18 @@ REQUIRED_HDIFF_FILES = (
     "Editor/Plugins/Hdiff/hdiffz.dll",
     "Editor/Plugins/Hdiff/hpatchz.dll",
 )
+REQUIRED_COMPRESSION_FILES = (
+    "Editor/Plugins/Compression/win-x64/mcb_lz4.dll",
+    "Editor/Plugins/Compression/win-x64/mcb_zstd.dll",
+    "Editor/Plugins/Compression/linux-x64/libmcb_lz4.so",
+    "Editor/Plugins/Compression/linux-x64/libmcb_zstd.so",
+    "Editor/Plugins/Compression/osx-x64/libmcb_lz4.dylib",
+    "Editor/Plugins/Compression/osx-x64/libmcb_zstd.dylib",
+    "Editor/Plugins/Compression/osx-arm64/libmcb_zstd.dylib",
+    "Editor/Plugins/Compression/provenance.json",
+    "Editor/Plugins/Compression/LZ4-LICENSE.txt",
+    "Editor/Plugins/Compression/ZSTD-LICENSE.txt",
+)
 ALLOWED_EXTERNAL_ASMDEF_REFERENCES = {
     "VRC.SDK3A",
     "VRC.SDK3A.Editor",
@@ -48,7 +60,7 @@ def validate_zip_name(name):
 
 
 def is_allowed_package_file(name):
-    if name.endswith(".meta"):
+    if name.endswith((".meta", ".py")):
         return False
 
     if name in ROOT_FILES:
@@ -106,6 +118,9 @@ def validate_required_files(archive, names, failures):
         require_file(archive, names, required_file, failures)
 
     for required_file in REQUIRED_HDIFF_FILES:
+        require_file(archive, names, required_file, failures)
+
+    for required_file in REQUIRED_COMPRESSION_FILES:
         require_file(archive, names, required_file, failures)
 
 

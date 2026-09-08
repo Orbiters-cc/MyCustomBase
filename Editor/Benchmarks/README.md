@@ -1,5 +1,12 @@
 # Native mesh pipeline experiments
 
+Python is not an MCB user dependency. `benchmark_payload_codecs.py` is an optional
+developer comparison and is excluded from release archives. Scripts under `ci/`
+prepare or verify packages on developer/CI machines. Unity calibration, creator
+builds, downloads and Apply call the bundled native codec libraries through C#;
+the release validator requires those binaries. Blender sync uses Blender's own
+embedded Python interpreter and does not require a system Python installation.
+
 For the current implementation, call
 `NativeMeshPipelineBenchmark.StartAdaptiveDelivery(assetPath, binPath, originalKeyPath, 3)`
 with an existing uncompressed native payload fixture. It compares the bundled

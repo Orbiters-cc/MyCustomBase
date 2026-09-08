@@ -569,6 +569,7 @@ public class NetworkService
         public string state;
         public string latestVersion;
         public string updateMessage;
+        public string supportStatus;
     }
 
     public async Task<CheckConnectionResponse> CheckConnectionDetailedAsync(string url, string authToken = null)

@@ -431,6 +431,14 @@ public class MCBEditor : UnityEditor.Editor
         bool hasMajorUpdateLockout = MCBPackageVersionService.RequiresMajorUpdate;
         bool showOfflineSavedVersionsUi = !HasServerAccess && importedVersions != null && importedVersions.Count > 0;
 
+        var packageStatus = MCBPackageVersionService.CurrentStatus;
+        if (packageStatus != null && packageStatus.isDeprecated)
+        {
+            statusHost.Add(CreateStatusMessage("MCB update recommended", string.IsNullOrWhiteSpace(packageStatus.updateMessage)
+                ? "This MCB release is deprecated. Update My Custom Base in VCC." : packageStatus.updateMessage, HelpBoxMessageType.Warning));
+            hasContent = true;
+        }
+
         if (hasMajorUpdateLockout)
         {
             var status = MCBPackageVersionService.CurrentStatus;
