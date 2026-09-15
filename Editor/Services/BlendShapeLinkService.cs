@@ -85,6 +85,7 @@ public partial class BlendShapeLinkService
         public bool setFactorDefaultValue;
         public float factorDefaultValue;
         public string driverBlendshape;
+        public bool copyWithoutFactor;
     }
 
     private struct AnimationBindingSignature

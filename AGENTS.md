@@ -134,6 +134,14 @@
 - Keep link operations idempotent and safe across repeated preprocess calls.
 - Keep naming deterministic for parameters and generated assets.
 
+### ReFit Flex Links
+- MCB ReFit adds all target-body mesh shapes containing `flex` (case-insensitive) to the exposed version shapes, preserving exact names and removing exact duplicates.
+- Use the existing `BlendShapeLinkService` for build-time synchronization. Do not add VRCFury Blendshape Link components or a second animation-rewrite system.
+- `MCBReFitLinkCaptureHook` captures the build-copy renderer references before hierarchy/mesh processing; `BlendShapeLinkPostVrcfuryHook` applies the links after version/manual correctives.
+- `BlendShapeLinkService.ReFit.cs` uses recorded source/generated pairs, including renamed outputs. Only currently applied ReFit meshes qualify; native accessory shapes are not inferred as transfers.
+- One-to-one ReFit links use `copyWithoutFactor`: clone the clip through the shared rewrite path, copy the source curve exactly, and add no factor parameter or wrapper tree. Factor-driven corrective behavior must remain unchanged.
+- Verify with `MCBReFitFlexTests`: actual animation sampling, exact bindings, authoring-asset isolation, repeat-build idempotence, and build-copy renderer identity. A mapping count alone is not evidence that the accessory animates.
+
 ## Custom Base FBX Backup Invariant
 - For a custom base version B/C applied over a default base A, every affected `*.fbx.old` file must always remain a copy of A.
 - Applying any custom FBX or downloaded/unsubmitted version may create `*.fbx.old` if it is missing, but must never overwrite or move an existing `*.fbx.old`.

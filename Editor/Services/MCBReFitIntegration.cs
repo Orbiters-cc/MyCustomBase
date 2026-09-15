@@ -825,14 +825,6 @@ public static partial class MCBReFitIntegration
             yield break;
         }
 
-        var shapes = (mcb.appliedCustomBaseVersion != null && mcb.appliedCustomBaseVersion.customBlendshapes != null
-                ? mcb.appliedCustomBaseVersion.customBlendshapes
-                    .Where(b => b != null && !string.IsNullOrEmpty(b.name))
-                    .Select(b => b.name)
-                : Enumerable.Empty<string>())
-            .Distinct()
-            .ToList();
-
         var source = BuildSourceReference(mcb, out string sourceError);
         if (source == null)
         {
@@ -843,6 +835,7 @@ public static partial class MCBReFitIntegration
             yield break;
         }
 
+        var shapes = CollectRefitBlendShapeNames(mcb.appliedCustomBaseVersion, source.targetBody.sharedMesh);
         var changedPaths = new List<string>();
         var failures = new List<string>();
         int done = 0;
@@ -964,6 +957,29 @@ public static partial class MCBReFitIntegration
             }
             reportDone(++done);
         }
+    }
+
+    internal static bool IsFlexBlendShape(string name)
+    {
+        return !string.IsNullOrEmpty(name) && name.IndexOf("flex", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    internal static List<string> CollectRefitBlendShapeNames(CustomBaseVersion version, Mesh targetBodyMesh)
+    {
+        var names = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        if (version?.customBlendshapes != null)
+            foreach (var shape in version.customBlendshapes)
+                if (!string.IsNullOrEmpty(shape?.name) && seen.Add(shape.name)) names.Add(shape.name);
+
+        // Flex shapes can exist only in the mesh, without a creator-exposed slider definition.
+        if (targetBodyMesh != null)
+            for (int i = 0; i < targetBodyMesh.blendShapeCount; i++)
+            {
+                string name = targetBodyMesh.GetBlendShapeName(i);
+                if (IsFlexBlendShape(name) && seen.Add(name)) names.Add(name);
+            }
+        return names;
     }
 
     private static void UpdateTransferredBlendShapeMap(RefitAppliedMeshEntry entry, string[] sourceNames, string[] generatedNames)

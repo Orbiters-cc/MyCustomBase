@@ -1,11 +1,8 @@
 #if UNITY_EDITOR
 using System;
-using System.Collections;
-using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Networking;
 using UnityEngine.UIElements;
 
 public partial class AssetGalleryModule
@@ -35,7 +32,6 @@ public partial class AssetGalleryModule
 
         bool canEditMedia = CanEditSelectedAssetMedia(selectedAsset);
         var state = EnsureInteractionLoad(selectedAsset.id);
-        string bannerUrl = ResolveSelectedAssetBannerUrl(selectedAsset);
 
         var frame = new VisualElement();
         frame.AddToClassList("mcb-selected-banner");
@@ -72,31 +68,21 @@ public partial class AssetGalleryModule
             frame.Add(interactionError);
         }
 
-        if (string.IsNullOrWhiteSpace(bannerUrl))
-        {
-            selectedAssetBannerImage.style.display = DisplayStyle.None;
-            selectedAssetBannerMessage.text = "No banner yet";
-            selectedAssetBannerMessage.style.display = DisplayStyle.Flex;
-            return;
-        }
+        UpdateSelectedAssetBanner();
+    }
 
-        if (selectedAssetBannerTextures.TryGetValue(selectedAsset.id, out var cachedTexture) && cachedTexture != null)
-        {
-            ApplySelectedAssetBannerTexture(cachedTexture);
-            return;
-        }
+    private void UpdateSelectedAssetBanner()
+    {
+        if (SelectedAsset == null || selectedAssetBannerImage == null ||
+            selectedAssetBannerAssetId != SelectedAsset.id) return;
 
-        if (selectedAssetBannerErrors.TryGetValue(selectedAsset.id, out var error) && !string.IsNullOrWhiteSpace(error))
-        {
-            selectedAssetBannerImage.style.display = DisplayStyle.None;
-            selectedAssetBannerMessage.text = error;
-            selectedAssetBannerMessage.style.display = DisplayStyle.Flex;
-            return;
-        }
-
-        selectedAssetBannerImage.style.display = DisplayStyle.None;
-        selectedAssetBannerMessage.style.display = DisplayStyle.Flex;
-        StartSelectedAssetBannerLoad(selectedAsset.id, bannerUrl);
+        var texture = AvatarAssetDiscoveryService.GetBanner(SelectedAsset);
+        if (texture != null)
+            ApplySelectedAssetBannerTexture(texture);
+        else
+            UpdateSelectedAssetBannerMessage(AvatarAssetDiscoveryService.IsBannerRetryPending(SelectedAsset)
+                ? "Banner temporarily unavailable. Retrying..."
+                : "Loading banner...");
     }
 
     private void BuildSelectedAssetActionsUIToolkit()
@@ -108,87 +94,6 @@ public partial class AssetGalleryModule
 
         selectedAssetActionsRoot.Clear();
         selectedAssetActionsRoot.style.display = DisplayStyle.None;
-    }
-
-    private void StartSelectedAssetBannerLoad(int assetId, string bannerUrl)
-    {
-        if (assetId <= 0 ||
-            string.IsNullOrWhiteSpace(bannerUrl) ||
-            selectedAssetBannerLoads.Contains(assetId) ||
-            selectedAssetBannerTextures.ContainsKey(assetId))
-        {
-            return;
-        }
-
-        selectedAssetBannerLoads.Add(assetId);
-        selectedAssetBannerErrors.Remove(assetId);
-        EditorCoroutineUtility.StartCoroutineOwnerless(LoadSelectedAssetBannerCoroutine(assetId, bannerUrl));
-    }
-
-    private IEnumerator LoadSelectedAssetBannerCoroutine(int assetId, string bannerUrl)
-    {
-        using (var request = UnityWebRequestTexture.GetTexture(bannerUrl))
-        {
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetImageDownload);
-            var policy = MCBManagedRequest.ResourcePolicyForUrl(
-                bannerUrl,
-                "Load selected asset banner",
-                $"asset-banner:{assetId}",
-                "Asset banner unavailable");
-            yield return MCBManagedRequest.SendUnityWebRequest(request, bannerUrl, policy);
-
-            selectedAssetBannerLoads.Remove(assetId);
-
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                selectedAssetBannerErrors[assetId] = $"Banner unavailable ({request.responseCode})";
-                if (SelectedAsset != null && SelectedAsset.id == assetId)
-                {
-                    UpdateSelectedAssetBannerMessage(selectedAssetBannerErrors[assetId]);
-                }
-                yield break;
-            }
-
-            Texture2D texture = null;
-            try
-            {
-                texture = DownloadHandlerTexture.GetContent(request);
-            }
-            catch (Exception ex)
-            {
-                selectedAssetBannerErrors[assetId] = $"Banner decode failed: {ex.Message}";
-                MCBConnectivityMonitor.ReportManagedException(bannerUrl, ex, MCBRequestPolicy.ExternalResource(
-                    "Decode selected asset banner",
-                    $"asset-banner:{assetId}",
-                    "Asset banner unavailable"));
-            }
-
-            if (texture == null)
-            {
-                if (!selectedAssetBannerErrors.ContainsKey(assetId))
-                {
-                    selectedAssetBannerErrors[assetId] = "Banner unavailable";
-                }
-
-                if (SelectedAsset != null && SelectedAsset.id == assetId)
-                {
-                    UpdateSelectedAssetBannerMessage(selectedAssetBannerErrors[assetId]);
-                }
-                yield break;
-            }
-
-            texture.name = $"mcb-asset-banner-{assetId}";
-            texture.wrapMode = TextureWrapMode.Clamp;
-            texture.filterMode = FilterMode.Bilinear;
-            selectedAssetBannerTextures[assetId] = texture;
-            selectedAssetBannerErrors.Remove(assetId);
-
-            if (SelectedAsset != null && SelectedAsset.id == assetId)
-            {
-                ApplySelectedAssetBannerTexture(texture);
-                editor.Repaint();
-            }
-        }
     }
 
     private void ApplySelectedAssetBannerTexture(Texture2D texture)
@@ -359,37 +264,6 @@ public partial class AssetGalleryModule
         editor.Repaint();
     }
 
-    private static string ResolveSelectedAssetBannerUrl(AvatarDiscoveredAsset selectedAsset)
-    {
-        if (selectedAsset == null)
-        {
-            return null;
-        }
-
-        string url = selectedAsset.bannerUrl;
-        if (string.IsNullOrWhiteSpace(url) && selectedAsset.id > 0)
-        {
-            url = $"/assets/{selectedAsset.id}/mcb-banner";
-        }
-
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return null;
-        }
-
-        return AppendSelectedAssetBannerFormat(MCBUtils.ResolveApiUrl(url, string.Empty));
-    }
-
-    private static string AppendSelectedAssetBannerFormat(string url)
-    {
-        if (string.IsNullOrWhiteSpace(url) || url.IndexOf("format=", StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            return url;
-        }
-
-        return $"{url}{(url.Contains("?") ? "&" : "?")}format=png";
-    }
-
     public void DrawSelectedAssetHeader()
     {
         var selectedAsset = SelectedAsset;
@@ -430,14 +304,13 @@ public partial class AssetGalleryModule
         }
 
         Texture2D cachedThumbnail = null;
-        Texture2D cachedBanner = null;
         if (editThumbnail != null && !string.IsNullOrWhiteSpace(updatedAsset.thumbnail))
         {
             cachedThumbnail = AvatarAssetDiscoveryService.CacheThumbnail(updatedAsset.id, updatedAsset.thumbnail, editThumbnail);
         }
         if (editBanner != null && !string.IsNullOrWhiteSpace(updatedAsset.mcbBanner))
         {
-            cachedBanner = AvatarAssetDiscoveryService.CacheBanner(updatedAsset.id, updatedAsset.mcbBanner, editBanner);
+            AvatarAssetDiscoveryService.CacheBanner(updatedAsset.id, updatedAsset.mcbBanner, editBanner);
         }
 
         ApplyAssetMediaFields(SelectedAsset, updatedAsset);
@@ -451,16 +324,7 @@ public partial class AssetGalleryModule
             thumbnailImage.image = cachedThumbnail;
         }
 
-        if (cachedBanner != null)
-        {
-            selectedAssetBannerTextures[updatedAsset.id] = cachedBanner;
-        }
-        else
-        {
-            selectedAssetBannerTextures.Remove(updatedAsset.id);
-        }
-        selectedAssetBannerErrors.Remove(updatedAsset.id);
-        selectedAssetBannerLoads.Remove(updatedAsset.id);
+        UpdateSelectedAssetBanner();
     }
 
     private static void ApplyAssetMediaFields(AvatarDiscoveredAsset asset, CreatorAssetCreateResponseAsset updatedAsset)

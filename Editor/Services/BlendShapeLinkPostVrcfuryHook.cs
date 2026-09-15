@@ -30,6 +30,17 @@ public class BlendShapeLinkPostVrcfuryHook : IVRCSDKPreprocessAvatarCallback
             MCBLogger.Log("[MCB] Manual BlendShape links skipped: " + manualResult.message);
         }
 
+        try
+        {
+            var refitResult = BlendShapeLinkService.Instance.ApplyReFitFlexLinks(avatarRoot);
+            MCBLogger.Log("[MCB] " + refitResult.message);
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError("[MCB] ReFit flex links failed: " + ex.Message);
+            return false;
+        }
+
         var animationOffsetResult = AnimationPositionOffsetService.Instance.ApplyActiveVersionOffsets(avatarRoot);
         if (animationOffsetResult.success)
         {

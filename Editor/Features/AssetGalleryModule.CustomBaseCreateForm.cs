@@ -1389,11 +1389,7 @@ public partial class AssetGalleryModule
                     }
                     if (createBanner != null && !string.IsNullOrWhiteSpace(discoveredAsset.bannerUrl))
                     {
-                        var cachedBanner = AvatarAssetDiscoveryService.CacheBanner(discoveredAsset.id, discoveredAsset.bannerUrl, createBanner);
-                        if (cachedBanner != null)
-                        {
-                            selectedAssetBannerTextures[discoveredAsset.id] = cachedBanner;
-                        }
+                        AvatarAssetDiscoveryService.CacheBanner(discoveredAsset.id, discoveredAsset.bannerUrl, createBanner);
                     }
 
                     compatibleAssets.RemoveAll(asset => asset != null && asset.id == discoveredAsset.id);

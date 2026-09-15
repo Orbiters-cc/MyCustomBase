@@ -69,6 +69,8 @@ public static class AvatarAssetDiscoveryService
     private static readonly HashSet<string> LoggedInsecureImageUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static readonly MCBImageRetryGate<string> FailedImageDownloads = new MCBImageRetryGate<string>();
     private static bool repaintQueued;
+    private static int imageGeneration;
+    private static bool bypassDiskImages;
 
     static AvatarAssetDiscoveryService()
     {
@@ -530,6 +532,25 @@ public static class AvatarAssetDiscoveryService
         return GetImage(asset.bannerUrl, "banner", asset.id);
     }
 
+    public static void ReloadImages()
+    {
+        imageGeneration++;
+        bypassDiskImages = true;
+        MCBImageCache.ReleaseAll(ThumbnailCache);
+        FailedImageDownloads.Clear();
+        PendingThumbnailDownloads.Clear();
+        QueueRepaintAllViews();
+    }
+
+    public static bool IsBannerRetryPending(AvatarDiscoveredAsset asset)
+    {
+        if (asset == null) return false;
+        string url = string.IsNullOrWhiteSpace(asset.bannerUrl)
+            ? BuildAssetImageUrl(asset.id, "mcb-banner") : asset.bannerUrl;
+        url = NormalizeImageUrl(ExpandImageUrl(url), "banner", asset.id);
+        return !string.IsNullOrWhiteSpace(url) && FailedImageDownloads.Contains(GetImageCacheKey("banner", asset.id, url));
+    }
+
     public static Texture2D CacheThumbnail(int assetId, string url, Texture2D texture)
     {
         return CacheImage(url, "thumb", assetId, texture);
@@ -597,7 +618,7 @@ public static class AvatarAssetDiscoveryService
         ClearStalePendingDownload(cacheKey, kind, assetId, url);
 
         string localPath = GetImageLocalPath(kind, assetId, url);
-        if (File.Exists(localPath))
+        if (!bypassDiskImages && File.Exists(localPath))
         {
             var localTexture = LoadTextureFromDisk(localPath);
             if (localTexture != null)
@@ -615,13 +636,13 @@ public static class AvatarAssetDiscoveryService
         if (!PendingThumbnailDownloads.TryGetValue(cacheKey, out pendingSince))
         {
             PendingThumbnailDownloads[cacheKey] = DateTime.UtcNow;
-            EditorCoroutineUtility.StartCoroutineOwnerless(DownloadImageCoroutine(url, cacheKey, localPath, kind, assetId));
+            EditorCoroutineUtility.StartCoroutineOwnerless(DownloadImageCoroutine(url, cacheKey, localPath, kind, assetId, imageGeneration));
         }
 
         return null;
     }
 
-    private static IEnumerator DownloadImageCoroutine(string url, string cacheKey, string localPath, string kind, int assetId)
+    private static IEnumerator DownloadImageCoroutine(string url, string cacheKey, string localPath, string kind, int assetId, int generation)
     {
         Task<(byte[] bytes, string error)> downloadTask = DownloadImageBytesAsync(url, kind, assetId);
         while (!downloadTask.IsCompleted)
@@ -631,6 +652,8 @@ public static class AvatarAssetDiscoveryService
 
         try
         {
+            // A manual reload supersedes old requests, including their failures and disk writes.
+            if (generation != imageGeneration) yield break;
             if (downloadTask.IsFaulted)
             {
                 FailedImageDownloads.Add(cacheKey);
@@ -697,7 +720,7 @@ public static class AvatarAssetDiscoveryService
         }
         finally
         {
-            PendingThumbnailDownloads.Remove(cacheKey);
+            if (generation == imageGeneration) PendingThumbnailDownloads.Remove(cacheKey);
         }
 
         QueueRepaintAllViews();

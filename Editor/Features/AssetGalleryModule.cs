@@ -181,9 +181,6 @@ public partial class AssetGalleryModule
     private readonly Dictionary<int, Image> ownerAvatarImages = new Dictionary<int, Image>();
     private readonly Dictionary<int, Label> likeCountLabels = new Dictionary<int, Label>();
     private readonly Dictionary<int, Label> commentCountLabels = new Dictionary<int, Label>();
-    private readonly Dictionary<int, Texture2D> selectedAssetBannerTextures = new Dictionary<int, Texture2D>();
-    private readonly Dictionary<int, string> selectedAssetBannerErrors = new Dictionary<int, string>();
-    private readonly HashSet<int> selectedAssetBannerLoads = new HashSet<int>();
 
     private List<AvatarDiscoveredAsset> compatibleAssets = new List<AvatarDiscoveredAsset>();
     private List<AvatarDiscoveredAsset> allAssets = new List<AvatarDiscoveredAsset>();
@@ -367,14 +364,7 @@ public partial class AssetGalleryModule
             }
         }
 
-        if (SelectedAsset != null &&
-            selectedAssetBannerImage != null &&
-            selectedAssetBannerAssetId == SelectedAsset.id &&
-            selectedAssetBannerTextures.TryGetValue(SelectedAsset.id, out var bannerTexture) &&
-            bannerTexture != null)
-        {
-            ApplySelectedAssetBannerTexture(bannerTexture);
-        }
+        UpdateSelectedAssetBanner();
 
         foreach (var pair in likeCountLabels.ToList())
         {

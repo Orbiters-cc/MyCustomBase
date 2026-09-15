@@ -1267,6 +1267,12 @@ public class MCBEditor : UnityEditor.Editor
         RefreshUiToolkitSections();
     }
 
+    public void ReloadVersionsAndBanners()
+    {
+        AvatarAssetDiscoveryService.ReloadImages();
+        RefreshAccountAndVersions();
+    }
+
     public void RefreshAccountAndVersions()
     {
         // Clear failed user info requests to allow retry

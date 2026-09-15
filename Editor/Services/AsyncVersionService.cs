@@ -26,6 +26,7 @@ public class AsyncVersionService
 
     // Track in-flight fetches to prevent duplicates per FBX path + token
     private readonly System.Collections.Generic.Dictionary<string, Task> inflightFetches = new System.Collections.Generic.Dictionary<string, Task>();
+    private readonly HashSet<string> pendingForcedRefreshes = new HashSet<string>();
 
     // Events for UI updates
     public event Action<List<CustomBaseVersion>, CustomBaseVersion> OnVersionsUpdated;
@@ -197,12 +198,25 @@ public class AsyncVersionService
             Task running;
             if (inflightFetches.TryGetValue(key, out running) && running != null && !running.IsCompleted)
             {
-                // Already fetching for this FBX+token
+                // A user reload must still fetch fresh data after the current request finishes.
+                if (!useCache) pendingForcedRefreshes.Add(key);
                 return;
             }
             var t = FetchVersionsAsync(fbxPath, authToken, assetId, useCache);
             inflightFetches[key] = t;
-            t.ContinueWith(_ => { lock (inflightFetches) { inflightFetches.Remove(key); } }, TaskScheduler.Default);
+            t.ContinueWith(_ =>
+            {
+                bool refresh = false;
+                lock (inflightFetches)
+                {
+                    if (inflightFetches.TryGetValue(key, out var current) && ReferenceEquals(current, t))
+                    {
+                        inflightFetches.Remove(key);
+                        refresh = pendingForcedRefreshes.Remove(key);
+                    }
+                }
+                if (refresh) taskManager.ExecuteOnMainThread(() => StartVersionFetchInBackground(fbxPath, authToken, assetId, false));
+            }, TaskScheduler.Default);
         }
     }
 

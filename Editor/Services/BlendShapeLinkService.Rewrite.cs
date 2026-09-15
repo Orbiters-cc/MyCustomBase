@@ -68,7 +68,7 @@ public partial class BlendShapeLinkService
             foreach (var controller in controllers)
             {
                 MCBLogger.Log($"[MCB] Checking controller '{controller.name}' for link toFix='{planned.toFixName}'");
-                if (!EnsureFloatParameter(controller, planned.factorParameterName, planned.setFactorDefaultValue, planned.factorDefaultValue, out var paramError))
+                if (!planned.copyWithoutFactor && !EnsureFloatParameter(controller, planned.factorParameterName, planned.setFactorDefaultValue, planned.factorDefaultValue, out var paramError))
                 {
                     Debug.LogWarning("[MCB] " + paramError);
                     continue;
@@ -550,11 +550,11 @@ public partial class BlendShapeLinkService
             return clip;
         }
 
-        var wrapperTree = CreateWrapperTree(controller, clip, variantClip, planned.factorParameterName);
-        clipCache[clip] = wrapperTree;
+        Motion result = planned.copyWithoutFactor ? (Motion)variantClip : CreateWrapperTree(controller, clip, variantClip, planned.factorParameterName);
+        clipCache[clip] = result;
         clipsWrapped++;
         changed = true;
-        return wrapperTree;
+        return result;
     }
 
     private static AnimationClip TryCreateVariantClip(AnimatorController controller, AnimationClip sourceClip, PlannedLink planned)
@@ -576,6 +576,10 @@ public partial class BlendShapeLinkService
         if (planned.toFixType == CorrectiveActivationType.Blendshape && planned.fixedByType == CorrectiveActivationType.Blendshape)
         {
             if (!TryGetBlendshapeCurve(sourceClip, planned.sourcePath, planned.sourceProperty, out var sourceCurve)) return null;
+            if (planned.copyWithoutFactor &&
+                TryGetBlendshapeCurve(sourceClip, planned.destinationPath, planned.destinationProperty, out var existingCurve) &&
+                sourceCurve.preWrapMode == existingCurve.preWrapMode && sourceCurve.postWrapMode == existingCurve.postWrapMode &&
+                sourceCurve.keys.SequenceEqual(existingCurve.keys)) return null;
             return CreateVariantClipWithBlendshapeCurve(controller, sourceClip, planned.destinationPath, planned.destinationProperty, sourceCurve);
         }
 
