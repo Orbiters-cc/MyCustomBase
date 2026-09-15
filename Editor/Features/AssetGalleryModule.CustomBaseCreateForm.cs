@@ -16,6 +16,9 @@ using UnityEngine.UIElements;
 
 public partial class AssetGalleryModule
 {
+    private string originalBaseVersionLabel = "Original base";
+    private readonly List<OriginalBaseVersionsEditor.Draft> additionalOriginalVersions = new List<OriginalBaseVersionsEditor.Draft>();
+
     private void BuildCreateCustomBaseFormUIToolkit(VisualElement root)
     {
         var header = CreateRow();
@@ -77,6 +80,11 @@ public partial class AssetGalleryModule
         {
             BuildOriginalSourceKeySectionUIToolkit(form);
         }
+
+        var originalLabel = new TextField("Original base version") { value = originalBaseVersionLabel, maxLength = 128 };
+        originalLabel.RegisterValueChangedCallback(evt => originalBaseVersionLabel = evt.newValue);
+        form.Add(originalLabel);
+        form.Add(new OriginalBaseVersionsEditor(additionalOriginalVersions, () => GetValidTargetFbxPaths().ToArray(), () => { }));
 
         if (!string.IsNullOrWhiteSpace(createError))
         {
@@ -313,6 +321,8 @@ public partial class AssetGalleryModule
         createSceneModeExplicitlySelected = false;
         customBaseCreationRequestId = null;
         customBaseCreationRequestSignature = null;
+        additionalOriginalVersions.Clear();
+        originalBaseVersionLabel = "Original base";
         targetFbxFiles.Clear();
         foreach (string path in editor.GetDetectedAvatarFbxPaths())
         {
@@ -1041,6 +1051,8 @@ public partial class AssetGalleryModule
             .ToList();
         if (retainedTargets.Count != matchedPaths.Count || retainedTargets.Count == originalCount) return 0;
 
+        additionalOriginalVersions.Clear();
+        originalBaseVersionLabel = "Original base";
         targetFbxFiles.Clear();
         targetFbxFiles.AddRange(retainedTargets);
         SyncOriginalSourceKeyMappings();
@@ -1299,6 +1311,25 @@ public partial class AssetGalleryModule
                 : "default-base"
         };
 
+        OriginalBaseVersionData[] supportedOriginalVersions;
+        try
+        {
+            foreach (var request in sourceKeyInstallRequests ?? new List<CustomBaseSourceSetupTransaction.SourceKeyInstallRequest>()) OriginalBaseLibrary.Cache(request.externalSourcePath);
+            foreach (var source in sourceFilePayload) OriginalBaseLibrary.Resolve(source);
+            if (string.IsNullOrWhiteSpace(originalBaseVersionLabel)) throw new InvalidOperationException("Give the current original base a name or version number.");
+            var primary = new OriginalBaseVersionData { label = originalBaseVersionLabel.Trim(), sourceFiles = sourceFilePayload.ToArray(), key = OriginalBaseLibrary.Key(sourceFilePayload.ToArray()) };
+            // Draft slots follow local targets; publish the corresponding canonical source paths.
+            var additional = OriginalBaseVersionsEditor.Build(additionalOriginalVersions, GetValidTargetFbxPaths().ToArray());
+            var targets = GetValidTargetFbxPaths();
+            foreach (var entry in additional) {
+                for (int i = 0; i < entry.sourceFiles.Length; i++) entry.sourceFiles[i].path = sourceKeyInstallRequests?.FirstOrDefault(r => string.Equals(r.localTargetPath, targets[i], StringComparison.OrdinalIgnoreCase))?.referenceSourcePath ?? sourceFilePayload.First(f => string.Equals(f.path, targets[i], StringComparison.OrdinalIgnoreCase)).path;
+                entry.key = OriginalBaseLibrary.Key(entry.sourceFiles);
+            }
+            supportedOriginalVersions = new[] { primary }.Concat(additional).ToArray();
+            if (supportedOriginalVersions.Select(v => v.key).Distinct().Count() != supportedOriginalVersions.Length) throw new InvalidOperationException("The same original files were added more than once.");
+            metadata["originalBaseVersions"] = JArray.FromObject(supportedOriginalVersions);
+        }
+        catch (Exception ex) { createError = ex.Message; isSubmittingCustomBase = false; editor.RefreshUiToolkitSections(); yield break; }
         metadata["sourceFiles"] = JArray.FromObject(sourceFilePayload);
         if (IsOtherAvatarBaseSelected())
         {
@@ -1380,6 +1411,7 @@ public partial class AssetGalleryModule
                                 ? new AvatarAssetBaseInfo { id = response.asset.selectedAvatarBase.id, name = response.asset.selectedAvatarBase.name }
                                 : null,
                             sourceFiles = response.asset.sourceFiles,
+                            sourceVersions = supportedOriginalVersions,
                             isCompatible = true
                     };
 
@@ -1747,6 +1779,8 @@ public partial class AssetGalleryModule
         customBaseCreationRequestId = null;
         customBaseCreationRequestSignature = null;
         otherAvatarBaseName = "";
+        additionalOriginalVersions.Clear();
+        originalBaseVersionLabel = "Original base";
         targetFbxFiles.Clear();
         originalSourceKeyCandidates.Clear();
         originalSourceKeyMappings.Clear();

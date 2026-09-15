@@ -73,7 +73,7 @@ public static partial class NativeMeshPayloadService
         if (paths.Length == 0) return null;
         var matches = (candidates ?? Enumerable.Empty<CustomBaseVersion>())
             .Where(v => v != null && !string.IsNullOrWhiteSpace(v.version))
-            .GroupBy(v => new { v.assetId, v.version, v.defaultAviVersion })
+            .GroupBy(v => new { v.assetId, v.version, v.defaultAviVersion, v.sourceVersionKey })
             .Select(g => g.First())
             .Where(v => paths.All(path => IsSharedMeshForVersion(path, v) ||
                 (TryParseGeneratedMeshAssetPath(path, out int owner, out string revision) &&

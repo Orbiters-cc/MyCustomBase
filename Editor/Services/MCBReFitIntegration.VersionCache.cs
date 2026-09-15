@@ -14,7 +14,7 @@ public static partial class MCBReFitIntegration
         if (target.appliedCustomBaseVersion != null) return target.appliedCustomBaseVersion;
         return string.IsNullOrEmpty(target.appliedCustomBaseVersionString) ? null : new CustomBaseVersion {
             assetId = target.appliedCustomBaseAssetId, version = target.appliedCustomBaseVersionString,
-            defaultAviVersion = target.appliedCustomBaseDefaultAviVersion };
+            defaultAviVersion = target.appliedCustomBaseDefaultAviVersion, sourceVersionKey = target.appliedCustomBaseSourceVersionKey };
     }
 
     public static string GetVersionRefitFolder(MyCustomBase target, CustomBaseVersion version)
@@ -23,7 +23,7 @@ public static partial class MCBReFitIntegration
         McbInstanceIdentityService.EnsureIdentity(target);
         return "Assets/MCB/refits/" + target.mcbComponentId + "/" + version.assetId + "/" +
             (Version.TryParse(version.version, out var label) ? "v" + label + "-" : "version-") +
-            CacheKey(version.version + "|" + version.defaultAviVersion);
+            CacheKey(version.version + "|" + version.defaultAviVersion + (string.IsNullOrEmpty(version.sourceVersionKey) ? "" : "|" + version.sourceVersionKey));
     }
 
     private static string CacheKey(string value)

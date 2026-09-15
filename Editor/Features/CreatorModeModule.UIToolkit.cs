@@ -160,6 +160,7 @@ public partial class CreatorModeModule
         BuildCreatorFormHeaderUIToolkit(content);
         BlenderSyncService.BuildCreatorModeSectionUIToolkit(content, editor, RefreshEditorUi);
         BuildParentVersionDropdownUIToolkit(content);
+        BuildSupportedOriginalVersions(content);
         BuildModelFileBuildEntriesUIToolkit(content);
         content.Add(CreateIconObjectField(
             "Avatar Logic Prefab",
@@ -178,6 +179,25 @@ public partial class CreatorModeModule
         {
             content.Add(CreateHelpBox("Submission Error: " + editor.submitError, HelpBoxMessageType.Error));
         }
+    }
+
+    private void BuildSupportedOriginalVersions(VisualElement root)
+    {
+        var asset = editor.GetSelectedAsset();
+        if (asset == null) return;
+        var card = new VisualElement(); card.AddToClassList("mcb-form-card"); root.Add(card);
+        card.Add(new Label("Supported original base versions"));
+        var selected = new System.Collections.Generic.HashSet<string>(OriginalBaseLibrary.Selection(asset));
+        card.Add(OriginalBaseVersionsEditor.ActionButton("Select all", () => { OriginalBaseLibrary.SaveSelection(asset.id, OriginalBaseLibrary.Versions(asset).Select(v => v.key)); RefreshEditorUi(); }));
+        foreach (var version in OriginalBaseLibrary.Versions(asset))
+        {
+            var toggle = new Toggle(version.label) { value = selected.Contains(version.key) };
+            toggle.RegisterValueChangedCallback(evt => { if (evt.newValue) selected.Add(version.key); else selected.Remove(version.key); OriginalBaseLibrary.SaveSelection(asset.id, selected); });
+            card.Add(toggle);
+        }
+        var hint = new Label("Your selection is reused for the next version. Each selected original receives its own encrypted custom base.");
+        hint.style.whiteSpace = WhiteSpace.Normal;
+        card.Add(hint);
     }
 
     private void BuildCreatorFormHeaderUIToolkit(VisualElement root)

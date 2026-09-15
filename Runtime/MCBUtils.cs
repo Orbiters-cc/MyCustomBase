@@ -272,20 +272,23 @@ public static class MCBUtils
 
     // Removes the authentication data file
 
-    public static string GetVersionDataPath(int assetId, string customBaseVersion, string defaultFbxVersion)
+    public static string GetVersionDataPath(int assetId, string customBaseVersion, string defaultFbxVersion, string sourceVersionKey = null)
     {
         if (assetId <= 0 || string.IsNullOrEmpty(customBaseVersion) || string.IsNullOrEmpty(defaultFbxVersion))
         {
             return null;
         }
 
-        return $"{ASSET_VERSIONS_FOLDER}/{assetId}/versions/u{customBaseVersion}d{defaultFbxVersion}";
+        if (!string.IsNullOrEmpty(sourceVersionKey) && !System.Text.RegularExpressions.Regex.IsMatch(sourceVersionKey, "^[a-f0-9]{64}$"))
+            throw new ArgumentException("Invalid original base version identity.", nameof(sourceVersionKey));
+        return $"{ASSET_VERSIONS_FOLDER}/{assetId}/versions/u{customBaseVersion}d{defaultFbxVersion}" +
+            (string.IsNullOrEmpty(sourceVersionKey) ? "" : "-source-" + sourceVersionKey);
     }
 
     public static string GetVersionDataPath(CustomBaseVersion version)
     {
         if (version == null) return null;
-        return GetVersionDataPath(version.assetId, version.version, version.defaultAviVersion);
+        return GetVersionDataPath(version.assetId, version.version, version.defaultAviVersion, version.sourceVersionKey);
     }
 
     public static string GetVersionBinPath(CustomBaseVersion version)

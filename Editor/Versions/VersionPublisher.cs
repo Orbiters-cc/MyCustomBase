@@ -199,7 +199,7 @@ public static class VersionPublisher
                 editor.serverVersions = editor.serverVersions
                     .Where(item => !item.Equals(version)).Append(version).ToList();
                 PersistentCache.Instance.CacheVersions(editor.currentBaseFbxHash,
-                    editor.serverVersions, editor.recommendedVersion, editor.authToken, version.assetId);
+                    editor.serverVersions, editor.recommendedVersion, editor.authToken, version.assetId, version.sourceVersionKey);
                 editor.LoadUnsubmittedVersions(true);
                 editor.LoadImportedVersions(true);
                 editor.RefreshUiToolkitSections();

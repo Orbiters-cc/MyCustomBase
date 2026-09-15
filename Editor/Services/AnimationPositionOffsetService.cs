@@ -251,7 +251,7 @@ public class AnimationPositionOffsetService
             string baseHash = PersistentCache.Instance.GetCachedHash(fullPath);
             if (string.IsNullOrWhiteSpace(baseHash)) continue;
 
-            var cached = PersistentCache.Instance.GetCachedVersions(baseHash, null, customBase.appliedCustomBaseAssetId);
+            var cached = PersistentCache.Instance.GetCachedVersions(baseHash, null, customBase.appliedCustomBaseAssetId, customBase.appliedCustomBaseSourceVersionKey);
             var match = FindMatchingVersion(cached?.serverVersions, customBase);
             if (match != null)
             {
@@ -267,7 +267,7 @@ public class AnimationPositionOffsetService
         string versionPath = MCBUtils.GetVersionDataPath(
             customBase.appliedCustomBaseAssetId,
             customBase.appliedCustomBaseVersionString,
-            customBase.appliedCustomBaseDefaultAviVersion);
+            customBase.appliedCustomBaseDefaultAviVersion, customBase.appliedCustomBaseSourceVersionKey);
         if (string.IsNullOrWhiteSpace(versionPath)) return null;
 
         string jsonPath = Path.Combine(versionPath, "version.json");
@@ -295,6 +295,7 @@ public class AnimationPositionOffsetService
             version != null &&
             (version.assetId <= 0 || version.assetId == customBase.appliedCustomBaseAssetId) &&
             string.Equals(version.version, customBase.appliedCustomBaseVersionString, StringComparison.Ordinal) &&
+            (string.IsNullOrEmpty(customBase.appliedCustomBaseSourceVersionKey) || version.sourceVersionKey == customBase.appliedCustomBaseSourceVersionKey) &&
             (string.IsNullOrWhiteSpace(customBase.appliedCustomBaseDefaultAviVersion) ||
              string.Equals(version.defaultAviVersion, customBase.appliedCustomBaseDefaultAviVersion, StringComparison.Ordinal)));
     }

@@ -848,7 +848,7 @@ public class MCBEditor : UnityEditor.Editor
             return;
         }
 
-        var cached = versionService.GetCachedVersions(fbxPath, authToken, selectedAsset.id);
+        var cached = versionService.GetCachedVersions(fbxPath, authToken, selectedAsset.id, OriginalBaseLibrary.ActiveKey(selectedAsset));
         if (HasServerAccess && cached.versions.Count > 0)
         {
             serverVersions = cached.versions;
@@ -865,7 +865,7 @@ public class MCBEditor : UnityEditor.Editor
         if (HasServerAccess && (forceRefetch || cached.versions.Count == 0))
         {
             fetchAttempted = true;
-            versionService.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: !forceRefetch);
+            versionService.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: !forceRefetch, sourceVersionKey: OriginalBaseLibrary.ActiveKey(selectedAsset));
         }
     }
 
@@ -1294,7 +1294,7 @@ public class MCBEditor : UnityEditor.Editor
         if (!string.IsNullOrEmpty(fbxPath) && HasServerAccess && selectedAsset != null)
         {
             fetchAttempted = true;
-            versionService?.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false);
+            versionService?.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false, sourceVersionKey: OriginalBaseLibrary.ActiveKey(selectedAsset));
         }
         if (selectedAsset == null)
         {
@@ -1427,7 +1427,7 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         int selectedAssetId = GetSelectedAsset()?.id ?? 0;
-        return VersionRepository.MergeAvailableVersions(selectedAssetId, serverVersions, importedVersions, unsubmittedVersions)
+        return VersionRepository.MergeAvailableVersions(selectedAssetId, serverVersions, importedVersions, unsubmittedVersions, OriginalBaseLibrary.ActiveKey(GetSelectedAsset()))
             .OrderByDescending(v => ParseVersion(v.version)).ToList();
     }
     

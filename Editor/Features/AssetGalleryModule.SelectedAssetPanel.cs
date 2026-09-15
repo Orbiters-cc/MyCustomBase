@@ -56,7 +56,13 @@ public partial class AssetGalleryModule
             var editButton = CreateTextButton("Edit", () => BeginEditSelectedAssetMedia(selectedAsset));
             editButton.AddToClassList("mcb-selected-banner__edit-button");
             editButton.SetEnabled(!isSavingSelectedAssetMedia && !isGeneratingPhotoshootImage);
-            frame.Add(editButton);
+            var creatorActions = new VisualElement();
+            creatorActions.AddToClassList("mcb-selected-banner__creator-actions");
+            creatorActions.Add(editButton);
+            var supportButton = CreateTextButton("Support new version", () => OriginalBaseSupportWindow.Open(editor, selectedAsset));
+            supportButton.AddToClassList("mcb-selected-banner__edit-button");
+            creatorActions.Add(supportButton);
+            frame.Add(creatorActions);
         }
 
         frame.Add(CreateSelectedAssetAuthorBadge(selectedAsset));

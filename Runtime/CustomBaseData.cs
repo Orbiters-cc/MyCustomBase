@@ -71,6 +71,17 @@ public class ModelFileSmrPathData
     [JsonProperty] public string rendererName;
 }
 
+[JsonObject(MemberSerialization.OptIn)]
+public class OriginalBaseVersionData
+{
+    [JsonProperty] public string key;
+    [JsonProperty] public string label;
+    [JsonProperty] public ModelFileData[] sourceFiles;
+    [JsonProperty] public ModelFileData[] versionFiles;
+    [JsonProperty] public MCBDeliveryVariant[] deliveryVariants;
+    [JsonProperty] public int meshDelivery;
+}
+
 // Represents a single available version of an custom base modification.
 [JsonObject(MemberSerialization.OptIn)]
 #if UNITY_EDITOR
@@ -96,6 +107,8 @@ public class CustomBaseVersion
     [JsonProperty] public ModelFileData[] versionFiles;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public MCBDeliveryVariant[] deliveryVariants;
     [JsonProperty] public int meshDelivery;
+    [JsonProperty] public OriginalBaseVersionData[] originalBaseVersions;
+    [JsonProperty] public string sourceVersionKey;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int uploaderId;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string parentVersion;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int assetId;
@@ -116,12 +129,12 @@ public class CustomBaseVersion
     public bool Equals(CustomBaseVersion other)
     {
         if (other == null) return false;
-        return assetId == other.assetId && version == other.version && defaultAviVersion == other.defaultAviVersion;
+        return assetId == other.assetId && version == other.version && defaultAviVersion == other.defaultAviVersion && sourceVersionKey == other.sourceVersionKey;
     }
 
     public override int GetHashCode()
     {
-        return HashCode.Combine(assetId, version, defaultAviVersion);
+        return HashCode.Combine(assetId, version, defaultAviVersion, sourceVersionKey);
     }
 
     public override bool Equals(object obj)

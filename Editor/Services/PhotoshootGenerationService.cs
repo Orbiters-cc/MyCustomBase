@@ -136,6 +136,8 @@ public static class PhotoshootGenerationService
                     !string.Equals(lastFaceBlendshapeKey, faceBlendshapeKey, StringComparison.Ordinal);
                 ResetAndApplyFaceBlendshapes(avatarCopy, request.selectedFaceBlendshapeNames);
                 lastFaceBlendshapeKey = faceBlendshapeKey;
+                foreach (var renderer in avatarCopy.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                    SkinnedMeshBoundsService.Refresh(renderer);
                 Bounds bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
                 ApplyAvatarRotation(avatarCopy, request.avatarYawDegrees);
                 bounds = CenterAvatarOnStage(avatarCopy, LiveSceneStageOrigin);
@@ -871,8 +873,21 @@ public static class PhotoshootGenerationService
             return;
         }
 
+        // Humanoid sampling can restore the imported Avatar's bone translations.
+        // A custom base may have moved eyes or changed limb proportions since import.
+        var animator = avatarRoot.GetComponentInChildren<Animator>(true);
+        var hips = animator != null && animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.Hips) : null;
+        var bones = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .SelectMany(renderer => renderer.bones).Where(bone => bone != null).Distinct().ToArray();
+        var positions = bones.Select(bone => bone.localPosition).ToArray();
+        var scales = bones.Select(bone => bone.localScale).ToArray();
         clip.SampleAnimation(avatarRoot, 0f);
         SampleHumanoidBodyPose(avatarRoot, clip);
+        for (int i = 0; i < bones.Length; i++)
+        {
+            if (bones[i] != hips) bones[i].localPosition = positions[i];
+            bones[i].localScale = scales[i];
+        }
     }
 
     private static void SampleHumanoidBodyPose(GameObject avatarRoot, AnimationClip clip)

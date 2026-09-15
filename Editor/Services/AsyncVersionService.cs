@@ -41,7 +41,7 @@ public class AsyncVersionService
     }
 
     public async Task<(List<CustomBaseVersion> versions, CustomBaseVersion recommended, string error)> FetchVersionsAsync(
-        string fbxPath, string authToken, int assetId, bool useCache = true)
+        string fbxPath, string authToken, int assetId, bool useCache = true, string sourceVersionKey = null)
     {
         // Fast path: if we can resolve the base hash from cache and versions are cached, avoid creating any task
         if (useCache)
@@ -49,8 +49,8 @@ public class AsyncVersionService
             string cachedBaseHash = GetBaseFbxHashIfCached(fbxPath);
             if (!string.IsNullOrEmpty(cachedBaseHash))
             {
-                var cachedEntryFast = cache.GetCachedVersions(cachedBaseHash, authToken, assetId);
-                if (cachedEntryFast != null && HasRequiredAssetIds(cachedEntryFast.serverVersions))
+                var cachedEntryFast = cache.GetCachedVersions(cachedBaseHash, authToken, assetId, sourceVersionKey);
+                if (cachedEntryFast != null && HasRequiredAssetIds(cachedEntryFast.serverVersions) && MatchesOriginal(cachedEntryFast.serverVersions, sourceVersionKey))
                 {
                     MCBLogger.Log($"[AsyncVersionService] Fast cache hit, returning versions without UI task for hash: {cachedBaseHash}");
                     taskManager.ExecuteOnMainThread(() =>
@@ -84,8 +84,8 @@ public class AsyncVersionService
             {
                 taskManager.UpdateTaskProgress(taskId, 0.3f, "Checking version cache...");
                 
-                var cachedEntry = cache.GetCachedVersions(baseFbxHash, authToken, assetId);
-                if (cachedEntry != null && HasRequiredAssetIds(cachedEntry.serverVersions))
+                var cachedEntry = cache.GetCachedVersions(baseFbxHash, authToken, assetId, sourceVersionKey);
+                if (cachedEntry != null && HasRequiredAssetIds(cachedEntry.serverVersions) && MatchesOriginal(cachedEntry.serverVersions, sourceVersionKey))
                 {
                     MCBLogger.Log($"[AsyncVersionService] Using cached versions for hash: {baseFbxHash}");
                     taskManager.CompleteTask(taskId);
@@ -101,7 +101,7 @@ public class AsyncVersionService
             // Step 3: Fetch from server
             taskManager.UpdateTaskProgress(taskId, 0.5f, "Fetching from server...");
             
-            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(assetId)}?d={baseFbxHash}&t={authToken}";
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(assetId)}?d={baseFbxHash}&t={authToken}&sourceKey={sourceVersionKey}";
             var fetchTask = taskManager.ExecuteOnMainThreadAsync(() => networkService.FetchVersionsAsync(url));
 
             // Wait for network request with progress updates
@@ -130,7 +130,7 @@ public class AsyncVersionService
                 var recommendedVersion = versions.FirstOrDefault(v => v.version == response.recommendedVersion);
 
                 // Cache the results
-                await Task.Run(() => cache.CacheVersions(baseFbxHash, versions, recommendedVersion, authToken, assetId));
+                await Task.Run(() => cache.CacheVersions(baseFbxHash, versions, recommendedVersion, authToken, assetId, sourceVersionKey));
 
                 taskManager.CompleteTask(taskId);
                 
@@ -188,11 +188,11 @@ public class AsyncVersionService
         return hashService.GetHashIfCached(fbxPath);
     }
 
-    public void StartVersionFetchInBackground(string fbxPath, string authToken, int assetId, bool useCache = true)
+    public void StartVersionFetchInBackground(string fbxPath, string authToken, int assetId, bool useCache = true, string sourceVersionKey = null)
     {
         if (string.IsNullOrEmpty(fbxPath) || string.IsNullOrEmpty(authToken) || assetId <= 0)
             return;
-        string key = System.IO.Path.GetFullPath(fbxPath) + "|" + authToken + "|" + assetId;
+        string key = System.IO.Path.GetFullPath(fbxPath) + "|" + authToken + "|" + assetId + "|" + sourceVersionKey;
         lock (inflightFetches)
         {
             Task running;
@@ -202,7 +202,7 @@ public class AsyncVersionService
                 if (!useCache) pendingForcedRefreshes.Add(key);
                 return;
             }
-            var t = FetchVersionsAsync(fbxPath, authToken, assetId, useCache);
+            var t = FetchVersionsAsync(fbxPath, authToken, assetId, useCache, sourceVersionKey);
             inflightFetches[key] = t;
             t.ContinueWith(_ =>
             {
@@ -215,13 +215,13 @@ public class AsyncVersionService
                         refresh = pendingForcedRefreshes.Remove(key);
                     }
                 }
-                if (refresh) taskManager.ExecuteOnMainThread(() => StartVersionFetchInBackground(fbxPath, authToken, assetId, false));
+                if (refresh) taskManager.ExecuteOnMainThread(() => StartVersionFetchInBackground(fbxPath, authToken, assetId, false, sourceVersionKey));
             }, TaskScheduler.Default);
         }
     }
 
 
-    public bool AreVersionsCached(string fbxPath, string authToken, int assetId)
+    public bool AreVersionsCached(string fbxPath, string authToken, int assetId, string sourceVersionKey = null)
     {
         // We need the hash to check cache, but we can check if the hash is cached
         string cachedHash = hashService.GetHashIfCached(fbxPath);
@@ -238,11 +238,11 @@ public class AsyncVersionService
         if (string.IsNullOrEmpty(cachedHash))
             return false;
 
-        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId);
-        return cachedVersions != null && HasRequiredAssetIds(cachedVersions.serverVersions);
+        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId, sourceVersionKey);
+        return cachedVersions != null && HasRequiredAssetIds(cachedVersions.serverVersions) && MatchesOriginal(cachedVersions.serverVersions, sourceVersionKey);
     }
 
-    public (List<CustomBaseVersion> versions, CustomBaseVersion recommended) GetCachedVersions(string fbxPath, string authToken, int assetId)
+    public (List<CustomBaseVersion> versions, CustomBaseVersion recommended) GetCachedVersions(string fbxPath, string authToken, int assetId, string sourceVersionKey = null)
     {
         // Try to get cached hash first
         string cachedHash = hashService.GetHashIfCached(fbxPath);
@@ -259,8 +259,8 @@ public class AsyncVersionService
         if (string.IsNullOrEmpty(cachedHash))
             return (new List<CustomBaseVersion>(), null);
 
-        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId);
-        if (cachedVersions != null && HasRequiredAssetIds(cachedVersions.serverVersions))
+        var cachedVersions = cache.GetCachedVersions(cachedHash, authToken, assetId, sourceVersionKey);
+        if (cachedVersions != null && HasRequiredAssetIds(cachedVersions.serverVersions) && MatchesOriginal(cachedVersions.serverVersions, sourceVersionKey))
         {
             return (cachedVersions.serverVersions, cachedVersions.recommendedVersion);
         }
@@ -281,7 +281,7 @@ public class AsyncVersionService
                 version.assetId = assetId;
             }
             string tempZipPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
-            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(assetId)}?version={version.version}&d={baseFbxHash}&t={authToken}";
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(assetId)}?version={version.version}&d={baseFbxHash}&t={authToken}&sourceKey={version.sourceVersionKey}";
 
             taskManager.UpdateTaskProgress(taskId, 0.1f, "Starting download...");
 
@@ -359,6 +359,8 @@ public class AsyncVersionService
     {
         return await FetchVersionsAsync(fbxPath, authToken, assetId, useCache: false);
     }
+
+    private static bool MatchesOriginal(IEnumerable<CustomBaseVersion> versions, string key) => string.IsNullOrEmpty(key) || versions.All(v => v.originalBaseVersions == null || v.originalBaseVersions.Length == 0 || v.sourceVersionKey == key);
 
     private static bool HasRequiredAssetIds(IEnumerable<CustomBaseVersion> versions)
     {

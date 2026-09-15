@@ -35,6 +35,7 @@ public class AvatarDiscoveredAsset
     [JsonProperty] public string latestVersion;
     [JsonProperty] public AvatarAssetBaseInfo avatarBase;
     [JsonProperty] public ModelFileData[] sourceFiles;
+    [JsonProperty] public OriginalBaseVersionData[] sourceVersions;
     [JsonProperty] public bool isCompatible;
     [JsonProperty] public JObject compatibility;
 }

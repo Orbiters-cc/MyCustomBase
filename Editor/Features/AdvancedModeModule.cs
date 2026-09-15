@@ -7,6 +7,9 @@ using System.Threading.Tasks;
 
 public class AdvancedModeModule
 {
+    private bool reloadPending;
+    private string reloadFeedback;
+
     private const double GeneratedAdvancedMeshStorageRefreshIntervalSeconds = 2d;
 
     private readonly struct HealthCheckDefinition
@@ -174,6 +177,36 @@ public class AdvancedModeModule
                     editor.RefreshAccountAndVersions();
                 }
                 EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.Space(EditorGUI.indentLevel * 15);
+                using (new EditorGUI.DisabledScope(reloadPending))
+                {
+                    var content = new GUIContent(reloadPending ? "Reloading…" : "Reload versions and banners");
+                    Rect buttonRect = GUILayoutUtility.GetRect(content, GUI.skin.button, GUILayout.Width(220));
+                    bool pressed = Event.current.type == EventType.MouseDown && Event.current.button == 0 && buttonRect.Contains(Event.current.mousePosition);
+                    bool clicked = GUI.Button(buttonRect, content);
+                    if (pressed || clicked)
+                    {
+                        if (pressed) Event.current.Use();
+                        reloadPending = true;
+                        reloadFeedback = "Requesting fresh versions and images…";
+                        editor.Repaint();
+                        EditorApplication.delayCall += () =>
+                        {
+                            try
+                            {
+                                if (!editor.HasServerAccess) throw new System.InvalidOperationException("Connect to the server in the MCB inspector, then retry.");
+                                editor.ReloadVersionsAndBanners();
+                                reloadFeedback = "Reload requested. Results appear in the MCB inspector.";
+                            }
+                            catch (System.Exception ex) { reloadFeedback = ex.Message; }
+                            finally { reloadPending = false; editor.Repaint(); }
+                        };
+                    }
+                }
+                EditorGUILayout.EndHorizontal();
+                if (!string.IsNullOrEmpty(reloadFeedback)) EditorGUILayout.LabelField(reloadFeedback, EditorStyles.wordWrappedMiniLabel);
 
                 BlenderSyncService.DrawAdvancedBlenderConnectorSettings();
 
@@ -349,7 +382,7 @@ public class AdvancedModeModule
                             EditorGUI.indentLevel++;
                             foreach (var blendshape in activeBlendshapes)
                             {
-                                EditorGUILayout.LabelField("• " + blendshape);
+                                EditorGUILayout.LabelField("â€¢ " + blendshape);
                             }
                             EditorGUI.indentLevel--;
                         }

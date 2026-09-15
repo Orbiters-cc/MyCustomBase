@@ -204,7 +204,7 @@ public static class VersionRepository
     /// deliberately unsubmitted local build remains a draft until publication.</summary>
     public static List<CustomBaseVersion> MergeAvailableVersions(int assetId,
         IEnumerable<CustomBaseVersion> server, IEnumerable<CustomBaseVersion> imported,
-        IEnumerable<CustomBaseVersion> unsubmitted)
+        IEnumerable<CustomBaseVersion> unsubmitted, string sourceVersionKey = null)
     {
         var merged = new Dictionary<CustomBaseVersion, CustomBaseVersion>();
         foreach (var source in new[] { imported, server, unsubmitted })
@@ -212,6 +212,7 @@ public static class VersionRepository
             foreach (var version in source ?? Enumerable.Empty<CustomBaseVersion>())
             {
                 if (version == null || assetId <= 0 || version.assetId != assetId) continue;
+                if (!string.IsNullOrEmpty(sourceVersionKey) && !string.IsNullOrEmpty(version.sourceVersionKey) && version.sourceVersionKey != sourceVersionKey) continue;
                 merged[version] = version;
             }
         }
@@ -313,9 +314,9 @@ public static class VersionRepository
     /// The folder is AssetDatabase-importable on purpose: the packaging pipeline uses
     /// AssetDatabase.CopyAsset / asset generation, which do not work in hidden folders.
     /// </summary>
-    public static string CreateStagingFolder(int assetId, string version, string defaultAviVersion)
+    public static string CreateStagingFolder(int assetId, string version, string defaultAviVersion, string sourceVersionKey = null)
     {
-        string finalPath = MCBUtils.GetVersionDataPath(assetId, version, defaultAviVersion);
+        string finalPath = MCBUtils.GetVersionDataPath(assetId, version, defaultAviVersion, sourceVersionKey);
         if (string.IsNullOrEmpty(finalPath))
         {
             throw new ArgumentException("A valid assetId, version, and base FBX version are required to create a version folder.");
@@ -449,9 +450,9 @@ public static class VersionRepository
     }
 
     /// <summary>Releases the in-progress guard a build placed on the final folder path.</summary>
-    public static void ReleaseFolderGuard(int assetId, string version, string defaultAviVersion)
+    public static void ReleaseFolderGuard(int assetId, string version, string defaultAviVersion, string sourceVersionKey = null)
     {
-        string finalPath = MCBUtils.GetVersionDataPath(assetId, version, defaultAviVersion);
+        string finalPath = MCBUtils.GetVersionDataPath(assetId, version, defaultAviVersion, sourceVersionKey);
         string key = NormalizeFullPath(finalPath);
         if (key == null) return;
         lock (inProgressFolders) { inProgressFolders.Remove(key); }

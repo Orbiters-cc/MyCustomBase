@@ -34,7 +34,9 @@ public static class VersionBuilder
         bool includeDynamicNormalsFlexing,
         IEnumerable<string> additionalAnimationAssetPaths,
         Func<CustomBaseVersion> metadataFactory,
-        string formSignature)
+        string formSignature,
+        OriginalBaseVersionData[] originalVersions = null,
+        string sourceVersionKey = null)
     {
         if (fileManagerService == null) throw new ArgumentNullException(nameof(fileManagerService));
         if (metadataFactory == null) throw new ArgumentNullException(nameof(metadataFactory));
@@ -54,7 +56,7 @@ public static class VersionBuilder
         var inputs = CollectInputs(packageEntries, logicPrefab, includeCustomVeins ? customVeinsTexture : null, animationPaths);
         Mark("Hash inputs");
 
-        string staging = VersionRepository.CreateStagingFolder(assetId, versionString, defaultAviVersion);
+        string staging = VersionRepository.CreateStagingFolder(assetId, versionString, defaultAviVersion, sourceVersionKey);
         try
         {
             fileManagerService.PopulateVersionFolder(
@@ -74,6 +76,8 @@ public static class VersionBuilder
                 throw new InvalidOperationException("Version metadata could not be created.");
             }
 
+            metadata.sourceVersionKey = sourceVersionKey;
+            if (originalVersions != null) OriginalBaseVariantBuilder.AddToBuild(staging, metadata, originalVersions);
             metadata.isUnsubmitted = true;
             Mark("Create metadata");
             var manifest = VersionRepository.CreateManifestFromFolder(staging, metadata, unsubmitted: true, formSignature: formSignature, inputs: inputs);
@@ -89,7 +93,7 @@ public static class VersionBuilder
         }
         finally
         {
-            VersionRepository.ReleaseFolderGuard(assetId, versionString, defaultAviVersion);
+            VersionRepository.ReleaseFolderGuard(assetId, versionString, defaultAviVersion, sourceVersionKey);
         }
     }
 

@@ -2091,7 +2091,8 @@ public partial class CreatorModeModule
 
             var modelFileMetadata = new Dictionary<string, object>
             {
-                { "sourcePath", referenceSourcePath }
+                { "sourcePath", referenceSourcePath },
+                { "sourceHash", packageEntry.sourceHash }
             };
             if (!string.IsNullOrWhiteSpace(customFbxPath))
             {
@@ -2228,7 +2229,9 @@ public partial class CreatorModeModule
             shouldIncludeDynamicNormalsFlexing,
             fixedByAnimationAssetPaths,
             metadataFactory,
-            ComputeFormSignature());
+            ComputeFormSignature(),
+            OriginalBaseLibrary.Versions(selectedAsset).Where(v => OriginalBaseLibrary.Selection(selectedAsset).Contains(v.key)).ToArray(),
+            OriginalBaseLibrary.ActiveKey(selectedAsset));
     }
 
     /// <summary>
@@ -2240,6 +2243,8 @@ public partial class CreatorModeModule
     private string ComputeFormSignature()
     {
         var canonical = new System.Text.StringBuilder(512);
+        var supportAsset = editor.GetSelectedAsset();
+        if (supportAsset != null) canonical.Append(string.Join(",", OriginalBaseLibrary.Selection(supportAsset).OrderBy(key => key, StringComparer.Ordinal)));
         canonical.Append(newVersionMajor).Append('.').Append(newVersionMinor).Append('.').Append(newVersionPatch);
         canonical.Append('|').Append(newVersionScope);
         canonical.Append('|').Append(newVersionTitle);

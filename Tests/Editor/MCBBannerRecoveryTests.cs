@@ -19,8 +19,8 @@ public static class MCBBannerRecoveryTests
         try
         {
             window.CreateGUI();
-            Check(window.rootVisualElement.Q<Button>("mcb-reload-versions-banners") != null,
-                "Advanced settings reload button is missing.");
+            Check(window.rootVisualElement.Q<Button>("mcb-reload-versions-banners") == null,
+                "Reload must stay with the standard Unity advanced controls.");
             Check(window.rootVisualElement.Q<IMGUIContainer>() != null,
                 "Existing advanced controls were lost.");
         }
@@ -31,7 +31,7 @@ public static class MCBBannerRecoveryTests
         var inflight = (Dictionary<string, Task>)typeof(AsyncVersionService).GetField("inflightFetches", instanceFlags).GetValue(versions);
         var queued = (HashSet<string>)typeof(AsyncVersionService).GetField("pendingForcedRefreshes", instanceFlags).GetValue(versions);
         string fakePath = System.IO.Path.GetFullPath("banner-validation.fbx");
-        string fetchKey = fakePath + "|test-token|987654319";
+        string fetchKey = fakePath + "|test-token|987654319|";
         inflight.Add(fetchKey, new TaskCompletionSource<bool>().Task);
         try
         {

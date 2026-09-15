@@ -824,3 +824,16 @@
 .mcb-photoshoot-status {
     margin-top: 2px;
 }
+
+.mcb-selected-banner__creator-actions {
+    position: absolute;
+    left: 28px;
+    bottom: 50px;
+    flex-direction: row;
+}
+.mcb-selected-banner__creator-actions .mcb-selected-banner__edit-button {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    margin-right: 6px;
+}

@@ -35,6 +35,7 @@ public class HashCacheEntry
 [Serializable]
 public class VersionCacheEntry
 {
+    public string sourceVersionKey;
     public string baseFbxHash;
     public int assetId;
     public List<CustomBaseVersion> serverVersions;
@@ -219,14 +220,14 @@ public class PersistentCache
     }
 
     // Version Cache Methods
-    public VersionCacheEntry GetCachedVersions(string baseFbxHash, string authToken, int assetId)
+    public VersionCacheEntry GetCachedVersions(string baseFbxHash, string authToken, int assetId, string sourceVersionKey = null)
     {
         if (string.IsNullOrEmpty(baseFbxHash))
             return null;
 
         if (!string.IsNullOrEmpty(authToken))
         {
-            string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}";
+            string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}_{sourceVersionKey}";
             
             lock (cacheLock)
             {
@@ -261,7 +262,7 @@ public class PersistentCache
                     }
 
                     if (!string.Equals(entry.baseFbxHash, baseFbxHash, StringComparison.Ordinal) ||
-                        entry.assetId != assetId)
+                        entry.assetId != assetId || (entry.sourceVersionKey ?? "") != (sourceVersionKey ?? ""))
                     {
                         continue;
                     }
@@ -288,13 +289,13 @@ public class PersistentCache
         return null;
     }
 
-    public void CacheVersions(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken, int assetId)
+    public void CacheVersions(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken, int assetId, string sourceVersionKey = null)
     {
         if (string.IsNullOrEmpty(baseFbxHash) || string.IsNullOrEmpty(authToken))
             return;
 
-        string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}";
-        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, authToken, assetId);
+        string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}_{sourceVersionKey}";
+        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, authToken, assetId) { sourceVersionKey = sourceVersionKey };
         
         lock (cacheLock)
         {

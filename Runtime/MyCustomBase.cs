@@ -133,6 +133,7 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public int appliedCustomBaseAssetId = 0;
     [HideInInspector] public string appliedCustomBaseVersionString = "";
     [HideInInspector] public string appliedCustomBaseDefaultAviVersion = "";
+    [HideInInspector] public string appliedCustomBaseSourceVersionKey = "";
     [HideInInspector] public string appliedCustomBaseDeliveryMode = "";
 
     [Tooltip("Stores the current values of the custom blendshape sliders.")]

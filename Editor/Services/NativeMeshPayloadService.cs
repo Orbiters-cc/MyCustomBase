@@ -2726,6 +2726,7 @@ public static partial class NativeMeshPayloadService
         }
 
         renderer.updateWhenOffscreen = previousUpdateWhenOffscreen;
+        SkinnedMeshBoundsService.Refresh(renderer);
     }
 
     private static void RefreshAvatarSkinnedRenderers(Transform avatarRoot, bool preserveSharedMeshes = false)
@@ -2741,7 +2742,7 @@ public static partial class NativeMeshPayloadService
             {
                 if (preserveSharedMeshes && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), null))
                 {
-                    renderer.localBounds = renderer.sharedMesh.bounds;
+                    SkinnedMeshBoundsService.Refresh(renderer);
                     continue;
                 }
                 RefreshSkinnedRenderer(renderer, renderer.sharedMesh);

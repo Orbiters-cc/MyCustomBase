@@ -216,7 +216,8 @@ public class VersionActions
         int requestedAssetId = selectedAsset.id;
         string requestedToken = editor.authToken;
         string requestedBaseHash = editor.currentBaseFbxHash;
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={editor.currentBaseFbxHash}&t={editor.authToken}";
+        string requestedSourceVersionKey = OriginalBaseLibrary.ActiveKey(selectedAsset);
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={editor.currentBaseFbxHash}&t={editor.authToken}&sourceKey={OriginalBaseLibrary.ActiveKey(selectedAsset)}";
         string sanitizedUrl = System.Text.RegularExpressions.Regex.Replace(url, @"([?&]t=)([^&]+)", "$1<redacted>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         MCBLogger.Log($"[VersionActions] Starting version fetch. assetId={selectedAsset.id} | url={sanitizedUrl} | currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash}");
         var fetchTask = networkService.FetchVersionsAsync(url);
@@ -228,7 +229,7 @@ public class VersionActions
         
         var (success, response, error) = fetchTask.Result;
         if (editor.GetSelectedAsset()?.id != requestedAssetId || editor.authToken != requestedToken ||
-            editor.currentBaseFbxHash != requestedBaseHash)
+            editor.currentBaseFbxHash != requestedBaseHash || OriginalBaseLibrary.ActiveKey(editor.GetSelectedAsset()) != requestedSourceVersionKey)
         {
             editor.isFetching = false;
             yield break;
@@ -238,7 +239,7 @@ public class VersionActions
             editor.serverVersions = response?.versions ?? new System.Collections.Generic.List<CustomBaseVersion>();
             editor.recommendedVersion = editor.serverVersions.FirstOrDefault(v => v.version == response?.recommendedVersion);
             PersistentCache.Instance.CacheVersions(requestedBaseHash, editor.serverVersions,
-                editor.recommendedVersion, requestedToken, requestedAssetId);
+                editor.recommendedVersion, requestedToken, requestedAssetId, requestedSourceVersionKey);
             UpdateAppliedVersionAndState();
             SmartSelectVersion();
         }
@@ -310,7 +311,7 @@ public class VersionActions
         }
         editor.currentBaseFbxHash = requestBaseHash;
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={requestBaseHash}&t={requestedToken}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={requestBaseHash}&t={requestedToken}&sourceKey={version.sourceVersionKey}";
         var deliveryDecision = MCBPerformance.Choose(version.deliveryVariants);
         var delivery = version.deliveryVariants?.FirstOrDefault(v => v.codec == deliveryDecision.codec);
         if (delivery != null) url += "&codec=" + Uri.EscapeDataString(delivery.codec);
@@ -2882,6 +2883,7 @@ public class VersionActions
         editor.customBaseTarget.appliedCustomBaseAssetId = version.assetId;
         editor.customBaseTarget.appliedCustomBaseVersionString = version.version ?? "";
         editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = version.defaultAviVersion ?? "";
+        editor.customBaseTarget.appliedCustomBaseSourceVersionKey = version.sourceVersionKey ?? "";
         editor.customBaseTarget.appliedCustomBaseDeliveryMode = NativeMeshPayloadService.VersionUsesAdvancedMesh(version)
             ? AdvancedMeshDeliveryMode
             : FbxReplacementDeliveryMode;
@@ -2901,6 +2903,7 @@ public class VersionActions
         editor.customBaseTarget.appliedCustomBaseAssetId = 0;
         editor.customBaseTarget.appliedCustomBaseVersionString = "";
         editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = "";
+        editor.customBaseTarget.appliedCustomBaseSourceVersionKey = "";
         editor.customBaseTarget.appliedCustomBaseDeliveryMode = "";
         editor.isCustomBase = false;
         editor.currentIsCustom = false;
@@ -2926,7 +2929,7 @@ public class VersionActions
 
         candidates = candidates
             .Where(v => v != null)
-            .GroupBy(v => $"{v.assetId}|{v.version}|{v.defaultAviVersion}", StringComparer.Ordinal)
+            .GroupBy(v => $"{v.assetId}|{v.version}|{v.defaultAviVersion}|{v.sourceVersionKey}", StringComparer.Ordinal)
             .Select(group => group.First())
             .ToList();
 
@@ -2959,6 +2962,7 @@ public class VersionActions
         return candidates.FirstOrDefault(v =>
             v != null &&
             string.Equals(v.version, versionString, StringComparison.Ordinal) &&
+            (string.IsNullOrEmpty(editor.customBaseTarget.appliedCustomBaseSourceVersionKey) || v.sourceVersionKey == editor.customBaseTarget.appliedCustomBaseSourceVersionKey) &&
             (assetId <= 0 || v.assetId == assetId) &&
             (string.IsNullOrWhiteSpace(defaultAviVersion) || string.Equals(v.defaultAviVersion, defaultAviVersion, StringComparison.Ordinal)));
     }
@@ -2980,6 +2984,8 @@ public class VersionActions
         available.AddRange(local.imported.Where(v => v != null));
         available.AddRange(local.unsubmitted.Where(v => v != null));
         var target = editor.customBaseTarget;
+        if (!string.IsNullOrEmpty(target.appliedCustomBaseSourceVersionKey))
+            available = available.Where(v => v.sourceVersionKey == target.appliedCustomBaseSourceVersionKey).ToList();
         var match = NativeMeshPayloadService.ResolveAppliedMeshVersion(
             target.transform.root, available, target.appliedCustomBaseAssetId,
             target.appliedCustomBaseVersionString, target.appliedCustomBaseDefaultAviVersion);
