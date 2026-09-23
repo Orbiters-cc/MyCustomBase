@@ -128,6 +128,32 @@ public sealed class MCBRequestWarning
     public DateTime timestampUtc;
 }
 
+internal static class MCBRequestHeaders
+{
+    internal const string IdempotencyKeyHeader = "Idempotency-Key";
+
+    internal static string CreateIdempotencyKey()
+    {
+        return Guid.NewGuid().ToString("N");
+    }
+
+    internal static void SetIdempotencyKey(UnityWebRequest request, string key)
+    {
+        if (request == null)
+        {
+            throw new ArgumentNullException(nameof(request));
+        }
+
+        string normalized = key?.Trim().ToLowerInvariant();
+        if (!Guid.TryParseExact(normalized, "N", out _))
+        {
+            throw new ArgumentException("A valid 32-character idempotency key is required.", nameof(key));
+        }
+
+        request.SetRequestHeader(IdempotencyKeyHeader, normalized);
+    }
+}
+
 public static class MCBManagedRequest
 {
     public static IEnumerator SendUnityWebRequest(UnityWebRequest request, string requestUrl, MCBRequestPolicy policy)

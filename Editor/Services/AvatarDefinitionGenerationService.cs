@@ -99,6 +99,38 @@ public static class AvatarDefinitionGenerationService
         new HumanBoneCandidate("RightEye", "Eye_R", "RightEye"),
     };
 
+    public static bool HasGenerationSource(GameObject customFbx, string externalFbxPath)
+    {
+        return customFbx != null || (!string.IsNullOrWhiteSpace(externalFbxPath) && File.Exists(externalFbxPath));
+    }
+
+    public static GenerationResult GenerateAvatarFromExternalFbx(string externalFbxPath, GameObject sourceMappingFbx, Avatar previousAvatar = null)
+    {
+        if (sourceMappingFbx == null) throw new ArgumentNullException(nameof(sourceMappingFbx));
+        string folder = MCBUtils.CombineUnityPath(MCBUtils.ASSETS_BASE_FOLDER, "generated", "blenderAvatars");
+        string outputPath = previousAvatar != null ? AssetDatabase.GetAssetPath(previousAvatar) : null;
+        // A manually assigned original Avatar must never be overwritten by Update.
+        if (string.IsNullOrWhiteSpace(outputPath) || !outputPath.StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase) ||
+            !AssetDatabase.IsMainAsset(previousAvatar))
+        {
+            EnsureAssetFolderExists(folder);
+            outputPath = AssetDatabase.GenerateUniqueAssetPath(MCBUtils.CombineUnityPath(folder,
+                BlenderProjectService.SanitizeFileName(sourceMappingFbx.name) + "Avatar.asset"));
+        }
+
+        string temporaryPath = null;
+        try
+        {
+            var imported = NativeMeshPayloadService.ImportExternalFbxForPayload(externalFbxPath, out temporaryPath);
+            return GenerateAvatarAsset(imported, sourceMappingFbx, outputPath,
+                applyGeneratedAvatarToFbx: false, keepImporterConfiguredForEditing: true);
+        }
+        finally
+        {
+            NativeMeshPayloadService.DeleteTemporaryImportedFbx(temporaryPath);
+        }
+    }
+
     public static string GetDefaultAvatarPath(string fbxUnityPath)
     {
         string normalized = MCBUtils.ToUnityPath(fbxUnityPath);

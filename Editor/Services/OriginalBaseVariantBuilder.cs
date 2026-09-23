@@ -35,7 +35,8 @@ public static class OriginalBaseVariantBuilder
             patch.metadata["sourcePath"] = newSource.path; patch.metadata["sourceHash"] = newSource.hash;
             patch.metadata["sourceVersionKey"] = result.key;
             var codecs = MCBVersionDelivery.GetVariants(originalPatch);
-            string prefix = "original-" + result.key + "-";
+            // Keep variant names bounded: the version folder already contains the source key.
+            string VariantPath(string path) => Hash(System.Text.Encoding.UTF8.GetBytes(result.key + "|" + PayloadName(path))) + Path.GetExtension(path);
             if (codecs.Length > 0)
             {
                 // Archive delivery stores the chosen codec under the primary payload path.
@@ -50,7 +51,7 @@ public static class OriginalBaseVariantBuilder
                     if (MCBUtils.CalculateFileHash(sourcePath) != codec.hash) throw new InvalidDataException("Historical mesh payload failed its hash check.");
                     byte[] encoded = MCBXor.Transform(oldKey, File.ReadAllBytes(sourcePath));
                     if (Hash(encoded) != codec.outputHash) throw new InvalidDataException("Original FBX cannot decrypt this mesh payload.");
-                    codec.path = prefix + PayloadName(codec.path);
+                    codec.path = VariantPath(codec.path);
                     Write(folder, codec.path, MCBXor.Transform(newKey, encoded));
                     codec.hash = MCBUtils.CalculateFileHash(Path.Combine(folder, codec.path));
                 }
@@ -79,7 +80,7 @@ public static class OriginalBaseVariantBuilder
                     if (!string.IsNullOrEmpty(patch.outputHash) && Hash(decoded) != patch.outputHash) throw new InvalidDataException("Original FBX cannot reconstruct the historical custom version.");
                     output = MCBXor.Transform(newKey, decoded);
                 }
-                patch.path = prefix + PayloadName(originalPatch.path);
+                patch.path = VariantPath(originalPatch.path);
                 Write(folder, patch.path, output); patch.hash = Hash(output);
             }
             patches.Add(patch);

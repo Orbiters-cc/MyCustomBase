@@ -85,6 +85,10 @@ public partial class AssetGalleryModule
         var texture = AvatarAssetDiscoveryService.GetBanner(SelectedAsset);
         if (texture != null)
             ApplySelectedAssetBannerTexture(texture);
+        else if (string.IsNullOrWhiteSpace(SelectedAsset.bannerUrl))
+            UpdateSelectedAssetBannerMessage(CanEditSelectedAssetMedia(SelectedAsset)
+                ? "No banner yet. Use Edit to add one when your custom base is ready."
+                : "No banner yet.");
         else
             UpdateSelectedAssetBannerMessage(AvatarAssetDiscoveryService.IsBannerRetryPending(SelectedAsset)
                 ? "Banner temporarily unavailable. Retrying..."

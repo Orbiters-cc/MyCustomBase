@@ -66,7 +66,6 @@ public static class AvatarAssetDiscoveryService
     private static readonly Dictionary<string, DateTime> PendingThumbnailDownloads = new Dictionary<string, DateTime>(StringComparer.Ordinal);
     private static readonly Dictionary<string, DiscoveryCacheEntry> DiscoveryCache = new Dictionary<string, DiscoveryCacheEntry>(StringComparer.Ordinal);
     private static readonly Dictionary<string, PendingDiscoveryRequest> PendingDiscoveryRequests = new Dictionary<string, PendingDiscoveryRequest>(StringComparer.Ordinal);
-    private static readonly HashSet<int> LoggedMissingBannerAssets = new HashSet<int>();
     private static readonly HashSet<string> LoggedInsecureImageUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static readonly MCBImageRetryGate<string> FailedImageDownloads = new MCBImageRetryGate<string>();
     private static bool repaintQueued;
@@ -517,17 +516,8 @@ public static class AvatarAssetDiscoveryService
 
         if (string.IsNullOrWhiteSpace(asset.bannerUrl))
         {
-            if (asset.id <= 0)
-            {
-                if (!LoggedMissingBannerAssets.Contains(asset.id))
-                {
-                    LoggedMissingBannerAssets.Add(asset.id);
-                    MCBLogger.LogWarning($"[AvatarAssetDiscovery] Asset {asset.id} ('{asset.name}') has no bannerUrl in discovery payload.");
-                }
-                return null;
-            }
-
-            return GetImage(BuildAssetImageUrl(asset.id, "mcb-banner"), "banner", asset.id);
+            // An absent URL means no banner has been uploaded, which is valid.
+            return null;
         }
 
         return GetImage(asset.bannerUrl, "banner", asset.id);
@@ -545,9 +535,8 @@ public static class AvatarAssetDiscoveryService
 
     public static bool IsBannerRetryPending(AvatarDiscoveredAsset asset)
     {
-        if (asset == null) return false;
-        string url = string.IsNullOrWhiteSpace(asset.bannerUrl)
-            ? BuildAssetImageUrl(asset.id, "mcb-banner") : asset.bannerUrl;
+        if (asset == null || string.IsNullOrWhiteSpace(asset.bannerUrl)) return false;
+        string url = asset.bannerUrl;
         url = NormalizeImageUrl(ExpandImageUrl(url), "banner", asset.id);
         return !string.IsNullOrWhiteSpace(url) && FailedImageDownloads.Contains(GetImageCacheKey("banner", asset.id, url));
     }
@@ -570,11 +559,6 @@ public static class AvatarAssetDiscoveryService
         }
 
         string url = asset.bannerUrl;
-        if (string.IsNullOrWhiteSpace(url) && asset.id > 0)
-        {
-            url = BuildAssetImageUrl(asset.id, "mcb-banner");
-        }
-
         if (string.IsNullOrWhiteSpace(url))
         {
             return null;
@@ -765,11 +749,6 @@ public static class AvatarAssetDiscoveryService
     private static string ExpandImageUrl(string url)
     {
         return MCBUtils.ResolveImageUrl(url);
-    }
-
-    private static string BuildAssetImageUrl(int assetId, string imageName)
-    {
-        return $"{MCBUtils.getApiUrl("assets")}/{assetId}/{imageName}";
     }
 
     private static string NormalizeImageUrl(string url, string kind, int assetId)

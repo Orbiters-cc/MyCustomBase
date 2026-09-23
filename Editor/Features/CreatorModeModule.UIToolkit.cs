@@ -313,6 +313,22 @@ public partial class CreatorModeModule
             var card = CreateCreatorPanel();
             card.AddToClassList("mcb-creator-target");
             card.Add(CreateStrongLabel(targetLabel));
+            bool hasModelChanges = customFbxProp.objectReferenceValue != null ||
+                !string.IsNullOrWhiteSpace(externalCustomFbxProp?.stringValue) || avatarProp.objectReferenceValue != null;
+            if (hasModelChanges)
+            {
+                card.Add(CreateTextButton("Use original", "Exclude this model's custom FBX and Avatar from this version.", () =>
+                    ApplyCreatorChange(() =>
+                    {
+                        customFbxProp.objectReferenceValue = null;
+                        if (externalCustomFbxProp != null) externalCustomFbxProp.stringValue = string.Empty;
+                        avatarProp.objectReferenceValue = null;
+                    })));
+            }
+            else
+            {
+                card.Add(CreateMutedLabel("Unchanged — uses the original FBX and Avatar definition."));
+            }
 
             var customFbxRow = CreateCreatorRow();
             customFbxRow.AddToClassList("mcb-creator__field-row");
@@ -352,17 +368,24 @@ public partial class CreatorModeModule
             var avatarRow = CreateCreatorRow();
             avatarRow.AddToClassList("mcb-creator__field-row");
             avatarRow.AddToClassList("mcb-creator-target__row");
-            var avatarField = CreateObjectField("Custom Base Avatar (Transformed)", avatarProp, typeof(Avatar), false);
+            var avatarField = CreateObjectField("Custom Base Avatar (Transformed, Optional)", avatarProp, typeof(Avatar), false);
+            avatarField.tooltip = CustomAvatarGuidance;
             avatarRow.Add(avatarField);
             var avatar = avatarProp.objectReferenceValue as Avatar;
-            var generateButton = CreateTextButton(avatar == null ? "Generate" : "Update", null, () =>
+            Button generateButton = null;
+            generateButton = CreateTextButton(avatar == null ? "Generate" : "Update", CustomAvatarGuidance, () =>
             {
-                editor.serializedObject.ApplyModifiedProperties();
-                GenerateAvatarForModelEntry(targetFbx, customFbxProp.objectReferenceValue as GameObject, avatarProp);
-                RefreshEditorUi();
+                generateButton.text = "Generating…";
+                generateButton.SetEnabled(false);
+                avatarRow.schedule.Execute(() =>
+                {
+                    editor.serializedObject.ApplyModifiedProperties();
+                    GenerateAvatarForModelEntry(targetFbx, customFbxProp.objectReferenceValue as GameObject, avatarProp, externalCustomFbxProp?.stringValue);
+                    RefreshEditorUi();
+                });
             });
             generateButton.AddToClassList("mcb-creator__compact-button");
-            generateButton.SetEnabled(targetFbx != null && customFbxProp.objectReferenceValue != null);
+            generateButton.SetEnabled(targetFbx != null && AvatarDefinitionGenerationService.HasGenerationSource(customFbxProp.objectReferenceValue as GameObject, externalCustomFbxProp?.stringValue));
             avatarRow.Add(generateButton);
 
             var applyAvatarButton = CreateTextButton("Apply", null, () =>
@@ -372,9 +395,10 @@ public partial class CreatorModeModule
                 RefreshEditorUi();
             });
             applyAvatarButton.AddToClassList("mcb-creator__compact-button");
-            applyAvatarButton.SetEnabled(targetFbx != null && customFbxProp.objectReferenceValue != null && avatar != null);
+            applyAvatarButton.SetEnabled(targetFbx != null && avatar != null);
             avatarRow.Add(applyAvatarButton);
             card.Add(avatarRow);
+            card.Add(CreateHelpBox(CustomAvatarGuidance, HelpBoxMessageType.Info));
 
             root.Add(card);
         }

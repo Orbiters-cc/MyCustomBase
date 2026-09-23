@@ -16,6 +16,25 @@ using CompressionLevel = System.IO.Compression.CompressionLevel;
 
 public class FileManagerService
 {
+    public static void SetCreatorSourceFiles(MyCustomBase target, IList<GameObject> sourceFiles)
+    {
+        if (target == null) throw new ArgumentNullException(nameof(target));
+        if (sourceFiles == null) throw new ArgumentNullException(nameof(sourceFiles));
+        var previous = new Dictionary<GameObject, CreatorModelFileBuildEntry>();
+        for (int i = 0; i < target.baseFbxFiles.Count; i++)
+        {
+            var source = target.baseFbxFiles[i];
+            if (source != null && i < target.modelFileBuildEntries.Count)
+                previous[source] = target.modelFileBuildEntries[i];
+        }
+        Undo.RecordObject(target, "Update creator source files");
+        target.baseFbxFiles = sourceFiles.ToList();
+        target.modelFileBuildEntries = sourceFiles.Select(source =>
+            source != null && previous.TryGetValue(source, out var entry) && entry != null
+                ? entry : new CreatorModelFileBuildEntry()).ToList();
+        EditorUtility.SetDirty(target);
+    }
+
     public const string OriginalBaseSuffix = ".originalbase";
     public const string OriginalSuffix = OriginalBaseSuffix;
     public const string PreMcbBackupPrefix = ".backup";
@@ -830,6 +849,8 @@ public class FileManagerService
             for (int i = 0; i < entries.Count; i++)
             {
                 var entry = entries[i];
+                if (entry == null || (entry.customFbx == null && string.IsNullOrWhiteSpace(entry.externalCustomFbxPath) && entry.customBaseAvatar == null))
+                    continue; // No supplied changes: retain the original model.
                 bool hasExternalCustomFbx = entry != null &&
                                             !string.IsNullOrWhiteSpace(entry.externalCustomFbxPath) &&
                                             File.Exists(Path.GetFullPath(entry.externalCustomFbxPath));
@@ -884,29 +905,7 @@ public class FileManagerService
                             entry.binUnityPath = binUnityPath;
                             entry.binHash = payloadResult.binHash;
 
-                            if (importedExternalFbx != null && entry.customBaseAvatar == null)
-                            {
-                                string sourceMappingPath = MCBUtils.ToUnityPath(entry.sourceFbxPath);
-                                if (sourceMappingPath.EndsWith(OriginalSuffix, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    sourceMappingPath = sourceMappingPath.Substring(0, sourceMappingPath.Length - OriginalSuffix.Length);
-                                }
-
-                                var sourceMappingFbx = AssetDatabase.LoadAssetAtPath<GameObject>(sourceMappingPath);
-                                string avatarName = $"{i + 1:00}_{safeBaseName} avatar.asset";
-                                string avatarUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, avatarName);
-                                var avatarResult = AvatarDefinitionGenerationService.GenerateAvatarAsset(
-                                    importedExternalFbx,
-                                    sourceMappingFbx,
-                                    avatarUnityPath,
-                                    applyGeneratedAvatarToFbx: false,
-                                    keepImporterConfiguredForEditing: false);
-                                if (avatarResult?.avatar != null)
-                                {
-                                    entry.avatarUnityPath = avatarUnityPath;
-                                    entry.avatarHash = CalculateFileHash(Path.GetFullPath(avatarUnityPath));
-                                }
-                            }
+                            // Avatar replacement is explicit and optional, also for Blender exports.
                         }
                         else
                         {

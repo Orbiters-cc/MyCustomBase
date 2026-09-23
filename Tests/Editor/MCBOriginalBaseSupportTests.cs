@@ -12,6 +12,96 @@ using UnityEditor.UIElements;
 
 public class MCBOriginalBaseSupportTests
 {
+    [TestCase(null)]
+    [TestCase("")]
+    [TestCase(" ")]
+    public void AssetWithoutBannerDoesNotScheduleDownloadsOrRetries(string bannerUrl)
+    {
+        var pending = (Dictionary<string, DateTime>)typeof(AvatarAssetDiscoveryService)
+            .GetField("PendingThumbnailDownloads", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+        var before = pending.ToArray();
+        var asset = new AvatarDiscoveredAsset { id = 987654317, name = "New custom base", bannerUrl = bannerUrl };
+        Assert.IsNull(AvatarAssetDiscoveryService.GetBanner(asset));
+        Assert.IsNull(AvatarAssetDiscoveryService.GetBannerLocalPath(asset));
+        Assert.IsFalse(AvatarAssetDiscoveryService.IsBannerRetryPending(asset));
+        CollectionAssert.AreEquivalent(before, pending);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void CustomBaseUploadPreservesMetadataAsMultipartWithOrWithoutImages(bool withImage)
+    {
+        const string metadata = "{\"name\":\"Tuto test\",\"mcbCreateSceneMode\":\"default-base\"}";
+        var form = (List<UnityEngine.Networking.IMultipartFormSection>)typeof(AssetGalleryModule)
+            .GetMethod("BuildCustomBaseUploadForm", BindingFlags.Static | BindingFlags.NonPublic)
+            .Invoke(null, new object[] { metadata });
+        if (withImage)
+        {
+            form.Add(new UnityEngine.Networking.MultipartFormFileSection("thumbnail", new byte[] { 1, 2, 3 }, "thumbnail.png", "image/png"));
+        }
+        using (var request = UnityEngine.Networking.UnityWebRequest.Post("http://localhost.invalid", form))
+        {
+            StringAssert.StartsWith("multipart/form-data; boundary=", request.uploadHandler.contentType);
+            string body = System.Text.Encoding.UTF8.GetString(request.uploadHandler.data);
+            StringAssert.Contains("name=\"metadata\"", body);
+            StringAssert.Contains(metadata, body);
+        }
+    }
+
+    [Test]
+    public void CustomBaseNameImmediatelyEnablesNextWhenTheRestOfTheFormIsValid()
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        string fbxPath = AssetDatabase.FindAssets("t:Model")
+            .Select(guid => AssetDatabase.GUIDToAssetPath(guid))
+            .FirstOrDefault(path => path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase) &&
+                                    AssetDatabase.LoadAssetAtPath<GameObject>(path) != null);
+        if (string.IsNullOrWhiteSpace(fbxPath))
+        {
+            Assert.Ignore("This UI regression test needs one imported FBX model asset.");
+        }
+
+        var owner = ScriptableObject.CreateInstance<OriginalBaseSupportWindow>();
+        var root = new VisualElement();
+        var panelType = typeof(VisualElement).Assembly.GetType("UnityEngine.UIElements.Panel");
+        var panel = (IPanel)panelType.GetMethod("CreateEditorPanel", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .Invoke(null, new object[] { owner });
+        panel.visualTree.Add(root);
+        try
+        {
+            var module = new AssetGalleryModule(null);
+            var moduleType = typeof(AssetGalleryModule);
+            var modeField = moduleType.GetField("createSceneMode", flags);
+            modeField.SetValue(module, Enum.Parse(modeField.FieldType, "DefaultBase"));
+            ((List<GameObject>)moduleType.GetField("targetFbxFiles", flags).GetValue(module))
+                .Add(AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath));
+            ((List<CreatorAvatarBaseOption>)moduleType.GetField("avatarBaseOptions", flags).GetValue(module))
+                .Add(new CreatorAvatarBaseOption { id = 1, name = "Test base" });
+            moduleType.GetField("createError", flags).SetValue(module, "Name must contain only letters, numbers, and spaces.");
+
+            moduleType.GetMethod("BuildCreateCustomBaseFormUIToolkit", flags).Invoke(module, new object[] { root });
+            var next = root.Q<Button>("mcb-create-next");
+            var validation = root.Q<Label>("mcb-create-validation");
+            var requestError = root.Q<Label>("mcb-create-error");
+            Assert.IsFalse(next.enabledSelf);
+            Assert.AreEqual("Enter a name to continue.", validation.text);
+            Assert.AreEqual(DisplayStyle.Flex, requestError.resolvedStyle.display);
+
+            root.Q<TextField>("mcb-create-name").value = "Valid name";
+
+            Assert.IsTrue(next.enabledSelf);
+            Assert.AreEqual(DisplayStyle.None, validation.resolvedStyle.display);
+            Assert.AreEqual(DisplayStyle.None, requestError.resolvedStyle.display);
+            Assert.IsNull(moduleType.GetField("createError", flags).GetValue(module));
+        }
+        finally
+        {
+            root.RemoveFromHierarchy();
+            ((IDisposable)panel).Dispose();
+            UnityEngine.Object.DestroyImmediate(owner);
+        }
+    }
+
     [Test]
     public void OriginalDraftSurvivesSerializationWithItsNamedFileMappings()
     {

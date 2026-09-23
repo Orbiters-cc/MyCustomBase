@@ -427,20 +427,20 @@ public partial class CreatorModeModule
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.PropertyField(avatarProp, new GUIContent("Custom Base Avatar (Transformed)"));
+                    EditorGUILayout.PropertyField(avatarProp, new GUIContent("Custom Base Avatar (Transformed, Optional)", CustomAvatarGuidance));
                     var customFbx = customFbxProp.objectReferenceValue as GameObject;
                     var avatar = avatarProp.objectReferenceValue as Avatar;
-                    using (new EditorGUI.DisabledScope(targetFbx == null || customFbx == null))
+                    using (new EditorGUI.DisabledScope(targetFbx == null || !AvatarDefinitionGenerationService.HasGenerationSource(customFbx, externalCustomFbxProp?.stringValue)))
                     {
                         string generateButtonText = avatar == null ? "Generate" : "Update";
                         if (GUILayout.Button(generateButtonText, GUILayout.Width(80f)))
                         {
                             editor.serializedObject.ApplyModifiedProperties();
-                            GenerateAvatarForModelEntry(targetFbx, customFbx, avatarProp);
+                            GenerateAvatarForModelEntry(targetFbx, customFbx, avatarProp, externalCustomFbxProp?.stringValue);
                         }
                     }
 
-                    using (new EditorGUI.DisabledScope(targetFbx == null || customFbx == null || avatar == null))
+                    using (new EditorGUI.DisabledScope(targetFbx == null || avatar == null))
                     {
                         if (GUILayout.Button("Apply", GUILayout.Width(80f)))
                         {
@@ -449,6 +449,7 @@ public partial class CreatorModeModule
                         }
                     }
                 }
+                EditorGUILayout.HelpBox(CustomAvatarGuidance, MessageType.Info);
             }
         }
     }
@@ -524,13 +525,20 @@ public partial class CreatorModeModule
 
     private void ApplyCustomAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, Avatar customAvatar)
     {
-        if (editor.customBaseTarget == null || targetFbx == null || customFbx == null || customAvatar == null)
+        if (editor.customBaseTarget == null || targetFbx == null || customAvatar == null)
         {
             return;
         }
 
         try
         {
+            if (customFbx == null)
+            {
+                AvatarDefinitionGenerationService.SetRootAnimatorAvatar(editor.customBaseTarget.transform.root, customAvatar);
+                SaveTemporaryInternalVersion("custom avatar apply");
+                EditorUtility.SetDirty(editor.customBaseTarget);
+                return;
+            }
             string targetPath = AssetDatabase.GetAssetPath(targetFbx);
             string customPath = AssetDatabase.GetAssetPath(customFbx);
             if (string.IsNullOrWhiteSpace(targetPath) || string.IsNullOrWhiteSpace(customPath))
@@ -571,16 +579,21 @@ public partial class CreatorModeModule
         }
     }
 
-    private void GenerateAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, SerializedProperty avatarProp)
+    private const string CustomAvatarGuidance = "Optional — required if the armature was modified. For mesh-only edits, leave this empty to keep using the original FBX Avatar definition.";
+
+    private void GenerateAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, SerializedProperty avatarProp, string externalFbxPath = null)
     {
-        if (targetFbx == null || customFbx == null || avatarProp == null)
+        if (targetFbx == null || !AvatarDefinitionGenerationService.HasGenerationSource(customFbx, externalFbxPath) || avatarProp == null)
         {
             return;
         }
 
         try
         {
-            var result = AvatarDefinitionGenerationService.GenerateAvatarAsset(
+            var result = customFbx == null
+                ? AvatarDefinitionGenerationService.GenerateAvatarFromExternalFbx(externalFbxPath, targetFbx,
+                    avatarProp.objectReferenceValue as Avatar)
+                : AvatarDefinitionGenerationService.GenerateAvatarAsset(
                 customFbx,
                 targetFbx,
                 applyGeneratedAvatarToFbx: false,
@@ -1992,7 +2005,9 @@ public partial class CreatorModeModule
             bool hasCustomFbx = customFbx != null;
             bool hasExternalCustomFbx = !string.IsNullOrWhiteSpace(externalCustomFbxPath) && File.Exists(Path.GetFullPath(externalCustomFbxPath));
             bool hasCustomAvatar = customAvatar != null;
-            if (!hasCustomFbx && !hasExternalCustomFbx && !hasCustomAvatar) continue;
+            if (!hasCustomFbx && string.IsNullOrWhiteSpace(externalCustomFbxPath) && !hasCustomAvatar) continue;
+            if (!hasCustomFbx && !string.IsNullOrWhiteSpace(externalCustomFbxPath) && !hasExternalCustomFbx)
+                throw new FileNotFoundException($"External Blender FBX for target {i + 1} no longer exists. Sync it again or choose Use original.", externalCustomFbxPath);
             if (sourceFbx == null)
                 throw new Exception($"Target model file {i + 1} is missing its source FBX.");
 

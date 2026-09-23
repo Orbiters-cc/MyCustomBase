@@ -49,7 +49,35 @@ public partial class AssetGalleryModule
         form.AddToClassList("mcb-form-card");
         root.Add(form);
 
+        Button nextButton = null;
+        Label validationMessage = null;
+        Label createErrorMessage = null;
+        Action refreshFormValidation = () =>
+        {
+            string message = GetCreateFormValidationMessage();
+            if (validationMessage != null)
+            {
+                validationMessage.text = message ?? string.Empty;
+                validationMessage.style.display = string.IsNullOrWhiteSpace(message)
+                    ? DisplayStyle.None
+                    : DisplayStyle.Flex;
+            }
+
+            nextButton?.SetEnabled(!isSubmittingCustomBase && string.IsNullOrWhiteSpace(message));
+        };
+        Action onFormChanged = () =>
+        {
+            createError = null;
+            if (createErrorMessage != null)
+            {
+                createErrorMessage.text = string.Empty;
+                createErrorMessage.style.display = DisplayStyle.None;
+            }
+            refreshFormValidation();
+        };
+
         var nameField = new TextField("Name") { value = createName };
+        nameField.name = "mcb-create-name";
         nameField.RegisterValueChangedCallback(evt =>
         {
             createName = Regex.Replace(evt.newValue ?? string.Empty, @"[^a-zA-Z0-9 ]", string.Empty);
@@ -57,23 +85,36 @@ public partial class AssetGalleryModule
             {
                 nameField.SetValueWithoutNotify(createName);
             }
+            onFormChanged();
         });
         form.Add(nameField);
 
         var descriptionField = new TextField("Description") { multiline = true, value = createDescription };
         descriptionField.style.minHeight = 70f;
-        descriptionField.RegisterValueChangedCallback(evt => createDescription = evt.newValue ?? "");
+        descriptionField.RegisterValueChangedCallback(evt =>
+        {
+            createDescription = evt.newValue ?? "";
+            onFormChanged();
+        });
         form.Add(descriptionField);
 
         var jinxxyField = new TextField("Jinxxy Link") { value = createJinxxyLink };
-        jinxxyField.RegisterValueChangedCallback(evt => createJinxxyLink = evt.newValue ?? "");
+        jinxxyField.RegisterValueChangedCallback(evt =>
+        {
+            createJinxxyLink = evt.newValue ?? "";
+            onFormChanged();
+        });
         form.Add(jinxxyField);
 
         var gumroadField = new TextField("Gumroad Link") { value = createGumroadLink };
-        gumroadField.RegisterValueChangedCallback(evt => createGumroadLink = evt.newValue ?? "");
+        gumroadField.RegisterValueChangedCallback(evt =>
+        {
+            createGumroadLink = evt.newValue ?? "";
+            onFormChanged();
+        });
         form.Add(gumroadField);
 
-        BuildAvatarBaseFormFieldsUIToolkit(form);
+        BuildAvatarBaseFormFieldsUIToolkit(form, onFormChanged);
 
         if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized &&
             !HasValidatedExistingOriginalBaseKeys())
@@ -82,27 +123,38 @@ public partial class AssetGalleryModule
         }
 
         var originalLabel = new TextField("Original base version") { value = originalBaseVersionLabel, maxLength = 128 };
-        originalLabel.RegisterValueChangedCallback(evt => originalBaseVersionLabel = evt.newValue);
-        form.Add(originalLabel);
-        form.Add(new OriginalBaseVersionsEditor(additionalOriginalVersions, () => GetValidTargetFbxPaths().ToArray(), () => { }));
-
-        if (!string.IsNullOrWhiteSpace(createError))
+        originalLabel.RegisterValueChangedCallback(evt =>
         {
-            form.Add(CreateMessageLabel(createError, new Color(1f, 0.55f, 0.35f)));
-        }
+            originalBaseVersionLabel = evt.newValue;
+            onFormChanged();
+        });
+        form.Add(originalLabel);
+        form.Add(new OriginalBaseVersionsEditor(additionalOriginalVersions, () => GetValidTargetFbxPaths().ToArray(), onFormChanged));
 
-        var nextButton = CreateTextButton(isSubmittingCustomBase ? "Creating..." : "Next", () =>
+        createErrorMessage = CreateMessageLabel(
+            string.IsNullOrWhiteSpace(createError) ? string.Empty : $"Last attempt: {createError}",
+            new Color(1f, 0.55f, 0.35f));
+        createErrorMessage.name = "mcb-create-error";
+        createErrorMessage.style.display = string.IsNullOrWhiteSpace(createError) ? DisplayStyle.None : DisplayStyle.Flex;
+        form.Add(createErrorMessage);
+
+        validationMessage = CreateMessageLabel(string.Empty, new Color(1f, 0.64f, 0.28f));
+        validationMessage.name = "mcb-create-validation";
+        form.Add(validationMessage);
+
+        nextButton = CreateTextButton(isSubmittingCustomBase ? "Creating..." : "Next", () =>
         {
             EditorCoroutineUtility.StartCoroutineOwnerless(CreateCustomBaseAssetCoroutine());
             editor.RefreshUiToolkitSections();
         });
+        nextButton.name = "mcb-create-next";
         nextButton.style.marginTop = 12f;
         nextButton.style.height = 32f;
-        nextButton.SetEnabled(!isSubmittingCustomBase && IsCreateFormValid());
         form.Add(nextButton);
+        refreshFormValidation();
     }
 
-    private void BuildAvatarBaseFormFieldsUIToolkit(VisualElement form)
+    private void BuildAvatarBaseFormFieldsUIToolkit(VisualElement form, Action onFormChanged)
     {
         if (isLoadingAvatarBases)
         {
@@ -126,6 +178,7 @@ public partial class AssetGalleryModule
         dropdown.AddToClassList("mcb-dropdown");
         dropdown.RegisterValueChangedCallback(evt =>
         {
+            createError = null;
             selectedAvatarBaseIndex = Mathf.Max(0, options.IndexOf(evt.newValue));
             TryDetectSelectedAvatarBase(forceDefaultMode: true);
             ApplyCanonicalReferencePathsFromSelectedBase();
@@ -136,7 +189,11 @@ public partial class AssetGalleryModule
         if (IsOtherAvatarBaseSelected())
         {
             var otherField = new TextField("Avatar Base Name") { value = otherAvatarBaseName };
-            otherField.RegisterValueChangedCallback(evt => otherAvatarBaseName = evt.newValue ?? "");
+            otherField.RegisterValueChangedCallback(evt =>
+            {
+                otherAvatarBaseName = evt.newValue ?? "";
+                onFormChanged?.Invoke();
+            });
             form.Add(otherField);
         }
 
@@ -165,6 +222,7 @@ public partial class AssetGalleryModule
             field.style.minWidth = 0f;
             field.RegisterValueChangedCallback(evt =>
             {
+                createError = null;
                 targetFbxFiles[index] = evt.newValue as GameObject;
                 createSceneModeExplicitlySelected = false;
                 TryDetectAvatarBaseFromTargets();
@@ -173,6 +231,7 @@ public partial class AssetGalleryModule
             row.Add(field);
             var remove = CreateTextButton("-", () =>
             {
+                createError = null;
                 targetFbxFiles.RemoveAt(index);
                 createSceneModeExplicitlySelected = false;
                 TryDetectAvatarBaseFromTargets();
@@ -196,6 +255,7 @@ public partial class AssetGalleryModule
 
         var addButton = CreateTextButton("Add Target FBX", () =>
         {
+            createError = null;
             targetFbxFiles.Add(null);
             createSceneModeExplicitlySelected = false;
             editor.RefreshUiToolkitSections();
@@ -374,18 +434,15 @@ public partial class AssetGalleryModule
 
             using (new EditorGUI.DisabledScope(isSubmittingCustomBase))
             {
+                EditorGUI.BeginChangeCheck();
                 if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized)
                 {
                     createThumbnail = EditorGUILayout.ObjectField("Thumbnail", createThumbnail, typeof(Texture2D), false) as Texture2D;
                     createBanner = EditorGUILayout.ObjectField("Banner", createBanner, typeof(Texture2D), false) as Texture2D;
                 }
 
-                EditorGUI.BeginChangeCheck();
                 string nextName = EditorGUILayout.TextField("Name", createName);
-                if (EditorGUI.EndChangeCheck())
-                {
-                    createName = Regex.Replace(nextName ?? string.Empty, @"[^a-zA-Z0-9 ]", string.Empty);
-                }
+                createName = Regex.Replace(nextName ?? string.Empty, @"[^a-zA-Z0-9 ]", string.Empty);
 
                 EditorGUILayout.LabelField("Description");
                 createDescription = EditorGUILayout.TextArea(createDescription, GUILayout.MinHeight(70f));
@@ -398,11 +455,21 @@ public partial class AssetGalleryModule
                 {
                     DrawOriginalSourceKeySectionIMGUI();
                 }
+                if (EditorGUI.EndChangeCheck())
+                {
+                    createError = null;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(createError))
             {
                 EditorGUILayout.HelpBox(createError, MessageType.Error);
+            }
+
+            string validationMessage = GetCreateFormValidationMessage();
+            if (!isSubmittingCustomBase && !string.IsNullOrWhiteSpace(validationMessage))
+            {
+                EditorGUILayout.HelpBox(validationMessage, MessageType.Info);
             }
 
             EditorGUILayout.Space(8f);
@@ -634,29 +701,65 @@ public partial class AssetGalleryModule
 
     private bool IsCreateFormValid()
     {
-        if (string.IsNullOrWhiteSpace(createName) || !Regex.IsMatch(createName, @"^[a-zA-Z0-9 ]+$"))
+        return string.IsNullOrWhiteSpace(GetCreateFormValidationMessage());
+    }
+
+    private string GetCreateFormValidationMessage()
+    {
+        if (string.IsNullOrWhiteSpace(createName))
         {
-            return false;
+            return "Enter a name to continue.";
+        }
+
+        if (!Regex.IsMatch(createName, @"^[a-zA-Z0-9 ]+$"))
+        {
+            return "Name may contain only letters, numbers, and spaces.";
         }
 
         if (GetValidTargetFbxPaths().Count == 0)
         {
-            return false;
+            return "Add at least one valid FBX model asset from this Unity project.";
         }
 
         if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized &&
             !HasValidatedExistingOriginalBaseKeys() &&
             !AreOriginalSourceKeyMappingsValid())
         {
-            return false;
+            return "Match every target FBX to its original/default source file before continuing.";
+        }
+
+        if (isLoadingAvatarBases)
+        {
+            return "Wait for the base avatar list to finish loading.";
         }
 
         if (!IsOtherAvatarBaseSelected())
         {
-            return selectedAvatarBaseIndex >= 0 && selectedAvatarBaseIndex < avatarBaseOptions.Count;
+            if (selectedAvatarBaseIndex < 0 || selectedAvatarBaseIndex >= avatarBaseOptions.Count)
+            {
+                return "Select a base avatar.";
+            }
+        }
+        else if (string.IsNullOrWhiteSpace(otherAvatarBaseName))
+        {
+            return "Enter a name for the Other base avatar.";
         }
 
-        return !string.IsNullOrWhiteSpace(otherAvatarBaseName);
+        if (string.IsNullOrWhiteSpace(originalBaseVersionLabel))
+        {
+            return "Give the current original base a name or version number.";
+        }
+
+        try
+        {
+            OriginalBaseVersionsEditor.Build(additionalOriginalVersions, GetValidTargetFbxPaths().ToArray());
+        }
+        catch (InvalidOperationException exception)
+        {
+            return exception.Message;
+        }
+
+        return null;
     }
 
     private bool IsOtherAvatarBaseSelected()
@@ -1351,13 +1454,10 @@ public partial class AssetGalleryModule
         if (string.IsNullOrWhiteSpace(customBaseCreationRequestId) ||
             !string.Equals(customBaseCreationRequestSignature, requestSignature, StringComparison.Ordinal))
         {
-            customBaseCreationRequestId = Guid.NewGuid().ToString("N");
+            customBaseCreationRequestId = MCBRequestHeaders.CreateIdempotencyKey();
             customBaseCreationRequestSignature = requestSignature;
         }
-        metadata["creationRequestId"] = customBaseCreationRequestId;
-
-        var form = new WWWForm();
-        form.AddField("metadata", metadata.ToString(Formatting.None));
+        var form = BuildCustomBaseUploadForm(metadata.ToString(Formatting.None));
         if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized)
         {
             AddImageToForm(form, "thumbnail", createThumbnail);
@@ -1367,6 +1467,7 @@ public partial class AssetGalleryModule
         string url = $"{MCBUtils.getApiUrl()}/assets/custom-base?t={editor.authToken}";
         using (var request = UnityWebRequest.Post(url, form))
         {
+            MCBRequestHeaders.SetIdempotencyKey(request, customBaseCreationRequestId);
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Create custom base"));
 
@@ -1686,7 +1787,13 @@ public partial class AssetGalleryModule
         editor.serializedObject.ApplyModifiedProperties();
     }
 
-    private static void AddImageToForm(WWWForm form, string fieldName, Texture2D texture)
+    private static List<IMultipartFormSection> BuildCustomBaseUploadForm(string metadata)
+    {
+        // The backend uses multipart parsing even when the default-base flow has no images.
+        return new List<IMultipartFormSection> { new MultipartFormDataSection("metadata", metadata) };
+    }
+
+    private static void AddImageToForm(List<IMultipartFormSection> form, string fieldName, Texture2D texture)
     {
         if (texture == null)
         {
@@ -1702,7 +1809,7 @@ public partial class AssetGalleryModule
                 return;
             }
 
-            form.AddBinaryData(fieldName, pngBytes, $"{fieldName}.png", "image/png");
+            form.Add(new MultipartFormFileSection(fieldName, pngBytes, $"{fieldName}.png", "image/png"));
             return;
         }
 
@@ -1714,7 +1821,7 @@ public partial class AssetGalleryModule
 
         string extension = Path.GetExtension(fullPath).ToLowerInvariant();
         string mimeType = extension == ".jpg" || extension == ".jpeg" ? "image/jpeg" : "image/png";
-        form.AddBinaryData(fieldName, File.ReadAllBytes(fullPath), Path.GetFileName(fullPath), mimeType);
+        form.Add(new MultipartFormFileSection(fieldName, File.ReadAllBytes(fullPath), Path.GetFileName(fullPath), mimeType));
     }
 
     private static string GetTextureCreationSignature(Texture2D texture)

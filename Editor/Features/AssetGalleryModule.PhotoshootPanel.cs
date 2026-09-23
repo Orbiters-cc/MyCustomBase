@@ -1368,7 +1368,7 @@ public partial class AssetGalleryModule
         selectedAssetMediaEditError = null;
         editor.Repaint();
 
-        var form = new WWWForm();
+        var form = new List<IMultipartFormSection>();
         AddImageToForm(form, "thumbnail", editThumbnail);
         AddImageToForm(form, "banner", editBanner);
 

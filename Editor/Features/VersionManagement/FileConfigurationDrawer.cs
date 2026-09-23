@@ -41,6 +41,8 @@ public class FileConfigurationDrawer
 
     public void Draw()
     {
+        var previousSources = editor.customBaseTarget.baseFbxFiles.ToList();
+        var previousEntries = editor.customBaseTarget.modelFileBuildEntries.ToList();
         EditorGUILayout.LabelField("Configuration", EditorStyles.boldLabel);
         EditorGUILayout.BeginVertical(EditorStyles.helpBox);
 
@@ -68,6 +70,14 @@ public class FileConfigurationDrawer
         if (fbxSpecChanged || fbxFieldChanged)
         {
             editor.serializedObject.ApplyModifiedProperties();
+            if (fbxFieldChanged)
+            {
+                var nextSources = editor.customBaseTarget.baseFbxFiles.ToList();
+                editor.customBaseTarget.baseFbxFiles = previousSources;
+                editor.customBaseTarget.modelFileBuildEntries = previousEntries;
+                FileManagerService.SetCreatorSourceFiles(editor.customBaseTarget, nextSources);
+                editor.serializedObject.Update();
+            }
             actions.UpdateCurrentBaseFbxHash();
             actions.StartVersionFetch();
             editor.Repaint();
@@ -82,17 +92,12 @@ public class FileConfigurationDrawer
         var detectedPaths = editor.GetDetectedAvatarFbxPaths();
         if (detectedPaths.Count == 0) return;
 
-        editor.baseFbxFilesProp.ClearArray();
-        foreach (string meshPath in detectedPaths)
-        {
-            var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(meshPath);
-            if (fbxAsset == null || !(AssetImporter.GetAtPath(meshPath) is ModelImporter)) continue;
-
-            editor.baseFbxFilesProp.InsertArrayElementAtIndex(editor.baseFbxFilesProp.arraySize);
-            editor.baseFbxFilesProp.GetArrayElementAtIndex(editor.baseFbxFilesProp.arraySize - 1).objectReferenceValue = fbxAsset;
-        }
-
+        var sources = detectedPaths.Where(path => AssetImporter.GetAtPath(path) is ModelImporter)
+            .Select(AssetDatabase.LoadAssetAtPath<GameObject>).Where(asset => asset != null).ToList();
+        if (sources.Count == 0) return;
         editor.serializedObject.ApplyModifiedProperties();
+        FileManagerService.SetCreatorSourceFiles(editor.customBaseTarget, sources);
+        editor.serializedObject.Update();
     }
 }
 #endif

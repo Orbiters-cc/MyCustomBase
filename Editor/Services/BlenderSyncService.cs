@@ -300,6 +300,13 @@ public static class BlenderSyncService
             refresh?.Invoke();
         });
         modifyButton.SetEnabled(targetFbxPaths.Count > 0 && !string.IsNullOrWhiteSpace(blenderPath) && !isConnected && !isPreparing);
+        modifyButton.schedule.Execute(() =>
+        {
+            var current = GetSessionForEditor(editor);
+            UpdateConnectionState(current);
+            modifyButton.SetEnabled(targetFbxPaths.Count > 0 && !string.IsNullOrWhiteSpace(blenderPath) &&
+                current?.connectionState != "connected" && !IsEditorProjectPreparing(editor));
+        }).Every(500);
         buttonRow.Add(modifyButton);
 
         var syncButton = CreateButton("Sync with Blender", () =>
@@ -392,7 +399,17 @@ public static class BlenderSyncService
         dot.style.backgroundColor = GetConnectionStateColor(displayState);
         row.Add(dot);
 
-        row.Add(CreateLabel(displayState, 11, FontStyle.Normal, new Color(0.82f, 0.82f, 0.82f)));
+        var stateLabel = CreateLabel(displayState, 11, FontStyle.Normal, new Color(0.82f, 0.82f, 0.82f));
+        row.Add(stateLabel);
+        // RepaintAllViews does not rebuild retained UI Toolkit elements.
+        row.schedule.Execute(() =>
+        {
+            var current = GetSessionForEditor(editor);
+            UpdateConnectionState(current);
+            string state = current?.connectionState ?? "waiting for Blender";
+            stateLabel.text = state;
+            dot.style.backgroundColor = GetConnectionStateColor(state);
+        }).Every(500);
         root.Add(row);
     }
 
@@ -620,7 +637,19 @@ public static class BlenderSyncService
     private static void StartSync(MCBEditor editor, List<string> targetFbxPaths)
     {
         bool hasBlenderOffer = TryReadBlenderOfferFromClipboard(out var blenderOffer);
-        var result = CreateSyncSession(editor, targetFbxPaths, null);
+        RestorePersistedSessionsIfNeeded();
+        var existing = GetSessionForEditor(editor);
+        var project = existing != null && existing.useProjectExports
+            ? new BlenderProjectInfo
+            {
+                projectId = existing.blenderProjectId,
+                projectUnityPath = existing.blenderProjectUnityPath,
+                projectAbsolutePath = existing.blenderProjectAbsolutePath,
+                exportsUnityPath = existing.blenderExportsUnityPath,
+                exportsAbsolutePath = existing.blenderExportsAbsolutePath
+            }
+            : null;
+        var result = CreateSyncSession(editor, targetFbxPaths, project, existing);
         EditorGUIUtility.systemCopyBuffer = result.payloadJson;
         RegisterActiveSession(result.activeSession);
 
@@ -690,11 +719,11 @@ public static class BlenderSyncService
         }
     }
 
-    private static SyncSessionBuildResult CreateSyncSession(MCBEditor editor, List<string> targetFbxPaths, BlenderProjectInfo projectInfo)
+    private static SyncSessionBuildResult CreateSyncSession(MCBEditor editor, List<string> targetFbxPaths, BlenderProjectInfo projectInfo, ActiveSession existing = null)
     {
         string projectPath = GetProjectRoot();
-        string sessionId = Guid.NewGuid().ToString("N");
-        string token = Guid.NewGuid().ToString("N");
+        string sessionId = existing?.sessionId ?? Guid.NewGuid().ToString("N");
+        string token = existing?.token ?? Guid.NewGuid().ToString("N");
         string inboxPath = Path.Combine(projectPath, "Library", "MCB", "BlenderSync", sessionId);
         string heartbeatPath = Path.Combine(inboxPath, "blender_heartbeat.json");
         Directory.CreateDirectory(inboxPath);
@@ -710,7 +739,11 @@ public static class BlenderSyncService
                 ? entries
                 : new List<ModelFileSmrPathData>();
             var serverEntries = GetSelectedAssetSmrPaths(selectedAsset, unityPath);
-            var mergedEntries = MergeSmrPaths(discoveredEntries, serverEntries);
+            // Preview meshes no longer point at the original FBX. Keep the established
+            // mapping when reconnecting so another export still targets those renderers.
+            var previousEntries = existing?.targetFbxFiles.FirstOrDefault(file => file != null &&
+                string.Equals(MCBUtils.ToUnityPath(file.unityPath), unityPath, StringComparison.OrdinalIgnoreCase))?.smrPaths;
+            var mergedEntries = MergeSmrPaths(discoveredEntries, previousEntries, serverEntries);
             return new TargetFbxInfo
             {
                 unityPath = unityPath,
@@ -803,6 +836,8 @@ public static class BlenderSyncService
         {
             return;
         }
+
+        RestorePersistedSessionsIfNeeded();
 
         ActiveSessions.RemoveAll(x =>
             x == null ||
@@ -1024,6 +1059,9 @@ public static class BlenderSyncService
 
             UpdateConnectionState(session);
 
+            // Leave exports pending while their scene is closed.
+            if (session?.customBase == null) continue;
+
             if (string.IsNullOrEmpty(session.inboxPath) || !Directory.Exists(session.inboxPath))
             {
                 continue;
@@ -1133,6 +1171,12 @@ public static class BlenderSyncService
             throw new InvalidOperationException("Blender export manifest has no CUSTOM_BASE model.");
         }
 
+        ResolveCustomBase(session);
+        if (session.customBase == null)
+        {
+            throw new InvalidOperationException("Open the scene containing this Blender session's avatar before syncing.");
+        }
+
         var updatedTargets = new List<string>();
         int generatedAvatarCount = 0;
         int advancedQueuedCount = 0;
@@ -1161,10 +1205,11 @@ public static class BlenderSyncService
             if (useAdvancedMeshForModel)
             {
                 string externalFbxPath = CopyModelToAdvancedIgnoredExports(session, sourceFbxPath, targetFbxPath, modelIndex);
+                ApplyAdvancedMeshPreview(session, externalFbxPath, targetFbxPath, model.meshNames);
                 AssignCreatorExternalCustomFbx(session, targetFbxPath, externalFbxPath);
                 updatedTargets.Add(externalFbxPath);
                 advancedQueuedCount++;
-                MCBLogger.Log($"[BlenderSync] Stored Blender export for advanced mesh submission without importing it. source={sourceFbxPath} external={externalFbxPath} target={targetFbxPath}");
+                MCBLogger.Log($"[BlenderSync] Applied native mesh preview and stored Blender export for submission. source={sourceFbxPath} external={externalFbxPath} target={targetFbxPath}");
             }
             else if (session.useProjectExports)
             {
@@ -1211,11 +1256,11 @@ public static class BlenderSyncService
 
         bool usedAdvancedMeshBlenderLink = advancedQueuedCount > 0;
         string action = usedAdvancedMeshBlenderLink
-            ? "Queued advanced external export from"
+            ? "Updated avatar with native meshes from"
             : (session.useProjectExports ? "Updated avatar from" : "Replaced");
         string avatarMessage = generatedAvatarCount > 0
             ? $"\nGenerated {generatedAvatarCount} Avatar asset(s)."
-            : (usedAdvancedMeshBlenderLink ? "\nNo immediate Unity FBX import was run." : "\nNo Avatar asset was generated.");
+            : (usedAdvancedMeshBlenderLink ? "\nOriginal FBX files are unchanged; exports are ready for submission." : "\nNo Avatar asset was generated.");
         string statusVerb = usedAdvancedMeshBlenderLink ? "processed" : "imported";
         SetStatus($"Blender export {statusVerb} for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}", MessageType.Info);
     }
@@ -1235,6 +1280,31 @@ public static class BlenderSyncService
         return model != null &&
                (string.Equals(model.unityImportMode, "nativeMeshPayload", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(model.transportFormat, NativeMeshPayloadService.PayloadFormat, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void ApplyAdvancedMeshPreview(ActiveSession session, string externalFbxPath, string targetFbxPath, IEnumerable<string> meshNames)
+    {
+        var target = session.targetFbxFiles.FirstOrDefault(file => file != null &&
+            string.Equals(MCBUtils.ToUnityPath(file.unityPath), MCBUtils.ToUnityPath(targetFbxPath), StringComparison.OrdinalIgnoreCase));
+        var names = new HashSet<string>(meshNames ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var mappings = (target?.smrPaths ?? new List<ModelFileSmrPathData>())
+            .Where(entry => entry != null && (names.Count == 0 || names.Contains(entry.meshName) || names.Contains(entry.rendererName)))
+            .ToList();
+        if (mappings.Count == 0)
+            throw new InvalidOperationException($"No avatar renderer mapping matches the Blender export for '{targetFbxPath}'. Reconnect the intended avatar and sync again.");
+
+        string temporaryPath = null;
+        try
+        {
+            var imported = NativeMeshPayloadService.ImportExternalFbxForPayload(externalFbxPath, out temporaryPath);
+            NativeMeshPayloadService.ApplyModelPreview(session.customBase.transform.root, imported,
+                MCBUtils.ToUnityPath(targetFbxPath), mappings,
+                MCBUtils.CombineUnityPath(MCBUtils.ASSETS_BASE_FOLDER, "generated", "blenderPreviews", session.sessionId));
+        }
+        finally
+        {
+            NativeMeshPayloadService.DeleteTemporaryImportedFbx(temporaryPath);
+        }
     }
 
     private static void DrawBlenderConnectionState(MCBEditor editor)
@@ -1456,13 +1526,7 @@ public static class BlenderSyncService
             return;
         }
 
-        int targetIndex = session.targetFbxFiles.FindIndex(file =>
-            file != null &&
-            string.Equals(MCBUtils.ToUnityPath(file.unityPath), MCBUtils.ToUnityPath(targetFbxPath), StringComparison.OrdinalIgnoreCase));
-        if (targetIndex < 0)
-        {
-            targetIndex = 0;
-        }
+        int targetIndex = GetCreatorTargetIndex(session.customBase, targetFbxPath);
 
         var serialized = new SerializedObject(session.customBase);
         var entriesProp = serialized.FindProperty("modelFileBuildEntries");
@@ -1500,13 +1564,7 @@ public static class BlenderSyncService
             return;
         }
 
-        int targetIndex = session.targetFbxFiles.FindIndex(file =>
-            file != null &&
-            string.Equals(MCBUtils.ToUnityPath(file.unityPath), MCBUtils.ToUnityPath(targetFbxPath), StringComparison.OrdinalIgnoreCase));
-        if (targetIndex < 0)
-        {
-            targetIndex = 0;
-        }
+        int targetIndex = GetCreatorTargetIndex(session.customBase, targetFbxPath);
 
         var serialized = new SerializedObject(session.customBase);
         var entriesProp = serialized.FindProperty("modelFileBuildEntries");
@@ -1540,6 +1598,15 @@ public static class BlenderSyncService
         }
         serialized.ApplyModifiedProperties();
         EditorUtility.SetDirty(session.customBase);
+    }
+
+    private static int GetCreatorTargetIndex(MyCustomBase customBase, string targetFbxPath)
+    {
+        int index = customBase.baseFbxFiles.FindIndex(source => source != null &&
+            string.Equals(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(source)),
+                MCBUtils.ToUnityPath(targetFbxPath), StringComparison.OrdinalIgnoreCase));
+        if (index < 0) throw new InvalidOperationException($"The Blender target '{targetFbxPath}' is not in this creator's source files. Reconnect the intended custom base before syncing.");
+        return index;
     }
 
     private static List<string> GetTargetFbxPaths(MCBEditor editor)
@@ -1798,7 +1865,10 @@ public static class BlenderSyncService
             return;
         }
 
-        foreach (string sessionFile in Directory.GetFiles(root, "session.json", SearchOption.AllDirectories))
+        // GetSessionForEditor selects the last session; directory enumeration order
+        // must not resurrect an older connection after a domain reload.
+        foreach (string sessionFile in Directory.GetFiles(root, "session.json", SearchOption.AllDirectories)
+                     .OrderBy(File.GetLastWriteTimeUtc))
         {
             try
             {

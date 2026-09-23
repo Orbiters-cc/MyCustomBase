@@ -923,14 +923,9 @@ public class MCBEditor : UnityEditor.Editor
             return true;
         }
 
-        baseFbxFilesProp.ClearArray();
-        for (int i = 0; i < detectedAssets.Count; i++)
-        {
-            baseFbxFilesProp.InsertArrayElementAtIndex(baseFbxFilesProp.arraySize);
-            baseFbxFilesProp.GetArrayElementAtIndex(baseFbxFilesProp.arraySize - 1).objectReferenceValue = detectedAssets[i];
-        }
-
         serializedObject.ApplyModifiedProperties();
+        FileManagerService.SetCreatorSourceFiles(customBaseTarget, detectedAssets);
+        serializedObject.Update();
         InvalidateDetectedAvatarFbxCache();
         MCBLogger.Log($"[MCBEditor] Auto-detected {baseFbxFilesProp.arraySize} FBX file(s) for the avatar root.");
         Repaint();
@@ -1502,14 +1497,9 @@ public class MCBEditor : UnityEditor.Editor
             return true;
         }
 
-        baseFbxFilesProp.ClearArray();
-        foreach (var fbxAsset in fbxAssets)
-        {
-            baseFbxFilesProp.InsertArrayElementAtIndex(baseFbxFilesProp.arraySize);
-            baseFbxFilesProp.GetArrayElementAtIndex(baseFbxFilesProp.arraySize - 1).objectReferenceValue = fbxAsset;
-        }
-
         serializedObject.ApplyModifiedProperties();
+        FileManagerService.SetCreatorSourceFiles(customBaseTarget, fbxAssets);
+        serializedObject.Update();
         InvalidateDetectedAvatarFbxCache();
         MCBLogger.Log($"[MCBEditor] Synced {baseFbxFilesProp.arraySize} target FBX file(s) from selected custom base source ModelFiles.");
         versionModule?.actions?.UpdateCurrentBaseFbxHash();

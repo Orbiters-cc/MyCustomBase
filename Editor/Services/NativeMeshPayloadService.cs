@@ -288,6 +288,33 @@ public static partial class NativeMeshPayloadService
         }
     }
 
+    public static NativeMeshPayloadAsset ApplyModelPreview(
+        Transform avatarRoot, GameObject importedModel, string sourceFbxPath,
+        IEnumerable<ModelFileSmrPathData> smrPaths, string outputFolder)
+    {
+        if (avatarRoot == null) throw new ArgumentNullException(nameof(avatarRoot));
+        if (importedModel == null) throw new ArgumentNullException(nameof(importedModel));
+        if (string.IsNullOrWhiteSpace(outputFolder)) throw new ArgumentNullException(nameof(outputFolder));
+        var sources = ResolvePayloadRendererSources(importedModel, smrPaths);
+        if (sources.Count == 0) throw new InvalidOperationException("The preview contains no matching skinned meshes.");
+
+        byte[] bytes;
+        using (var stream = new MemoryStream())
+        {
+            CreateBinaryPayload(sourceFbxPath, importedModel, sources, stream,
+                new NativeMeshPayloadBuildMetrics(), false, null);
+            bytes = stream.ToArray();
+        }
+        string hash;
+        using (var sha = MCBHashing.CreateSha256()) hash = BytesToHex(sha.ComputeHash(bytes));
+        // Content-addressed assets keep earlier previews valid for Undo and scene saves.
+        string path = MCBUtils.CombineUnityPath(outputFolder, hash + ".asset");
+        var payload = WriteBinaryPayloadAsset(path, bytes, hash, PayloadCompressionNone);
+        ApplyPayloadToAvatar(avatarRoot, payload);
+        ApplyPayloadAuthoringPose(avatarRoot, payload);
+        return payload;
+    }
+
     public static GameObject ImportExternalFbxForPayload(string externalFbxPath, out string tempUnityPath)
     {
         tempUnityPath = null;
