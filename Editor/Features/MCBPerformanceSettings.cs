@@ -10,7 +10,7 @@ public static class MCBPerformanceSettings
         return new SettingsProvider("Preferences/MCB/Downloads", SettingsScope.User) {
             label = "MCB Downloads",
             activateHandler = (_, root) => {
-                var style = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/orbiters.mcb/Editor/Styles/mcb-theme.uss");
+                var style = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/orbiters.toolkit/Runtime/EditorServices/theme.uss");
                 if (style != null) root.styleSheets.Add(style);
                 root.style.paddingLeft = 18; root.style.paddingRight = 18; root.style.paddingTop = 12;
                 var title = new Label("Faster version downloads");

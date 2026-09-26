@@ -124,34 +124,7 @@ public partial class AvatarOptionsModule
     }
 
     internal static VisualElement CreateOptionHelpBox(string message, HelpBoxMessageType messageType)
-    {
-        var box = new VisualElement();
-        box.AddToClassList("mcb-avatar-helpbox");
-        switch (messageType)
-        {
-            case HelpBoxMessageType.Warning:
-                box.AddToClassList("mcb-avatar-helpbox--warning");
-                break;
-            case HelpBoxMessageType.Error:
-                box.AddToClassList("mcb-avatar-helpbox--error");
-                break;
-            case HelpBoxMessageType.Info:
-                box.AddToClassList("mcb-avatar-helpbox--info");
-                break;
-            default:
-                box.AddToClassList("mcb-avatar-helpbox--none");
-                break;
-        }
-
-        var icon = CreateOptionLabel(GetHelpBoxIcon(messageType), 14, FontStyle.Bold, Color.white);
-        icon.AddToClassList("mcb-avatar-helpbox__icon");
-        box.Add(icon);
-
-        var label = CreateOptionLabel(message, 12, FontStyle.Normal, new Color(0.82f, 0.82f, 0.82f));
-        label.AddToClassList("mcb-avatar-helpbox__text");
-        box.Add(label);
-        return box;
-    }
+        => new OrbitersNoticeElement(message, messageType);
 
     internal static void RefreshEditorUi(MCBEditor editor)
     {
@@ -159,19 +132,5 @@ public partial class AvatarOptionsModule
         editor?.Repaint();
     }
 
-    private static string GetHelpBoxIcon(HelpBoxMessageType messageType)
-    {
-        switch (messageType)
-        {
-            case HelpBoxMessageType.Warning:
-                return "!";
-            case HelpBoxMessageType.Error:
-                return "x";
-            case HelpBoxMessageType.Info:
-                return "i";
-            default:
-                return string.Empty;
-        }
-    }
 }
 #endif

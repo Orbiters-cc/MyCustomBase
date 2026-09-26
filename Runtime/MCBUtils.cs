@@ -38,18 +38,7 @@ public static class MCBUtils
     private const string ApiSimulationModePrefKey = "MCB_ApiSimulationMode";
     
     // Dev Environment property with persistent storage
-    public static bool isDevEnvironment
-    {
-        get
-        {
-            try { return EditorPrefs.GetBool(DevEnvironmentPrefKey, false); }
-            catch { return false; }
-        }
-        set
-        {
-            try { EditorPrefs.SetBool(DevEnvironmentPrefKey, value); } catch { }
-        }
-    }
+    public static bool isDevEnvironment { get => OrbitersEnvironment.IsDevelopment; set => OrbitersEnvironment.IsDevelopment = value; }
 
     public static ApiSimulationMode apiSimulationMode
     {
@@ -97,40 +86,10 @@ public static class MCBUtils
                 return "https://wrong.host.badssl.com/" + scope;
         }
 
-        if (isDevEnvironment)
-        {
-            return "http://localhost:4100/" + scope;
-        }
-        return "https://" + API_BASE_URL + scope;
+        return OrbitersEnvironment.ApiUrl(scope);
     }
 
-    public static string ResolveApiUrl(string pathOrUrl, string scope = "")
-    {
-        if (string.IsNullOrWhiteSpace(pathOrUrl))
-        {
-            return pathOrUrl;
-        }
-
-        Uri apiRoot;
-        if (!Uri.TryCreate(EnsureTrailingSlash(getApiUrl(scope ?? string.Empty)), UriKind.Absolute, out apiRoot))
-        {
-            return pathOrUrl;
-        }
-
-        Uri absoluteUri;
-        if (Uri.TryCreate(pathOrUrl, UriKind.Absolute, out absoluteUri) &&
-            (absoluteUri.Scheme == Uri.UriSchemeHttp || absoluteUri.Scheme == Uri.UriSchemeHttps))
-        {
-            if (isDevEnvironment && string.Equals(absoluteUri.Host, "dev.api.orbiters.cc", StringComparison.OrdinalIgnoreCase))
-            {
-                return new UriBuilder(absoluteUri) { Scheme = apiRoot.Scheme, Host = apiRoot.Host,
-                    Port = apiRoot.IsDefaultPort ? -1 : apiRoot.Port }.Uri.ToString();
-            }
-            return NormalizeApiOrigin(absoluteUri, apiRoot);
-        }
-
-        return new Uri(apiRoot, pathOrUrl.TrimStart('/')).ToString();
-    }
+    public static string ResolveApiUrl(string pathOrUrl, string scope = "") => OrbitersEnvironment.ResolveApiUrl(pathOrUrl, scope, getApiUrl(scope ?? string.Empty));
 
     public static string ResolveImageUrl(string pathOrUrl)
     {
@@ -147,42 +106,7 @@ public static class MCBUtils
         return new UriBuilder(uri) { Query = query }.Uri.ToString();
     }
 
-    private static string NormalizeApiOrigin(Uri uri, Uri apiRoot)
-    {
-        bool sameHost = string.Equals(uri.Host, apiRoot.Host, StringComparison.OrdinalIgnoreCase);
-        bool compatiblePort = uri.Port == apiRoot.Port || (uri.IsDefaultPort && apiRoot.IsDefaultPort);
-        if (!sameHost || !compatiblePort)
-        {
-            return uri.ToString();
-        }
-
-        var builder = new UriBuilder(uri)
-        {
-            Scheme = apiRoot.Scheme,
-            Host = apiRoot.Host,
-            Port = apiRoot.IsDefaultPort ? -1 : apiRoot.Port
-        };
-        return builder.Uri.ToString();
-    }
-
-    private static string EnsureTrailingSlash(string value)
-    {
-        if (string.IsNullOrEmpty(value) || value.EndsWith("/", StringComparison.Ordinal))
-        {
-            return value;
-        }
-
-        return value + "/";
-    }
-
-    public static string getWebsiteUrl()
-    {
-        if (isDevEnvironment)
-        {
-            return "https://dev." + SERVER_BASE_URL;
-        }
-        return "https://" + SERVER_BASE_URL;
-    }
+    public static string getWebsiteUrl() => OrbitersEnvironment.WebsiteUrl;
 
     public static void ReportFileUsage(string url, long bytes, string purpose)
     {

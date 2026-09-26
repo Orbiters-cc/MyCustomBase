@@ -48,39 +48,12 @@ public class AuthenticationModule
         panel.AddToClassList("mcb-form-card");
         authRoot.Add(panel);
 
-        var buttonRow = new VisualElement();
-        buttonRow.AddToClassList("mcb-auth-panel__actions");
-        panel.Add(buttonRow);
-
-        var button = AvatarOptionsModule.CreateOptionButton("Magic Sync", StartMagicSync);
-        button.AddToClassList("mcb-button--primary");
-        button.AddToClassList("mcb-auth-panel__button");
-        buttonRow.Add(button);
-
-        panel.Add(AvatarOptionsModule.CreateOptionHelpBox(
-            "Use Magic Sync to authenticate this tool. Go to the Orbiters website, click 'Magic Sync' to copy your token, then click the button above.",
-            HelpBoxMessageType.Info));
-    }
-
-    private void StartMagicSync()
-    {
-        AuthenticationService.RegisterAuth().ContinueWith(task =>
+        panel.Add(new OrbitersSignInElement(() =>
         {
-            // Queue the result to be processed on the main thread
-            EditorApplication.delayCall += () =>
-            {
-                if (task.Result)
-                {
-                    editor.CheckAuthentication(); // Update state in the main editor
-                    RefreshUIToolkit();
-                    editor.Repaint();
-                }
-                else
-                {
-                    EditorUtility.DisplayDialog("Authentication Failed", "Please visit the Orbiters website and click 'Magic Sync' first.", "OK");
-                }
-            };
-        });
+            editor.CheckAuthentication();
+            RefreshUIToolkit();
+            editor.Repaint();
+        }));
     }
 
     // Authentication logic moved to AuthenticationService. This class now only provides UI helpers.

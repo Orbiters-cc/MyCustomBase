@@ -66,83 +66,8 @@ public class AccountModule
         accountRoot.style.display = DisplayStyle.Flex;
         RefreshCachedAccountAssets();
 
-        var identity = new VisualElement();
-        identity.AddToClassList("mcb-account__identity");
-        accountRoot.Add(identity);
-
-        var avatarFrame = new VisualElement();
-        avatarFrame.AddToClassList("mcb-account__avatar");
-        avatarFrame.style.backgroundColor = avatarFallbackColor;
-        var avatarImage = new Image { image = avatarTexture, scaleMode = ScaleMode.ScaleAndCrop };
-        avatarImage.AddToClassList("mcb-account__avatar-image");
-        avatarFrame.Add(avatarImage);
-        var initials = new Label(GetInitials(userName));
-        initials.AddToClassList("mcb-account__avatar-initials");
-        avatarFrame.Add(initials);
-        if (accountUserId.HasValue) UserAvatarImage.Bind(avatarImage, accountUserId.Value, texture => {
-            avatarTexture = texture;
-            initials.style.display = texture == null ? DisplayStyle.Flex : DisplayStyle.None;
-            avatarImage.style.display = texture == null ? DisplayStyle.None : DisplayStyle.Flex;
-        });
-        if (HasAvatarLoadWarning())
-        {
-            var warning = new Label("!");
-            warning.tooltip = "Profile picture could not be loaded.";
-            warning.AddToClassList("mcb-account__avatar-warning");
-            avatarFrame.Add(warning);
-        }
-        identity.Add(avatarFrame);
-
-        var textBlock = new VisualElement();
-        textBlock.AddToClassList("mcb-account__text");
-        identity.Add(textBlock);
-
-        var caption = new Label("logged as");
-        caption.AddToClassList("mcb-account__caption");
-        textBlock.Add(caption);
-
-        var nameRow = new VisualElement();
-        nameRow.AddToClassList("mcb-account__name-row");
-        textBlock.Add(nameRow);
-
-        var name = new Label(string.IsNullOrEmpty(userName) ? "(unknown)" : userName);
-        name.AddToClassList("mcb-account__name");
-        nameRow.Add(name);
-
-        if (MCBUtils.isDevEnvironment)
-        {
-            var chip = new Label("dev");
-            chip.AddToClassList("mcb-account__dev-chip");
-            nameRow.Add(chip);
-        }
-
-        var actions = new VisualElement();
-        actions.AddToClassList("mcb-account__actions");
-        accountRoot.Add(actions);
-
-        var statusRow = new VisualElement();
-        statusRow.AddToClassList("mcb-account__status-row");
-        actions.Add(statusRow);
-
-        var statusDot = new VisualElement();
-        statusDot.AddToClassList("mcb-account__status-dot");
-        var statusClass = GetStatusDotClass(connectionState);
-        if (!string.IsNullOrEmpty(statusClass))
-        {
-            statusDot.AddToClassList(statusClass);
-        }
-        statusRow.Add(statusDot);
-
-        string displayState = string.IsNullOrEmpty(connectionState) ? (isRefreshing ? "Checking..." : "unknown") : connectionState;
-        var status = new Label(displayState);
-        status.AddToClassList("mcb-account__status-label");
-        statusRow.Add(status);
-
-        var logout = new Button(Logout) { text = "Logout" };
-        logout.AddToClassList("mcb-button");
-        logout.AddToClassList("mcb-button--flat");
-        logout.AddToClassList("mcb-account__logout");
-        actions.Add(logout);
+        OrbitersAccountView.Populate(accountRoot, userName, connectionState, isRefreshing, avatarTexture, avatarFallbackColor, Logout,
+            (image, updated) => { if (accountUserId.HasValue) UserAvatarImage.Bind(image, accountUserId.Value, texture => { avatarTexture = texture; updated(texture); }); });
     }
 
     public void Draw()
@@ -396,6 +321,7 @@ public class AccountModule
         if (int.TryParse(auth.user, out var parsedId))
         {
             accountUserId = parsedId;
+            if (!string.IsNullOrEmpty(auth.username)) UserService.UpdateUserInfo(parsedId, auth.username, auth.avatarUrl);
             var cachedInfo = UserService.GetUserInfo(parsedId);
             if (cachedInfo != null && !string.IsNullOrEmpty(cachedInfo.username))
             {
@@ -495,27 +421,9 @@ public class AccountModule
         avatarFallbackColor = SeedToColor(string.IsNullOrEmpty(userName) ? "Unknown" : userName);
     }
 
-    private static string GetInitials(string name)
-    {
-        if (string.IsNullOrEmpty(name)) return "?";
-        string[] parts = name.Split(new[] { ' ', '\t', '\n', '\r', '_' }, StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 1) return parts[0].Substring(0, Math.Min(2, parts[0].Length)).ToUpperInvariant();
-        string a = parts[0].Substring(0, 1);
-        string b = parts[parts.Length - 1].Substring(0, 1);
-        return (a + b).ToUpperInvariant();
-    }
+    private static string GetInitials(string name) => OrbitersAccountView.GetInitials(name);
 
-    private static Color SeedToColor(string seed)
-    {
-        unchecked
-        {
-            int h = seed == null ? 0 : seed.GetHashCode();
-            float r = ((h & 0xFF) / 255f) * 0.6f + 0.2f;
-            float g = (((h >> 8) & 0xFF) / 255f) * 0.6f + 0.2f;
-            float b = (((h >> 16) & 0xFF) / 255f) * 0.6f + 0.2f;
-            return new Color(r, g, b);
-        }
-    }
+    private static Color SeedToColor(string seed) => OrbitersAccountView.FallbackColor(seed);
 
     private static Color GetStateColor(string state)
     {

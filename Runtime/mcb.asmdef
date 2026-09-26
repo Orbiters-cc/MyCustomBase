@@ -2,7 +2,8 @@
   "name": "mcb",
   "references": [
     "VRC.SDK3A",
-    "VRC.SDKBase"
+    "VRC.SDKBase",
+    "Orbiters.Toolkit"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

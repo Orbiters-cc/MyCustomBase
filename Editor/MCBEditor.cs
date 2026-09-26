@@ -15,7 +15,6 @@ public class MCBEditor : UnityEditor.Editor
     private const string DevModeWarningEnabledPrefKey = "MCB.DevModeWarningEnabled";
     private static readonly string[] UiToolkitStyleSheets =
     {
-        "Packages/orbiters.mcb/Editor/Styles/mcb-theme.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-account.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-gallery.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-creator.uss",
@@ -53,7 +52,7 @@ public class MCBEditor : UnityEditor.Editor
     public WarningsModule warningsModule;
 
     private VisualElement uiToolkitRoot;
-    private MCBGlowSurfaceElement chromeSurfaceHost;
+    private OrbitersGlowSurfaceElement chromeSurfaceHost;
     private VisualElement headerHost;
     private VisualElement bannerHost;
     private VisualElement accountHost;
@@ -255,30 +254,13 @@ public class MCBEditor : UnityEditor.Editor
         dynamicUiSchedule?.Pause();
         dynamicUiSchedule = null;
 
-        uiToolkitRoot = new VisualElement();
-        uiToolkitRoot.AddToClassList("mcb-root");
+        var shell = new OrbitersInspectorShell();
+        uiToolkitRoot = shell;
         LoadUiToolkitStyleSheets(uiToolkitRoot);
-
-        chromeSurfaceHost = new MCBGlowSurfaceElement(
-            new Color(0.180f, 0.180f, 0.180f, 1f),
-            new Color(0.212f, 0.212f, 0.212f, 1f),
-            254f,
-            -78f,
-            318f);
-        chromeSurfaceHost.AddToClassList("mcb-chrome-surface");
-        uiToolkitRoot.Add(chromeSurfaceHost);
-
-        headerHost = new VisualElement();
-        headerHost.AddToClassList("mcb-header");
-        uiToolkitRoot.Add(headerHost);
-
-        bannerHost = new VisualElement();
-        bannerHost.AddToClassList("mcb-banner");
-        headerHost.Add(bannerHost);
-
-        accountHost = new VisualElement();
-        headerHost.Add(accountHost);
-        chromeSurfaceHost.SendToBack();
+        chromeSurfaceHost = shell.Glow;
+        headerHost = shell.Header;
+        bannerHost = shell.Banner;
+        accountHost = shell.Account;
 
         dependencyHost = new VisualElement();
         uiToolkitRoot.Add(dependencyHost);
