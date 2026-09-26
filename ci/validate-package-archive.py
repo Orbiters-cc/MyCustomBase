@@ -17,7 +17,8 @@ REQUIRED_ASMDEF_FILES = (
     "Tests/Editor/mcb.Editor.Tests.asmdef",
 )
 REQUIRED_USS_FILES = (
-    "Editor/Styles/mcb-theme.uss",
+    "Editor/Styles/mcb-account.uss",
+    "Editor/Styles/mcb-avatar-options.uss",
 )
 REQUIRED_HDIFF_FILES = (
     "Editor/Plugins/Hdiff/THIRD_PARTY_NOTICES.md",
@@ -38,6 +39,7 @@ REQUIRED_COMPRESSION_FILES = (
     "Editor/Plugins/Compression/ZSTD-LICENSE.txt",
 )
 ALLOWED_EXTERNAL_ASMDEF_REFERENCES = {
+    "Orbiters.Toolkit",
     "VRC.SDK3A",
     "VRC.SDK3A.Editor",
     "VRC.SDKBase",
@@ -133,6 +135,9 @@ def validate_package_json(archive, failures):
     package_name = package_json.get("name")
     if package_name != EXPECTED_PACKAGE_NAME:
         failures.append(f"package.json: expected name '{EXPECTED_PACKAGE_NAME}', got '{package_name}'")
+
+    if not package_json.get("vpmDependencies", {}).get("orbiters.toolkit"):
+        failures.append("package.json: shared Inspector styles and services require orbiters.toolkit")
 
     for field in ("displayName", "version", "unity"):
         value = package_json.get(field)
