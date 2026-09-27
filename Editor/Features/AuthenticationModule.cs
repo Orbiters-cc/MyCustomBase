@@ -53,7 +53,7 @@ public class AuthenticationModule
             editor.CheckAuthentication();
             RefreshUIToolkit();
             editor.Repaint();
-        }));
+        }, "Connect your Orbiters account to publish and download your bases.", "mcb"));
     }
 
     // Authentication logic moved to AuthenticationService. This class now only provides UI helpers.

@@ -306,42 +306,6 @@
     margin-bottom: 12px;
 }
 
-.mcb-avatar-graph__bar {
-    flex-direction: row;
-    height: 12px;
-    min-height: 12px;
-    background-color: #808080;
-    border-radius: 3px;
-    padding: 1px;
-    overflow: hidden;
-}
-
-.mcb-avatar-graph__segment {
-    height: 10px;
-    min-height: 10px;
-    flex-shrink: 1;
-}
-
-.mcb-avatar-graph__legend {
-    margin-top: 8px;
-}
-
-.mcb-avatar-graph__legend-row {
-    flex-direction: row;
-    align-items: center;
-    min-height: 16px;
-    margin-bottom: 4px;
-}
-
-.mcb-avatar-graph__legend-square {
-    width: 12px;
-    height: 12px;
-    min-width: 12px;
-    border-radius: 3px;
-    border-width: 1px;
-    border-color: #808080;
-    margin-right: 4px;
-}
 
 .mcb-avatar-sliders__compression-toggle {
     margin-top: 2px;

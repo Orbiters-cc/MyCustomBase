@@ -260,40 +260,9 @@ public partial class SlidersDrawer
 
     private VisualElement BuildGraphUIToolkit()
     {
-        var graph = new VisualElement();
+        var graph = new Orbiters.Toolkit.Editor.BudgetBar();
         graph.AddToClassList("mcb-avatar-graph");
-
-        var bar = new VisualElement();
-        bar.AddToClassList("mcb-avatar-graph__bar");
-
-        foreach (var element in graphData)
-        {
-            var segment = new VisualElement();
-            segment.AddToClassList("mcb-avatar-graph__segment");
-            segment.style.backgroundColor = element.color;
-            segment.style.width = 0;
-            segment.style.flexGrow = Mathf.Max(0f, element.number);
-            bar.Add(segment);
-        }
-        graph.Add(bar);
-
-        var legend = new VisualElement();
-        legend.AddToClassList("mcb-avatar-graph__legend");
-        foreach (var element in graphData)
-        {
-            var row = new VisualElement();
-            row.AddToClassList("mcb-avatar-graph__legend-row");
-
-            var square = new VisualElement();
-            square.AddToClassList("mcb-avatar-graph__legend-square");
-            square.style.backgroundColor = element.color;
-            row.Add(square);
-
-            row.Add(AvatarOptionsModule.CreateOptionLabel(element.label, 11, FontStyle.Normal, new Color(0.8f, 0.8f, 0.8f)));
-            legend.Add(row);
-        }
-        graph.Add(legend);
-
+        graph.SetSegments(graphData.Select(element => new Orbiters.Toolkit.Editor.BudgetBar.Segment(element.label, element.number, element.color)));
         return graph;
     }
 

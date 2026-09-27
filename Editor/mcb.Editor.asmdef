@@ -7,7 +7,8 @@
     "VRC.SDKBase.Editor",
     "mcb",
     "Orbiters.Toolkit",
-    "Orbiters.Toolkit.Editor"
+    "Orbiters.Toolkit.Editor",
+    "Orbiters.Toolkit.Editor.VRChat"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

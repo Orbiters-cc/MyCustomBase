@@ -273,16 +273,21 @@ public class VRCFuryService
 
     public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot, int selectedCustomBaseSlidersCount)
     {
-        var usage = AvatarParametersService.Instance.GetAvatarParameterUsage(avatarRoot, selectedCustomBaseSlidersCount);
+        var usage = Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Estimate(avatarRoot,
+            new Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Options
+            {
+                IsReservedSliderHost = gameObject => gameObject.name == SLIDERS_GAMEOBJECT_NAME,
+                PlannedSliders = selectedCustomBaseSlidersCount
+            });
         return new ParameterUsage
         {
-            currentSyncedBits = usage.currentSyncedBits,
-            totalUsedAfterBuild = usage.totalUsedAfterBuild,
-            usedByAvatar = usage.usedByAvatar,
-            usedBySliders = usage.usedBySliders,
-            compressionEnabled = usage.compressionEnabled,
-            compressionIsExternal = usage.compressionIsExternal,
-            compressionPath = usage.compressionPath
+            currentSyncedBits = usage.DescriptorBits,
+            totalUsedAfterBuild = usage.TotalAfterBuild,
+            usedByAvatar = usage.WithoutAdded,
+            usedBySliders = usage.Added,
+            compressionEnabled = usage.CompressionEnabled,
+            compressionIsExternal = usage.CompressionIsExternal,
+            compressionPath = usage.CompressionPath
         };
     }
 
@@ -295,17 +300,13 @@ public class VRCFuryService
     {
         if (avatarRoot == null) return;
         
-        // 1. Ensure Types are loaded
-        if (_vrcFuryType == null) _vrcFuryType = FindType("VF.Model.VRCFury");
-        if (_unlimitedType == null) _unlimitedType = FindType("VF.Model.Feature.UnlimitedParameters");
-
-        if (_vrcFuryType == null || _unlimitedType == null)
+        if (!Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.CanCompress)
         {
             Debug.LogError("[MCB] VRCFury types not found. Cannot toggle compression.");
             return;
         }
 
-        // 2. Find or create the "mcb sliders" GameObject
+        // 1. Find or create the "mcb sliders" GameObject
         Transform slidersTransform = avatarRoot.transform.Find(SLIDERS_GAMEOBJECT_NAME);
         GameObject slidersObj;
         if (slidersTransform == null)
@@ -328,30 +329,9 @@ public class VRCFuryService
             slidersObj = slidersTransform.gameObject;
         }
 
-        // 3. Find existing Unlimited Parameters component on the sliders object
-        var existingVrcfComponents = slidersObj.GetComponents(_vrcFuryType);
-        var compressionComp = existingVrcfComponents.FirstOrDefault(c => 
-            _vrcFuryType.GetField("content").GetValue(c)?.GetType() == _unlimitedType);
-
-        if (enabled)
-        {
-            if (compressionComp == null)
-            {
-                // Add the Unlimited Parameters feature
-                var vrcf = Undo.AddComponent(slidersObj, _vrcFuryType);
-                var feature = System.Activator.CreateInstance(_unlimitedType);
-                _vrcFuryType.GetField("content").SetValue(vrcf, feature);
-                Debug.Log("[MCB] VRCFury Parameter Compression enabled.");
-            }
-        }
-        else
-        {
-            if (compressionComp != null && compressionComp is Component comp)
-            {
-                Undo.DestroyObjectImmediate(comp);
-                Debug.Log("[MCB] VRCFury Parameter Compression disabled.");
-            }
-        }
+        // 2. The compressor lives on the sliders object.
+        Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.SetCompression(slidersObj, enabled);
+        Debug.Log(enabled ? "[MCB] VRCFury Parameter Compression enabled." : "[MCB] VRCFury Parameter Compression disabled.");
     }
 
     private System.Type FindType(string fullName)
