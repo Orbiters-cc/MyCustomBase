@@ -2,7 +2,9 @@
   "name": "mcb.Editor.Tests",
   "references": [
     "mcb",
-    "mcb.Editor"
+    "mcb.Editor",
+    "Orbiters.Toolkit",
+    "Orbiters.Toolkit.Editor"
   ],
   "includePlatforms": [
     "Editor"

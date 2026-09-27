@@ -40,6 +40,7 @@ REQUIRED_COMPRESSION_FILES = (
 )
 ALLOWED_EXTERNAL_ASMDEF_REFERENCES = {
     "Orbiters.Toolkit",
+    "Orbiters.Toolkit.Editor",
     "VRC.SDK3A",
     "VRC.SDK3A.Editor",
     "VRC.SDKBase",

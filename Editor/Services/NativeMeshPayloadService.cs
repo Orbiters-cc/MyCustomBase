@@ -13,6 +13,7 @@ using MCBEditorUtils;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Orbiters.Toolkit.Editor;
 
 public static partial class NativeMeshPayloadService
 {
@@ -2753,7 +2754,7 @@ public static partial class NativeMeshPayloadService
         }
 
         renderer.updateWhenOffscreen = previousUpdateWhenOffscreen;
-        SkinnedMeshBoundsService.Refresh(renderer);
+        SkinnedMeshBounds.Refresh(renderer);
     }
 
     private static void RefreshAvatarSkinnedRenderers(Transform avatarRoot, bool preserveSharedMeshes = false)
@@ -2769,7 +2770,7 @@ public static partial class NativeMeshPayloadService
             {
                 if (preserveSharedMeshes && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), null))
                 {
-                    SkinnedMeshBoundsService.Refresh(renderer);
+                    SkinnedMeshBounds.Refresh(renderer);
                     continue;
                 }
                 RefreshSkinnedRenderer(renderer, renderer.sharedMesh);

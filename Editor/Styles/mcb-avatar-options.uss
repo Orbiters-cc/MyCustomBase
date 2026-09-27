@@ -343,63 +343,6 @@
     margin-right: 4px;
 }
 
-.mcb-avatar-chip-group {
-    flex-direction: row;
-    flex-wrap: wrap;
-    min-width: 0;
-    margin-bottom: 8px;
-}
-
-.mcb-avatar-chip {
-    flex-direction: row;
-    align-items: center;
-    height: 24px;
-    min-height: 24px;
-    border-radius: 12px;
-    border-width: 1px;
-    border-color: #999999;
-    background-color: #252525;
-    padding-left: 8px;
-    padding-right: 10px;
-    margin-right: 6px;
-    margin-bottom: 6px;
-}
-
-.mcb-avatar-chip:hover {
-    background-color: #333333;
-}
-
-.mcb-avatar-chip--selected {
-    background-color: #8a8a8a;
-}
-
-.mcb-avatar-chip--selected:hover {
-    background-color: #949494;
-}
-
-.mcb-avatar-chip__marker {
-    width: 14px;
-    height: 14px;
-    min-width: 14px;
-    border-radius: 7px;
-    border-width: 1px;
-    border-color: #ffffff;
-    margin-right: 8px;
-}
-
-.mcb-avatar-chip--selected .mcb-avatar-chip__marker {
-    background-color: #ffffff;
-}
-
-.mcb-avatar-chip__label {
-    color: #ffffff;
-    white-space: nowrap;
-}
-
-.mcb-avatar-chip Label {
-    color: #ffffff;
-}
-
 .mcb-avatar-sliders__compression-toggle {
     margin-top: 2px;
 }

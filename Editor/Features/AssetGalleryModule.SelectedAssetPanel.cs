@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Orbiters.Toolkit.Editor;
 
 public partial class AssetGalleryModule
 {
@@ -55,7 +56,7 @@ public partial class AssetGalleryModule
         {
             var editButton = CreateTextButton("Edit", () => BeginEditSelectedAssetMedia(selectedAsset));
             editButton.AddToClassList("mcb-selected-banner__edit-button");
-            editButton.SetEnabled(!isSavingSelectedAssetMedia && !isGeneratingPhotoshootImage);
+            editButton.SetEnabled(!isSavingSelectedAssetMedia && !photoshoot.IsGenerating);
             var creatorActions = new VisualElement();
             creatorActions.AddToClassList("mcb-selected-banner__creator-actions");
             creatorActions.Add(editButton);
@@ -168,7 +169,7 @@ public partial class AssetGalleryModule
         row.AddToClassList("mcb-selected-banner__breadcrumb");
 
         var galleryStep = new Button { text = "Gallery" };
-        MCBButtonInteractionUtility.RegisterImmediateClick(galleryStep, ReturnToGallery);
+        ButtonInteraction.RegisterImmediateClick(galleryStep, ReturnToGallery);
         galleryStep.AddToClassList("mcb-selected-banner__breadcrumb-step");
         row.Add(galleryStep);
 
@@ -189,7 +190,7 @@ public partial class AssetGalleryModule
         {
             tooltip = state != null && state.likedByCurrentUser ? "Unlike asset" : "Like asset"
         };
-        MCBButtonInteractionUtility.RegisterImmediateClick(button, ToggleSelectedAssetLike);
+        ButtonInteraction.RegisterImmediateClick(button, ToggleSelectedAssetLike);
         button.AddToClassList("mcb-selected-banner__like-button");
         button.EnableInClassList("mcb-selected-banner__like-button--liked", state != null && state.likedByCurrentUser);
         button.SetEnabled(state != null && !state.isLoading);

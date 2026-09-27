@@ -6,7 +6,8 @@
     "VRC.SDKBase",
     "VRC.SDKBase.Editor",
     "mcb",
-    "Orbiters.Toolkit"
+    "Orbiters.Toolkit",
+    "Orbiters.Toolkit.Editor"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

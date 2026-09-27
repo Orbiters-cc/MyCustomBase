@@ -6,6 +6,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Orbiters.Toolkit.Editor;
 
 public partial class VersionListDrawer
 {
@@ -172,7 +173,7 @@ public partial class VersionListDrawer
         item.Add(CreateConnectorTimeline(isListCollapsed));
 
         var button = new Button();
-        MCBButtonInteractionUtility.RegisterImmediateClick(button, () =>
+        ButtonInteraction.RegisterImmediateClick(button, () =>
         {
             isListCollapsed = !isListCollapsed;
             RefreshVersionUi();
@@ -634,7 +635,7 @@ public partial class VersionListDrawer
             text = detailsExpanded ? "-" : "+",
             tooltip = detailsExpanded ? "Collapse version details" : "Expand version details"
         };
-        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
+        ButtonInteraction.RegisterImmediateClick(button, onClick);
         button.AddToClassList("mcb-version-details-toggle");
         return button;
     }
@@ -1081,7 +1082,7 @@ public partial class VersionListDrawer
         button.AddToClassList("mcb-button");
         button.AddToClassList("mcb-button--icon-only");
         button.AddToClassList("mcb-version-action-button");
-        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
+        ButtonInteraction.RegisterImmediateClick(button, onClick);
 
         var iconContent = EditorGUIUtility.IconContent(iconName);
         if (iconContent?.image != null)
@@ -1104,7 +1105,7 @@ public partial class VersionListDrawer
         button.AddToClassList("mcb-button");
         button.AddToClassList("mcb-button--icon-only");
         button.AddToClassList("mcb-version-action-button");
-        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
+        ButtonInteraction.RegisterImmediateClick(button, onClick);
 
         var icon = new MCBInteractionIconElement(iconKind);
         icon.AddToClassList("mcb-button-icon");
@@ -1116,7 +1117,7 @@ public partial class VersionListDrawer
     {
         var button = new Button { text = text ?? string.Empty };
         button.AddToClassList("mcb-button");
-        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
+        ButtonInteraction.RegisterImmediateClick(button, onClick);
         return button;
     }
 

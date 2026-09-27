@@ -9,6 +9,8 @@ using Newtonsoft.Json;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Orbiters.Toolkit.Editor;
+using Orbiters.Toolkit.Editor.Photoshoot;
 
 public class CreatorAvatarBaseOption
 {
@@ -114,32 +116,8 @@ public partial class AssetGalleryModule
     private string selectedAssetMediaEditError;
     private Texture2D editThumbnail;
     private Texture2D editBanner;
-    private PhotoshootGenerationService.Catalog photoshootCatalog;
-    private PhotoshootGenerationService.LivePreviewSession photoshootPreviewSession;
-    private int photoshootBodyPoseIndex;
-    private int photoshootBackgroundIndex;
-    private int photoshootLightPresetIndex;
-    private float photoshootZoom = 1.35f;
-    private Vector2 photoshootPlacement = Vector2.zero;
-    private float photoshootRotationDegrees;
-    private readonly HashSet<string> photoshootSelectedFaceBlendshapes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, Texture2D> photoshootPoseIconCache = new Dictionary<string, Texture2D>(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, Texture2D> photoshootLightIconCache = new Dictionary<string, Texture2D>(StringComparer.OrdinalIgnoreCase);
-    private Image photoshootStagePreviewImage;
-    private Image photoshootThumbnailPreviewImage;
-    private readonly List<Button> photoshootLightOptionButtons = new List<Button>();
-    private readonly List<Button> photoshootPoseOptionButtons = new List<Button>();
-    private readonly List<Button> photoshootBackgroundOptionButtons = new List<Button>();
-    private readonly Dictionary<string, Button> photoshootExpressionChipButtons = new Dictionary<string, Button>(StringComparer.OrdinalIgnoreCase);
-    private string photoshootStatus;
-    private string photoshootError;
-    private bool isGeneratingPhotoshootImage;
-    private int photoshootStateVersion;
-    private int photoshootLivePreviewRefreshTicket;
-    private const float PhotoshootMinZoom = 0.65f;
-    private const float PhotoshootMaxZoom = 7.5f;
-    private const float PhotoshootMinRotationDegrees = -90f;
-    private const float PhotoshootMaxRotationDegrees = 90f;
+    // Photoshoot selections and live scene survive UI rebuilds; the shared Toolkit panel renders them.
+    private readonly PhotoshootState photoshoot = new PhotoshootState();
     private string createName = "";
     private string createDescription = "";
     private string createJinxxyLink = "";
@@ -322,7 +300,7 @@ public partial class AssetGalleryModule
         selectedAssetLikeButton = null;
         selectedAssetLikeCountLabel = null;
         ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
-        ReleasePhotoshootPreviewTexture();
+        photoshoot.Dispose();
     }
 
     public void RefreshUIToolkit()
@@ -476,7 +454,7 @@ public partial class AssetGalleryModule
     {
         var button = new Button { text = text };
         button.AddToClassList("mcb-button");
-        MCBButtonInteractionUtility.RegisterImmediateClick(button, onClick);
+        ButtonInteraction.RegisterImmediateClick(button, onClick);
         return button;
     }
 

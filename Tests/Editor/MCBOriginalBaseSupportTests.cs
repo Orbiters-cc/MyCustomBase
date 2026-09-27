@@ -9,6 +9,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEditor.UIElements;
+using Orbiters.Toolkit.Editor;
 
 public class MCBOriginalBaseSupportTests
 {
@@ -251,7 +252,7 @@ public class MCBOriginalBaseSupportTests
             var renderer = root.AddComponent<SkinnedMeshRenderer>(); renderer.sharedMesh = mesh; renderer.bones = new[] { eye };
             clip.SetCurve("Eye", typeof(Transform), "localPosition.z", AnimationCurve.Constant(0, 1, 0));
             clip.SetCurve("Eye", typeof(Transform), "localScale.x", AnimationCurve.Constant(0, 1, 1));
-            typeof(PhotoshootGenerationService).GetMethod("SampleBodyPose", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { root, clip });
+            Orbiters.Toolkit.Editor.Photoshoot.PhotoshootService.SampleBodyPose(root, clip);
             Assert.AreEqual(new Vector3(0, 1, 2), eye.localPosition); Assert.AreEqual(Vector3.one * 1.2f, eye.localScale);
         }
         finally { UnityEngine.Object.DestroyImmediate(root); UnityEngine.Object.DestroyImmediate(clip); UnityEngine.Object.DestroyImmediate(mesh); }
@@ -268,7 +269,7 @@ public class MCBOriginalBaseSupportTests
             mesh.triangles = new[] { 0, 1, 2 }; mesh.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, 3).ToArray();
             mesh.bindposes = new[] { bone.worldToLocalMatrix * root.transform.localToWorldMatrix }; mesh.RecalculateBounds(); renderer.sharedMesh = mesh;
             renderer.localBounds = mesh.bounds;
-            SkinnedMeshBoundsService.Refresh(renderer); renderer.BakeMesh(baked);
+            SkinnedMeshBounds.Refresh(renderer); renderer.BakeMesh(baked);
             foreach (var vertex in baked.vertices) Assert.IsTrue(renderer.bounds.Contains(renderer.transform.TransformPoint(vertex)), "Culling bounds exclude posed geometry.");
             Assert.IsFalse(renderer.updateWhenOffscreen, "The scene fix must not enable perpetual offscreen skinning.");
         }
