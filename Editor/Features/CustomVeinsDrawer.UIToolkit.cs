@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Orbiters.Toolkit.Editor.Vpm;
 
 public partial class CustomVeinsDrawer
 {
@@ -171,59 +172,15 @@ public partial class CustomVeinsDrawer
             return;
         }
 
-        var status = VpmDependencyService.Instance.GetOptionalDependencyStatus("com.poiyomi.toon");
-        if (status == null || status.IsInstalled)
+        var prompt = new DependencyPrompt(McbDependencies.Vpm, McbDependencies.PoiyomiPackageId,
+            "This material was locked from a Poiyomi shader, but Poiyomi Toon is not installed in the project.");
+        if (prompt.IsInstalled)
         {
             return;
         }
 
-        var box = new VisualElement();
-        box.AddToClassList("mcb-avatar-helpbox");
-        box.AddToClassList("mcb-avatar-helpbox--warning");
-
-        var icon = AvatarOptionsModule.CreateOptionLabel("!", 14, FontStyle.Bold, Color.white);
-        icon.AddToClassList("mcb-avatar-helpbox__icon");
-        box.Add(icon);
-
-        var content = new VisualElement();
-        content.AddToClassList("mcb-avatar-helpbox__content");
-        content.Add(AvatarOptionsModule.CreateOptionLabel(
-            "This material was locked from a Poiyomi shader, but Poiyomi Toon is not installed in the project.",
-            12,
-            FontStyle.Normal,
-            new Color(0.82f, 0.82f, 0.82f)));
-
-        if (!string.IsNullOrWhiteSpace(status.Reason))
-        {
-            var reason = AvatarOptionsModule.CreateOptionLabel(status.Reason, 11, FontStyle.Normal, new Color(0.62f, 0.62f, 0.62f));
-            reason.AddToClassList("mcb-avatar-helpbox__secondary");
-            content.Add(reason);
-        }
-
-        string label = VpmDependencyService.Instance.IsInstalling ? "Installing Poiyomi Toon..." : "Install Poiyomi Toon";
-        var installButton = AvatarOptionsModule.CreateOptionButton(label, () =>
-        {
-            var result = VpmDependencyService.Instance.InstallOptionalDependency("com.poiyomi.toon");
-            if (!result.Success)
-            {
-                EditorUtility.DisplayDialog("Install Poiyomi Toon Failed", result.ErrorMessage, "Ok");
-            }
-            else
-            {
-                EditorUtility.DisplayDialog(
-                    "Poiyomi Toon Installed",
-                    "Poiyomi Toon was installed. Unity may reload assemblies before custom veins can continue.",
-                    "Ok");
-            }
-
-            AvatarOptionsModule.RefreshEditorUi(editor);
-        });
-        installButton.AddToClassList("mcb-avatar-veins__poiyomi-button");
-        installButton.SetEnabled(!VpmDependencyService.Instance.IsInstalling);
-        content.Add(installButton);
-
-        box.Add(content);
-        root.Add(box);
+        prompt.Installed += () => AvatarOptionsModule.RefreshEditorUi(editor);
+        root.Add(prompt);
     }
 
     private void BuildReapplyButtonUIToolkit(VisualElement root, bool currentEnabled, bool isLocked)

@@ -42,6 +42,7 @@ ALLOWED_EXTERNAL_ASMDEF_REFERENCES = {
     "Orbiters.Toolkit",
     "Orbiters.Toolkit.Editor",
     "Orbiters.Toolkit.Editor.VRChat",
+    "Orbiters.Toolkit.Editor.Vpm",
     "VRC.SDK3A",
     "VRC.SDK3A.Editor",
     "VRC.SDKBase",

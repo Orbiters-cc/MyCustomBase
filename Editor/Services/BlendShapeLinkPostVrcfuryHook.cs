@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 using UnityEngine;
 using VRC.SDKBase.Editor.BuildPipeline;
 
@@ -9,31 +10,31 @@ public class BlendShapeLinkPostVrcfuryHook : IVRCSDKPreprocessAvatarCallback
 
     public bool OnPreprocessAvatar(GameObject avatarRoot)
     {
-        BlendShapeLinkService.Instance.ClearSessionTracking();
+        BlendShapeLinkEngine.BeginBuild();
         var versionResult = BlendShapeLinkService.Instance.ApplyActiveVersionFactorLinks(avatarRoot);
-        if (versionResult.success)
+        if (versionResult.Success)
         {
-            MCBLogger.Log("[MCB] " + versionResult.message);
+            MCBLogger.Log("[MCB] " + versionResult.Message);
         }
         else
         {
-            MCBLogger.Log("[MCB] Version BlendShape links skipped: " + versionResult.message);
+            MCBLogger.Log("[MCB] Version BlendShape links skipped: " + versionResult.Message);
         }
 
         var manualResult = BlendShapeLinkService.Instance.ApplyConfiguredFactorLinks(avatarRoot);
-        if (manualResult.success)
+        if (manualResult.Success)
         {
-            MCBLogger.Log("[MCB] " + manualResult.message);
+            MCBLogger.Log("[MCB] " + manualResult.Message);
         }
         else
         {
-            MCBLogger.Log("[MCB] Manual BlendShape links skipped: " + manualResult.message);
+            MCBLogger.Log("[MCB] Manual BlendShape links skipped: " + manualResult.Message);
         }
 
         try
         {
             var refitResult = BlendShapeLinkService.Instance.ApplyReFitFlexLinks(avatarRoot);
-            MCBLogger.Log("[MCB] " + refitResult.message);
+            MCBLogger.Log("[MCB] " + refitResult.Message);
         }
         catch (System.Exception ex)
         {

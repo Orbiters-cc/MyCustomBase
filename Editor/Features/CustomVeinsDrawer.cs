@@ -3,6 +3,7 @@ using System.Linq;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
+using Orbiters.Toolkit.Editor.Vpm;
 
 public partial class CustomVeinsDrawer
 {
@@ -194,7 +195,7 @@ public partial class CustomVeinsDrawer
             return;
         }
 
-        var status = VpmDependencyService.Instance.GetOptionalDependencyStatus("com.poiyomi.toon");
+        var status = McbDependencies.Vpm.OptionalStatus(McbDependencies.PoiyomiPackageId);
         if (status == null || status.IsInstalled)
         {
             return;
@@ -210,12 +211,12 @@ public partial class CustomVeinsDrawer
             EditorGUILayout.LabelField(status.Reason, EditorStyles.wordWrappedMiniLabel);
         }
 
-        using (new EditorGUI.DisabledScope(VpmDependencyService.Instance.IsInstalling))
+        using (new EditorGUI.DisabledScope(VpmDependencies.IsInstalling))
         {
-            string label = VpmDependencyService.Instance.IsInstalling ? "Installing Poiyomi Toon..." : "Install Poiyomi Toon";
+            string label = VpmDependencies.IsInstalling ? "Installing Poiyomi Toon..." : "Install Poiyomi Toon";
             if (GUILayout.Button(label, GUILayout.Width(180f)))
             {
-                var result = VpmDependencyService.Instance.InstallOptionalDependency("com.poiyomi.toon");
+                var result = McbDependencies.Vpm.InstallOptional(McbDependencies.PoiyomiPackageId);
                 if (!result.Success)
                 {
                     EditorUtility.DisplayDialog("Install Poiyomi Toon Failed", result.ErrorMessage, "Ok");

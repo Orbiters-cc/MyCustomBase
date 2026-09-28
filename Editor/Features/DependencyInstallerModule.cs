@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Orbiters.Toolkit.Editor;
+using Orbiters.Toolkit.Editor.Vpm;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -24,13 +26,13 @@ public class DependencyInstallerModule
 
     public void Initialize()
     {
-        VpmDependencyService.Instance.StatusChanged += OnDependencyStatusChanged;
+        VpmDependencies.StatusChanged += OnDependencyStatusChanged;
         RefreshStatuses();
     }
 
     public void Dispose()
     {
-        VpmDependencyService.Instance.StatusChanged -= OnDependencyStatusChanged;
+        VpmDependencies.StatusChanged -= OnDependencyStatusChanged;
     }
 
     public void AttachUIToolkit(VisualElement root)
@@ -93,13 +95,20 @@ public class DependencyInstallerModule
         actionRow.AddToClassList("mcb-dependencies__actions");
         panel.Add(actionRow);
 
-        var installButton = new Button(InstallMissingRequiredDependencies)
+        var installButton = new Button
         {
-            text = VpmDependencyService.Instance.IsInstalling
+            text = VpmDependencies.IsInstalling
                 ? "Installing..."
-                : VpmDependencyService.BuildInstallButtonLabel(missingRequiredDependencies)
+                : VpmDependencies.InstallLabel(missingRequiredDependencies)
         };
-        installButton.SetEnabled(!VpmDependencyService.Instance.IsInstalling);
+        installButton.SetEnabled(!VpmDependencies.IsInstalling);
+        ButtonInteraction.RegisterImmediateClick(installButton, () =>
+        {
+            installButton.text = "Installing...";
+            installButton.SetEnabled(false);
+            // Installing blocks the editor: let the pressed state paint first.
+            installButton.schedule.Execute(InstallMissingRequiredDependencies).StartingIn(40);
+        });
         installButton.AddToClassList("mcb-button");
         installButton.AddToClassList("mcb-button--primary");
         installButton.AddToClassList("mcb-dependencies__install-button");
@@ -130,11 +139,11 @@ public class DependencyInstallerModule
             EditorGUILayout.LabelField(line, EditorStyles.wordWrappedMiniLabel);
         }
 
-        using (new EditorGUI.DisabledScope(VpmDependencyService.Instance.IsInstalling))
+        using (new EditorGUI.DisabledScope(VpmDependencies.IsInstalling))
         {
-            string label = VpmDependencyService.Instance.IsInstalling
+            string label = VpmDependencies.IsInstalling
                 ? "Installing..."
-                : VpmDependencyService.BuildInstallButtonLabel(missingRequiredDependencies);
+                : VpmDependencies.InstallLabel(missingRequiredDependencies);
             if (GUILayout.Button(label, GUILayout.Height(30f)))
             {
                 InstallMissingRequiredDependencies();
@@ -146,7 +155,7 @@ public class DependencyInstallerModule
 
     private void RefreshStatuses()
     {
-        missingRequiredDependencies = VpmDependencyService.Instance.GetMissingRequiredDependencyStatuses();
+        missingRequiredDependencies = McbDependencies.Vpm.MissingRequired();
     }
 
     private string BuildTitle()
@@ -201,7 +210,7 @@ public class DependencyInstallerModule
 
     private void InstallMissingRequiredDependencies()
     {
-        var result = VpmDependencyService.Instance.InstallMissingRequiredDependencies();
+        var result = McbDependencies.Vpm.InstallMissingRequired();
         if (!result.Success)
         {
             EditorUtility.DisplayDialog("Install Required Dependencies Failed", result.ErrorMessage, "Ok");

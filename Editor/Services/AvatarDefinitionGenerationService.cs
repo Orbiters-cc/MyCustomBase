@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Orbiters.Toolkit.Armature;
 using UnityEditor;
 using UnityEngine;
 
@@ -25,78 +26,16 @@ public static class AvatarDefinitionGenerationService
         public bool autoGenerateAvatarMappingIfUnspecified;
     }
 
-    private struct HumanBoneCandidate
+    // Name-based mapping follows the Toolkit's humanoid naming, except where an MCB base names bones its own way:
+    // the Alphazear rig continues its ring finger chain into the little finger.
+    private static readonly Dictionary<string, HumanBodyBones> NameOverrides = new Dictionary<string, HumanBodyBones>(StringComparer.OrdinalIgnoreCase)
     {
-        public readonly string humanName;
-        public readonly string[] boneNames;
-
-        public HumanBoneCandidate(string humanName, params string[] boneNames)
-        {
-            this.humanName = humanName;
-            this.boneNames = boneNames ?? Array.Empty<string>();
-        }
-    }
-
-    private static readonly HumanBoneCandidate[] NameBasedCandidates =
-    {
-        new HumanBoneCandidate("Hips", "Hips", "hips", "Pelvis"),
-        new HumanBoneCandidate("Spine", "Spine", "spine"),
-        new HumanBoneCandidate("Chest", "Chest", "chest"),
-        new HumanBoneCandidate("Neck", "Neck", "neck"),
-        new HumanBoneCandidate("Head", "Head", "head"),
-
-        new HumanBoneCandidate("LeftUpperLeg", "Leg_L", "UpperLeg.L", "upper_leg.L", "Thigh.L", "thigh.L", "LeftUpperLeg", "LeftUpLeg", "Left leg"),
-        new HumanBoneCandidate("RightUpperLeg", "Leg_R", "UpperLeg.R", "upper_leg.R", "Thigh.R", "thigh.R", "RightUpperLeg", "RightUpLeg", "Right leg"),
-        new HumanBoneCandidate("LeftLowerLeg", "LowerLeg.L", "lower_leg.L", "LegLower.L", "Calf.L", "calf.L", "shin.L", "LeftLowerLeg", "LeftLeg"),
-        new HumanBoneCandidate("RightLowerLeg", "LowerLeg.R", "lower_leg.R", "LegLower.R", "Calf.R", "calf.R", "shin.R", "RightLowerLeg", "RightLeg"),
-        new HumanBoneCandidate("LeftFoot", "Foot.L", "foot.L", "LeftFoot"),
-        new HumanBoneCandidate("RightFoot", "Foot.R", "foot.R", "RightFoot"),
-        new HumanBoneCandidate("LeftToes", "Toe_Base_L", "Toe.L", "toe.L", "LeftToes"),
-        new HumanBoneCandidate("RightToes", "Toe_Base_R", "Toe.R", "toe.R", "RightToes"),
-
-        new HumanBoneCandidate("LeftShoulder", "Shoulder.L", "shoulder.L", "LeftShoulder"),
-        new HumanBoneCandidate("RightShoulder", "Shoulder.R", "shoulder.R", "RightShoulder"),
-        new HumanBoneCandidate("LeftUpperArm", "UpperArm.L", "upper_arm.L", "Arm.L", "arm.L", "LeftUpperArm"),
-        new HumanBoneCandidate("RightUpperArm", "UpperArm.R", "upper_arm.R", "Arm.R", "arm.R", "RightUpperArm"),
-        new HumanBoneCandidate("LeftLowerArm", "LowerArm.L", "lower_arm.L", "ForeArm.L", "forearm.L", "LeftLowerArm", "LeftForeArm"),
-        new HumanBoneCandidate("RightLowerArm", "LowerArm.R", "lower_arm.R", "ForeArm.R", "forearm.R", "RightLowerArm", "RightForeArm"),
-        new HumanBoneCandidate("LeftHand", "Hand.L", "hand.L", "LeftHand"),
-        new HumanBoneCandidate("RightHand", "Hand.R", "hand.R", "RightHand"),
-
-        new HumanBoneCandidate("Left Thumb Proximal", "Thumb.L", "thumb.01.L", "LeftThumbProximal"),
-        new HumanBoneCandidate("Left Thumb Intermediate", "Thumb.L.001", "thumb.02.L", "LeftThumbIntermediate"),
-        new HumanBoneCandidate("Left Thumb Distal", "Thumb.L.002", "thumb.03.L", "LeftThumbDistal"),
-        new HumanBoneCandidate("Left Index Proximal", "IndexFinger.L", "Index.L", "f_index.01.L", "LeftIndexProximal"),
-        new HumanBoneCandidate("Left Index Intermediate", "IndexFinger.L.001", "Index.L.001", "f_index.02.L", "LeftIndexIntermediate"),
-        new HumanBoneCandidate("Left Index Distal", "IndexFinger.L.002", "Index.L.002", "f_index.03.L", "LeftIndexDistal"),
-        new HumanBoneCandidate("Left Middle Proximal", "MiddleFinger.L", "Middle.L", "f_middle.01.L", "LeftMiddleProximal"),
-        new HumanBoneCandidate("Left Middle Intermediate", "MiddleFinger.L.001", "Middle.L.001", "f_middle.02.L", "LeftMiddleIntermediate"),
-        new HumanBoneCandidate("Left Middle Distal", "MiddleFinger.L.002", "Middle.L.002", "f_middle.03.L", "LeftMiddleDistal"),
-        new HumanBoneCandidate("Left Ring Proximal", "RingFinger.L", "Ring.L", "f_ring.01.L", "LeftRingProximal"),
-        new HumanBoneCandidate("Left Ring Intermediate", "RingFinger.L.001", "Ring.L.001", "f_ring.02.L", "LeftRingIntermediate"),
-        new HumanBoneCandidate("Left Ring Distal", "RingFinger.L.002", "Ring.L.002", "f_ring.03.L", "LeftRingDistal"),
-        new HumanBoneCandidate("Left Little Proximal", "RingFinger.L.003", "LittleFinger.L", "PinkyFinger.L", "f_pinky.01.L", "LeftLittleProximal"),
-        new HumanBoneCandidate("Left Little Intermediate", "RingFinger.L.004", "LittleFinger.L.001", "PinkyFinger.L.001", "f_pinky.02.L", "LeftLittleIntermediate"),
-        new HumanBoneCandidate("Left Little Distal", "RingFinger.L.005", "LittleFinger.L.002", "PinkyFinger.L.002", "f_pinky.03.L", "LeftLittleDistal"),
-
-        new HumanBoneCandidate("Right Thumb Proximal", "Thumb.R", "thumb.01.R", "RightThumbProximal"),
-        new HumanBoneCandidate("Right Thumb Intermediate", "Thumb.R.001", "thumb.02.R", "RightThumbIntermediate"),
-        new HumanBoneCandidate("Right Thumb Distal", "Thumb.R.002", "thumb.03.R", "RightThumbDistal"),
-        new HumanBoneCandidate("Right Index Proximal", "IndexFinger.R", "Index.R", "f_index.01.R", "RightIndexProximal"),
-        new HumanBoneCandidate("Right Index Intermediate", "IndexFinger.R.001", "Index.R.001", "f_index.02.R", "RightIndexIntermediate"),
-        new HumanBoneCandidate("Right Index Distal", "IndexFinger.R.002", "Index.R.002", "f_index.03.R", "RightIndexDistal"),
-        new HumanBoneCandidate("Right Middle Proximal", "MiddleFinger.R", "Middle.R", "f_middle.01.R", "RightMiddleProximal"),
-        new HumanBoneCandidate("Right Middle Intermediate", "MiddleFinger.R.001", "Middle.R.001", "f_middle.02.R", "RightMiddleIntermediate"),
-        new HumanBoneCandidate("Right Middle Distal", "MiddleFinger.R.002", "Middle.R.002", "f_middle.03.R", "RightMiddleDistal"),
-        new HumanBoneCandidate("Right Ring Proximal", "RingFinger.R", "Ring.R", "f_ring.01.R", "RightRingProximal"),
-        new HumanBoneCandidate("Right Ring Intermediate", "RingFinger.R.001", "Ring.R.001", "f_ring.02.R", "RightRingIntermediate"),
-        new HumanBoneCandidate("Right Ring Distal", "RingFinger.R.002", "Ring.R.002", "f_ring.03.R", "RightRingDistal"),
-        new HumanBoneCandidate("Right Little Proximal", "RingFinger.R.003", "LittleFinger.R", "PinkyFinger.R", "f_pinky.01.R", "RightLittleProximal"),
-        new HumanBoneCandidate("Right Little Intermediate", "RingFinger.R.004", "LittleFinger.R.001", "PinkyFinger.R.001", "f_pinky.02.R", "RightLittleIntermediate"),
-        new HumanBoneCandidate("Right Little Distal", "RingFinger.R.005", "LittleFinger.R.002", "PinkyFinger.R.002", "f_pinky.03.R", "RightLittleDistal"),
-
-        new HumanBoneCandidate("LeftEye", "Eye_L", "LeftEye"),
-        new HumanBoneCandidate("RightEye", "Eye_R", "RightEye"),
+        ["RingFinger.L.003"] = HumanBodyBones.LeftLittleProximal,
+        ["RingFinger.L.004"] = HumanBodyBones.LeftLittleIntermediate,
+        ["RingFinger.L.005"] = HumanBodyBones.LeftLittleDistal,
+        ["RingFinger.R.003"] = HumanBodyBones.RightLittleProximal,
+        ["RingFinger.R.004"] = HumanBodyBones.RightLittleIntermediate,
+        ["RingFinger.R.005"] = HumanBodyBones.RightLittleDistal,
     };
 
     public static bool HasGenerationSource(GameObject customFbx, string externalFbxPath)
@@ -532,11 +471,11 @@ public static class AvatarDefinitionGenerationService
 
     private static HumanBone[] BuildHumanBoneMap(HumanDescription targetDescription, HumanDescription sourceDescription, out string message)
     {
-        var targetBoneNames = new HashSet<string>(
-            (targetDescription.skeleton ?? Array.Empty<SkeletonBone>())
-                .Where(bone => !string.IsNullOrWhiteSpace(bone.name))
-                .Select(bone => bone.name),
-            StringComparer.Ordinal);
+        var orderedTargetBoneNames = (targetDescription.skeleton ?? Array.Empty<SkeletonBone>())
+            .Where(bone => !string.IsNullOrWhiteSpace(bone.name))
+            .Select(bone => bone.name)
+            .ToList();
+        var targetBoneNames = new HashSet<string>(orderedTargetBoneNames, StringComparer.Ordinal);
 
         var mappedBones = new List<HumanBone>();
         var usedHumanNames = new HashSet<string>(StringComparer.Ordinal);
@@ -559,11 +498,11 @@ public static class AvatarDefinitionGenerationService
             }
 
             message = $"Used source humanoid mapping ({mappedBones.Count}/{sourceHuman.Length} bones after MCB corrections).";
-            AddMissingNameBasedMappings(mappedBones, usedHumanNames, targetBoneNames);
+            AddMissingNameBasedMappings(mappedBones, usedHumanNames, orderedTargetBoneNames);
         }
         else
         {
-            AddMissingNameBasedMappings(mappedBones, usedHumanNames, targetBoneNames);
+            AddMissingNameBasedMappings(mappedBones, usedHumanNames, orderedTargetBoneNames);
 
             message = mappedBones.Count > 0
                 ? $"Used name-based humanoid mapping ({mappedBones.Count} bones after MCB corrections)."
@@ -708,28 +647,29 @@ public static class AvatarDefinitionGenerationService
         return null;
     }
 
-    private static void AddMissingNameBasedMappings(List<HumanBone> mappedBones, HashSet<string> usedHumanNames, HashSet<string> targetBoneNames)
+    private static void AddMissingNameBasedMappings(List<HumanBone> mappedBones, HashSet<string> usedHumanNames, IReadOnlyList<string> orderedTargetBoneNames)
     {
-        foreach (HumanBoneCandidate candidate in NameBasedCandidates)
+        // Skeleton order puts parents first, so "Toe_Base_L" wins over its child "Toe.L".
+        foreach (string boneName in orderedTargetBoneNames)
         {
-            if (usedHumanNames.Contains(candidate.humanName))
+            if (!NameOverrides.TryGetValue(boneName, out HumanBodyBones bone) && !BoneNames.TryInferHumanoid(boneName, out bone))
             {
                 continue;
             }
 
-            string boneName = FindTargetBoneName(targetBoneNames, candidate.boneNames);
-            if (string.IsNullOrWhiteSpace(boneName))
+            // MCB leaves the jaw unmapped and takes an upper chest only from the source mapping.
+            string humanName = HumanTrait.BoneName[(int)bone];
+            if (bone == HumanBodyBones.Jaw || bone == HumanBodyBones.UpperChest || !usedHumanNames.Add(humanName))
             {
                 continue;
             }
 
             mappedBones.Add(new HumanBone
             {
-                humanName = candidate.humanName,
+                humanName = humanName,
                 boneName = boneName,
                 limit = CreateDefaultHumanLimit()
             });
-            usedHumanNames.Add(candidate.humanName);
         }
     }
 

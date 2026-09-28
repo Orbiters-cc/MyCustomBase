@@ -5,14 +5,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using UnityEditor;
-using UnityEditor.Animations;
 using UnityEngine;
-using VRC.SDK3.Avatars.Components;
+using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 
 public partial class BlendShapeLinkService
 {
     private static bool TryResolveManualLink(GameObject avatarRoot, BlendShapeFactorLinkEntry link,
-        out PlannedLink resolved, out string error)
+        out BlendShapeLink resolved, out string error)
     {
         resolved = default;
         error = null;
@@ -84,44 +83,44 @@ public partial class BlendShapeLinkService
             }
         }
 
-        AnimationClip toFixClip = null;
-        List<AnimationBindingSignature> toFixSignature = null;
+        AnimationClipSignature toFixSignature = null;
         if (link.toFixType == CorrectiveActivationType.Animation)
         {
-            toFixClip = FindAnimationClipsByName(link.toFix).FirstOrDefault();
+            var toFixClip = FindAnimationClipsByName(link.toFix).FirstOrDefault();
             if (toFixClip != null)
             {
-                toFixSignature = BuildAnimationSignature(toFixClip);
+                toFixSignature = AnimationClipSignature.Build(toFixClip);
             }
         }
 
-        resolved = new PlannedLink
-        {
-            targetRendererPath = link.targetRendererPath ?? string.Empty,
-            toFixType = link.toFixType,
-            toFixName = link.toFix,
-            toFixAnimationClip = toFixClip,
-            toFixAnimationSignature = toFixSignature,
-            fixedByType = link.fixedByType,
-            fixedByName = link.fixedBy,
-            sourcePath = link.toFixType == CorrectiveActivationType.Blendshape ? link.targetRendererPath : string.Empty,
-            sourceProperty = link.toFixType == CorrectiveActivationType.Blendshape
-                ? "blendShape." + link.toFix
-                : string.Empty,
-            destinationPath = link.fixedByType == CorrectiveActivationType.Blendshape
-                ? link.targetRendererPath
-                : string.Empty,
-            destinationProperty = link.fixedByType == CorrectiveActivationType.Blendshape
-                ? "blendShape." + link.fixedBy
-                : string.Empty,
-            fixedByAnimationClip = fixedByClip,
-            factorParameterName = link.factorParameterName,
-            setFactorDefaultValue = false,
-            factorDefaultValue = 0f,
-            driverBlendshape = string.Empty
-        };
-
+        resolved = CorrectiveLink(link.targetRendererPath ?? string.Empty, link.toFixType, link.toFix, toFixSignature,
+            link.fixedByType, link.fixedBy, fixedByClip, link.factorParameterName, false, 0f);
         return true;
+    }
+
+    private static BlendShapeLink CorrectiveLink(string rendererPath, CorrectiveActivationType toFixType, string toFix,
+        AnimationClipSignature toFixSignature, CorrectiveActivationType fixedByType, string fixedBy, AnimationClip fixedByClip,
+        string factorParameterName, bool setFactorDefault, float factorDefault)
+    {
+        bool shapeTrigger = toFixType == CorrectiveActivationType.Blendshape;
+        bool shapeEffect = fixedByType == CorrectiveActivationType.Blendshape;
+        return new BlendShapeLink
+        {
+            TargetRendererPath = rendererPath,
+            TriggerType = ToEndpoint(toFixType),
+            TriggerName = toFix,
+            TriggerSignature = toFixSignature,
+            EffectType = ToEndpoint(fixedByType),
+            EffectName = fixedBy,
+            EffectClip = fixedByClip,
+            SourcePath = shapeTrigger ? rendererPath : string.Empty,
+            SourceProperty = shapeTrigger ? "blendShape." + toFix : string.Empty,
+            DestinationPath = shapeEffect ? rendererPath : string.Empty,
+            DestinationProperty = shapeEffect ? "blendShape." + fixedBy : string.Empty,
+            FactorParameter = factorParameterName,
+            SetFactorDefault = setFactorDefault,
+            FactorDefault = factorDefault
+        };
     }
 
     private static bool TryBuildAndValidateEntry(
@@ -291,18 +290,5 @@ public partial class BlendShapeLinkService
     }
 
     private static ConfigResult FailConfig(string message) => new ConfigResult { success = false, message = message };
-
-    private static ApplyResult FailApply(string message)
-    {
-        return new ApplyResult
-        {
-            success = false,
-            linksProcessed = 0,
-            controllersProcessed = 0,
-            clipsWrapped = 0,
-            statesRewritten = 0,
-            message = message
-        };
-    }
 }
 #endif

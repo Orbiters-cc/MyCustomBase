@@ -5,9 +5,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using UnityEditor;
-using UnityEditor.Animations;
 using UnityEngine;
-using VRC.SDK3.Avatars.Components;
+using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 
 public partial class BlendShapeLinkService
 {
@@ -16,11 +15,11 @@ public partial class BlendShapeLinkService
     private static bool _animationClipLookupProjectChangedHooked;
     private const double AnimationClipLookupCacheTtlSeconds = 2.0d;
 
-    private static List<PlannedLink> BuildVersionPlannedLinks(GameObject avatarRoot, CustomBaseVersion version,
+    private static List<VersionLink> BuildVersionPlannedLinks(GameObject avatarRoot, CustomBaseVersion version,
         bool useCustomSliderSelection, List<string> customSliderSelectionNames,
         bool includeAnimationSignatures = true)
     {
-        var output = new List<PlannedLink>();
+        var output = new List<VersionLink>();
         if (avatarRoot == null || version?.customBlendshapes == null || version.customBlendshapes.Length == 0)
             return output;
 
@@ -47,13 +46,12 @@ public partial class BlendShapeLinkService
                 if (string.IsNullOrWhiteSpace(corrective.toFix)) continue;
                 if (string.IsNullOrWhiteSpace(corrective.fixedBy)) continue;
 
-                AnimationClip toFixClip = null;
-                List<AnimationBindingSignature> toFixSignature = null;
+                AnimationClipSignature toFixSignature = null;
                 if (includeAnimationSignatures &&
                     corrective.toFixType == CorrectiveActivationType.Animation &&
-                    TryResolveAnimationClipByName(corrective.toFix, getAnimationClipLookup(), out toFixClip))
+                    TryResolveAnimationClipByName(corrective.toFix, getAnimationClipLookup(), out var toFixClip))
                 {
-                    toFixSignature = BuildAnimationSignature(toFixClip);
+                    toFixSignature = AnimationClipSignature.Build(toFixClip);
                 }
 
                 AnimationClip fixedByClip = null;
@@ -76,23 +74,11 @@ public partial class BlendShapeLinkService
                         corrective.fixedByType, corrective.fixedBy, factorParamNoRenderer);
                     if (!dedupe.Add(keyNoRenderer)) continue;
 
-                    output.Add(new PlannedLink
+                    output.Add(new VersionLink
                     {
-                        targetRendererPath = string.Empty,
-                        toFixType = corrective.toFixType,
-                        toFixName = corrective.toFix,
-                        toFixAnimationClip = toFixClip,
-                        toFixAnimationSignature = toFixSignature,
-                        fixedByType = corrective.fixedByType,
-                        fixedByName = corrective.fixedBy,
-                        sourcePath = string.Empty,
-                        sourceProperty = string.Empty,
-                        destinationPath = string.Empty,
-                        destinationProperty = string.Empty,
-                        fixedByAnimationClip = fixedByClip,
-                        factorParameterName = factorParamNoRenderer,
-                        setFactorDefaultValue = !isSliderFactor,
-                        factorDefaultValue = globalConstantFactor,
+                        link = CorrectiveLink(string.Empty, corrective.toFixType, corrective.toFix, toFixSignature,
+                            corrective.fixedByType, corrective.fixedBy, fixedByClip, factorParamNoRenderer,
+                            !isSliderFactor, globalConstantFactor),
                         driverBlendshape = driver.name
                     });
                     continue;
@@ -121,31 +107,11 @@ public partial class BlendShapeLinkService
                         corrective.fixedByType, corrective.fixedBy, factorParam);
                     if (!dedupe.Add(key)) continue;
 
-                    output.Add(new PlannedLink
+                    output.Add(new VersionLink
                     {
-                        targetRendererPath = rendererPath,
-                        toFixType = corrective.toFixType,
-                        toFixName = corrective.toFix,
-                        toFixAnimationClip = toFixClip,
-                        toFixAnimationSignature = toFixSignature,
-                        fixedByType = corrective.fixedByType,
-                        fixedByName = corrective.fixedBy,
-                        sourcePath = corrective.toFixType == CorrectiveActivationType.Blendshape
-                            ? rendererPath
-                            : string.Empty,
-                        sourceProperty = corrective.toFixType == CorrectiveActivationType.Blendshape
-                            ? "blendShape." + corrective.toFix
-                            : string.Empty,
-                        destinationPath = corrective.fixedByType == CorrectiveActivationType.Blendshape
-                            ? rendererPath
-                            : string.Empty,
-                        destinationProperty = corrective.fixedByType == CorrectiveActivationType.Blendshape
-                            ? "blendShape." + corrective.fixedBy
-                            : string.Empty,
-                        fixedByAnimationClip = fixedByClip,
-                        factorParameterName = factorParam,
-                        setFactorDefaultValue = !isSliderFactor,
-                        factorDefaultValue = constantFactor,
+                        link = CorrectiveLink(rendererPath, corrective.toFixType, corrective.toFix, toFixSignature,
+                            corrective.fixedByType, corrective.fixedBy, fixedByClip, factorParam,
+                            !isSliderFactor, constantFactor),
                         driverBlendshape = driver.name
                     });
                 }
@@ -243,14 +209,14 @@ public partial class BlendShapeLinkService
             return clip != null;
         }
 
-        string normalizedTarget = NormalizeAnimationKey(clipName);
+        string normalizedTarget = AnimationClipSignature.NormalizeClipName(clipName);
         if (string.IsNullOrWhiteSpace(normalizedTarget)) return false;
 
         foreach (var pair in lookup)
         {
             if (pair.Value == null || pair.Value.Count == 0) continue;
 
-            if (string.Equals(NormalizeAnimationKey(pair.Key), normalizedTarget, StringComparison.Ordinal))
+            if (string.Equals(AnimationClipSignature.NormalizeClipName(pair.Key), normalizedTarget, StringComparison.Ordinal))
             {
                 clip = pair.Value[0];
                 return clip != null;
@@ -263,7 +229,7 @@ public partial class BlendShapeLinkService
                 string path = AssetDatabase.GetAssetPath(candidate);
                 string fileName = string.IsNullOrWhiteSpace(path)
                     ? string.Empty
-                    : NormalizeAnimationKey(System.IO.Path.GetFileNameWithoutExtension(path));
+                    : AnimationClipSignature.NormalizeClipName(System.IO.Path.GetFileNameWithoutExtension(path));
 
                 if (string.Equals(fileName, normalizedTarget, StringComparison.Ordinal))
                 {
@@ -387,76 +353,6 @@ public partial class BlendShapeLinkService
         }
     }
 
-    private static List<AnimationBindingSignature> BuildAnimationSignature(AnimationClip clip)
-    {
-        var output = new List<AnimationBindingSignature>();
-        if (clip == null) return output;
-
-        var dedupe = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var binding in AnimationUtility.GetCurveBindings(clip))
-        {
-            var curve = AnimationUtility.GetEditorCurve(clip, binding);
-            TryAppendSignature(output, dedupe, binding.path, binding.type, binding.propertyName, curve);
-        }
-
-        // Keep only distinctive channels to reduce false positives in semantic matching.
-        return output.Where(IsDistinctiveSignature).ToList();
-    }
-
-    private static void TryAppendSignature(
-        List<AnimationBindingSignature> output,
-        HashSet<string> dedupe,
-        string path,
-        Type type,
-        string propertyName,
-        AnimationCurve curve)
-    {
-        if (output == null || dedupe == null || curve == null || curve.length == 0) return;
-        if (string.IsNullOrWhiteSpace(propertyName)) return;
-
-        string normalizedPath = path ?? string.Empty;
-        string normalizedProperty = propertyName ?? string.Empty;
-        string typeName = type != null ? type.FullName : string.Empty;
-        string dedupeKey = normalizedPath + "|" + normalizedProperty + "|" + typeName;
-        if (!dedupe.Add(dedupeKey)) return;
-
-        var keyTimes = curve.keys.Select(k => k.time).Distinct().OrderBy(t => t).ToList();
-        if (keyTimes.Count == 0) return;
-
-        // Keep signature compact and deterministic.
-        var samples = new List<float>
-        {
-            keyTimes.First(),
-            keyTimes.Last()
-        };
-        if (keyTimes.Count > 2)
-        {
-            samples.Add(keyTimes[keyTimes.Count / 2]);
-        }
-
-        samples = samples.Distinct().OrderBy(t => t).ToList();
-
-        output.Add(new AnimationBindingSignature
-        {
-            path = normalizedPath,
-            type = type,
-            propertyName = normalizedProperty,
-            sampleTimes = samples.ToArray(),
-            sampleValues = samples.Select(curve.Evaluate).ToArray()
-        });
-    }
-
-    private static bool IsDistinctiveSignature(AnimationBindingSignature sig)
-    {
-        if (sig.sampleValues == null || sig.sampleValues.Length == 0) return false;
-        const float eps = 0.0001f;
-        float min = sig.sampleValues.Min();
-        float max = sig.sampleValues.Max();
-        float absMax = sig.sampleValues.Max(v => Mathf.Abs(v));
-        return (max - min) > eps || absMax > eps;
-    }
-
     private static float GetIntendedFactor(MyCustomBase customBase, CustomBlendshapeEntry driver,
         SkinnedMeshRenderer specificRenderer, SkinnedMeshRenderer[] allRenderers)
     {
@@ -567,28 +463,6 @@ public partial class BlendShapeLinkService
         foreach (char c in input)
         {
             sb.Append(char.IsLetterOrDigit(c) ? c : '_');
-        }
-
-        return sb.ToString();
-    }
-
-    private static string NormalizeAnimationKey(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-        string trimmed = value.Trim();
-        if (trimmed.EndsWith(".anim", StringComparison.OrdinalIgnoreCase))
-        {
-            trimmed = trimmed.Substring(0, trimmed.Length - 5);
-        }
-
-        var sb = new StringBuilder(trimmed.Length);
-        for (int i = 0; i < trimmed.Length; i++)
-        {
-            char c = trimmed[i];
-            if (char.IsLetterOrDigit(c))
-            {
-                sb.Append(char.ToLowerInvariant(c));
-            }
         }
 
         return sb.ToString();

@@ -514,41 +514,33 @@ public class AdvancedModeModule
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Experimental features", EditorStyles.boldLabel);
                 EditorGUI.indentLevel++;
-                if (!FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
-                    FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK))
+                foreach (var feature in Orbiters.Toolkit.Editor.OrbitersFeatures.All)
                 {
-                    FeatureFlags.SetEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK, false);
-                }
-                foreach (var (key, label, description) in FeatureFlags.All())
-                {
-                    bool isBlenderAdvancedMesh = key == FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK;
-                    bool dependencyEnabled = !isBlenderAdvancedMesh ||
-                                             FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR);
+                    if (feature.Product != FeatureFlags.Product) continue;
+                    bool dependencyEnabled = string.IsNullOrEmpty(feature.Requires) || FeatureFlags.IsEnabled(feature.Requires);
 
                     EditorGUI.BeginChangeCheck();
-                    bool current = FeatureFlags.IsEnabled(key);
                     bool next;
                     using (new EditorGUI.DisabledScope(!dependencyEnabled))
                     {
-                        next = EditorGUILayout.ToggleLeft(new GUIContent(label, description), dependencyEnabled && current);
+                        next = EditorGUILayout.ToggleLeft(new GUIContent(feature.Label, feature.Description), FeatureFlags.IsEnabled(feature.Key));
                     }
                     if (EditorGUI.EndChangeCheck())
                     {
-                        FeatureFlags.SetEnabled(key, next);
+                        FeatureFlags.SetEnabled(feature.Key, next);
                         // If user disables custom unknown version support, clear selection and warning
-                        if (key == FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION && !next)
+                        if (feature.Key == FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION && !next)
                         {
                             editor.selectedCustomVersionForAction = null;
                             editor.customWarningShown = false;
                             editor.currentIsCustom = false; // hide current custom UI marks
                             editor.Repaint();
                         }
-
-                        if (key == FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR && !next)
-                        {
-                            FeatureFlags.SetEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK, false);
-                        }
                     }
+                }
+                if (GUILayout.Button("Open Orbiters settings", EditorStyles.miniButton, GUILayout.Width(160f)))
+                {
+                    Orbiters.Toolkit.Editor.OrbitersSettingsWindow.Open();
                 }
                 EditorGUI.indentLevel--;
                 EditorGUILayout.Space();
@@ -1022,7 +1014,7 @@ public class AdvancedModeModule
         if (!UnitGitReleasePublisher.IsUnitGitAvailable)
         {
             string availabilityMessage = UnitGitReleasePublisher.UnitGitAvailabilityMessage;
-            if (VpmDependencyService.Instance.IsOptionalDependencyAssumedInstalled(VpmDependencyService.UnitGitPackageId))
+            if (McbDependencies.IsOptionalDependencyAssumedInstalled(McbDependencies.UnitGitPackageId))
             {
                 EditorGUILayout.HelpBox(
                     string.IsNullOrWhiteSpace(availabilityMessage)
@@ -1119,7 +1111,7 @@ public class AdvancedModeModule
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Optional Integrations", EditorStyles.boldLabel);
 
-        bool current = VpmDependencyService.Instance.AssumeLocalOptionalIntegrationsInstalled;
+        bool current = McbDependencies.AssumeLocalOptionalIntegrationsInstalled;
         bool next = EditorGUILayout.Toggle(
             new GUIContent(
                 "Assume local ReFit/Unit Git",
@@ -1128,7 +1120,7 @@ public class AdvancedModeModule
 
         if (next != current)
         {
-            VpmDependencyService.Instance.AssumeLocalOptionalIntegrationsInstalled = next;
+            McbDependencies.AssumeLocalOptionalIntegrationsInstalled = next;
             editor.RefreshUiToolkitSections();
             editor.Repaint();
         }

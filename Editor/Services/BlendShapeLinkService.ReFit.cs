@@ -1,20 +1,21 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 using UnityEditor;
 using UnityEngine;
 
 public partial class BlendShapeLinkService
 {
-    public ApplyResult ApplyReFitFlexLinks(GameObject avatarRoot)
+    public BlendShapeLinkResult ApplyReFitFlexLinks(GameObject avatarRoot)
     {
-        if (avatarRoot == null) return FailApply("Avatar root is null.");
+        if (avatarRoot == null) return BlendShapeLinkResult.Fail("Avatar root is null.");
         var links = MCBReFitIntegration.GetBuildFlexLinks(avatarRoot);
-        if (links.Count == 0) return FailApply("No transferred ReFit flex shapes to link.");
+        if (links.Count == 0) return BlendShapeLinkResult.Fail("No transferred ReFit flex shapes to link.");
         // Use the same safety boundary as manual/version links, including initial weight synchronization.
-        if (CollectVrcFuryBuiltControllers(avatarRoot).Count == 0)
-            return FailApply("No temporary AnimatorController found for ReFit flex links.");
-        var planned = new List<PlannedLink>();
+        if (BlendShapeLinkEngine.CollectBuiltControllers(avatarRoot).Count == 0)
+            return BlendShapeLinkResult.Fail("No temporary AnimatorController found for ReFit flex links.");
+        var planned = new List<BlendShapeLink>();
         foreach (var link in links)
         {
             if (link.body == null || link.accessory == null || link.body.sharedMesh == null || link.accessory.sharedMesh == null ||
@@ -30,20 +31,10 @@ public partial class BlendShapeLinkService
                     throw new InvalidOperationException("ReFit flex shape removed during build: " + pair.Key + " -> " + pair.Value +
                         ". Keep transferred flex shapes when configuring blendshape optimization.");
                 link.accessory.SetBlendShapeWeight(destinationIndex, link.body.GetBlendShapeWeight(sourceIndex));
-                planned.Add(new PlannedLink
-                {
-                    targetRendererPath = destinationPath,
-                    toFixType = CorrectiveActivationType.Blendshape, toFixName = pair.Key,
-                    fixedByType = CorrectiveActivationType.Blendshape, fixedByName = pair.Value,
-                    sourcePath = sourcePath, sourceProperty = "blendShape." + pair.Key,
-                    destinationPath = destinationPath, destinationProperty = "blendShape." + pair.Value,
-                    copyWithoutFactor = true
-                });
+                planned.Add(BlendShapeLink.Copy(sourcePath, pair.Key, destinationPath, pair.Value));
             }
         }
-        // Reuse the existing clip cloning, nested-motion traversal, FX routing and debug registry.
-        // Direct copies need no extra animator parameters or runtime blend-tree wrappers.
-        return ApplyPlannedLinks(avatarRoot, planned, "ReFit flex");
+        return BlendShapeLinkEngine.Apply(avatarRoot, planned, "ReFit flex");
     }
 }
 #endif

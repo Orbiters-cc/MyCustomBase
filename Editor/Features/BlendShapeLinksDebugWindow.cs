@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using Orbiters.Toolkit.Editor;
+using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
@@ -243,14 +244,14 @@ public class BlendShapeLinksDebugWindow : EditorWindow
 
     private void RenderStates()
     {
-        var records = _snapshot?.appliedLinkRecords ?? new List<BlendShapeLinkService.AppliedLinkRecord>();
+        var records = _snapshot?.appliedLinkRecords ?? new List<AppliedBlendShapeLink>();
         var notFound = _snapshot?.appliedLinksNotFoundInControllers ?? new List<string>();
         var states = (_snapshot?.blendShapeLinkStates ?? new List<LiveAvatarControllerService.LiveStateInfo>()).Where(s => s != null).ToList();
         _statesCount.text = $"{states.Count} live · {records.Count} applied";
 
         // Everything this section shows, values rounded as displayed.
         var key = new StringBuilder();
-        foreach (var r in records) key.Append(r.sourceLabel).Append(r.toFixName).Append(r.fixedByName).Append(r.factorParameterName).Append(r.controllerName).Append('|');
+        foreach (var r in records) key.Append(r.Label).Append(r.Trigger).Append(r.Effect).Append(r.FactorParameter).Append(r.ControllerName).Append('|');
         foreach (var n in notFound) key.Append(n).Append('|');
         foreach (var s in states)
         {
@@ -268,10 +269,10 @@ public class BlendShapeLinksDebugWindow : EditorWindow
             foreach (var r in records)
             {
                 var row = Row("bsl-row"); _states.Add(row);
-                row.Add(Chip(r.sourceLabel, Idle));
-                row.Add(Text(r.toFixName + "  →  " + r.fixedByName, "bsl-strong bsl-grow", r.controllerAssetPath));
-                row.Add(Text(r.factorParameterName, "bsl-param", "Factor parameter"));
-                row.Add(Text(r.controllerName, "bsl-meta", r.controllerAssetPath));
+                row.Add(Chip(r.Label, Idle));
+                row.Add(Text(r.Trigger + "  →  " + r.Effect, "bsl-strong bsl-grow", r.ControllerPath));
+                row.Add(Text(r.FactorParameter, "bsl-param", "Factor parameter"));
+                row.Add(Text(r.ControllerName, "bsl-meta", r.ControllerPath));
             }
         }
         foreach (var n in notFound) _states.Add(Message(n, Warn));

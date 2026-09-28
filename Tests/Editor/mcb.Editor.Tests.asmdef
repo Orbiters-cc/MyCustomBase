@@ -4,7 +4,8 @@
     "mcb",
     "mcb.Editor",
     "Orbiters.Toolkit",
-    "Orbiters.Toolkit.Editor"
+    "Orbiters.Toolkit.Editor",
+    "Orbiters.Toolkit.Editor.VRChat"
   ],
   "includePlatforms": [
     "Editor"

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -16,9 +17,6 @@ public class LiveAvatarControllerService
     private static LiveAvatarControllerService _instance;
     public static LiveAvatarControllerService Instance => _instance ??= new LiveAvatarControllerService();
 
-    public const string BlendShapeLinkWrapperPrefix = "UP_BSLINK_FACTOR_";
-    public const string BlendShapeLinkVariantPrefix = "UP_BSLINK_VARIANT_";
-
     public class AvatarControllerSnapshot
     {
         public GameObject avatarRoot;
@@ -28,7 +26,7 @@ public class LiveAvatarControllerService
         public List<string> missingLayers = new List<string>();
         public AttachmentSource attachmentSource = AttachmentSource.None;
         public string attachmentStatus = "No animator source selected.";
-        public List<BlendShapeLinkService.AppliedLinkRecord> appliedLinkRecords = new List<BlendShapeLinkService.AppliedLinkRecord>();
+        public List<AppliedBlendShapeLink> appliedLinkRecords = new List<AppliedBlendShapeLink>();
         public List<string> appliedLinksNotFoundInControllers = new List<string>();
     }
 
@@ -757,7 +755,7 @@ public class LiveAvatarControllerService
                 for (int pi = 0; pi < paramCount; pi++)
                 {
                     var p = acPlayable.GetParameter(pi);
-                    if (p.name != null && p.name.StartsWith(BlendShapeLinkWrapperPrefix, StringComparison.Ordinal))
+                    if (p.name != null && p.name.StartsWith(BlendShapeLinkEngine.WrapperPrefix, StringComparison.Ordinal))
                     {
                         state.usedParameters.Add(ReadParameterFromPlayable(acPlayable, p.name));
                     }
@@ -767,7 +765,7 @@ public class LiveAvatarControllerService
                 {
                     var clipInfo = clipInfos[clipIdx];
                     if (clipInfo.clip == null) continue;
-                    bool isVariant = clipInfo.clip.name.StartsWith(BlendShapeLinkVariantPrefix, StringComparison.Ordinal);
+                    bool isVariant = clipInfo.clip.name.StartsWith(BlendShapeLinkEngine.VariantPrefix, StringComparison.Ordinal);
                     var lca = new LiveClipActivation
                     {
                         clip = clipInfo.clip,
@@ -985,7 +983,7 @@ public class LiveAvatarControllerService
                 for (int pi = 0; pi < parameters.Length; pi++)
                 {
                     var p = parameters[pi];
-                    if (p.name != null && p.name.StartsWith(BlendShapeLinkWrapperPrefix, StringComparison.Ordinal))
+                    if (p.name != null && p.name.StartsWith(BlendShapeLinkEngine.WrapperPrefix, StringComparison.Ordinal))
                     {
                         state.usedParameters.Add(ReadParameter(animator, p.name));
                     }
@@ -1002,7 +1000,7 @@ public class LiveAvatarControllerService
                         clipName = clip.name,
                         clipAssetPath = AssetDatabase.GetAssetPath(clip),
                         activation = clipInfo.weight,
-                        isBlendShapeLinkVariant = clip.name.StartsWith(BlendShapeLinkVariantPrefix, StringComparison.Ordinal)
+                        isBlendShapeLinkVariant = clip.name.StartsWith(BlendShapeLinkEngine.VariantPrefix, StringComparison.Ordinal)
                     });
                 }
 
@@ -1063,7 +1061,7 @@ public class LiveAvatarControllerService
     private static void BuildAppliedLinksInfo(AvatarControllerSnapshot snapshot)
     {
         if (snapshot == null) return;
-        var registry = BlendShapeLinkService.AppliedLinksRegistry;
+        var registry = BlendShapeLinkEngine.Applied;
         if (registry == null || registry.Count == 0) return;
 
         // Collect all controller asset paths present in the snapshot's animators
@@ -1085,11 +1083,11 @@ public class LiveAvatarControllerService
             {
                 var record = kvp.Value[i];
                 snapshot.appliedLinkRecords.Add(record);
-                if (!string.IsNullOrWhiteSpace(record.controllerAssetPath) &&
-                    !foundControllerPaths.Contains(record.controllerAssetPath))
+                if (!string.IsNullOrWhiteSpace(record.ControllerPath) &&
+                    !foundControllerPaths.Contains(record.ControllerPath))
                 {
                     string msg = string.Format("Link '{0}' -> '{1}' was applied to controller '{2}' ({3}) but that controller was not found in the current animator set.",
-                        record.toFixName, record.fixedByName, record.controllerName, record.controllerAssetPath);
+                        record.Trigger, record.Effect, record.ControllerName, record.ControllerPath);
                     if (!snapshot.appliedLinksNotFoundInControllers.Contains(msg))
                         snapshot.appliedLinksNotFoundInControllers.Add(msg);
                 }
@@ -1104,7 +1102,7 @@ public class LiveAvatarControllerService
         {
             var clip = clipInfos[i].clip;
             if (clip == null) continue;
-            if (clip.name.StartsWith(BlendShapeLinkVariantPrefix, StringComparison.Ordinal))
+            if (clip.name.StartsWith(BlendShapeLinkEngine.VariantPrefix, StringComparison.Ordinal))
             {
                 return true;
             }

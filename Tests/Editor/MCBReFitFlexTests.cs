@@ -122,7 +122,7 @@ public sealed class MCBReFitFlexTests
         state.motion = tree;
         body.SetBlendShapeWeight(1, 63);
         var result = BlendShapeLinkService.Instance.ApplyReFitFlexLinks(root);
-        Assert.That(result.success, Is.True, result.message);
+        Assert.That(result.Success, Is.True, result.Message);
         var output = (AnimationClip)tree.children[0].motion;
         Assert.That(output, Is.Not.SameAs(source));
         var copied = AnimationUtility.GetEditorCurve(output, destinationBinding);
@@ -149,7 +149,7 @@ public sealed class MCBReFitFlexTests
         ConfigureBuildTracking();
         var controller = CreateController(false);
         body.SetBlendShapeWeight(1, 64);
-        Assert.That(BlendShapeLinkService.Instance.ApplyReFitFlexLinks(root).success, Is.False);
+        Assert.That(BlendShapeLinkService.Instance.ApplyReFitFlexLinks(root).Success, Is.False);
         Assert.That(controller.parameters, Is.Empty);
         Assert.That(accessory.GetBlendShapeWeight(1), Is.Zero);
     }
@@ -183,7 +183,7 @@ public sealed class MCBReFitFlexTests
             AnimationUtility.SetEditorCurve(clip, binding, AnimationCurve.Linear(0, 0, 1, 100));
             var state = controller.layers[0].stateMachine.AddState("Flex");
             state.motion = clip;
-            Assert.That(BlendShapeLinkService.Instance.ApplyReFitFlexLinks(clone).success, Is.True);
+            Assert.That(BlendShapeLinkService.Instance.ApplyReFitFlexLinks(clone).Success, Is.True);
             var output = (AnimationClip)state.motion;
             Assert.That(AnimationUtility.GetEditorCurve(output, EditorCurveBinding.FloatCurve(
                 "Body/Moved accessory", typeof(SkinnedMeshRenderer), "blendShape.refit_biceps flex right")), Is.Not.Null);
@@ -229,7 +229,7 @@ public sealed class MCBReFitFlexTests
         Assert.That(BlendShapeLinkService.Instance.UpsertFactorLinkConfig(root, body,
             CorrectiveActivationType.Blendshape, "biceps flex right", CorrectiveActivationType.Blendshape,
             "FLEX left", "ExistingFactor").success, Is.True);
-        Assert.That(BlendShapeLinkService.Instance.ApplyConfiguredFactorLinks(root).success, Is.True);
+        Assert.That(BlendShapeLinkService.Instance.ApplyConfiguredFactorLinks(root).Success, Is.True);
         Assert.That(state.motion, Is.TypeOf<BlendTree>());
         Assert.That(((BlendTree)state.motion).blendParameter, Is.EqualTo("ExistingFactor"));
         Assert.That(controller.parameters.Select(p => p.name), Does.Contain("ExistingFactor"));

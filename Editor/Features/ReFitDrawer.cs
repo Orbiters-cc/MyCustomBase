@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Orbiters.Toolkit.Editor.Vpm;
 
 /// <summary>
 /// "ReFit" avatar option frame (same style as Custom Veins / Sliders / Blendshapes), shown at the top of the
@@ -221,7 +222,7 @@ public class ReFitDrawer
         description.style.whiteSpace = WhiteSpace.Normal;
         card.Add(description);
 
-        var status = VpmDependencyService.Instance.GetOptionalDependencyStatus(VpmDependencyService.ReFitPackageId);
+        var status = McbDependencies.Vpm.OptionalStatus(McbDependencies.ReFitPackageId);
         string apiMessage = MCBReFitIntegration.ReFitAvailabilityMessage;
         bool assumedInstalled = status != null && status.IsAssumedInstalled;
         if (assumedInstalled)
@@ -240,41 +241,13 @@ public class ReFitDrawer
                     : apiMessage,
                 HelpBoxMessageType.Warning));
         }
-        else if (status != null && !string.IsNullOrWhiteSpace(status.Reason))
+        else
         {
-            var reason = AvatarOptionsModule.CreateOptionLabel(
-                status.Reason,
-                11,
-                FontStyle.Normal,
-                new Color(0.62f, 0.62f, 0.62f));
-            reason.style.whiteSpace = WhiteSpace.Normal;
-            reason.style.marginTop = 6;
-            card.Add(reason);
+            var prompt = new DependencyPrompt(McbDependencies.Vpm, McbDependencies.ReFitPackageId, "ReFit is not installed in this project.");
+            prompt.style.marginTop = 10;
+            prompt.Installed += () => AvatarOptionsModule.RefreshEditorUi(editor);
+            card.Add(prompt);
         }
-
-        string label = VpmDependencyService.Instance.IsInstalling ? "Adding ReFit..." : "Add ReFit";
-        var installButton = AvatarOptionsModule.CreateOptionButton(label, () =>
-        {
-            var result = VpmDependencyService.Instance.InstallOptionalDependency(VpmDependencyService.ReFitPackageId);
-            if (!result.Success)
-            {
-                EditorUtility.DisplayDialog("Add ReFit Failed", result.ErrorMessage, "Ok");
-            }
-            else
-            {
-                EditorUtility.DisplayDialog(
-                    "ReFit Added",
-                    "ReFit was added. Unity may reload assemblies before the ReFit avatar options become available.",
-                    "Ok");
-            }
-
-            AvatarOptionsModule.RefreshEditorUi(editor);
-        });
-        installButton.AddToClassList("mcb-button--primary");
-        installButton.style.height = 36;
-        installButton.style.marginTop = 10;
-        installButton.SetEnabled(status != null && !status.IsInstalled && !VpmDependencyService.Instance.IsInstalling);
-        card.Add(installButton);
 
         root.Add(card);
     }

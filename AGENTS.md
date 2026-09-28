@@ -73,11 +73,11 @@
   - manual links
 
 ### Animator Mutation Strategy
-- Core service is split (partial class):
-  - `Editor/Services/BlendShapeLinkService.cs` (planning/lookup/signature build)
-  - `Editor/Services/BlendShapeLinkService.LinkResolution.cs` (manual link resolution/validation)
-  - `Editor/Services/BlendShapeLinkService.Rewrite.cs` (state machine + blendtree rewrite)
-  - `Editor/Services/BlendShapeLinkService.VariantOps.cs` (clip variant creation/curve ops)
+- MCB plans, Toolkit rewrites:
+  - `Editor/Services/BlendShapeLinkService.cs` / `.Planning.cs` (version planning/lookup) and `.LinkResolution.cs` (manual links)
+    build `Orbiters.Toolkit.Editor.VRChat.BlendShapes.BlendShapeLink` plans (MCB maps `CorrectiveActivationType`).
+  - Toolkit `BlendShapeLinkEngine` (`Packages/orbiters.toolkit/Editor/VRChat/BlendShapes/`) does the state machine + blendtree
+    rewrite, clip variants, FX layer copy, factor parameters and the applied-links registry. Do not re-add a copy in MCB.
 - Collect only VRCFury temp controllers (`com.vrcfury.temp`).
 - For each matching motion (states and nested blendtrees):
   - clone clip as variant
@@ -139,7 +139,7 @@
 - Use the existing `BlendShapeLinkService` for build-time synchronization. Do not add VRCFury Blendshape Link components or a second animation-rewrite system.
 - `MCBReFitLinkCaptureHook` captures the build-copy renderer references before hierarchy/mesh processing; `BlendShapeLinkPostVrcfuryHook` applies the links after version/manual correctives.
 - `BlendShapeLinkService.ReFit.cs` uses recorded source/generated pairs, including renamed outputs. Only currently applied ReFit meshes qualify; native accessory shapes are not inferred as transfers.
-- One-to-one ReFit links use `copyWithoutFactor`: clone the clip through the shared rewrite path, copy the source curve exactly, and add no factor parameter or wrapper tree. Factor-driven corrective behavior must remain unchanged.
+- One-to-one ReFit links use `BlendShapeLink.Copy` (`DirectCopy`): clone the clip through the shared rewrite path, copy the source curve exactly, and add no factor parameter or wrapper tree. Factor-driven corrective behavior must remain unchanged.
 - Verify with `MCBReFitFlexTests`: actual animation sampling, exact bindings, authoring-asset isolation, repeat-build idempotence, and build-copy renderer identity. A mapping count alone is not evidence that the accessory animates.
 
 ## Custom Base FBX Backup Invariant
