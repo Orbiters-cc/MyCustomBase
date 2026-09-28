@@ -1,12 +1,12 @@
 {
   "name": "orbiters.mcb",
   "displayName": "My Custom Base (MCB)",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "license": "LicenseRef-MCB-Proprietary",
   "unity": "2022.3",
   "description": "Wizard to apply a custom base with the MCB tool",
   "type": "tool",
-  "url": "https://github.com/Orbiters-cc/MyCustomBase/releases/download/1.7.5/My%20Custom%20Base%20%28MCB%29-1.7.5.zip",
+  "url": "https://github.com/Orbiters-cc/MyCustomBase/releases/download/1.7.6/My.Custom.Base.MCB.-1.7.6.zip",
   "dependencies": {},
   "gitDependencies": {},
   "vpmDependencies": {
