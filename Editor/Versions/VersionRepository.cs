@@ -164,6 +164,8 @@ public static class VersionRepository
                         }
 
                         var manifest = VersionManifest.Load(MCBUtils.ToUnityPath(folderFullPath));
+                        if (!string.Equals(Path.GetFullPath(MCBUtils.GetVersionDataPath(version)), folderFullPath, StringComparison.OrdinalIgnoreCase)) continue;
+                        if ((manifest == null || !manifest.unsubmitted) && !VersionStorage.IsComplete(folderFullPath, version)) continue;
                         if (manifest != null && manifest.unsubmitted)
                         {
                             version.isUnsubmitted = true;
@@ -262,11 +264,26 @@ public static class VersionRepository
             return result;
         }
 
+        if (artifact.Manifest.outputs == null || artifact.Manifest.outputs.Count == 0)
+        {
+            result.state = ArtifactState.Corrupt;
+            return result;
+        }
         string folderFullPath = Path.GetFullPath(artifact.FolderUnityPath);
         foreach (var output in artifact.Manifest.outputs ?? new List<VersionManifestFile>())
         {
-            if (output == null || string.IsNullOrWhiteSpace(output.path)) continue;
-            string fullPath = Path.Combine(folderFullPath, output.path.Replace('/', Path.DirectorySeparatorChar));
+            if (output == null || string.IsNullOrWhiteSpace(output.path))
+            {
+                result.state = ArtifactState.Corrupt;
+                return result;
+            }
+            string fullPath;
+            try { fullPath = VersionStorage.ContainedPath(folderFullPath, output.path); }
+            catch (Exception ex) when (ex is IOException || ex is ArgumentException || ex is UnauthorizedAccessException)
+            {
+                result.state = ArtifactState.Corrupt;
+                return result;
+            }
             if (!File.Exists(fullPath))
             {
                 result.missingOutputs.Add(output.path);
@@ -390,44 +407,12 @@ public static class VersionRepository
 
         string stagingFull = Path.GetFullPath(stagingUnityPath);
         string finalFull = Path.GetFullPath(finalUnityPath);
-        string trashFull = $"{finalFull}{TrashInfix}{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-
-        bool oldMovedToTrash = false;
-        try
-        {
-            if (Directory.Exists(finalFull))
-            {
-                Directory.Move(finalFull, trashFull);
-                oldMovedToTrash = true;
-            }
-
-            Directory.Move(stagingFull, finalFull);
-        }
-        catch
-        {
-            // Never destroy the last valid artifact: put the old folder back if the
-            // replacement could not be completed.
-            if (oldMovedToTrash && !Directory.Exists(finalFull) && Directory.Exists(trashFull))
-            {
-                try { Directory.Move(trashFull, finalFull); }
-                catch (Exception restoreEx)
-                {
-                    MCBLogger.LogError($"[VersionRepository] Could not restore previous version folder from trash: {restoreEx.Message}. It remains at {trashFull}.");
-                }
-            }
-
-            throw;
-        }
+        try { VersionStorage.ReplaceDirectory(stagingFull, finalFull); }
         finally
         {
-            lock (inProgressFolders)
-            {
-                inProgressFolders.Remove(NormalizeFullPath(stagingUnityPath));
-            }
+            lock (inProgressFolders) { inProgressFolders.Remove(NormalizeFullPath(stagingUnityPath)); }
         }
 
-        // The new folder is committed; everything below is cleanup.
-        TryDeleteDirectory(trashFull);
         TryDeleteFile(stagingFull + ".meta"); // orphan meta of the staging folder name
 
         AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);

@@ -1,294 +1,183 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Newtonsoft.Json;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Networking;
 
-/// <summary>
-/// Editor-only issue reporter that can forward Unity console logs to backend /bugs endpoint.
-/// Controlled from AdvancedModeModule via EditorPrefs settings.
-/// </summary>
+/// <summary>Opt-in, bounded reporting of diagnostics emitted by MCB's own logger.</summary>
+[InitializeOnLoad]
 public static class EditorIssueReporter
 {
-    // EditorPrefs keys
     private const string SharePrefKey = "MCB_ShareIssueLogs";
-    private const string MinSeverityPrefKey = "MCB_MinIssueSeverity"; // 1..4
-
-    // Defaults
-    private const bool DefaultShare = true;
-    private const int DefaultMinSeverity = 2; // Warning
-
-    // Severity mapping: 1=INFO, 2=WARN, 3=ERROR, 4=FATAL
+    private const string MinSeverityPrefKey = "MCB_MinIssueSeverity";
     public enum SeverityLevel { Info = 1, Warn = 2, Error = 3, Fatal = 4 }
+    private static readonly IssueReportBuffer Buffer = new IssueReportBuffer();
+    private static volatile bool listening;
+    private static volatile int minSeverity = 2;
+    private static UnityWebRequest activeRequest;
+    private static bool sending;
 
-    private static bool _listening;
-    private static readonly Dictionary<string, double> _lastSentAtBySignature = new Dictionary<string, double>();
-    private const double DuplicateSuppressWindowSeconds = 10.0; // prevent sending identical message too often
+    static EditorIssueReporter()
+    {
+        EditorApplication.delayCall += RefreshListener;
+        AssemblyReloadEvents.beforeAssemblyReload += Stop;
+        EditorApplication.quitting += Stop;
+    }
 
     public static bool ShareIssueLogs
     {
-        get
-        {
-            try { return EditorPrefs.GetBool(SharePrefKey, DefaultShare); }
-            catch { return DefaultShare; }
-        }
-        set
-        {
-            try { EditorPrefs.SetBool(SharePrefKey, value); } catch { }
-        }
+        get => EditorPrefs.GetBool(SharePrefKey, false);
+        set { EditorPrefs.SetBool(SharePrefKey, value); RefreshListener(); }
     }
 
     public static int MinSeverityLevel
     {
-        get
-        {
-            try { return Mathf.Clamp(EditorPrefs.GetInt(MinSeverityPrefKey, DefaultMinSeverity), 1, 4); }
-            catch { return DefaultMinSeverity; }
-        }
-        set
-        {
-            try { EditorPrefs.SetInt(MinSeverityPrefKey, Mathf.Clamp(value, 1, 4)); } catch { }
-        }
+        get => Mathf.Clamp(EditorPrefs.GetInt(MinSeverityPrefKey, 2), 1, 4);
+        set { EditorPrefs.SetInt(MinSeverityPrefKey, Mathf.Clamp(value, 1, 4)); minSeverity = MinSeverityLevel; }
     }
 
     public static void RefreshListener()
     {
-        bool shouldListen = ShareIssueLogs;
-        if (shouldListen && !_listening)
-        {
-            Application.logMessageReceived -= OnLogMessageReceived; // ensure not double
-            Application.logMessageReceived += OnLogMessageReceived;
-            _listening = true;
-        }
-        else if (!shouldListen && _listening)
-        {
-            Application.logMessageReceived -= OnLogMessageReceived;
-            _listening = false;
-        }
-    }
-
-    private static void OnLogMessageReceived(string condition, string stackTrace, LogType type)
-    {
+        Stop();
+        minSeverity = MinSeverityLevel;
         if (!ShareIssueLogs) return;
-        if (ShouldSuppressIssueSendForConnectivity()) return;
-
-        var (level, severityText) = MapSeverity(type);
-        if ((int)level < MinSeverityLevel) return;
-
-        // Build payload
-        string message = condition ?? string.Empty;
-        if (message.Length > 10000) message = message.Substring(0, 10000);
-        string trimmedStack = stackTrace ?? string.Empty;
-        if (trimmedStack.Length > 50000) trimmedStack = trimmedStack.Substring(0, 50000);
-
-        string errorType = ExtractErrorType(condition, type);
-        string tool = "MCB";
-        string url = EditorSceneManager.GetActiveScene().path;
-        string userAgent = SystemInfo.operatingSystem + " | Unity " + Application.unityVersion + " | " + SystemInfo.deviceModel;
-
-        // browserInfo as JSON string
-        var browserInfoObj = new Dictionary<string, object>
-        {
-            {"unityVersion", Application.unityVersion},
-            {"platform", Application.platform.ToString()},
-            {"deviceModel", SystemInfo.deviceModel},
-            {"deviceType", SystemInfo.deviceType.ToString()},
-            {"graphicsDeviceName", SystemInfo.graphicsDeviceName},
-            {"graphicsDeviceType", SystemInfo.graphicsDeviceType.ToString()},
-            {"graphicsMemorySizeMB", SystemInfo.graphicsMemorySize},
-            {"systemMemorySizeMB", SystemInfo.systemMemorySize},
-            {"projectPath", Application.dataPath}
-        };
-        string browserInfoJson = MiniJson.Serialize(browserInfoObj);
-
-        // Deduplication by signature
-        string signature = severityText + "|" + errorType + "|" + FirstLine(message);
-        double now = EditorApplication.timeSinceStartup;
-        if (_lastSentAtBySignature.TryGetValue(signature, out var last) && now - last < DuplicateSuppressWindowSeconds)
-        {
-            return; // suppress duplicates for a short window
-        }
-        _lastSentAtBySignature[signature] = now;
-
-        // Fire and forget async send
-        EditorApplication.delayCall += () => SendIssueAsync(message, severityText, errorType, tool, url, trimmedStack, userAgent, browserInfoJson);
+        listening = true;
+        MCBLogger.IssueLogged += OnIssue;
+        EditorApplication.update += Pump;
     }
 
-    private static bool ShouldSuppressIssueSendForConnectivity()
+    private static void Stop()
     {
-        return MCBConnectivityMonitor.HasCompleted &&
-               !MCBConnectivityMonitor.CanReachServer;
+        listening = false;
+        MCBLogger.IssueLogged -= OnIssue;
+        EditorApplication.update -= Pump;
+        Buffer.Clear();
+        activeRequest?.Abort();
     }
 
-    private static (SeverityLevel, string) MapSeverity(LogType type)
+    private static void OnIssue(string message, string stack, LogType type)
     {
-        switch (type)
+        int level = type == LogType.Exception ? 4 : type == LogType.Error || type == LogType.Assert ? 3 : type == LogType.Warning ? 2 : 1;
+        if (!listening || level < minSeverity) return;
+        // Logger calls may come from worker threads: no Unity APIs or EditorPrefs here.
+        Buffer.Enqueue(new IssueReportBuffer.Report
         {
-            case LogType.Error:
-            case LogType.Assert:
-                return (SeverityLevel.Error, "ERROR");
-            case LogType.Warning:
-                return (SeverityLevel.Warn, "WARN");
-            case LogType.Exception:
-                return (SeverityLevel.Fatal, "FATAL");
-            default:
-                return (SeverityLevel.Info, "INFO");
-        }
+            Message = IssueReportBuffer.Redact(message, 4000),
+            Stack = IssueReportBuffer.Redact(stack, 12000),
+            Severity = new[] { "INFO", "WARN", "ERROR", "FATAL" }[level - 1],
+            ErrorType = type.ToString()
+        }, DateTime.UtcNow);
+        if (!listening) Buffer.Clear();
     }
 
-    private static string ExtractErrorType(string condition, LogType type)
+    private static void Pump()
     {
-        if (type == LogType.Exception && !string.IsNullOrEmpty(condition))
-        {
-            // Usually formatted as "ExceptionType: message" – extract the type left of colon
-            int idx = condition.IndexOf(':');
-            if (idx > 0)
-            {
-                return condition.Substring(0, idx).Trim();
-            }
-        }
-        return type.ToString();
+        if (!listening || sending || (MCBConnectivityMonitor.HasCompleted && !MCBConnectivityMonitor.CanReachServer)) return;
+        if (Buffer.TryTake(DateTime.UtcNow, out var report)) Send(report);
     }
 
-    private static string FirstLine(string s)
+    private static async void Send(IssueReportBuffer.Report report)
     {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        int idx = s.IndexOf('\n');
-        return idx >= 0 ? s.Substring(0, idx) : s;
-    }
-
-    private static async void SendIssueAsync(string message, string severity, string errorType, string tool, string url, string stackTrace, string userAgent, string browserInfoJson)
-    {
-        if (ShouldSuppressIssueSendForConnectivity())
-        {
-            return;
-        }
-
+        sending = true;
         try
         {
-            // Build JSON body manually to avoid dependency on Newtonsoft in this assembly
-            var sb = new StringBuilder();
-            sb.Append('{');
-            AppendJsonField(sb, "message", message, true);
-            AppendJsonField(sb, "severity", severity);
-            AppendJsonField(sb, "errorType", errorType);
-            AppendJsonField(sb, "tool", tool);
-            AppendJsonField(sb, "url", url);
-            AppendJsonField(sb, "stackTrace", stackTrace);
-            AppendJsonField(sb, "userAgent", userAgent);
-            // browserInfo is expected to be JSON; send as string that server can parse
-            AppendJsonField(sb, "browserInfo", browserInfoJson);
-            sb.Append('}');
-            byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
-
-            string endpoint = MCBUtils.getApiUrl(scope: "bugs");
-            using (var req = new UnityWebRequest(endpoint, UnityWebRequest.kHttpVerbPOST))
+            if (!listening) return;
+            var auth = AuthenticationService.GetAuth();
+            if (!string.IsNullOrEmpty(auth?.token))
             {
-                req.uploadHandler = new UploadHandlerRaw(bodyRaw);
-                req.downloadHandler = new DownloadHandlerBuffer();
-                req.SetRequestHeader("Content-Type", "application/json");
-
-                // Optional Authorization
-                var auth = AuthenticationService.GetAuth();
-                if (auth != null && !string.IsNullOrEmpty(auth.token))
-                {
-                    req.SetRequestHeader("Authorization", $"Bearer {auth.token}");
-                }
-
-                await MCBManagedRequest.SendUnityWebRequestAsync(req, endpoint, MCBRequestPolicy.LocalOnly("Send issue report"));
-                // Swallow errors; this is best-effort reporting
-                if (req.result != UnityWebRequest.Result.Success)
-                {
-                    // Optionally, log locally but do not recurse into reporter (disabled by signature throttling)
-                    Debug.Log($"[MCB IssueReporter] Failed to send issue: {req.responseCode} {req.error}");
-                }
+                report.Message = report.Message.Replace(auth.token, "[redacted]");
+                report.Stack = report.Stack.Replace(auth.token, "[redacted]");
+            }
+            string payload = JsonConvert.SerializeObject(new
+            {
+                message = report.Message, severity = report.Severity, errorType = report.ErrorType,
+                tool = "MCB", stackTrace = report.Stack, userAgent = "Unity " + Application.unityVersion,
+                browserInfo = JsonConvert.SerializeObject(new { unityVersion = Application.unityVersion, platform = Application.platform.ToString() })
+            });
+            string endpoint = MCBUtils.getApiUrl(scope: "bugs");
+            using (var request = new UnityWebRequest(endpoint, UnityWebRequest.kHttpVerbPOST))
+            {
+                activeRequest = request;
+                request.timeout = 15;
+                request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(payload));
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.SetRequestHeader("Content-Type", "application/json");
+                if (!string.IsNullOrEmpty(auth?.token)) request.SetRequestHeader("Authorization", "Bearer " + auth.token);
+                await MCBManagedRequest.SendUnityWebRequestAsync(request, endpoint, MCBRequestPolicy.LocalOnly("Send issue report"));
             }
         }
-        catch (Exception ex)
-        {
-            Debug.Log($"[MCB IssueReporter] Exception while sending issue: {ex.Message}");
-        }
-    }
-
-    private static void AppendJsonField(StringBuilder sb, string key, string value, bool first = false)
-    {
-        if (!first) sb.Append(',');
-        sb.Append('"').Append(EscapeJson(key)).Append('"').Append(':');
-        sb.Append('"').Append(EscapeJson(value ?? string.Empty)).Append('"');
-    }
-
-    private static string EscapeJson(string s)
-    {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        return s
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"")
-            .Replace("\n", "\\n")
-            .Replace("\r", "\\r")
-            .Replace("\t", "\\t");
+        catch (Exception) { /* Reporting failures must not generate more reports. */ }
+        finally { activeRequest = null; sending = false; }
     }
 }
 
-/// <summary>
-/// Minimal JSON serializer for simple dictionaries. Avoids requiring Newtonsoft in Editor assembly.
-/// </summary>
-internal static class MiniJson
+internal sealed class IssueReportBuffer
 {
-    public static string Serialize(Dictionary<string, object> dict)
-    {
-        var sb = new StringBuilder();
-        sb.Append('{');
-        bool first = true;
-        foreach (var kv in dict)
-        {
-            if (!first) sb.Append(',');
-            first = false;
-            sb.Append('"').Append(EditorIssueReporter_Escape(kv.Key)).Append('"').Append(':');
-            AppendValue(sb, kv.Value);
-        }
-        sb.Append('}');
-        return sb.ToString();
-    }
+    internal sealed class Report { public string Message, Stack, Severity, ErrorType; }
+    internal const int QueueLimit = 32, SignatureLimit = 128;
+    private readonly Queue<Report> pending = new Queue<Report>();
+    private readonly Dictionary<string, DateTime> signatures = new Dictionary<string, DateTime>();
+    private readonly object gate = new object();
+    private DateTime nextSend;
+    internal int PendingCount { get { lock (gate) return pending.Count; } }
+    internal int SignatureCount { get { lock (gate) return signatures.Count; } }
 
-    private static void AppendValue(StringBuilder sb, object val)
+    internal bool Enqueue(Report report, DateTime now)
     {
-        switch (val)
+        lock (gate)
         {
-            case null:
-                sb.Append("null");
-                break;
-            case string s:
-                sb.Append('"').Append(EditorIssueReporter_Escape(s)).Append('"');
-                break;
-            case bool b:
-                sb.Append(b ? "true" : "false");
-                break;
-            case int i:
-                sb.Append(i);
-                break;
-            case long l:
-                sb.Append(l);
-                break;
-            case float f:
-                sb.Append(f.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                break;
-            case double d:
-                sb.Append(d.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                break;
-            default:
-                sb.Append('"').Append(EditorIssueReporter_Escape(val.ToString())).Append('"');
-                break;
+            foreach (var key in signatures.Where(p => now - p.Value >= TimeSpan.FromMinutes(1)).Select(p => p.Key).ToArray()) signatures.Remove(key);
+            string signature = report.Severity + "|" + report.Message;
+            if (signatures.ContainsKey(signature) || pending.Count >= QueueLimit) return false;
+            if (signatures.Count >= SignatureLimit) signatures.Remove(signatures.OrderBy(p => p.Value).First().Key);
+            signatures[signature] = now;
+            pending.Enqueue(report);
+            return true;
         }
     }
 
-    private static string EditorIssueReporter_Escape(string s)
+    internal bool TryTake(DateTime now, out Report report)
     {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+        lock (gate)
+        {
+            report = null;
+            if (pending.Count == 0 || now < nextSend) return false;
+            nextSend = now.AddSeconds(10); // Six starts per minute, one in flight.
+            report = pending.Dequeue();
+            return true;
+        }
     }
+
+    internal void Clear() { lock (gate) { pending.Clear(); signatures.Clear(); } }
+
+    internal static string Redact(string input, int limit)
+    {
+        if (string.IsNullOrEmpty(input)) return string.Empty;
+        string text = input.Substring(0, Math.Min(input.Length, limit));
+        try
+        {
+            foreach (string pattern in RedactionPatterns)
+                text = Regex.Replace(text, pattern, "[redacted]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+            return text;
+        }
+        catch (RegexMatchTimeoutException) { return "[diagnostic omitted]"; }
+    }
+
+    private static readonly string[] RedactionPatterns =
+    {
+        @"(?im)\b(?:authorization|cookie|set-cookie)\s*:\s*[^\r\n]+",
+        @"https?://[^\s<>""']+",
+        @"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9+/=_\-.]+",
+        @"(?i)[""']?(?:password|passwd|secret|token|api[_-]?key|authorization|cookie|access[_-]?token|refresh[_-]?token)[""']?\s*[:=]\s*(?:""[^""]*""|'[^']*'|[^\s,;}]+)",
+        @"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+        @"[A-Za-z]:[\\/][^\r\n""<>|]+|\\\\[^\r\n""<>|]+|(?<![\w:])/(?:[^\s/]+/)+[^\s]*",
+        @"\b(?:Assets|Packages)[\\/][^\r\n""<>|]+",
+        @"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+    };
 }
 #endif

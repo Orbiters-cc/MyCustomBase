@@ -72,39 +72,11 @@ public partial class SlidersDrawer
         content.Add(BuildGraphUIToolkit());
         content.Add(BuildSliderChipGroupUIToolkit());
 
-        var compressionToggle = new Toggle("enable VRCFury parameters compression") { value = usage.compressionEnabled };
-        compressionToggle.AddToClassList("mcb-avatar-toggle");
-        compressionToggle.AddToClassList("mcb-avatar-sliders__compression-toggle");
-        compressionToggle.SetEnabled(!usage.compressionIsExternal);
-        compressionToggle.RegisterValueChangedCallback(evt =>
-        {
-            VRCFuryService.Instance.SetCompression(avatarRoot, evt.newValue);
-            UpdateGraph(selectedIndices.Count);
-            AvatarOptionsModule.RefreshEditorUi(editor);
-        });
-        content.Add(compressionToggle);
-
-        if (usage.compressionEnabled)
-        {
-            var success = AvatarOptionsModule.CreateOptionLabel(
-                "Parameter use reduced by VRCFury compression",
-                11,
-                FontStyle.Bold,
-                new Color(0.3f, 0.8f, 0.3f));
-            success.AddToClassList("mcb-avatar-sliders__compression-success");
-            content.Add(success);
-
-            if (usage.compressionIsExternal && !string.IsNullOrEmpty(usage.compressionPath))
-            {
-                var path = AvatarOptionsModule.CreateOptionLabel(
-                    $"Already activated in : {usage.compressionPath}",
-                    11,
-                    FontStyle.Normal,
-                    new Color(0.5f, 0.5f, 0.5f));
-                path.AddToClassList("mcb-avatar-sliders__compression-path");
-                content.Add(path);
-            }
-        }
+        var compressionStatus = AvatarOptionsModule.CreateOptionLabel(
+            "Estimate before compression. " + usage.compressionStatus, 11, FontStyle.Normal, new Color(0.6f, 0.6f, 0.6f));
+        compressionStatus.style.whiteSpace = WhiteSpace.Normal;
+        compressionStatus.tooltip = "Change compression behavior from VRCFury's global settings. Final usage is determined during build.";
+        content.Add(compressionStatus);
 
         toolkitPendingApplyLabel = AvatarOptionsModule.CreateOptionLabel(string.Empty, 11, FontStyle.Normal, new Color(0.55f, 0.55f, 0.55f));
         toolkitPendingApplyLabel.AddToClassList("mcb-avatar-sliders__pending");

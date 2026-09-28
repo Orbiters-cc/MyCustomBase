@@ -381,33 +381,30 @@ public class FileManagerService
         return MCBXor.Transform(baseData, keyData);
     }
 
-    public void UnzipAndMove(string zipPath, string extractPath, string finalDestinationPath)
+    public void UnzipAndMove(string zipPath, string extractPath, string finalDestinationPath, Action<string> validateExtracted = null)
     {
-        if (Directory.Exists(extractPath)) Directory.Delete(extractPath, true);
-        Directory.CreateDirectory(extractPath);
-        ZipFile.ExtractToDirectory(zipPath, extractPath);
-
-        string contentSourcePath = extractPath;
-        var rootDirs = Directory.GetDirectories(extractPath);
-        if (rootDirs.Length == 1 && Directory.GetFiles(extractPath).Length == 0)
-        {
-            contentSourcePath = rootDirs[0];
-        }
-
-        if (Directory.Exists(finalDestinationPath)) Directory.Delete(finalDestinationPath, true);
-        CopyDirectory(contentSourcePath, finalDestinationPath);
+        // Both disk and RAM downloads use the same validated, transactional extraction path.
+        using (var stream = File.OpenRead(zipPath))
+            ExtractVersionArchive(stream, finalDestinationPath, null, validateExtracted);
     }
 
     public Dictionary<string, byte[]> UnzipAndMoveFromMemory(
         byte[] zipBytes,
         string finalDestinationPath,
-        ISet<string> captureRelativePaths = null)
+        ISet<string> captureRelativePaths = null, Action<string> validateExtracted = null)
     {
         if (zipBytes == null || zipBytes.Length == 0)
         {
             throw new InvalidDataException("Version ZIP data is empty.");
         }
 
+        using (var stream = new MemoryStream(zipBytes, false))
+            return ExtractVersionArchive(stream, finalDestinationPath, captureRelativePaths, validateExtracted);
+    }
+
+    private Dictionary<string, byte[]> ExtractVersionArchive(Stream zipStream, string finalDestinationPath,
+        ISet<string> captureRelativePaths, Action<string> validateExtracted)
+    {
         if (string.IsNullOrWhiteSpace(finalDestinationPath))
         {
             throw new ArgumentNullException(nameof(finalDestinationPath));
@@ -424,76 +421,94 @@ public class FileManagerService
             }
         }
 
-        if (Directory.Exists(finalDestinationPath)) Directory.Delete(finalDestinationPath, true);
-        Directory.CreateDirectory(finalDestinationPath);
-
-        string destinationRoot = Path.GetFullPath(finalDestinationPath);
-        using (var zipStream = new MemoryStream(zipBytes, false))
-        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, false))
+        string finalPath = Path.GetFullPath(finalDestinationPath);
+        string staging = finalPath + ".building-" + Guid.NewGuid().ToString("N");
+        string destinationRoot = staging;
+        try
         {
-            var fileEntries = archive.Entries
-                .Where(entry => entry != null && !IsZipDirectory(entry))
-                .ToList();
-            string rootPrefix = ResolveSingleZipRootPrefix(fileEntries);
-
-            foreach (var entry in fileEntries)
+            // Open the archive before making a staging directory; the previous cache stays intact.
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, true))
             {
-                string relativePath = NormalizeZipRelativePath(entry.FullName);
-                if (string.IsNullOrWhiteSpace(relativePath))
+                VersionStorage.RejectLinks(Path.GetDirectoryName(finalPath), finalPath);
+                Directory.CreateDirectory(staging);
+                var fileEntries = archive.Entries
+                    .Where(entry => entry != null && !IsZipDirectory(entry))
+                    .ToList();
+                if (fileEntries.Count == 0) throw new InvalidDataException("The version archive is empty.");
+                foreach (var entry in fileEntries)
                 {
-                    continue;
+                    string raw = entry.FullName.Replace('\\', '/');
+                    VersionStorage.ContainedPath(staging, raw);
+                    if (raw.StartsWith("/", StringComparison.Ordinal) || raw.Contains(":") || raw.Split('/').Any(segment => segment == ".." || segment == "."))
+                        throw new InvalidDataException("The version archive contains an unsafe path.");
                 }
+                string rootPrefix = ResolveSingleZipRootPrefix(fileEntries);
 
-                if (!string.IsNullOrEmpty(rootPrefix) &&
-                    relativePath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                foreach (var entry in fileEntries)
                 {
-                    relativePath = relativePath.Substring(rootPrefix.Length);
-                }
-
-                relativePath = NormalizeZipRelativePath(relativePath);
-                if (string.IsNullOrWhiteSpace(relativePath))
-                {
-                    continue;
-                }
-
-                string outputPath = Path.GetFullPath(Path.Combine(
-                    finalDestinationPath,
-                    relativePath.Replace('/', Path.DirectorySeparatorChar)));
-                if (!IsSameOrChildPath(outputPath, destinationRoot))
-                {
-                    throw new InvalidDataException($"ZIP entry resolves outside the version folder: {entry.FullName}");
-                }
-
-                string outputDirectory = Path.GetDirectoryName(outputPath);
-                if (!string.IsNullOrWhiteSpace(outputDirectory))
-                {
-                    Directory.CreateDirectory(outputDirectory);
-                }
-
-                bool shouldCapture = normalizedCapturePaths.Contains(relativePath);
-                if (shouldCapture)
-                {
-                    using (var entryStream = entry.Open())
-                    using (var memory = new MemoryStream())
+                    string relativePath = NormalizeZipRelativePath(entry.FullName);
+                    if (string.IsNullOrWhiteSpace(relativePath))
                     {
-                        entryStream.CopyTo(memory);
-                        byte[] bytes = memory.ToArray();
-                        File.WriteAllBytes(outputPath, bytes);
-                        captured[relativePath] = bytes;
+                        continue;
                     }
-                }
-                else
-                {
-                    using (var entryStream = entry.Open())
-                    using (var fileStream = File.Create(outputPath))
+
+                    if (!string.IsNullOrEmpty(rootPrefix) &&
+                        relativePath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
                     {
-                        entryStream.CopyTo(fileStream);
+                        relativePath = relativePath.Substring(rootPrefix.Length);
+                    }
+
+                    relativePath = NormalizeZipRelativePath(relativePath);
+                    if (string.IsNullOrWhiteSpace(relativePath))
+                    {
+                        continue;
+                    }
+
+                    string outputPath = Path.GetFullPath(Path.Combine(
+                        staging,
+                        relativePath.Replace('/', Path.DirectorySeparatorChar)));
+                    if (!IsSameOrChildPath(outputPath, destinationRoot))
+                    {
+                        throw new InvalidDataException($"ZIP entry resolves outside the version folder: {entry.FullName}");
+                    }
+
+                    string outputDirectory = Path.GetDirectoryName(outputPath);
+                    if (!string.IsNullOrWhiteSpace(outputDirectory))
+                    {
+                        Directory.CreateDirectory(outputDirectory);
+                    }
+
+                    bool shouldCapture = normalizedCapturePaths.Contains(relativePath);
+                    if (shouldCapture)
+                    {
+                        using (var entryStream = entry.Open())
+                        using (var memory = new MemoryStream())
+                        {
+                            entryStream.CopyTo(memory);
+                            byte[] bytes = memory.ToArray();
+                            File.WriteAllBytes(outputPath, bytes);
+                            captured[relativePath] = bytes;
+                        }
+                    }
+                    else
+                    {
+                        using (var entryStream = entry.Open())
+                        using (var fileStream = File.Create(outputPath))
+                        {
+                            entryStream.CopyTo(fileStream);
+                        }
                     }
                 }
             }
-        }
 
-        return captured;
+            validateExtracted?.Invoke(staging);
+            VersionStorage.ReplaceDirectory(staging, finalPath);
+            return captured;
+        }
+        finally
+        {
+            if (Directory.Exists(staging)) Directory.Delete(staging, true);
+        }
     }
 
     private void CopyDirectory(string sourceDir, string destDir)

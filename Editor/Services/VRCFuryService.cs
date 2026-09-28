@@ -25,12 +25,10 @@ public class VRCFuryService
     public struct ParameterUsage
     {
         public int currentSyncedBits;
-        public int totalUsedAfterBuild;
+        public int totalBeforeCompression;
         public int usedByAvatar;
         public int usedBySliders;
-        public bool compressionEnabled;
-        public bool compressionIsExternal;
-        public string compressionPath;
+        public string compressionStatus;
     }
 
     public static string GetSliderGlobalParamName(string sliderName)
@@ -282,56 +280,16 @@ public class VRCFuryService
         return new ParameterUsage
         {
             currentSyncedBits = usage.DescriptorBits,
-            totalUsedAfterBuild = usage.TotalAfterBuild,
+            totalBeforeCompression = usage.TotalBeforeCompression,
             usedByAvatar = usage.WithoutAdded,
             usedBySliders = usage.Added,
-            compressionEnabled = usage.CompressionEnabled,
-            compressionIsExternal = usage.CompressionIsExternal,
-            compressionPath = usage.CompressionPath
+            compressionStatus = usage.CompressionStatus
         };
     }
 
     public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot)
     {
         return GetAvatarParameterUsage(avatarRoot, 0);
-    }
-
-    public void SetCompression(GameObject avatarRoot, bool enabled)
-    {
-        if (avatarRoot == null) return;
-        
-        if (!Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.CanCompress)
-        {
-            Debug.LogError("[MCB] VRCFury types not found. Cannot toggle compression.");
-            return;
-        }
-
-        // 1. Find or create the "mcb sliders" GameObject
-        Transform slidersTransform = avatarRoot.transform.Find(SLIDERS_GAMEOBJECT_NAME);
-        GameObject slidersObj;
-        if (slidersTransform == null)
-        {
-            if (!enabled) return;
-            slidersObj = new GameObject(SLIDERS_GAMEOBJECT_NAME);
-            slidersObj.transform.SetParent(avatarRoot.transform, false);
-            Undo.RegisterCreatedObjectUndo(slidersObj, "Create MCB Sliders GameObject");
-
-            // Set initial state from My Custom Base component
-            var customBase = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
-            if (customBase != null)
-            {
-                bool desiredState = customBase.useCustomSlidersState ? customBase.customSlidersState : true;
-                slidersObj.SetActive(desiredState);
-            }
-        }
-        else
-        {
-            slidersObj = slidersTransform.gameObject;
-        }
-
-        // 2. The compressor lives on the sliders object.
-        Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.SetCompression(slidersObj, enabled);
-        Debug.Log(enabled ? "[MCB] VRCFury Parameter Compression enabled." : "[MCB] VRCFury Parameter Compression disabled.");
     }
 
     private System.Type FindType(string fullName)

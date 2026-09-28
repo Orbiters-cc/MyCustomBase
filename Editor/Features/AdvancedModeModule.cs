@@ -274,9 +274,9 @@ public class AdvancedModeModule
                     MCBLogger.SetEnabled(newLogging);
                 }
 
-                // Share issue logs (true by default) + minimum severity slider
+                // Optional MCB-only diagnostics (off by default).
                 bool currentShare = EditorIssueReporter.ShareIssueLogs;
-                bool newShare = EditorGUILayout.Toggle(new GUIContent("Share issue logs", "Send warnings/errors/exceptions to the MCB server to help us improve."), currentShare);
+                bool newShare = EditorGUILayout.Toggle(new GUIContent("Share MCB diagnostics", "Opt in to MCB-only diagnostics. Known credentials, URLs and paths are redacted; reports are rate limited. Project paths and unrelated Unity logs are excluded."), currentShare);
                 if (newShare != currentShare)
                 {
                     EditorIssueReporter.ShareIssueLogs = newShare;

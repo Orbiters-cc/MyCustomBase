@@ -205,8 +205,13 @@ public static class MCBUtils
 
         if (!string.IsNullOrEmpty(sourceVersionKey) && !System.Text.RegularExpressions.Regex.IsMatch(sourceVersionKey, "^[a-f0-9]{64}$"))
             throw new ArgumentException("Invalid original base version identity.", nameof(sourceVersionKey));
-        return $"{ASSET_VERSIONS_FOLDER}/{assetId}/versions/u{customBaseVersion}d{defaultFbxVersion}" +
+        VersionStorage.ValidateLabel(customBaseVersion, nameof(customBaseVersion));
+        VersionStorage.ValidateLabel(defaultFbxVersion, nameof(defaultFbxVersion));
+        string relative = $"{assetId}/versions/u{customBaseVersion}d{defaultFbxVersion}" +
             (string.IsNullOrEmpty(sourceVersionKey) ? "" : "-source-" + sourceVersionKey);
+        VersionStorage.RejectLinks(Path.GetFullPath("Assets"), Path.GetFullPath(ASSET_VERSIONS_FOLDER));
+        VersionStorage.ContainedPath(ASSET_VERSIONS_FOLDER, relative);
+        return ASSET_VERSIONS_FOLDER + "/" + relative;
     }
 
     public static string GetVersionDataPath(CustomBaseVersion version)
@@ -223,12 +228,10 @@ public static class MCBUtils
 
     public static bool IsVersionDownloaded(CustomBaseVersion version)
     {
-        string dataPath = GetVersionDataPath(version);
-        if (string.IsNullOrEmpty(dataPath)) return false;
-
-        string absoluteDataPath = Path.GetFullPath(dataPath);
-        return Directory.Exists(absoluteDataPath) &&
-               Directory.GetFiles(absoluteDataPath, "*", SearchOption.TopDirectoryOnly).Length > 0;
+        try { return VersionStorage.IsComplete(GetVersionDataPath(version), version); }
+        catch (ArgumentException) { return false; }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     public static string GetVersionAvatarPath(CustomBaseVersion version, string relativeAvatarPath)

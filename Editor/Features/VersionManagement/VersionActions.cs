@@ -70,7 +70,7 @@ public class VersionActions
     private readonly MCBEditor editor;
     private readonly NetworkService networkService;
     private readonly FileManagerService fileManagerService;
-    private AdvancedTransitionRollbackSnapshot activeAdvancedTransitionRollback;
+    private VersionTransitionRollbackSnapshot activeTransitionRollback;
     private static int fbxHashRecalculationGeneration;
     private int applyProgressGeneration;
     private float applyProgressBase;
@@ -480,25 +480,38 @@ public class VersionActions
                     ReportApplyProgress(DownloadApplyExtractionComplete, "Extracting version files...");
                 }
                 string finalDest = MCBUtils.GetVersionDataPath(version);
+                void ValidateDownload(string staging)
+                {
+                    MCBVersionDelivery.ApplyLocalDelivery(version, staging);
+                    foreach (var file in version.versionFiles ?? Array.Empty<ModelFileData>())
+                    {
+                        if (file == null) throw new InvalidDataException("Missing version file metadata.");
+                        string path = VersionStorage.ContainedPath(staging, file.path);
+                        if (!File.Exists(path)) throw new InvalidDataException("Downloaded version is missing a required file.");
+                        if (!string.IsNullOrWhiteSpace(file.hash) &&
+                            !string.Equals(fileManagerService.CalculateFileHash(path), file.hash, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("Downloaded version failed file integrity verification.");
+                    }
+                    VersionRepository.SaveVersionJson(staging, version);
+                    var manifest = VersionRepository.CreateManifestFromFolder(staging, version, false, null, null);
+                    manifest.Save(staging);
+                    if (!VersionStorage.IsComplete(staging, version)) throw new InvalidDataException("Downloaded version is incomplete.");
+                }
                 Dictionary<string, byte[]> inMemoryPatchBytes = null;
                 if (downloadedZipBytes != null)
                 {
                     inMemoryPatchBytes = fileManagerService.UnzipAndMoveFromMemory(
                         downloadedZipBytes,
                         finalDest,
-                        GetAdvancedMeshPatchFileNames(version));
+                        GetAdvancedMeshPatchFileNames(version), ValidateDownload);
                     downloadedZipBytes = null;
                 }
                 else
                 {
                     tempExtractPath = Path.Combine(Path.GetTempPath(), $"mcb_extract_{Guid.NewGuid()}");
-                    fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest);
+                    fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest, ValidateDownload);
                 }
 
-                MCBVersionDelivery.ApplyLocalDelivery(version);
-                // The server archive excludes local repository metadata. Persist the
-                // authorized, codec-adjusted version so reload/offline scans find it.
-                VersionRepository.SaveVersionJson(finalDest, version);
                 editor.LoadImportedVersions(true);
                 extractionSucceeded = true;
                 if (advancedMeshApply)
@@ -1019,7 +1032,7 @@ public class VersionActions
         string versionLabel = version != null ? version.version : "null";
         string message = $"{operation} failed: {ex.GetBaseException().Message}";
         MCBLogger.LogError($"[VersionActions] {operation} failed unexpectedly. version={versionLabel} reset={isReset}: {ex}");
-        RollbackActiveAdvancedTransition();
+        RollbackActiveTransition();
         editor.warningsModule?.AddWarning(message, MessageType.Error, $"{operation} failed");
         editor.isDownloading = false;
         advancedMeshPreparationPreloads.Clear();
@@ -1060,18 +1073,10 @@ public class VersionActions
             yield break;
         }
 
-        if (isAdvancedTransition)
-        {
-            if (activeAdvancedTransitionRollback != null)
-            {
-                throw new InvalidOperationException("Another advanced mesh version transition is still active.");
-            }
-
-            activeAdvancedTransitionRollback = AdvancedTransitionRollbackSnapshot.Capture(
-                GetTransitionAffectedFbxPaths(transitionVersions, fbxPath),
-                editor.customBaseTarget,
-                editor);
-        }
+        if (activeTransitionRollback != null)
+            throw new InvalidOperationException("Another version transition is still active.");
+        activeTransitionRollback = VersionTransitionRollbackSnapshot.Capture(
+            GetTransitionAffectedFbxPaths(transitionVersions, fbxPath), editor.customBaseTarget, editor);
 
         MCBReFitIntegration.SaveVersionFits(editor.customBaseTarget, previousVersion);
         MCBReFitIntegration.RestoreOriginalAssetMeshes(editor.customBaseTarget);
@@ -1196,13 +1201,9 @@ public class VersionActions
         {
             profile.Mark("Model patch/reset failed");
             MCBLogger.LogError($"[MCB] Operation failed: {operationException.Message}");
-            if (activeAdvancedTransitionRollback != null)
+            if (activeTransitionRollback != null)
             {
-                RollbackActiveAdvancedTransition();
-            }
-            else if (!isReset && fileManagerService.BackupExists(fbxPath))
-            {
-                fileManagerService.RestoreBackup(fbxPath);
+                RollbackActiveTransition();
             }
             advancedMeshPreparationPreloads.Clear();
             FinishApplyProgress(false);
@@ -1302,7 +1303,7 @@ public class VersionActions
                     catch (Exception ex)
                     {
                         editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Logic package import failed");
-                        RollbackActiveAdvancedTransition();
+                        RollbackActiveTransition();
                         FinishApplyProgress(false);
                         yield break;
                     }
@@ -1322,7 +1323,7 @@ public class VersionActions
                         catch (Exception ex)
                         {
                             editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Logic package import failed");
-                            RollbackActiveAdvancedTransition();
+                            RollbackActiveTransition();
                             FinishApplyProgress(false);
                             yield break;
                         }
@@ -1555,13 +1556,14 @@ public class VersionActions
 
         if (!success)
         {
+            RollbackActiveTransition();
             editor.Repaint();
             FinishApplyProgress(false);
             profile.Done("FAILED");
             yield break;
         }
         
-        CommitActiveAdvancedTransition();
+        CommitActiveTransition();
         MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating applied state.");
         // Force a recalculation of current/default FBX hashes after every switch. Advanced
         // transitions can restore .originalbase bytes even though the visible mesh is a native
@@ -2556,7 +2558,7 @@ public class VersionActions
             if (restored == 0)
             {
                 restoredEverySource = false;
-                if (activeAdvancedTransitionRollback != null)
+                if (activeTransitionRollback != null)
                 {
                     throw new InvalidOperationException(
                         $"No renderer could be safely refreshed from '{fbxPath}' during the advanced mesh transition.");
@@ -2575,7 +2577,7 @@ public class VersionActions
         int restoredTransforms = SmrPathService.RestoreTargetTransformHierarchyFromFbx(root, canonicalFbxPath);
         if (restoredTransforms == 0)
         {
-            if (activeAdvancedTransitionRollback != null)
+            if (activeTransitionRollback != null)
             {
                 throw new InvalidOperationException(
                     $"No avatar transforms could be safely restored from the canonical FBX '{canonicalFbxPath}' during the advanced mesh transition.");
@@ -3345,28 +3347,28 @@ public class VersionActions
                string.Equals(sourcePath, MCBUtils.ToUnityPath(patchSourcePath), StringComparison.OrdinalIgnoreCase);
     }
 
-    private void CommitActiveAdvancedTransition()
+    private void CommitActiveTransition()
     {
-        if (activeAdvancedTransitionRollback == null) return;
+        if (activeTransitionRollback == null) return;
 
-        activeAdvancedTransitionRollback.Commit();
-        activeAdvancedTransitionRollback = null;
+        activeTransitionRollback.Commit();
+        activeTransitionRollback = null;
     }
 
-    private void RollbackActiveAdvancedTransition()
+    private void RollbackActiveTransition()
     {
-        var snapshot = activeAdvancedTransitionRollback;
-        activeAdvancedTransitionRollback = null;
+        var snapshot = activeTransitionRollback;
+        activeTransitionRollback = null;
         if (snapshot == null) return;
 
         try
         {
             snapshot.Rollback();
-            MCBLogger.Log("[VersionActions] Restored the exact previous FBX and scene state after the failed advanced transition.");
+            MCBLogger.Log("[VersionActions] Restored the exact previous FBX and scene state after the failed version transition.");
         }
         catch (Exception rollbackException)
         {
-            MCBLogger.LogError($"[VersionActions] Advanced transition rollback failed: {rollbackException}");
+            MCBLogger.LogError($"[VersionActions] Version transition rollback failed: {rollbackException}");
             ClearAppliedVersionState();
             editor.warningsModule?.AddWarning(
                 "The version switch failed and MCB could not fully restore the previous state. The applied-version marker was cleared to avoid reporting a mismatched version.",
@@ -3375,7 +3377,7 @@ public class VersionActions
         }
     }
 
-    private sealed class AdvancedTransitionRollbackSnapshot
+    private sealed class VersionTransitionRollbackSnapshot
     {
         private readonly int undoGroup;
         private readonly List<FbxRollbackFile> files = new List<FbxRollbackFile>();
@@ -3384,7 +3386,7 @@ public class VersionActions
         private readonly bool editorCurrentWasCustom;
         private bool completed;
 
-        private AdvancedTransitionRollbackSnapshot(MyCustomBase target, MCBEditor editor)
+        private VersionTransitionRollbackSnapshot(MyCustomBase target, MCBEditor editor)
         {
             this.editor = editor;
             editorWasCustomBase = editor != null && editor.isCustomBase;
@@ -3398,12 +3400,12 @@ public class VersionActions
             }
         }
 
-        public static AdvancedTransitionRollbackSnapshot Capture(
+        public static VersionTransitionRollbackSnapshot Capture(
             IEnumerable<string> fbxPaths,
             MyCustomBase target,
             MCBEditor editor)
         {
-            var snapshot = new AdvancedTransitionRollbackSnapshot(target, editor);
+            var snapshot = new VersionTransitionRollbackSnapshot(target, editor);
             try
             {
                 foreach (string rawPath in fbxPaths ?? Enumerable.Empty<string>())
@@ -3498,12 +3500,12 @@ public class VersionActions
             }
 
             completed = true;
-            CleanupFiles();
+            if (rollbackFailure == null) CleanupFiles();
             Undo.IncrementCurrentGroup();
 
             if (rollbackFailure != null)
             {
-                throw new InvalidOperationException("Could not restore the previous version-switch state.", rollbackFailure);
+                throw new InvalidOperationException("Could not restore the previous version-switch state. Recovery copies are retained at: " + string.Join(", ", files.Select(file => file.rollbackPath)), rollbackFailure);
             }
         }
 

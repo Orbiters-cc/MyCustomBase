@@ -12,10 +12,10 @@ public static class MCBVersionDelivery
     public const string ManifestName = "mcb-delivery.json";
     sealed class Manifest { public int schema; public string codec; public MCBPayloadVariant[] files; }
 
-    public static void ApplyLocalDelivery(CustomBaseVersion version)
+    public static void ApplyLocalDelivery(CustomBaseVersion version, string folder = null)
     {
         if (version == null) return;
-        string path = Path.Combine(Path.GetFullPath(MCBUtils.GetVersionDataPath(version)), ManifestName);
+        string path = Path.Combine(Path.GetFullPath(folder ?? MCBUtils.GetVersionDataPath(version)), ManifestName);
         if (!File.Exists(path)) return;
         if (new FileInfo(path).Length > 128 * 1024) throw new InvalidDataException("Delivery manifest is too large.");
         ApplyManifest(version, File.ReadAllText(path));

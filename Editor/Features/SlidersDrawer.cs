@@ -179,7 +179,7 @@ public partial class SlidersDrawer
         var usage = VRCFuryService.Instance.GetAvatarParameterUsage(avatarRoot, selectedCount);
         int usedByAvatar = usage.usedByAvatar;
         int usedBySliders = usage.usedBySliders;
-        int available = Mathf.Max(0, MAX_PARAMETERS - usage.totalUsedAfterBuild);
+        int available = Mathf.Max(0, MAX_PARAMETERS - usage.totalBeforeCompression);
 
         graphData = new List<RepartitionGraph.GraphElement>
         {
@@ -286,35 +286,9 @@ public partial class SlidersDrawer
                 GameObject rootObj = editor.customBaseTarget.transform.root.gameObject;
                 var usage = VRCFuryService.Instance.GetAvatarParameterUsage(rootObj, selectedIndices.Count);
                 
-                EditorGUI.BeginDisabledGroup(usage.compressionIsExternal);
-                bool toggleVal = usage.compressionEnabled;
-                EditorGUI.BeginChangeCheck();
-                toggleVal = EditorGUILayout.ToggleLeft("enable VRCFury parameters compression", toggleVal);
-                if (EditorGUI.EndChangeCheck())
-                {
-                    VRCFuryService.Instance.SetCompression(rootObj, toggleVal);
-                    UpdateGraph(selectedIndices.Count);
-                }
-                EditorGUI.EndDisabledGroup();
+                EditorGUILayout.LabelField("Estimate before compression. " + usage.compressionStatus, EditorStyles.wordWrappedMiniLabel);
                 compressionSectionBottomRect = GUILayoutUtility.GetLastRect();
 
-                if (usage.compressionEnabled)
-                {
-                    GUIStyle successStyle = new GUIStyle(EditorStyles.miniLabel);
-                    successStyle.normal.textColor = new Color(0.3f, 0.8f, 0.3f);
-                    successStyle.fontStyle = FontStyle.Bold;
-                    EditorGUILayout.LabelField("Parameter use reduced by VRCFury compression", successStyle);
-                    compressionSectionBottomRect = GUILayoutUtility.GetLastRect();
-                    
-                    if (usage.compressionIsExternal && !string.IsNullOrEmpty(usage.compressionPath))
-                    {
-                        GUIStyle pathStyle = new GUIStyle(EditorStyles.miniLabel);
-                        pathStyle.normal.textColor = new Color(0.5f, 0.5f, 0.5f);
-                        EditorGUILayout.LabelField($"Already activated in : {usage.compressionPath}", pathStyle);
-                        compressionSectionBottomRect = GUILayoutUtility.GetLastRect();
-                    }
-                }
-                
                 // Debounce logic for sliders setup (moved here to avoid clipping)
                 if (hasPendingMenuNameUpdate)
                 {
