@@ -1,0 +1,77 @@
+/* Blendshape Links window: the My Avatar / MCB look, packed tight for a technical tool. */
+
+/* Labels start flush; the classes below add their own spacing. */
+.unity-label { margin: 0; padding: 0; }
+
+.bsl { background-color: #1f1f1f; font-size: 11px; color: #d0d0d0; }
+
+/* Top bar */
+.bsl-bar { flex-direction: row; align-items: center; padding: 6px 8px; background-color: #262626; border-bottom-width: 1px; border-color: rgba(255, 255, 255, 0.05); }
+.bsl-avatar { flex-grow: 1; flex-shrink: 1; min-width: 120px; margin: 0 6px 0 0; }
+.bsl-avatar .unity-object-field__input { border-radius: 6px; background-color: #1a1a1a; border-color: #333333; min-height: 22px; }
+.bsl-statusbar { flex-direction: row; align-items: center; padding: 3px 10px; background-color: #222222; }
+.bsl-status { flex-grow: 1; color: #8f8f8f; font-size: 10px; margin: 0; padding: 0; }
+.bsl-notice { color: #9cc9ff; font-size: 10px; margin: 0; padding: 0; }
+
+/* Small buttons and toggles */
+.bsl-button { height: 22px; min-height: 22px; margin: 0 0 0 4px; padding: 0 8px; border-width: 0; border-radius: 6px; background-color: #3a3a3a; color: #e6e6e6; font-size: 11px; cursor: link; transition-property: scale, background-color; transition-duration: 0.1s; }
+.bsl-button:hover { background-color: #4a4a4a; }
+.bsl-button--pressed { scale: 0.95 0.95; background-color: #505050; }
+.bsl-button.bsl-toggle--on { background-color: rgba(0, 218, 109, 0.2); color: #00DA6D; -unity-font-style: bold; }
+.bsl-button.bsl-record { color: #ff8a8a; }
+.bsl-button.bsl-record--on { background-color: rgba(255, 92, 92, 0.25); color: #ff5c5c; -unity-font-style: bold; }
+
+/* Sections */
+.bsl-scroll { flex-grow: 1; }
+.bsl-content { padding: 0 8px 10px 8px; }
+.bsl-section { flex-direction: row; align-items: center; margin: 8px 2px 4px 2px; }
+.bsl-title { color: #f2f2f2; font-size: 12px; -unity-font-style: bold; margin: 0; padding: 0; }
+.bsl-count { margin: 0 0 0 6px; padding: 0 6px; border-radius: 8px; background-color: #2e2e2e; color: #9a9a9a; font-size: 10px; }
+.bsl-card { padding: 6px 8px; border-radius: 10px; background-color: #242424; border-width: 1px; border-color: rgba(255, 255, 255, 0.05); }
+.bsl-subtitle { margin: 2px 0 3px 0; padding: 0; color: #8f8f8f; font-size: 10px; -unity-font-style: bold; }
+
+.bsl-columns { flex-direction: row; align-items: flex-start; }
+.bsl-column { flex-grow: 1; flex-basis: 0; min-width: 0; margin-right: 8px; }
+.bsl-column--last { margin-right: 0; }
+.bsl-columns--stacked { flex-direction: column; align-items: stretch; }
+.bsl-columns--stacked > .bsl-column { margin-right: 0; }
+
+/* Rows */
+.bsl-row { flex-direction: row; align-items: center; min-height: 18px; }
+.bsl-row--nested { padding-left: 10px; }
+.bsl-item { margin-bottom: 4px; padding: 4px 6px; border-radius: 7px; background-color: #1a1a1a; }
+.bsl-chips { flex-direction: row; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+.bsl-grow { flex-grow: 1; flex-shrink: 1; min-width: 0; }
+
+.bsl-strong { margin-right: 6px; color: #f2f2f2; -unity-font-style: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsl-meta { color: #8f8f8f; font-size: 10px; margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bsl-meta.bsl-row--nested { margin-left: 0; margin-top: 2px; }
+.bsl-index { width: 20px; color: #6a6a6a; font-size: 10px; }
+.bsl-value { width: 34px; margin-left: 4px; color: #ffffff; font-size: 10px; -unity-text-align: middle-right; -unity-font-style: bold; }
+.bsl-param { color: #ffb31a; font-size: 10px; margin-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsl-row--nested > .bsl-param { margin-left: 0; }
+.bsl-code { color: #c8c8c8; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsl-code--path { color: #7f7f7f; margin-left: 8px; flex-shrink: 2; }
+.bsl-link { color: #9cc9ff; cursor: link; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsl-link:hover { color: #ffffff; }
+.bsl-clip { flex-grow: 1; flex-shrink: 1; min-width: 40px; margin-right: 8px; }
+.bsl-code--property { flex-shrink: 1; min-width: 40px; }
+.bsl-strong.bsl-link { color: #f2f2f2; margin-left: 0; }
+.bsl-strong.bsl-link:hover { color: #9cc9ff; }
+
+.bsl-chip { height: 16px; margin: 1px 4px 1px 0; padding: 0 6px; border-radius: 8px; font-size: 10px; -unity-text-align: middle-center; white-space: nowrap; flex-shrink: 0; }
+.bsl-bar .bsl-chip { height: 20px; border-radius: 10px; margin-right: 2px; }
+
+.bsl-message { margin: 2px 0; padding: 3px 8px; border-left-width: 2px; border-radius: 3px; background-color: #1a1a1a; color: #bdbdbd; font-size: 10px; white-space: normal; }
+
+.bsl-bar-track { width: 60px; height: 5px; margin-left: 6px; border-radius: 3px; background-color: #333333; overflow: hidden; flex-shrink: 0; }
+.bsl-bar-fill { height: 100%; border-radius: 3px; }
+
+/* Search */
+.bsl-query { flex-direction: row; align-items: center; margin-top: 6px; }
+.bsl-query__field { flex-grow: 1; flex-shrink: 1; min-width: 60px; margin: 0; }
+.bsl-query__field > .unity-text-field__input { min-height: 22px; border-radius: 6px; background-color: #1a1a1a; border-color: #333333; }
+.bsl-query > .bsl-button { flex-shrink: 0; }
+.bsl-meta.bsl-hint { margin: 3px 0 0 0; }
+.bsl-card > .bsl-meta { margin: 4px 0 2px 2px; white-space: normal; }
+.bsl-bone { margin: 2px 0 2px 2px; font-size: 10px; -unity-font-style: bold; white-space: normal; }
