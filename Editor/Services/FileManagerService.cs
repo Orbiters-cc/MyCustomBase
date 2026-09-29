@@ -700,7 +700,7 @@ public class FileManagerService
     internal static string PrepareLogicPackageImport(string packagePath)
     {
         var index = Orbiters.Toolkit.Editor.UnityPackageIndex.Read(packagePath);
-        var wanted = index.Entries.Where(entry => IsLogicPackageImportPath(entry.Path) && !ProjectHasAsset(entry.Guid)).ToList();
+        var wanted = LogicPackageImportEntries(index).ToList();
         if (wanted.Count == 0) return null;
         if (wanted.Count == index.Entries.Count) return packagePath;
 
@@ -716,6 +716,10 @@ public class FileManagerService
             throw;
         }
     }
+
+    /// <summary>The entries of a logic package MCB imports: the creator's assets under Assets/ the project does not have yet.</summary>
+    internal static IEnumerable<Orbiters.Toolkit.Editor.UnityPackageIndex.Entry> LogicPackageImportEntries(Orbiters.Toolkit.Editor.UnityPackageIndex index) =>
+        index.Entries.Where(entry => IsLogicPackageImportPath(entry.Path) && !ProjectHasAsset(entry.Guid));
 
     private static bool ProjectHasAsset(string guid)
     {

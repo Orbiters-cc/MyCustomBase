@@ -2559,7 +2559,7 @@ public static partial class NativeMeshPayloadService
             if (record?.mesh == null) throw new InvalidDataException("Advanced mesh payload contains a missing mesh.");
             var renderer = ResolveAvatarRenderer(avatarRoot, record);
             if (renderer == null)
-                throw new InvalidOperationException($"Cannot find the avatar renderer '{record.avatarPath}': it was moved or renamed, or several renderers match it. Put it back at '{record.avatarPath}' and try again.");
+                throw new InvalidOperationException($"Cannot find the avatar renderer '{record.avatarPath}': it was moved or renamed. Put it back at '{record.avatarPath}' and try again.");
             int duplicate = Array.IndexOf(targets, renderer);
             if (duplicate >= 0)
                 throw new InvalidOperationException($"Advanced mesh targets '{records[duplicate].avatarPath}' and '{record.avatarPath}' both resolve to the renderer '{renderer.name}'.");
@@ -2905,7 +2905,22 @@ public static partial class NativeMeshPayloadService
         // Mesh/renderer names are not identities: clothing can be the only remaining mesh named "Body".
         // An empty recorded path is a renderer on the avatar root; a missing path must be remapped explicitly.
         var target = record.avatarPath.Length == 0 ? avatarRoot : FindTransformByRelativePath(avatarRoot, record.avatarPath);
-        return target != null ? target.GetComponent<SkinnedMeshRenderer>() : null;
+        var renderer = target != null ? target.GetComponent<SkinnedMeshRenderer>() : null;
+        if (renderer != null || record.avatarPath.Length == 0) return renderer;
+        // The avatar may sit under a scene organizer object: accept the single renderer whose path ends with the recorded one.
+        string suffix = "/" + record.avatarPath.Trim('/');
+        var matches = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .Where(r => r != null && ("/" + GetRelativePath(avatarRoot, r.transform)).EndsWith(suffix, StringComparison.Ordinal))
+            .Take(2).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static string GetRelativePath(Transform root, Transform target)
+    {
+        var parts = new List<string>();
+        for (var t = target; t != null && t != root; t = t.parent) parts.Add(t.name);
+        parts.Reverse();
+        return string.Join("/", parts);
     }
 
     private static IEnumerable<ModelFileData> GetSourceFilesForPatch(CustomBaseVersion version, ModelFileData patch)

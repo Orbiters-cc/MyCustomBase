@@ -465,12 +465,31 @@ public class VersionActions
             MCBLogger.LogError($"[VersionActions] Download task failed unexpectedly: {ex}");
         }
         VersionContentTrust.CreatorTrustSnapshot currentCreatorTrust = null;
+        List<string> downloadedCode = null;
         if (success)
         {
+            try
+            {
+                using (var zip = downloadedZipBytes != null ? new MemoryStream(downloadedZipBytes, false) : (Stream)File.OpenRead(tempZipPath))
+                    downloadedCode = VersionContentTrust.ListCode(zip);
+            }
+            catch (Exception ex) when (ex is IOException || ex is InvalidDataException || ex is UnauthorizedAccessException)
+            {
+                success = false;
+                error = $"The downloaded version could not be read: {ex.Message}";
+            }
+        }
+        // Only code needs the creator's current trust. One retry: a failed lookup would warn about a trusted creator.
+        for (int attempt = 0; success && downloadedCode.Count > 0 && currentCreatorTrust == null && attempt < 2; attempt++)
+        {
+            if (applyAfter) ReportApplyProgress(DownloadApplyProgressComplete, "Checking the creator...");
             var trustRequest = networkService.FetchCreatorTrustAsync(MCBUtils.GetAssetModelTrustUrl(
                 selectedAsset.id, version.version, requestBaseHash, requestedToken, version.sourceVersionKey));
             while (!trustRequest.IsCompleted) yield return null;
             if (!trustRequest.IsFaulted && !trustRequest.IsCanceled) currentCreatorTrust = trustRequest.Result;
+        }
+        if (success)
+        {
             if (editor.authToken != requestedToken || AuthenticationService.GetAuth()?.token != requestedToken ||
                 editor.GetSelectedAsset()?.id != selectedAsset.id)
             {
@@ -490,7 +509,7 @@ public class VersionActions
                 editor.warningsModule.AddWarning(error, MessageType.Error, "Download failed");
                 if (applyAfter) FinishApplyProgress(false);
             }
-            else if (!ConfirmDownloadedCode(version, selectedAsset, downloadedZipBytes, tempZipPath, currentCreatorTrust))
+            else if (!VersionContentTrust.ConfirmDownloadedCode(version, selectedAsset, downloadedCode, currentCreatorTrust))
             {
                 downloadedZipBytes = null;
                 editor.warningsModule.AddWarning(
@@ -592,10 +611,6 @@ public class VersionActions
     }
 
     // Runs on the downloaded archive before anything is extracted under Assets/.
-    private static bool ConfirmDownloadedCode(CustomBaseVersion version, AvatarDiscoveredAsset asset, byte[] zipBytes, string zipPath, VersionContentTrust.CreatorTrustSnapshot currentTrust) =>
-        VersionContentTrust.ConfirmDownloadedCode(version, asset,
-            () => zipBytes != null ? new MemoryStream(zipBytes, false) : (Stream)File.OpenRead(zipPath), currentTrust);
-
     private bool CanUseInMemoryVersionPackage(long zipSizeBytes, out string decision)
     {
         if (zipSizeBytes <= 0L)
@@ -1022,7 +1037,7 @@ public class VersionActions
         IEnumerator routine = null;
         try
         {
-            routine = RunPreparedMutation(PrepareVersionSwitchCoroutine(version, isReset), () => ApplyOrResetCore(version, isReset));
+            routine = RunPreparedMutation(ThenShowApplying(PrepareVersionSwitchCoroutine(version, isReset), isReset), () => ApplyOrResetCore(version, isReset));
         }
         catch (Exception ex)
         {
@@ -1102,6 +1117,14 @@ public class VersionActions
     }
 
     // The Action boundary prevents a mutation phase from silently becoming a yielding coroutine.
+    // The switch itself runs in one editor frame (one Undo step) and the Inspector cannot repaint meanwhile: say so first.
+    private IEnumerator ThenShowApplying(IEnumerator preparation, bool isReset)
+    {
+        while (preparation.MoveNext()) yield return preparation.Current;
+        BeginApplyProgress(isReset ? "Resetting... Unity may pause for a moment" : "Applying version... Unity may pause for a moment", 0f);
+        yield return null;
+    }
+
     internal static IEnumerator RunPreparedMutation(IEnumerator preparation, Action mutate)
     {
         while (preparation.MoveNext()) yield return preparation.Current;

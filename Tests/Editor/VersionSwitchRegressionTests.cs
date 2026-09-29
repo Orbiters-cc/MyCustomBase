@@ -99,10 +99,10 @@ public sealed class VersionSwitchRegressionTests
     public void TrustedOrCodeFreeDownloadsNeedNoConfirmation()
     {
         Assert.IsTrue(VersionContentTrust.ConfirmDownloadedCode(new CustomBaseVersion { assetId = 14, version = "1" }, null,
-            () => throw new AssertionException("A trusted creator's archive must not be inspected."),
+            new[] { "Editor/Setup.cs" },
             new VersionContentTrust.CreatorTrustSnapshot { assetId = 14, version = "1", creatorTrusted = true }));
         Assert.IsTrue(VersionContentTrust.ConfirmDownloadedCode(new CustomBaseVersion { version = "1" }, null,
-            () => new MemoryStream(Zip(("model.bin", new byte[] { 1 })))));
+            VersionContentTrust.ListCode(new MemoryStream(Zip(("model.bin", new byte[] { 1 }))))));
     }
 
     // ---- MCB-03: logic package dependencies

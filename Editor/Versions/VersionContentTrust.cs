@@ -61,9 +61,9 @@ public static class VersionContentTrust
                     using (var source = entry.Open())
                     using (var file = File.Create(temp))
                         source.CopyTo(file);
-                    code.AddRange(UnityPackageIndex.Read(temp).Paths
-                        .Where(p => FileManagerService.IsLogicPackageImportPath(p) && CodeContent.IsCode(p))
-                        .Select(p => path + "/" + p));
+                    code.AddRange(FileManagerService.LogicPackageImportEntries(UnityPackageIndex.Read(temp))
+                        .Where(e => CodeContent.IsCode(e.Path))
+                        .Select(e => path + "/" + e.Path));
                 }
                 finally
                 {
@@ -75,13 +75,14 @@ public static class VersionContentTrust
         return code.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>True when the version may be installed: a trusted creator, no code, or the user chose to continue.</summary>
-    public static bool ConfirmDownloadedCode(CustomBaseVersion version, AvatarDiscoveredAsset asset, Func<Stream> openZip, CreatorTrustSnapshot current = null)
+    /// <summary>
+    /// True when the version may be installed: no code (<see cref="ListCode"/>), a trusted creator, or the user chose to
+    /// continue.
+    /// </summary>
+    public static bool ConfirmDownloadedCode(CustomBaseVersion version, AvatarDiscoveredAsset asset, IReadOnlyList<string> code, CreatorTrustSnapshot current = null)
     {
-        if (IsCreatorTrusted(version, current, SignedInUserId())) return true;
-        List<string> code;
-        using (var zip = openZip()) code = ListCode(zip);
-        return code.Count == 0 || UntrustedCodeDialog.Confirm(new UntrustedCodeDialog.Request
+        if (code == null || code.Count == 0 || IsCreatorTrusted(version, current, SignedInUserId())) return true;
+        return UntrustedCodeDialog.Confirm(new UntrustedCodeDialog.Request
         {
             Subject = $"{(string.IsNullOrWhiteSpace(asset?.name) ? "Custom Base" : asset.name)} {version.version}",
             Author = !string.IsNullOrWhiteSpace(current?.creatorName) ? current.creatorName : version.creatorName ?? asset?.ownerUsername,
