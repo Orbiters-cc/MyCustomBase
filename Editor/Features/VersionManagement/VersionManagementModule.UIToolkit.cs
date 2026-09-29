@@ -270,32 +270,44 @@ public partial class VersionManagementModule
             return;
         }
 
-        if (selectedVersion == null)
+        RequestApply(selectedVersion);
+    }
+
+    /// <summary>
+    /// Applies a version after the usual confirmation, downloading it first when needed. Returns false when nothing
+    /// started (declined, or another download or apply is running).
+    /// </summary>
+    public bool RequestApply(CustomBaseVersion version)
+    {
+        if (version == null || editor.isDownloading || editor.isApplying)
         {
-            return;
+            return false;
         }
 
-        bool isDownloaded = MCBUtils.IsVersionDownloaded(selectedVersion);
+        bool isDownloaded = MCBUtils.IsVersionDownloaded(version);
         string assetName = editor.GetSelectedAssetDisplayName();
 
-        bool shouldApply = ShouldSkipApplyConfirmation(selectedVersion) ||
-                           EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using {assetName} version '{selectedVersion.version}'.\nA backup will be created.", "Proceed", "Cancel");
+        bool shouldApply = ShouldSkipApplyConfirmation(version) ||
+                           EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using {assetName} version '{version.version}'.\nA backup will be created.", "Proceed", "Cancel");
         if (!shouldApply)
         {
-            return;
+            return false;
         }
 
+        editor.selectedVersionForAction = version;
+        editor.selectedCustomVersionForAction = null;
         if (isDownloaded)
         {
             actions.StartApplyVersion();
         }
         else
         {
-            actions.StartVersionDownload(selectedVersion, true);
+            actions.StartVersionDownload(version, true);
         }
 
         editor.RefreshUiToolkitSections();
         editor.Repaint();
+        return true;
     }
 
     private static Button CreateVersionTextButton(string text, System.Action onClick)

@@ -652,6 +652,11 @@ public partial class VersionListDrawer
             details.Add(changelog);
         }
 
+        if (VersionActions.ShipsMeshes(ver))
+        {
+            details.Add(CreateMeshChangesRow(ver));
+        }
+
         if (ver != null && ver.uploaderId > 0)
         {
             details.Add(CreateUserInfoUIToolkit(ver.uploaderId, false));
@@ -670,6 +675,31 @@ public partial class VersionListDrawer
         }
 
         return details;
+    }
+
+    // A version that ships meshes can be seen in 3D, on the avatar, before it is applied.
+    private VisualElement CreateMeshChangesRow(CustomBaseVersion ver)
+    {
+        var row = new VisualElement();
+        row.AddToClassList("mcb-version-mesh-row");
+        var chip = CreateChip("Mesh updated", new Color(0.45f, 0.85f, 1f), lowercase: false);
+        chip.AddToClassList("mcb-version-mesh-row__chip");
+        row.Add(chip);
+
+        var button = new Button { tooltip = "See in 3D what this version changes on your avatar, before applying it." };
+        button.AddToClassList("mcb-version-mesh-row__button");
+        var icon = new CompareGlyph(CompareGlyph.Kind.Compare);
+        icon.AddToClassList("mcb-version-mesh-row__icon");
+        button.Add(icon);
+        var label = new Label("See differences") { pickingMode = PickingMode.Ignore };
+        label.AddToClassList("mcb-version-mesh-row__label");
+        button.Add(label);
+        button.RegisterCallback<PointerDownEvent>(_ => button.AddToClassList("mcb-version-mesh-row__button--pressed"), TrickleDown.TrickleDown);
+        button.RegisterCallback<PointerUpEvent>(_ => button.RemoveFromClassList("mcb-version-mesh-row__button--pressed"), TrickleDown.TrickleDown);
+        button.RegisterCallback<PointerLeaveEvent>(_ => button.RemoveFromClassList("mcb-version-mesh-row__button--pressed"));
+        ButtonInteraction.RegisterImmediateClick(button, () => VersionCompareWindow.Open(editor, ver));
+        row.Add(button);
+        return row;
     }
 
     private VisualElement CreateVersionEditForm(CustomBaseVersion ver)
@@ -730,6 +760,7 @@ public partial class VersionListDrawer
     private static bool HasVersionDetails(CustomBaseVersion ver)
     {
         return !string.IsNullOrWhiteSpace(ver?.changelog) ||
+               VersionActions.ShipsMeshes(ver) ||
                ExtraCustomizationUtils.GetFlags(ver?.extraCustomization).Count > 0;
     }
 

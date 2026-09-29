@@ -78,6 +78,8 @@ public class VersionActions
     private readonly Dictionary<string, NativeMeshPayloadService.NativeMeshPayloadPreparationPreload> advancedMeshPreparationPreloads =
         new Dictionary<string, NativeMeshPayloadService.NativeMeshPayloadPreparationPreload>(StringComparer.OrdinalIgnoreCase);
     public VersionApplyProgressState ApplyProgress { get; } = new VersionApplyProgressState();
+    /// <summary>How far the running version download is (0 to 1).</summary>
+    public float DownloadProgress { get; private set; }
 
     public VersionActions(MCBEditor editor, NetworkService network, FileManagerService files)
     {
@@ -277,6 +279,7 @@ public class VersionActions
         MCBPerformance.PauseForeground();
         if (editor.isDownloading) yield break;
         editor.isDownloading = true;
+        DownloadProgress = 0f;
         if (applyAfter)
         {
             BeginApplyProgress("Downloading version...", 0.02f);
@@ -423,6 +426,7 @@ public class VersionActions
         while ((memoryDownloadTask != null && !memoryDownloadTask.IsCompleted) ||
                (diskDownloadTask != null && !diskDownloadTask.IsCompleted))
         {
+            DownloadProgress = downloadProgress;
             if (applyAfter)
             {
                 visibleDownloadProgress = GetVisibleDownloadApplyProgress(downloadStartedAt, downloadProgress, visibleDownloadProgress);
@@ -1968,6 +1972,73 @@ public class VersionActions
         }
 
         return originalFbxPath;
+    }
+
+    /// <summary>A model file a version puts on the avatar, located for reading (see <see cref="ResolveModelPatches"/>).</summary>
+    public sealed class VersionModelPatch
+    {
+        public ModelFileData Patch;
+        public ModelFileData Source;
+        /// <summary>Advanced meshes (Unity meshes for the avatar's renderers) rather than a replacement FBX.</summary>
+        public bool AdvancedMesh;
+        public bool Hdiff;
+        /// <summary>The avatar's model the patch replaces.</summary>
+        public string TargetFbxPath;
+        public string BinPath;
+        /// <summary>The original model: the key of the patch, and what the avatar looks like with no version.</summary>
+        public string OriginalFbxPath;
+    }
+
+    /// <summary>Whether a version ships meshes (a replacement FBX or advanced meshes), so its changes can be shown in 3D.</summary>
+    public static bool ShipsMeshes(CustomBaseVersion version)
+    {
+        return version?.versionFiles != null && version.versionFiles.Any(file =>
+            file != null &&
+            string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
+            (ModelFileTransforms.IsFbxReplacementTransform(file.transform) || NativeMeshPayloadService.IsAdvancedMeshPatchTransform(file.transform)));
+    }
+
+    /// <summary>
+    /// The model patches of a downloaded version, located to read what it would put on the avatar. Unlike applying, this
+    /// changes nothing: the original model must already be there (its .originalbase copy, or the model itself while no
+    /// replacement is applied); readers check it against <see cref="VersionModelPatch.Source"/>'s hash.
+    /// </summary>
+    public List<VersionModelPatch> ResolveModelPatches(CustomBaseVersion version)
+    {
+        var patches = new List<VersionModelPatch>();
+        string fallbackFbxPath = GetCurrentFBXPath();
+        foreach (var patchFile in version?.versionFiles ?? Array.Empty<ModelFileData>())
+        {
+            if (patchFile == null || !string.Equals(patchFile.role, "PATCH", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            bool advanced = NativeMeshPayloadService.IsAdvancedMeshPatchTransform(patchFile.transform);
+            if (!advanced && !ModelFileTransforms.IsFbxReplacementTransform(patchFile.transform))
+            {
+                continue;
+            }
+
+            string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
+            if (string.IsNullOrWhiteSpace(targetFbxPath))
+            {
+                throw new FileNotFoundException($"The avatar model replaced by '{patchFile.path}' could not be found.");
+            }
+
+            patches.Add(new VersionModelPatch
+            {
+                Patch = patchFile,
+                Source = ResolveSourceFileForPatch(version, patchFile),
+                AdvancedMesh = advanced,
+                Hdiff = ModelFileTransforms.IsHdiffFbxReplacementTransform(patchFile.transform),
+                TargetFbxPath = targetFbxPath,
+                BinPath = ResolveVersionPatchPath(version, patchFile),
+                OriginalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath)
+            });
+        }
+
+        return patches;
     }
 
     private List<string> GetAffectedFbxPaths(CustomBaseVersion version, string fallbackFbxPath)

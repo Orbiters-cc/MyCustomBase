@@ -407,6 +407,58 @@
     color: #d1d1d1;
 }
 
+.mcb-version-mesh-row {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.mcb-version-mesh-row .mcb-version-mesh-row__chip {
+    margin-left: 0;
+    margin-right: 8px;
+}
+
+.mcb-version-mesh-row__button {
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    margin: 0;
+    padding-left: 8px;
+    padding-right: 12px;
+    border-width: 1px;
+    border-radius: 12px;
+    border-color: rgba(255, 255, 255, 0.16);
+    background-color: rgba(255, 255, 255, 0.06);
+    transition-property: background-color, border-color, scale;
+    transition-duration: 0.14s, 0.14s, 0.2s;
+    transition-timing-function: ease-out, ease-out, ease-out-back;
+}
+
+.mcb-version-mesh-row__button:hover {
+    background-color: rgba(0, 218, 109, 0.14);
+    border-color: rgba(0, 218, 109, 0.6);
+}
+
+.mcb-version-mesh-row__button--pressed {
+    scale: 0.94 0.94;
+}
+
+.mcb-version-mesh-row__icon {
+    width: 14px;
+    height: 14px;
+    margin-right: 6px;
+    --glyph-color: #e6e6e6;
+}
+
+.mcb-version-mesh-row__label {
+    margin: 0;
+    padding: 0;
+    color: #ececec;
+    font-size: 11px;
+    -unity-font-style: bold;
+}
+
 .mcb-version-edit {
     padding-left: 12px;
     padding-right: 12px;

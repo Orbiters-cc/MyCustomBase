@@ -10,6 +10,26 @@ MCB editor UI is transitioning to Unity UI Toolkit with the shared styled surfac
 third-party software it ships with (HDiffPatch with libdivsufsort, CocoTools, YUCP Dev Tools, Zstandard, zlib, bzip2,
 the LZMA SDK and LZ4), each with its license. The texts live in `Editor/Plugins/Hdiff/THIRD_PARTY_NOTICES.md`.
 
+## See a version's differences
+
+The expanded card of a version that ships meshes shows **Mesh updated · See differences**. It opens a window with the
+avatar turning in 3D, before and after the version, so creators see what it does to their avatar before applying it:
+
+- **Slider** wipes between before and after with a handle, **Side by side** turns both together, **Overlay** shows the
+  version with its former shape as an x-ray ghost. Holding Space shows the before side.
+- **Changes** makes the surface that moves glow, from amber (a little) to magenta (the most); **Clay** shows the shape
+  alone; **Textured** uses the avatar's own materials. The clothes button adds the avatar's other renderers.
+- It compares with **your avatar now**, or with the **original** model while a version is applied. Parts are shown with
+  the renderer's blendshape values, and the version's new blendshapes at the value the creator chose.
+- The list of meshes that change flies the camera to each change; blendshapes added, reshaped or removed are listed.
+- **Apply** goes through the usual confirmation. A version that is not downloaded is downloaded first.
+
+Reading changes nothing in the project: FBX replacements are decoded in memory (HDiff through a temporary file in
+`Library/MCB/HdiffTemp`), advanced meshes are decrypted and parsed in memory (or read from the cache an earlier apply
+left), and the models are read with Toolkit's `FbxReader`. `VersionActions.ResolveModelPatches` locates a downloaded
+version's patches without creating backups; `VersionMeshComparison` pairs them with the avatar's renderers and measures
+the change with Toolkit's `MeshComparison`.
+
 ## Small accessories on the body (beta)
 
 Advanced Options › Blendshape processing › **Keep Small Accessories On The Body (beta)** adds Toolkit's Follow Body

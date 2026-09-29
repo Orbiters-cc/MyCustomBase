@@ -568,6 +568,24 @@ public static partial class NativeMeshPayloadService
         return payload;
     }
 
+    /// <summary>
+    /// Reads an advanced mesh patch for a preview, off the main thread: decrypted and parsed in memory, so nothing is written
+    /// to the project. Throws when the original model is not the patch's key.
+    /// </summary>
+    internal static PreparedPayloadAssetData ReadPayloadForPreview(ModelFileData patchFile, string binPath, string originalFbxPath)
+    {
+        return PrepareNativeMeshPayloadData(binPath, originalFbxPath, null, null, Path.GetFileNameWithoutExtension(binPath),
+            GetPayloadIdentity(patchFile), ResolvePayloadCompression(patchFile), new NativeMeshPayloadPreparationStatus());
+    }
+
+    /// <summary>The payload an earlier apply cached for this patch, or null: reading it is faster than decoding (main thread).</summary>
+    internal static NativeMeshPayloadAsset FindCachedPayload(CustomBaseVersion version, ModelFileData patchFile)
+    {
+        string payloadHash = GetPayloadIdentity(patchFile);
+        var cached = LoadPayloadAsset(GetGeneratedPayloadPath(version, patchFile, payloadHash));
+        return CachedPayloadMatches(cached, payloadHash, ResolvePayloadCompression(patchFile)) ? cached : null;
+    }
+
     public static NativeMeshPayloadPreparationPreload StartEncryptedPayloadPreparation(
         CustomBaseVersion version,
         ModelFileData patchFile,
@@ -2899,7 +2917,7 @@ public static partial class NativeMeshPayloadService
         return matches.Length == 1 ? matches[0] : null;
     }
 
-    private static SkinnedMeshRenderer ResolveAvatarRenderer(Transform avatarRoot, NativeMeshPayloadRenderer record)
+    internal static SkinnedMeshRenderer ResolveAvatarRenderer(Transform avatarRoot, NativeMeshPayloadRenderer record)
     {
         if (avatarRoot == null || record == null || record.avatarPath == null) return null;
         // Mesh/renderer names are not identities: clothing can be the only remaining mesh named "Body".
