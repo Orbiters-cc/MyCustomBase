@@ -805,15 +805,17 @@ public partial class AssetGalleryModule
         isLoading = true;
         loadingAvatarSignature = requestSignature;
         lastError = null;
+        string requestToken = editor.authToken;
 
         EditorCoroutineUtility.StartCoroutineOwnerless(
             AvatarAssetDiscoveryService.DiscoverAssetsCoroutine(
-                editor.authToken,
+                requestToken,
                 paths,
                 filterOnlyCompatible,
                 (response, error) =>
                 {
-                    if (!string.Equals(requestSignature, lastAvatarSignature, StringComparison.Ordinal))
+                    if (!string.Equals(requestSignature, lastAvatarSignature, StringComparison.Ordinal) ||
+                        !string.Equals(requestToken, editor.authToken, StringComparison.Ordinal))
                     {
                         return;
                     }

@@ -155,6 +155,7 @@ public partial class AssetGalleryModule
     private Button selectedAssetLikeButton;
     private Label selectedAssetLikeCountLabel;
     private readonly Dictionary<int, AssetInteractionState> interactionStates = new Dictionary<int, AssetInteractionState>();
+    private string interactionAccountToken;
     private readonly Dictionary<int, Image> thumbnailImages = new Dictionary<int, Image>();
     private readonly Dictionary<int, Image> ownerAvatarImages = new Dictionary<int, Image>();
     private readonly Dictionary<int, Label> likeCountLabels = new Dictionary<int, Label>();
@@ -269,6 +270,7 @@ public partial class AssetGalleryModule
     public AssetGalleryModule(MCBEditor editor)
     {
         this.editor = editor;
+        interactionAccountToken = AuthenticationService.GetAuth()?.token;
         galleryBrowser = new GalleryBrowser(this);
         selectedAssetPanel = new SelectedAssetPanel(this);
         assetInteractionPanel = new AssetInteractionPanel(this);
@@ -485,6 +487,14 @@ public partial class AssetGalleryModule
 
     public void OnAuthenticationChanged()
     {
+        if (!string.Equals(interactionAccountToken, editor.authToken, StringComparison.Ordinal))
+        {
+            // Likes, comment ownership, drafts and pending results belong to the account that loaded them.
+            interactionAccountToken = editor.authToken;
+            interactionStates.Clear();
+            ResetState(clearSelection: false);
+        }
+
         if (!editor.isAuthenticated)
         {
             ResetState(clearSelection: true);

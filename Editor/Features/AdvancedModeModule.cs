@@ -983,12 +983,12 @@ public class AdvancedModeModule
         GUILayout.Space(EditorGUI.indentLevel * 15);
         if (GUILayout.Button(new GUIContent(
                 "Flush removable data",
-                "Deletes data MCB can recreate anytime: downloaded version files (except the applied and unsubmitted versions) and generated advanced mesh caches."),
+                "Deletes data MCB can recreate anytime: downloaded version files (except versions an avatar, scene or asset still uses, and unsubmitted versions) and generated advanced mesh caches."),
             GUILayout.Width(180)))
         {
             if (EditorUtility.DisplayDialog(
                     "Flush Removable Data",
-                    "Delete downloaded version files (except the applied and unsubmitted versions) and all generated advanced mesh caches?\n\nThey can be downloaded or rebuilt again anytime.",
+                    "Delete downloaded version files and all generated advanced mesh caches?\n\nVersions applied to an open avatar or used by a scene, prefab, material or model are kept, as are unsubmitted versions. Everything else can be downloaded or rebuilt again anytime.",
                     "Flush",
                     "Cancel"))
             {

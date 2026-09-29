@@ -2551,10 +2551,23 @@ public partial class CreatorModeModule
             : ComputeFormSignature();
         if (version != null && version.assetId > 0)
         {
-            SessionState.SetString(
-                PendingBuildSessionKeyPrefix + version.assetId,
-                $"{version.assetId}|{version.version}|{version.defaultAviVersion}");
+            SessionState.SetString(PendingBuildSessionKeyPrefix + version.assetId, FormatPendingBuildKey(version));
         }
+    }
+
+    // The full storage identity: builds for an original-base source live in their own "-source-<key>" folder.
+    internal static string FormatPendingBuildKey(CustomBaseVersion version) =>
+        $"{version.assetId}|{version.version}|{version.defaultAviVersion}|{version.sourceVersionKey}";
+
+    internal static CustomBaseVersion ParsePendingBuildKey(string stored)
+    {
+        string[] parts = (stored ?? string.Empty).Split('|');
+        if (parts.Length != 4 || !int.TryParse(parts[0], out int assetId)) return null;
+        return new CustomBaseVersion
+        {
+            assetId = assetId, version = parts[1], defaultAviVersion = parts[2],
+            sourceVersionKey = string.IsNullOrEmpty(parts[3]) ? null : parts[3], isUnsubmitted = true
+        };
     }
 
     /// <summary>
@@ -2577,14 +2590,12 @@ public partial class CreatorModeModule
             return;
         }
 
-        string stored = SessionState.GetString(PendingBuildSessionKeyPrefix + selectedAsset.id, string.Empty);
-        string[] parts = stored.Split('|');
-        if (parts.Length != 3 || !int.TryParse(parts[0], out int assetId))
+        var key = ParsePendingBuildKey(SessionState.GetString(PendingBuildSessionKeyPrefix + selectedAsset.id, string.Empty));
+        if (key == null)
         {
             return;
         }
 
-        var key = new CustomBaseVersion { assetId = assetId, version = parts[1], defaultAviVersion = parts[2], isUnsubmitted = true };
         var artifact = VersionRepository.GetArtifact(key);
         if (artifact?.Manifest == null || !artifact.Manifest.unsubmitted || string.IsNullOrEmpty(artifact.Manifest.formSignature) || !artifact.FolderExists)
         {

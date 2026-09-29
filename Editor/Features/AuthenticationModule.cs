@@ -50,7 +50,7 @@ public class AuthenticationModule
 
         panel.Add(new OrbitersSignInElement(() =>
         {
-            editor.CheckAuthentication();
+            editor.SyncAuthentication();
             RefreshUIToolkit();
             editor.Repaint();
         }, "Connect your Orbiters account to publish and download your bases.", "mcb"));

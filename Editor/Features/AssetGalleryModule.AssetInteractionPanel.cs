@@ -274,7 +274,9 @@ public partial class AssetGalleryModule
         }
 
         state.isLikeSyncRunning = true;
-        while (state.pendingLikeSync)
+        // A queued like belongs to the account that clicked it; stop once the shared account changes.
+        string token = editor.authToken;
+        while (state.pendingLikeSync && string.Equals(token, editor.authToken, StringComparison.Ordinal))
         {
             state.pendingLikeSync = false;
             bool targetLiked = state.desiredLikedByCurrentUser;
@@ -293,7 +295,7 @@ public partial class AssetGalleryModule
 
                     yield return InteractionService.CreateInteractionCoroutine(
                         payload,
-                        editor.authToken,
+                        token,
                         (interaction, createError) =>
                         {
                             createdInteraction = interaction;
@@ -316,7 +318,7 @@ public partial class AssetGalleryModule
                 string error = null;
                 yield return InteractionService.DeleteInteractionCoroutine(
                     interactionId,
-                    editor.authToken,
+                    token,
                     deleteError => error = deleteError);
 
                 if (!string.IsNullOrWhiteSpace(error))

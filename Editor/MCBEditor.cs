@@ -178,6 +178,8 @@ public class MCBEditor : UnityEditor.Editor
         // Initialize modules
         creatorModule.Initialize();
         CheckAuthentication();
+        AuthenticationService.Changed += SyncAuthentication;
+        OrbitersEnvironment.Changed += SyncAuthentication;
         lastConnectivityBlocked = IsConnectivityBlocked();
         MCBConnectivityMonitor.StatusChanged += RepaintFromConnectivityMonitor;
         MCBConnectivityMonitor.EnsureCheckStarted(authToken);
@@ -203,6 +205,8 @@ public class MCBEditor : UnityEditor.Editor
         // Unsubscribe from play mode state changes
         EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
         EditorApplication.delayCall -= RunScheduledAsyncInitialization;
+        AuthenticationService.Changed -= SyncAuthentication;
+        OrbitersEnvironment.Changed -= SyncAuthentication;
         asyncInitializationScheduled = false;
         accountModule?.DetachUIToolkit();
         authModule?.DetachUIToolkit();
@@ -1229,16 +1233,28 @@ public class MCBEditor : UnityEditor.Editor
         }
     }
 
-    public void CheckAuthentication()
+    // The account is shared by every Orbiters panel: a sign-out or switch elsewhere must stop this
+    // inspector from sending requests with the previous token.
+    public void SyncAuthentication() => SyncAuthentication(AuthenticationService.GetAuth());
+
+    // Share the callback's state transition with isolated tests without changing the shared credential store.
+    internal void SyncAuthentication(AuthenticationService.AuthData auth)
     {
-        authToken = AuthenticationService.GetAuth()?.token;
+        if (!string.Equals(auth?.token, authToken, StringComparison.Ordinal)) CheckAuthentication(auth);
+    }
+
+    public void CheckAuthentication() => CheckAuthentication(AuthenticationService.GetAuth());
+
+    private void CheckAuthentication(AuthenticationService.AuthData auth)
+    {
+        authToken = auth?.token;
         isAuthenticated = !string.IsNullOrEmpty(authToken);
         if (!isAuthenticated)
         {
             accessDeniedAssetId = null;
             fetchError = null;
         }
-        MCBPackageVersionService.EnsureCheckStarted(authToken);
+        if (isAuthenticated) MCBPackageVersionService.EnsureCheckStarted(authToken);
         accountModule?.Refresh();
         assetGalleryModule?.OnAuthenticationChanged();
         RefreshUiToolkitSections();

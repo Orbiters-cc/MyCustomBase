@@ -2551,36 +2551,33 @@ public static partial class NativeMeshPayloadService
 
         // Reject incomplete associations before assigning any mesh. Positional bone
         // fallback can silently bind a skin weight to the wrong joint after rig edits.
-        foreach (var record in payload.renderers ?? new List<NativeMeshPayloadRenderer>())
+        var records = payload.renderers ?? new List<NativeMeshPayloadRenderer>();
+        var targets = new SkinnedMeshRenderer[records.Count];
+        for (int i = 0; i < records.Count; i++)
         {
+            var record = records[i];
             if (record?.mesh == null) throw new InvalidDataException("Advanced mesh payload contains a missing mesh.");
             var renderer = ResolveAvatarRenderer(avatarRoot, record);
-            if (renderer == null) throw new InvalidOperationException($"Cannot resolve advanced mesh target '{record.avatarPath}'.");
+            if (renderer == null)
+                throw new InvalidOperationException($"Cannot find the avatar renderer '{record.avatarPath}': it was moved or renamed, or several renderers match it. Put it back at '{record.avatarPath}' and try again.");
+            int duplicate = Array.IndexOf(targets, renderer);
+            if (duplicate >= 0)
+                throw new InvalidOperationException($"Advanced mesh targets '{records[duplicate].avatarPath}' and '{record.avatarPath}' both resolve to the renderer '{renderer.name}'.");
             var bones = ResolveBoneArray(avatarRoot, record.bonePaths, renderer);
             if (bones.Length != (record.bonePaths?.Count ?? 0)
                 || (record.mesh.bindposes.Length > 0 && bones.Length != record.mesh.bindposes.Length))
                 throw new InvalidOperationException($"Cannot safely associate all skin bones for '{record.avatarPath}'.");
+            targets[i] = renderer;
         }
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
-        int rendererIndex = 0;
-        int rendererTotal = payload.renderers?.Count ?? 0;
-        foreach (var record in payload.renderers ?? new List<NativeMeshPayloadRenderer>())
+        int rendererTotal = records.Count;
+        for (int rendererIndex = 1; rendererIndex <= rendererTotal; rendererIndex++)
         {
-            rendererIndex++;
+            var record = records[rendererIndex - 1];
+            var targetRenderer = targets[rendererIndex - 1];
             var rendererStep = System.Diagnostics.Stopwatch.StartNew();
-            if (record == null || record.mesh == null)
-            {
-                continue;
-            }
-
-            var targetRenderer = ResolveAvatarRenderer(avatarRoot, record);
-            if (targetRenderer == null)
-            {
-                MCBLogger.LogWarning($"[NativeMeshPayload] Could not find target renderer for '{record.rendererName}' / '{record.avatarPath}'.");
-                continue;
-            }
 
             ApplyPayloadBoneTransformsForRenderer(avatarRoot, targetRenderer, payload, record);
 
@@ -2904,42 +2901,11 @@ public static partial class NativeMeshPayloadService
 
     private static SkinnedMeshRenderer ResolveAvatarRenderer(Transform avatarRoot, NativeMeshPayloadRenderer record)
     {
-        if (avatarRoot == null || record == null)
-        {
-            return null;
-        }
-
-        if (!string.IsNullOrWhiteSpace(record.avatarPath))
-        {
-            var transform = FindTransformByRelativePath(avatarRoot, record.avatarPath);
-            var renderer = transform != null ? transform.GetComponent<SkinnedMeshRenderer>() : null;
-            if (renderer != null)
-            {
-                return renderer;
-            }
-        }
-
-        var renderers = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-        if (!string.IsNullOrWhiteSpace(record.rendererName))
-        {
-            var byRendererName = renderers.FirstOrDefault(renderer =>
-                renderer != null &&
-                string.Equals(renderer.transform.name, record.rendererName, StringComparison.Ordinal));
-            if (byRendererName != null)
-            {
-                return byRendererName;
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(record.meshName))
-        {
-            return renderers.FirstOrDefault(renderer =>
-                renderer != null &&
-                renderer.sharedMesh != null &&
-                string.Equals(renderer.sharedMesh.name, record.meshName, StringComparison.Ordinal));
-        }
-
-        return null;
+        if (avatarRoot == null || record == null || record.avatarPath == null) return null;
+        // Mesh/renderer names are not identities: clothing can be the only remaining mesh named "Body".
+        // An empty recorded path is a renderer on the avatar root; a missing path must be remapped explicitly.
+        var target = record.avatarPath.Length == 0 ? avatarRoot : FindTransformByRelativePath(avatarRoot, record.avatarPath);
+        return target != null ? target.GetComponent<SkinnedMeshRenderer>() : null;
     }
 
     private static IEnumerable<ModelFileData> GetSourceFilesForPatch(CustomBaseVersion version, ModelFileData patch)

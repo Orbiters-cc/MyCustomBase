@@ -617,92 +617,44 @@ public class FileManagerService
         AvatarDefinitionGenerationService.ApplyAvatarToFbxAndAnimator(fbx, avatar, root);
     }
 
+    // Imports may compile scripts and span editor frames. Complete them before a version-switch Undo scope starts.
+    public IEnumerator PrepareLogicPrefabCoroutine(string packagePath)
+    {
+        if (string.IsNullOrEmpty(packagePath)) yield break;
+        string absolutePackagePath = Path.GetFullPath(MCBUtils.ToUnityPath(packagePath));
+        string importPackagePath = File.Exists(absolutePackagePath) ? PrepareLogicPackageImport(absolutePackagePath) : null;
+        if (importPackagePath == null) yield break;
+        try
+        {
+            var import = Orbiters.Toolkit.Editor.UnityPackageImport.ImportAsync(importPackagePath);
+            while (!import.IsCompleted) yield return null;
+            import.GetAwaiter().GetResult();
+            while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+        }
+        finally
+        {
+            if (!string.Equals(importPackagePath, absolutePackagePath, StringComparison.OrdinalIgnoreCase) && File.Exists(importPackagePath))
+                File.Delete(importPackagePath);
+        }
+    }
+
     public IEnumerator InstantiateLogicPrefabCoroutine(string packagePath, Transform parent)
     {
-        if (string.IsNullOrEmpty(packagePath) || parent == null) yield break;
+        var prepare = PrepareLogicPrefabCoroutine(packagePath);
+        while (prepare.MoveNext()) yield return prepare.Current;
+        InstantiatePreparedLogicPrefab(packagePath, parent);
+    }
 
-        string unityPackagePath = MCBUtils.ToUnityPath(packagePath);
-        string absolutePackagePath = Path.GetFullPath(unityPackagePath);
-        string versionDataFolderUnity = MCBUtils.ToUnityPath(Path.GetDirectoryName(unityPackagePath));
+    public void InstantiatePreparedLogicPrefab(string packagePath, Transform parent)
+    {
+        if (string.IsNullOrEmpty(packagePath) || parent == null) return;
+        string versionDataFolderUnity = MCBUtils.ToUnityPath(Path.GetDirectoryName(MCBUtils.ToUnityPath(packagePath)));
         string prefabPath = MCBUtils.GetLogicPrefabPath(versionDataFolderUnity);
-        bool prefabReady = !string.IsNullOrEmpty(prefabPath) &&
-                           File.Exists(Path.GetFullPath(prefabPath)) &&
-                           AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) != null;
-        
-        if (!prefabReady && File.Exists(absolutePackagePath))
-        {
-            MCBLogger.Log($"[FileManager] Importing unity package at {unityPackagePath}");
-            bool packageImportFinished = false;
-            bool packageImportFailed = false;
-            bool packageImportCancelled = false;
-            string packageImportFailureMessage = null;
-
-            void HandleImportCompleted(string _) => packageImportFinished = true;
-            void HandleImportCancelled(string _) => packageImportCancelled = true;
-            void HandleImportFailed(string _, string error)
-            {
-                packageImportFailed = true;
-                packageImportFailureMessage = error;
-            }
-
-            AssetDatabase.importPackageCompleted += HandleImportCompleted;
-            AssetDatabase.importPackageCancelled += HandleImportCancelled;
-            AssetDatabase.importPackageFailed += HandleImportFailed;
-
-            try
-            {
-                AssetDatabase.ImportPackage(unityPackagePath, false);
-
-                double startTime = EditorApplication.timeSinceStartup;
-                const double timeoutSeconds = 30.0d;
-                while (!packageImportFinished && !packageImportFailed && !packageImportCancelled)
-                {
-                    if (EditorApplication.timeSinceStartup - startTime > timeoutSeconds)
-                    {
-                        throw new TimeoutException($"Timed out while importing nested package '{unityPackagePath}'.");
-                    }
-
-                    yield return null;
-                }
-            }
-            finally
-            {
-                AssetDatabase.importPackageCompleted -= HandleImportCompleted;
-                AssetDatabase.importPackageCancelled -= HandleImportCancelled;
-                AssetDatabase.importPackageFailed -= HandleImportFailed;
-            }
-
-            if (packageImportCancelled)
-            {
-                MCBLogger.LogWarning($"[FileManager] Unity package import was cancelled: {unityPackagePath}");
-            }
-            else if (packageImportFailed)
-            {
-                throw new InvalidOperationException($"Nested unitypackage import failed for '{unityPackagePath}': {packageImportFailureMessage}");
-            }
-
-            while (EditorApplication.isCompiling || EditorApplication.isUpdating)
-            {
-                yield return null;
-            }
-
-            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-            MCBLogger.Log("[FileManager] Unity package import completed.");
-            prefabPath = MCBUtils.GetLogicPrefabPath(versionDataFolderUnity);
-        }
-        else if (!prefabReady)
-        {
-            MCBLogger.LogWarning($"[FileManager] Unity package not found at '{absolutePackagePath}'.");
-        }
-        else
-        {
-            MCBLogger.Log($"[FileManager] Using existing logic prefab at {prefabPath}");
-        }
-        
         if (string.IsNullOrEmpty(prefabPath))
         {
             MCBLogger.LogWarning($"[FileManager] No logic prefab found in '{versionDataFolderUnity}'.");
-            yield break;
+            return;
         }
 
         string absolutePrefabPath = Path.GetFullPath(prefabPath);
@@ -710,7 +662,7 @@ public class FileManagerService
         if (!File.Exists(absolutePrefabPath))
         {
             MCBLogger.LogWarning($"[FileManager] Expected prefab not found at '{absolutePrefabPath}'.");
-            yield break;
+            return;
         }
 
         GameObject logicPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
@@ -732,6 +684,113 @@ public class FileManagerService
         {
             MCBLogger.LogWarning($"[FileManager] Could not load prefab at '{prefabPath}'.");
         }
+    }
+
+    /// <summary>
+    /// Logic packages are exported with every prefab dependency, including copies of installed package files (VRCFury,
+    /// VRChat SDK). Only the creator's assets under Assets/ are imported, so an old copy never overwrites a project package.
+    /// </summary>
+    internal static bool IsLogicPackageImportPath(string path) =>
+        Orbiters.Toolkit.Editor.UnityPackageIndex.IsProjectPath(path) && path.StartsWith("Assets/", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The package to import for a version's logic prefab: null when the project already has every creator asset it
+    /// carries, a filtered temporary copy when it also carries entries outside Assets/.
+    /// </summary>
+    internal static string PrepareLogicPackageImport(string packagePath)
+    {
+        var index = Orbiters.Toolkit.Editor.UnityPackageIndex.Read(packagePath);
+        var wanted = index.Entries.Where(entry => IsLogicPackageImportPath(entry.Path) && !ProjectHasAsset(entry.Guid)).ToList();
+        if (wanted.Count == 0) return null;
+        if (wanted.Count == index.Entries.Count) return packagePath;
+
+        string filtered = Path.Combine(Path.GetTempPath(), "mcb-logic-" + Guid.NewGuid().ToString("N") + ".unitypackage");
+        try
+        {
+            CopyUnityPackageEntries(packagePath, filtered, new HashSet<string>(wanted.Select(entry => entry.Guid), StringComparer.OrdinalIgnoreCase));
+            return filtered;
+        }
+        catch
+        {
+            if (File.Exists(filtered)) File.Delete(filtered);
+            throw;
+        }
+    }
+
+    private static bool ProjectHasAsset(string guid)
+    {
+        string path = AssetDatabase.GUIDToAssetPath(guid);
+        return !string.IsNullOrEmpty(path) && (AssetDatabase.IsValidFolder(path) || AssetDatabase.GetMainAssetTypeAtPath(path) != null);
+    }
+
+    // A .unitypackage is a gzipped tar of <guid>/pathname, <guid>/asset and <guid>/asset.meta entries.
+    private static void CopyUnityPackageEntries(string source, string destination, ISet<string> guids)
+    {
+        var header = new byte[512];
+        var buffer = new byte[81920];
+        byte[] longNameRecord = null;
+        string longName = null;
+        using (var input = new GZipStream(File.OpenRead(source), CompressionMode.Decompress))
+        using (var output = new GZipStream(File.Create(destination), CompressionLevel.Fastest))
+        {
+            while (ReadTarBytes(input, header, 0, 512) && header.Any(b => b != 0))
+            {
+                long size = 0;
+                for (int i = 124; i < 136; i++)
+                {
+                    byte b = header[i];
+                    if (b == 0 || b == (byte)' ') { if (size > 0) break; continue; }
+                    size = size * 8 + (b - '0');
+                }
+                long padded = (size + 511) / 512 * 512;
+                if (header[156] == (byte)'L')
+                {
+                    longNameRecord = new byte[512 + padded];
+                    Buffer.BlockCopy(header, 0, longNameRecord, 0, 512);
+                    if (!ReadTarBytes(input, longNameRecord, 512, (int)padded)) throw new EndOfStreamException("The logic package is truncated.");
+                    longName = Encoding.UTF8.GetString(longNameRecord, 512, (int)size).TrimEnd('\0');
+                    continue;
+                }
+
+                string prefix = TarText(header, 345, 155);
+                string name = longName ?? (prefix.Length > 0 ? prefix + "/" : "") + TarText(header, 0, 100);
+                bool keep = guids.Contains(name.TrimStart('.', '/').Split('/')[0]);
+                if (keep)
+                {
+                    if (longNameRecord != null) output.Write(longNameRecord, 0, longNameRecord.Length);
+                    output.Write(header, 0, 512);
+                }
+                longNameRecord = null;
+                longName = null;
+
+                for (long remaining = padded; remaining > 0;)
+                {
+                    int read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                    if (read <= 0) throw new EndOfStreamException("The logic package is truncated.");
+                    if (keep) output.Write(buffer, 0, read);
+                    remaining -= read;
+                }
+            }
+
+            output.Write(new byte[1024], 0, 1024);
+        }
+    }
+
+    private static bool ReadTarBytes(Stream stream, byte[] buffer, int offset, int count)
+    {
+        for (int read = 0; read < count;)
+        {
+            int n = stream.Read(buffer, offset + read, count - read);
+            if (n <= 0) return false;
+            read += n;
+        }
+        return true;
+    }
+
+    private static string TarText(byte[] header, int offset, int length)
+    {
+        int end = Array.IndexOf(header, (byte)0, offset, length);
+        return Encoding.UTF8.GetString(header, offset, (end < 0 ? offset + length : end) - offset);
     }
 
     public Dictionary<string, string> FindPrefabDependencies(GameObject prefab)

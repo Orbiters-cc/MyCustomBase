@@ -544,8 +544,9 @@ public static class VersionRepository
 
     /// <summary>
     /// Deletes data MCB can recreate at any time: generated advanced mesh caches and
-    /// downloaded version files — keeping the applied version, unsubmitted artifacts,
-    /// and anything currently in progress. Returns a human-readable summary.
+    /// downloaded version files — keeping versions applied to open avatars or used by
+    /// scenes/assets, unsubmitted artifacts, and anything currently in progress.
+    /// Returns a human-readable summary.
     /// (Absorbed from the deleted DiskSpaceService.)
     /// </summary>
     public static string FlushRemovableData(MCBEditor editor)
@@ -567,16 +568,33 @@ public static class VersionRepository
         try
         {
             var keepFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            void Keep(CustomBaseVersion version)
+            void KeepFolder(string unityPath)
             {
-                string path = NormalizeFullPath(MCBUtils.GetVersionDataPath(version));
+                string path = NormalizeFullPath(unityPath);
                 if (path != null) keepFolders.Add(path);
             }
 
-            Keep(editor != null && editor.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseVersion : null);
+            KeepFolder(MCBUtils.GetVersionDataPath(editor != null && editor.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseVersion : null));
+            // Every avatar open in a scene keeps its applied version, not only the one in the inspector.
+            foreach (var target in UnityEngine.Object.FindObjectsOfType<MyCustomBase>(true))
+            {
+                try
+                {
+                    KeepFolder(MCBUtils.GetVersionDataPath(target.appliedCustomBaseVersion));
+                    KeepFolder(MCBUtils.GetVersionDataPath(target.appliedCustomBaseAssetId, target.appliedCustomBaseVersionString,
+                        target.appliedCustomBaseDefaultAviVersion, target.appliedCustomBaseSourceVersionKey));
+                }
+                catch (ArgumentException) { }
+            }
             foreach (var unsubmitted in Scan(true).unsubmitted)
             {
-                Keep(unsubmitted);
+                KeepFolder(MCBUtils.GetVersionDataPath(unsubmitted));
+            }
+            foreach (string usedAsset in CollectVersionAssetsInUse())
+            {
+                // <versions root>/<assetId>/versions/<version>/<file>: keep that version folder.
+                var parts = usedAsset.Substring(MCBUtils.ASSET_VERSIONS_FOLDER.Length + 1).Split('/');
+                if (parts.Length > 3) KeepFolder(string.Join("/", MCBUtils.ASSET_VERSIONS_FOLDER, parts[0], parts[1], parts[2]));
             }
 
             string versionsRoot = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
@@ -635,6 +653,50 @@ public static class VersionRepository
 
         MCBLogger.Log($"[VersionRepository] Flush removable data: {summary}");
         return summary;
+    }
+
+    /// <summary>
+    /// Version files something still uses: open scenes (unsaved changes included), project assets such as scenes, prefabs
+    /// and materials, and model importers copying an Avatar from a version.
+    /// </summary>
+    private static HashSet<string> CollectVersionAssetsInUse()
+    {
+        string prefix = MCBUtils.ASSET_VERSIONS_FOLDER + "/";
+        bool IsVersionAsset(string path) => !string.IsNullOrEmpty(path) && path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            EditorUtility.DisplayProgressBar("Flush Removable Data", "Checking which versions are still in use...", 0.2f);
+            var projectAssets = AssetDatabase.GetAllAssetPaths()
+                .Where(path => path.StartsWith("Assets/", StringComparison.Ordinal) && !IsVersionAsset(path) && !AssetDatabase.IsValidFolder(path))
+                .ToArray();
+            used.UnionWith(AssetDatabase.GetDependencies(projectAssets, true).Where(IsVersionAsset));
+
+            EditorUtility.DisplayProgressBar("Flush Removable Data", "Checking model Avatars...", 0.6f);
+            foreach (string guid in AssetDatabase.FindAssets("t:Model", new[] { "Assets" }))
+            {
+                if (AssetImporter.GetAtPath(AssetDatabase.GUIDToAssetPath(guid)) is ModelImporter importer && importer.sourceAvatar != null)
+                    used.Add(AssetDatabase.GetAssetPath(importer.sourceAvatar));
+            }
+
+            EditorUtility.DisplayProgressBar("Flush Removable Data", "Checking open scenes...", 0.8f);
+            var roots = Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount)
+                .Select(UnityEngine.SceneManagement.SceneManager.GetSceneAt)
+                .Where(scene => scene.isLoaded)
+                .SelectMany(scene => scene.GetRootGameObjects())
+                .Cast<UnityEngine.Object>()
+                .ToList();
+            var prefabStage = UnityEditor.SceneManagement.PrefabStageUtility.GetCurrentPrefabStage();
+            if (prefabStage != null) roots.Add(prefabStage.prefabContentsRoot);
+            used.UnionWith(EditorUtility.CollectDependencies(roots.ToArray()).Where(obj => obj != null).Select(obj => AssetDatabase.GetAssetPath(obj)));
+        }
+        finally
+        {
+            EditorUtility.ClearProgressBar();
+        }
+
+        used.RemoveWhere(path => !IsVersionAsset(path));
+        return used;
     }
 
     private static long GetDirectorySize(string directory)

@@ -137,7 +137,7 @@ public class UserService
             else
             {
                 failedRequests.Add(userId);
-                MCBLogger.LogWarning($"[MCB] Failed to fetch user info for ID {userId}: {request.error}, url: {url}");
+                MCBLogger.LogWarning($"[MCB] Failed to fetch user info for ID {userId}: {request.error}, url: {NetworkService.SanitizeUrlForLogs(url)}");
             }
             
             onComplete?.Invoke();
@@ -212,7 +212,7 @@ public class UserService
                 else
                 {
                     failedAvatarDownloads.Add(uploaderId);
-                    MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {request.error} (url: {avatarUrl})");
+                    MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {request.error} (url: {NetworkService.SanitizeUrlForLogs(avatarUrl)})");
                 }
             }
         }

@@ -40,6 +40,26 @@ public class NetworkService
         }
     }
 
+    public async Task<VersionContentTrust.CreatorTrustSnapshot> FetchCreatorTrustAsync(string url)
+    {
+        try
+        {
+            using (var request = UnityWebRequest.Get(url))
+            {
+                request.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
+                request.redirectLimit = 0; // Trust must come from the authenticated API, never a file/CDN redirect.
+                await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Backend("Verify version creator"));
+                if (request.result != UnityWebRequest.Result.Success || request.responseCode != 200) return null;
+                return JsonConvert.DeserializeObject<VersionContentTrust.CreatorTrustSnapshot>(request.downloadHandler.text);
+            }
+        }
+        catch (Exception)
+        {
+            // Unknown trust requires the same explicit code consent as an untrusted creator. No cached fallback.
+            return null;
+        }
+    }
+
     public async Task<(bool success, CustomBaseVersionResponse response, string error)> FetchVersionsAsync(string url)
     {
         using (var req = UnityWebRequest.Get(url))
@@ -590,7 +610,7 @@ public class NetworkService
                     long code = req.responseCode;
                     string body = null;
                     try { body = req.downloadHandler?.text; } catch { /* ignore */ }
-                    MCBLogger.LogWarning($"[MCB] Connection check failed: [{code}] [url: {url}] {req.error} {(string.IsNullOrEmpty(body) ? string.Empty : "- " + body)}");
+                    MCBLogger.LogWarning($"[MCB] Connection check failed: [{code}] [url: {SanitizeUrlForLogs(url)}] {req.error} {(string.IsNullOrEmpty(body) ? string.Empty : "- " + body)}");
                     return new CheckConnectionResponse { state = "disconnected" };
                 }
 

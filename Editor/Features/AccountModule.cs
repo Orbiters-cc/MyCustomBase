@@ -190,12 +190,10 @@ public class AccountModule
             return;
         }
 
+        // RemoveAuth raises AuthenticationService.Changed, which every open MCB inspector follows.
         if (AuthenticationService.RemoveAuth())
         {
-            editor.CheckAuthentication();
-            ResetAccountState();
-            RefreshUIToolkit();
-            editor.Repaint();
+            editor.SyncAuthentication();
         }
     }
 
@@ -296,20 +294,10 @@ public class AccountModule
 
     private void LoadAuthData()
     {
+        // The shared account file is the only source: a token it no longer holds was signed out elsewhere.
         var auth = AuthenticationService.GetAuth();
-        if (auth == null)
+        if (string.IsNullOrEmpty(auth?.token))
         {
-            // Fallback to editor state if available (e.g., auth loaded elsewhere)
-            if (!string.IsNullOrEmpty(editor.authToken))
-            {
-                authToken = editor.authToken;
-                userInfoRequested = false;
-                avatarTexture = null;
-                // Keep existing userName/accountUserId if any; otherwise leave as Unknown
-                UpdateFallbackColor();
-                return;
-            }
-
             ResetAccountState();
             return;
         }

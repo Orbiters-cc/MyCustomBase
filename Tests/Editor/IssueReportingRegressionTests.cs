@@ -14,6 +14,20 @@ public sealed class IssueReportingRegressionTests
     [TestCase("creator@example.test", "creator@example.test")]
     public void SensitiveFieldsAreRedacted(string text, string secret) => StringAssert.DoesNotContain(secret, IssueReportBuffer.Redact(text, 4000));
 
+    [Test] public void RequestUrlsInLogsAndConnectivityReportsNeverContainTheAccountToken()
+    {
+        const string url = "https://api.orbiters.cc/user?u=4&t=orbit-secret-token";
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+        var monitor = typeof(MCBConnectivityMonitor);
+        string warning = (string)monitor.GetMethod("BuildWarningMessage", flags).Invoke(null, new object[] { "Fetch user info", url, 500L, "Internal Server Error" });
+        string details = (string)monitor.GetMethod("BuildFailedRequestDetails", flags).Invoke(null, new object[] { "Fetch user info", url, 0L, "Cannot resolve host" });
+        foreach (string text in new[] { NetworkService.SanitizeUrlForLogs(url), warning, details })
+        {
+            StringAssert.DoesNotContain("orbit-secret-token", text);
+            StringAssert.Contains("u=4", text);
+        }
+    }
+
     [Test] public void ReportingDefaultsToOff()
     {
         const string key = "MCB_ShareIssueLogs";

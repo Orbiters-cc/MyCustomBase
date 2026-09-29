@@ -106,7 +106,11 @@ public class VersionActions
         int hashGeneration = ++fbxHashRecalculationGeneration;
         EditorCoroutineUtility.StartCoroutineOwnerless(RecalculateCurrentFbxHashCoroutine(hashGeneration, null));
     }
-    public void StartApplyCustomVersion() => EditorCoroutineUtility.StartCoroutineOwnerless(ApplyCustomVersionCoroutine(editor.selectedCustomVersionForAction));
+    public void StartApplyCustomVersion()
+    {
+        if (editor.isApplying || ApplyProgress.IsRunning) return;
+        EditorCoroutineUtility.StartCoroutineOwnerless(ApplyCustomVersionCoroutine(editor.selectedCustomVersionForAction));
+    }
     public void ConfigureApplyProgressColor(Color color) => ApplyProgress.SetFillColor(color);
 
     public bool CanResetToDefaultBaseWithoutFbxImport()
@@ -460,6 +464,20 @@ public class VersionActions
             error = $"Download failed: {ex.GetBaseException().Message}";
             MCBLogger.LogError($"[VersionActions] Download task failed unexpectedly: {ex}");
         }
+        VersionContentTrust.CreatorTrustSnapshot currentCreatorTrust = null;
+        if (success)
+        {
+            var trustRequest = networkService.FetchCreatorTrustAsync(MCBUtils.GetAssetModelTrustUrl(
+                selectedAsset.id, version.version, requestBaseHash, requestedToken, version.sourceVersionKey));
+            while (!trustRequest.IsCompleted) yield return null;
+            if (!trustRequest.IsFaulted && !trustRequest.IsCanceled) currentCreatorTrust = trustRequest.Result;
+            if (editor.authToken != requestedToken || AuthenticationService.GetAuth()?.token != requestedToken ||
+                editor.GetSelectedAsset()?.id != selectedAsset.id)
+            {
+                success = false;
+                error = "The signed-in account or selected asset changed during download. Select the version again to retry.";
+            }
+        }
         bool extractionSucceeded = false;
         if (version.meshDelivery != 1) MCBPerformance.RecordDownload(deliveryDecision, (long)downloadedBytes,
             (EditorApplication.timeSinceStartup - downloadStartedAt) * 1000, success);
@@ -470,6 +488,14 @@ public class VersionActions
             if (!success)
             {
                 editor.warningsModule.AddWarning(error, MessageType.Error, "Download failed");
+                if (applyAfter) FinishApplyProgress(false);
+            }
+            else if (!ConfirmDownloadedCode(version, selectedAsset, downloadedZipBytes, tempZipPath, currentCreatorTrust))
+            {
+                downloadedZipBytes = null;
+                editor.warningsModule.AddWarning(
+                    $"Version {version.version} was not installed: it contains code and you chose not to import it. Nothing was added to your project.",
+                    MessageType.Info, "Download cancelled");
                 if (applyAfter) FinishApplyProgress(false);
             }
             else
@@ -564,6 +590,11 @@ public class VersionActions
             }
         }
     }
+
+    // Runs on the downloaded archive before anything is extracted under Assets/.
+    private static bool ConfirmDownloadedCode(CustomBaseVersion version, AvatarDiscoveredAsset asset, byte[] zipBytes, string zipPath, VersionContentTrust.CreatorTrustSnapshot currentTrust) =>
+        VersionContentTrust.ConfirmDownloadedCode(version, asset,
+            () => zipBytes != null ? new MemoryStream(zipBytes, false) : (Stream)File.OpenRead(zipPath), currentTrust);
 
     private bool CanUseInMemoryVersionPackage(long zipSizeBytes, out string decision)
     {
@@ -991,7 +1022,7 @@ public class VersionActions
         IEnumerator routine = null;
         try
         {
-            routine = ApplyOrResetCoreCoroutine(version, isReset);
+            routine = RunPreparedMutation(PrepareVersionSwitchCoroutine(version, isReset), () => ApplyOrResetCore(version, isReset));
         }
         catch (Exception ex)
         {
@@ -1041,7 +1072,43 @@ public class VersionActions
         editor.Repaint();
     }
 
-    private IEnumerator ApplyOrResetCoreCoroutine(CustomBaseVersion version, bool isReset)
+    private IEnumerator PrepareVersionSwitchCoroutine(CustomBaseVersion version, bool isReset)
+    {
+        var requestedTarget = editor.customBaseTarget;
+        string requestedToken = editor.authToken;
+        if (!isReset)
+        {
+            if (version == null) throw new ArgumentNullException(nameof(version));
+            MCBVersionDelivery.ApplyLocalDelivery(version);
+            var logic = fileManagerService.PrepareLogicPrefabCoroutine(MCBUtils.GetLogicPackagePath(version));
+            while (logic.MoveNext()) yield return logic.Current;
+            foreach (var patch in version.versionFiles ?? Array.Empty<ModelFileData>())
+            {
+                if (patch == null || !string.Equals(patch.role, "PATCH", StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(patch.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase)) continue;
+                string targetPath = ResolveTargetFbxPath(version, patch, GetCurrentFBXPath());
+                string originalPath = EnsureOriginalFbxKeyPath(version, patch, targetPath, "native mesh preparation");
+                var prepare = NativeMeshPayloadService.MaterializeEncryptedPayloadAssetCoroutine(
+                    version, patch, ResolveVersionPatchPath(version, patch), originalPath, fileManagerService,
+                    (progress, label) => ReportApplyProgress(Mathf.Lerp(0.05f, 0.30f, progress), label),
+                    _ => { }, GetAdvancedMeshPreparationPreload(version, patch));
+                while (prepare.MoveNext()) yield return prepare.Current;
+            }
+        }
+        while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
+        if (requestedTarget == null || editor.customBaseTarget != requestedTarget || editor.authToken != requestedToken)
+            throw new InvalidOperationException("The avatar or signed-in account changed while preparing the version switch.");
+
+    }
+
+    // The Action boundary prevents a mutation phase from silently becoming a yielding coroutine.
+    internal static IEnumerator RunPreparedMutation(IEnumerator preparation, Action mutate)
+    {
+        while (preparation.MoveNext()) yield return preparation.Current;
+        mutate();
+    }
+
+    private void ApplyOrResetCore(CustomBaseVersion version, bool isReset, bool finalize = true)
     {
         MCBPerformance.PauseForeground();
         if (!isReset) MCBVersionDelivery.ApplyLocalDelivery(version);
@@ -1070,7 +1137,7 @@ public class VersionActions
         {
             profile.Done("ABORT missing FBX path");
             FinishApplyProgress(false);
-            yield break;
+            return;
         }
 
         if (activeTransitionRollback != null)
@@ -1133,11 +1200,9 @@ public class VersionActions
         }
         else
         {
-            IEnumerator patchRoutine = null;
             try
             {
                 if (version == null) throw new ArgumentNullException(nameof(version), "A version must be provided to apply.");
-
                 if (isAdvancedTransition)
                 {
                     ReportApplyProgress(0.10f, "Restoring original FBX state...");
@@ -1145,38 +1210,11 @@ public class VersionActions
                         previousVersion != null && !previousUsesAdvancedMesh, version);
                     profile.Mark("Restored original FBX renderer and armature state for advanced mesh transition");
                 }
-
-                patchRoutine = ApplyVersionModelFilePatchesCoroutine(version, fbxPath);
+                ApplyVersionModelFilePatches(version, fbxPath);
             }
             catch (Exception e)
             {
                 operationException = e;
-            }
-
-            while (operationException == null && patchRoutine != null)
-            {
-                object current = null;
-                bool moved = false;
-                try
-                {
-                    moved = patchRoutine.MoveNext();
-                    if (moved)
-                    {
-                        current = patchRoutine.Current;
-                    }
-                }
-                catch (Exception e)
-                {
-                    operationException = e;
-                    break;
-                }
-
-                if (!moved)
-                {
-                    break;
-                }
-
-                yield return current;
             }
         }
 
@@ -1201,6 +1239,7 @@ public class VersionActions
         {
             profile.Mark("Model patch/reset failed");
             MCBLogger.LogError($"[MCB] Operation failed: {operationException.Message}");
+            editor.warningsModule?.AddWarning(operationException.Message, MessageType.Error, isReset ? "Reset failed" : "Apply failed");
             if (activeTransitionRollback != null)
             {
                 RollbackActiveTransition();
@@ -1231,14 +1270,8 @@ public class VersionActions
                 ? "[VersionActions] FBX import completed."
                 : "[VersionActions] No FBX import required for this version operation.");
             
-            // Wait until Unity has finished compiling (if any compilation was triggered).
-            // This is essential to prevent race conditions.
-            while (EditorApplication.isCompiling || EditorApplication.isUpdating)
-            {
-                ReportApplyProgress(versionUsesAdvancedMesh ? 0.74f : 0.58f, "Waiting for Unity asset updates...");
-                yield return null;
-            }
-            MCBLogger.Log("[VersionActions] Editor finished pending compilation/import work.");
+            // Model imports above are synchronous; preparation finished any asynchronous package import.
+            MCBLogger.Log("[VersionActions] Synchronous model imports completed.");
             profile.Mark("FBX import and pending editor update wait");
             //  --- END CRITICAL FIX ---
             
@@ -1253,11 +1286,6 @@ public class VersionActions
                 {
                     ReportApplyProgress(0.60f, "Restoring default avatar import settings...");
                     ApplyDefaultAvatarImportsForReset(root, versionForAssets);
-                }
-                while (EditorApplication.isCompiling || EditorApplication.isUpdating)
-                {
-                    ReportApplyProgress(versionUsesAdvancedMesh ? 0.80f : 0.66f, "Waiting for avatar updates...");
-                    yield return null;
                 }
                 MCBLogger.Log("[VersionActions] Default avatar import completed.");
                 profile.Mark("Default avatar import/reset wait");
@@ -1277,11 +1305,6 @@ public class VersionActions
                 ReportApplyProgress(versionUsesAdvancedMesh ? 0.78f : 0.60f, "Applying avatar definition...");
                 ApplyAvatarImportsForVersion(root, versionForAssets, isReset);
                 profile.Mark("Applied avatar import settings for version");
-                while (EditorApplication.isCompiling || EditorApplication.isUpdating)
-                {
-                    ReportApplyProgress(versionUsesAdvancedMesh ? 0.80f : 0.66f, "Waiting for avatar updates...");
-                    yield return null;
-                }
                 MCBLogger.Log("[VersionActions] Avatar import completed.");
                 profile.Mark("Avatar import/update wait");
                 if (versionUsesAdvancedMesh)
@@ -1295,42 +1318,7 @@ public class VersionActions
                 if (!isReset)
                 {
                     string packagePath = MCBUtils.GetLogicPackagePath(versionForAssets);
-                    IEnumerator importLogicRoutine = null;
-                    try
-                    {
-                        importLogicRoutine = fileManagerService.InstantiateLogicPrefabCoroutine(packagePath, root);
-                    }
-                    catch (Exception ex)
-                    {
-                        editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Logic package import failed");
-                        RollbackActiveTransition();
-                        FinishApplyProgress(false);
-                        yield break;
-                    }
-
-                    while (true)
-                    {
-                        object current;
-                        try
-                        {
-                            if (importLogicRoutine == null || !importLogicRoutine.MoveNext())
-                            {
-                                break;
-                            }
-
-                            current = importLogicRoutine.Current;
-                        }
-                        catch (Exception ex)
-                        {
-                            editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Logic package import failed");
-                            RollbackActiveTransition();
-                            FinishApplyProgress(false);
-                            yield break;
-                        }
-
-                        ReportApplyProgress(0.86f, "Installing version logic...");
-                        yield return current;
-                    }
+                    fileManagerService.InstantiatePreparedLogicPrefab(packagePath, root);
                     profile.Mark("Imported/instantiated logic prefab");
                 }
             }
@@ -1341,18 +1329,11 @@ public class VersionActions
             bool shouldApplyDynamicNormals = (hasDynamicNormalBody || hasDynamicNormalFlexing) && editor.customBaseTarget.useDynamicNormals;
             
             // Apply or remove dynamic normals based on version feature flags
-            // CRITICAL FIX: Execute INSIDE the coroutine (not via delayCall) with proper yield statements
+            // Complete these synchronous mutations inside the version transaction.
             if (!shouldApplyDynamicNormals && !versionUsesAdvancedMesh)
             {
                 MCBLogger.Log("[VersionActions] Removing dynamic normals.");
                 dynamicNormalsService.Remove(affectedFbxPaths);
-                
-                // Wait for any asset processing triggered by removal
-                yield return null;
-                while (EditorApplication.isCompiling || EditorApplication.isUpdating)
-                {
-                    yield return null;
-                }
                 MCBLogger.Log("[VersionActions] Dynamic normals removal completed.");
                 profile.Mark("Removed DynamicNormals and waited for editor update");
             }
@@ -1376,13 +1357,6 @@ public class VersionActions
                     bool applyFlex = hasDynamicNormalFlexing;
                     MCBLogger.Log("[VersionActions] Applying dynamic normals.");
                     dynamicNormalsService.Apply(applyBody, applyFlex);
-                    
-                    // Wait for any asset processing triggered by dynamic normals
-                    yield return null;
-                    while (EditorApplication.isCompiling || EditorApplication.isUpdating)
-                    {
-                        yield return null;
-                    }
                     MCBLogger.Log("[VersionActions] Dynamic normals application completed.");
                     profile.Mark("Applied DynamicNormals and waited for editor update");
                 }
@@ -1560,10 +1534,11 @@ public class VersionActions
             editor.Repaint();
             FinishApplyProgress(false);
             profile.Done("FAILED");
-            yield break;
+            return;
         }
         
         CommitActiveTransition();
+        if (!finalize) return; // A saved-custom transition will commit or restore its encompassing snapshot.
         MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating applied state.");
         // Force a recalculation of current/default FBX hashes after every switch. Advanced
         // transitions can restore .originalbase bytes even though the visible mesh is a native
@@ -1592,7 +1567,7 @@ public class VersionActions
         profile.Done();
     }
 
-    private IEnumerator ApplyVersionModelFilePatchesCoroutine(CustomBaseVersion version, string fallbackFbxPath)
+    private void ApplyVersionModelFilePatches(CustomBaseVersion version, string fallbackFbxPath)
     {
         var patchFiles = version.versionFiles?
             .Where(file => file != null && string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase))
@@ -1602,7 +1577,7 @@ public class VersionActions
         {
             MCBLogger.Log("[VersionActions] Version has no model file patches. Skipping FBX transformation.");
             ReportApplyProgress(0.70f, "No mesh patch required...");
-            yield break;
+            return;
         }
 
         for (int i = 0; i < patchFiles.Length; i++)
@@ -1617,11 +1592,7 @@ public class VersionActions
             if (string.Equals(transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase))
             {
                 ReportApplyProgress(0.12f, $"Preparing advanced mesh {i + 1}/{patchFiles.Length}...");
-                var routine = ApplyXorBinToUnityAssetCoroutine(version, patchFile);
-                while (routine.MoveNext())
-                {
-                    yield return routine.Current;
-                }
+                ApplyXorBinToUnityAsset(version, patchFile);
                 continue;
             }
 
@@ -1647,7 +1618,6 @@ public class VersionActions
             {
                 ApplyXorBinToFbx(version, patchFile, binPath, targetFbxPath);
             }
-            yield return null;
         }
     }
 
@@ -1801,7 +1771,7 @@ public class VersionActions
         }
     }
 
-    private IEnumerator ApplyXorBinToUnityAssetCoroutine(CustomBaseVersion version, ModelFileData patchFile)
+    private void ApplyXorBinToUnityAsset(CustomBaseVersion version, ModelFileData patchFile)
     {
         if (editor?.customBaseTarget == null)
         {
@@ -1816,24 +1786,19 @@ public class VersionActions
 
         string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "native mesh payload");
         string binPath = ResolveVersionPatchPath(version, patchFile);
-        var routine = NativeMeshPayloadService.ApplyEncryptedPayloadCoroutine(
-            editor.customBaseTarget.transform.root,
-            version,
-            patchFile,
-            binPath,
-            originalFbxPath,
-            fileManagerService,
-            (progress, label) => ReportApplyProgress(Mathf.Lerp(0.12f, 0.72f, Mathf.Clamp01(progress)), label),
-            GetAdvancedMeshPreparationPreload(version, patchFile));
-
-        while (routine.MoveNext())
-        {
-            yield return routine.Current;
-        }
+        // Preparation has already materialized the payload cache; assign meshes/pose synchronously.
+        NativeMeshPayloadService.ApplyEncryptedPayload(editor.customBaseTarget.transform.root, version, patchFile,
+            binPath, originalFbxPath, fileManagerService);
     }
 
     private void RestoreBackupsForVersion(CustomBaseVersion version, string fallbackFbxPath, bool requireBackup = true)
     {
+        if (requireBackup)
+        {
+            // Every model the version replaced needs its original; restoring only some would report a mixed avatar as reset.
+            EnsureOriginalBackups(GetFbxImportPaths(version, null), fileManagerService.BackupExists);
+        }
+
         var affectedPaths = GetResetAffectedFbxPaths(version, fallbackFbxPath);
         var pathsToRestore = affectedPaths
             .Where(path => !string.IsNullOrWhiteSpace(path) && fileManagerService.BackupExists(path))
@@ -1853,6 +1818,21 @@ public class VersionActions
         foreach (string path in pathsToRestore)
         {
             fileManagerService.ForceRestoreBackupAtPath(path);
+        }
+    }
+
+    internal static void EnsureOriginalBackups(IEnumerable<string> replacedFbxPaths, Func<string, bool> backupExists)
+    {
+        var missing = (replacedFbxPaths ?? Enumerable.Empty<string>())
+            .Where(path => !string.IsNullOrWhiteSpace(path) && !backupExists(path))
+            .Select(Path.GetFileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (missing.Count > 0)
+        {
+            throw new FileNotFoundException(
+                $"Reset stopped: the original backup ({FileManagerService.OriginalBaseSuffix}) is missing for {string.Join(", ", missing)}. " +
+                "Nothing was restored. Re-import the original model files, then reset again.");
         }
     }
 
@@ -3211,21 +3191,82 @@ public class VersionActions
             }
         }
 
-        var directMatch = candidateVersions.FirstOrDefault(v =>
-            !string.IsNullOrEmpty(v.appliedCustomAviHash) &&
-            v.appliedCustomAviHash.Equals(currentFileHash, StringComparison.OrdinalIgnoreCase));
-        if (directMatch != null)
+        var target = editor?.customBaseTarget;
+        return SelectAppliedVersionByHashes(candidateVersions, currentFileHash, GetCurrentTargetHashes(currentFileHash),
+            sourceFile => AvatarPathOverrideService.ResolveLocalTargetPath(target, sourceFile),
+            version => target != null &&
+                       version.assetId == target.appliedCustomBaseAssetId &&
+                       string.Equals(version.version, target.appliedCustomBaseVersionString, StringComparison.Ordinal) &&
+                       string.Equals(version.defaultAviVersion, target.appliedCustomBaseDefaultAviVersion, StringComparison.Ordinal) &&
+                       string.Equals(version.sourceVersionKey ?? "", target.appliedCustomBaseSourceVersionKey ?? "", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A release is identified by every target model it changes. appliedCustomAviHash covers only the first model, so it
+    /// cannot identify a release until secondary hashes are known. An existing persisted identity can be retained
+    /// while hashing if no known hash contradicts it. It also picks among releases with identical mesh bytes.
+    /// </summary>
+    internal static CustomBaseVersion SelectAppliedVersionByHashes(
+        IReadOnlyList<CustomBaseVersion> candidateVersions,
+        string primaryHash,
+        IReadOnlyDictionary<string, string> currentHashesByPath,
+        Func<ModelFileData, string> resolveTargetPath,
+        Func<CustomBaseVersion, bool> isPersistedIdentity)
+    {
+        var candidates = (candidateVersions ?? Array.Empty<CustomBaseVersion>()).Where(v => v != null).ToList();
+        var matches = candidates.Where(v => MatchTargetHashes(v, currentHashesByPath, resolveTargetPath) == true).ToList();
+        if (matches.Count == 0)
         {
-            return directMatch;
+            matches = candidates.Where(v =>
+                !string.IsNullOrEmpty(v.appliedCustomAviHash) &&
+                v.appliedCustomAviHash.Equals(primaryHash, StringComparison.OrdinalIgnoreCase) &&
+                isPersistedIdentity(v) &&
+                MatchTargetHashes(v, currentHashesByPath, resolveTargetPath) != false).ToList();
         }
 
-        var currentHashesByPath = GetCurrentTargetHashes(currentFileHash);
-        if (currentHashesByPath.Count == 0)
+        return matches.FirstOrDefault(isPersistedIdentity) ?? matches.FirstOrDefault();
+    }
+
+    // True when every target hash matches, false when a known target hash differs, null when a target hash is unknown.
+    private static bool? MatchTargetHashes(
+        CustomBaseVersion version,
+        IReadOnlyDictionary<string, string> currentHashesByPath,
+        Func<ModelFileData, string> resolveTargetPath)
+    {
+        if (version?.sourceFiles == null || version.sourceFiles.Length == 0)
         {
             return null;
         }
 
-        return candidateVersions.FirstOrDefault(version => DoesVersionMatchCurrentTargetHashes(version, currentHashesByPath));
+        bool unknown = false;
+        bool comparedAny = false;
+        foreach (var sourceFile in version.sourceFiles)
+        {
+            if (sourceFile == null || string.IsNullOrWhiteSpace(sourceFile.path))
+            {
+                continue;
+            }
+
+            string targetPath = resolveTargetPath(sourceFile);
+            if (string.IsNullOrWhiteSpace(targetPath) ||
+                currentHashesByPath == null ||
+                !currentHashesByPath.TryGetValue(targetPath, out string currentHash))
+            {
+                unknown = true;
+                continue;
+            }
+
+            string expectedHash = ResolveExpectedHashForSource(version, sourceFile);
+            if (string.IsNullOrWhiteSpace(expectedHash) ||
+                !expectedHash.Equals(currentHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            comparedAny = true;
+        }
+
+        return comparedAny && !unknown ? true : (bool?)null;
     }
 
     private Dictionary<string, string> GetCurrentTargetHashes(string currentFileHash)
@@ -3252,46 +3293,7 @@ public class VersionActions
         return hashes;
     }
 
-    private bool DoesVersionMatchCurrentTargetHashes(CustomBaseVersion version, Dictionary<string, string> currentHashesByPath)
-    {
-        if (version?.sourceFiles == null || version.sourceFiles.Length == 0)
-        {
-            return false;
-        }
-
-        bool comparedAny = false;
-        foreach (var sourceFile in version.sourceFiles)
-        {
-            if (sourceFile == null || string.IsNullOrWhiteSpace(sourceFile.path))
-            {
-                continue;
-            }
-
-            string targetPath = AvatarPathOverrideService.ResolveLocalTargetPath(editor?.customBaseTarget, sourceFile);
-            if (string.IsNullOrWhiteSpace(targetPath) ||
-                !currentHashesByPath.TryGetValue(targetPath, out string currentHash))
-            {
-                return false;
-            }
-
-            string expectedHash = ResolveExpectedHashForSource(version, sourceFile);
-            if (string.IsNullOrWhiteSpace(expectedHash))
-            {
-                return false;
-            }
-
-            if (!expectedHash.Equals(currentHash, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            comparedAny = true;
-        }
-
-        return comparedAny;
-    }
-
-    private string ResolveExpectedHashForSource(CustomBaseVersion version, ModelFileData sourceFile)
+    private static string ResolveExpectedHashForSource(CustomBaseVersion version, ModelFileData sourceFile)
     {
         if (NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
         {
@@ -3322,7 +3324,7 @@ public class VersionActions
         return version?.sourceFiles?.FirstOrDefault(sourceFile => IsPatchForSourceFile(patchFile, sourceFile));
     }
 
-    private bool IsPatchForSourceFile(ModelFileData patchFile, ModelFileData sourceFile)
+    private static bool IsPatchForSourceFile(ModelFileData patchFile, ModelFileData sourceFile)
     {
         if (patchFile == null || sourceFile == null)
         {
@@ -3379,7 +3381,7 @@ public class VersionActions
 
     private sealed class VersionTransitionRollbackSnapshot
     {
-        private readonly int undoGroup;
+        private readonly VersionSwitchUndoScope undo;
         private readonly List<FbxRollbackFile> files = new List<FbxRollbackFile>();
         private readonly MCBEditor editor;
         private readonly bool editorWasCustomBase;
@@ -3391,9 +3393,7 @@ public class VersionActions
             this.editor = editor;
             editorWasCustomBase = editor != null && editor.isCustomBase;
             editorCurrentWasCustom = editor != null && editor.currentIsCustom;
-            Undo.IncrementCurrentGroup();
-            undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("Switch MCB Version");
+            undo = new VersionSwitchUndoScope(target != null ? target.transform.root : null, "Switch MCB Version");
             if (target != null)
             {
                 Undo.RegisterCompleteObjectUndo(target, "Switch MCB Version");
@@ -3445,7 +3445,7 @@ public class VersionActions
             catch
             {
                 snapshot.CleanupFiles();
-                Undo.IncrementCurrentGroup();
+                snapshot.undo.Abandon();
                 throw;
             }
         }
@@ -3454,10 +3454,9 @@ public class VersionActions
         {
             if (completed) return;
 
-            Undo.CollapseUndoOperations(undoGroup);
+            undo.Commit();
             completed = true;
             CleanupFiles();
-            Undo.IncrementCurrentGroup();
         }
 
         public void Rollback()
@@ -3486,7 +3485,7 @@ public class VersionActions
 
             try
             {
-                Undo.RevertAllDownToGroup(undoGroup);
+                undo.Rollback();
             }
             catch (Exception ex)
             {
@@ -3501,7 +3500,6 @@ public class VersionActions
 
             completed = true;
             if (rollbackFailure == null) CleanupFiles();
-            Undo.IncrementCurrentGroup();
 
             if (rollbackFailure != null)
             {
@@ -3541,66 +3539,66 @@ public class VersionActions
 
     private IEnumerator ApplyCustomVersionCoroutine(UserCustomVersionEntry entry)
     {
-        if (entry == null) yield break;
-        if (!FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION)) yield break;
-        var root = editor.customBaseTarget.transform.root;
-
-        fileManagerService.RemoveExistingLogic(root);
-
-        string fbxPath = GetCurrentFBXPath();
-        if (string.IsNullOrEmpty(fbxPath))
+        if (entry == null || !FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION)) yield break;
+        if (string.IsNullOrWhiteSpace(entry.backupFbxPath) || !File.Exists(entry.backupFbxPath))
         {
+            editor.warningsModule?.AddWarning("The saved custom FBX no longer exists. The current version was kept.", MessageType.Error, "Custom version unavailable");
             yield break;
         }
+        var requestedTarget = editor.customBaseTarget;
+        while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
+        if (requestedTarget == null || editor.customBaseTarget != requestedTarget) yield break;
 
-        bool success = false;
+        var root = requestedTarget.transform.root;
+        string fbxPath = GetCurrentFBXPath();
+        if (string.IsNullOrEmpty(fbxPath)) yield break;
+        var previous = ResolvePersistedAppliedVersion();
+        bool ReleaseApplied() => ResolvePersistedAppliedVersion() != null ||
+                                 NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(root).Count > 0;
+        VersionTransitionRollbackSnapshot snapshot = null;
         try
         {
-            // Ensure original backup exists; if not, create one now from current file
-            if (!fileManagerService.BackupExists(fbxPath))
+            if (activeTransitionRollback != null) throw new InvalidOperationException("Another version transition is still active.");
+            snapshot = VersionTransitionRollbackSnapshot.Capture(
+                GetTransitionAffectedFbxPaths(GetDistinctTransitionVersions(previous), fbxPath), requestedTarget, editor);
+            StartApplyProgress("Applying saved custom version...", 0f);
+            // Reset and custom installation are one synchronous transaction: failure must restore the release as well.
+            if (ReleaseApplied())
             {
-                fileManagerService.CreateBackup(fbxPath);
+                ApplyOrResetCore(null, true, finalize: false);
+                if (ReleaseApplied()) throw new InvalidOperationException("The applied version could not be reset.");
             }
-
-            // Copy saved custom FBX over the current FBX
-            string srcUnity = MCBUtils.ToUnityPath(entry.backupFbxPath);
-            string srcAbs = System.IO.Path.GetFullPath(srcUnity);
-            string dstUnity = MCBUtils.ToUnityPath(fbxPath);
-            string dstAbs = System.IO.Path.GetFullPath(dstUnity);
-            if (!System.IO.File.Exists(srcAbs)) throw new System.IO.FileNotFoundException("Saved custom FBX not found", srcAbs);
-
-            System.IO.File.Copy(srcAbs, dstAbs, true);
-            success = true;
+            fileManagerService.RemoveExistingLogic(root);
+            if (!fileManagerService.BackupExists(fbxPath)) fileManagerService.CreateBackup(fbxPath);
+            File.Copy(Path.GetFullPath(MCBUtils.ToUnityPath(entry.backupFbxPath)), Path.GetFullPath(fbxPath), true);
+            AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            var fbxGameObject = editor.baseFbxFilesProp.arraySize > 0
+                ? editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject : null;
+            if (!string.IsNullOrEmpty(entry.appliedAvatarAsset))
+                fileManagerService.ApplyAvatarToModel(root, fbxGameObject, entry.appliedAvatarAsset);
+            ClearAppliedVersionState();
+            editor.currentIsCustom = true;
+            snapshot.Commit();
+            FinishApplyProgress(true);
+            StartRecalculateCurrentFbxHash();
         }
         catch (Exception ex)
         {
+            RollbackActiveTransition();
+            try { snapshot?.Rollback(); }
+            catch (Exception rollback)
+            {
+                ClearAppliedVersionState();
+                editor.warningsModule?.AddWarning(rollback.Message, MessageType.Error, "Custom version rollback failed");
+                MCBLogger.LogError($"[MCB] Custom version rollback failed: {rollback.Message}");
+            }
+            FinishApplyProgress(false);
+            editor.warningsModule?.AddWarning(ex.Message, MessageType.Error, "Custom version not applied");
             MCBLogger.LogError($"[MCB] Failed to apply custom version: {ex.Message}");
         }
-
-        if (success)
-        {
-            // Force reimport
-            AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-            while (EditorApplication.isCompiling || EditorApplication.isUpdating) { yield return null; }
-
-            // Apply avatar if we saved one
-            var fbxGameObject = editor.baseFbxFilesProp.arraySize > 0 ? editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject : null;
-            if (!string.IsNullOrEmpty(entry.appliedAvatarAsset))
-            {
-                fileManagerService.ApplyAvatarToModel(root, fbxGameObject, entry.appliedAvatarAsset);
-                while (EditorApplication.isCompiling || EditorApplication.isUpdating) { yield return null; }
-            }
-
-            // Update state flags
-            editor.isCustomBase = false;
-            editor.customBaseTarget.appliedCustomBaseVersion = null;
-            SyncAppliedVersionBlendshapeLinkCache(null);
-            SyncAppliedVersionAnimationPositionOffsetCache(null);
-            editor.currentIsCustom = true;
-
-            // Recalculate hashes and update state
-            StartRecalculateCurrentFbxHash();
-        }
+        editor.RefreshUiToolkitSections();
+        editor.Repaint();
     }
+
 }
 #endif

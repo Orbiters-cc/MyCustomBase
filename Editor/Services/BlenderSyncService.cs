@@ -32,6 +32,7 @@ public static class BlenderSyncService
     private static Texture2D blenderIcon;
     private static readonly List<PreparationCompletion> PendingPreparationCompletions = new List<PreparationCompletion>();
     private static readonly HashSet<string> PreparingProjectPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> WaitingExportsReported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     private class PreparationCompletion
     {
@@ -1033,6 +1034,7 @@ public static class BlenderSyncService
         if (pollingHooked) return;
         pollingHooked = true;
         EditorApplication.update += Poll;
+        UnityEditor.SceneManagement.EditorSceneManager.sceneSaved += UpdateSessionIdsForSavedScene;
     }
 
     private static void Poll()
@@ -1060,7 +1062,11 @@ public static class BlenderSyncService
             UpdateConnectionState(session);
 
             // Leave exports pending while their scene is closed.
-            if (session?.customBase == null) continue;
+            if (session?.customBase == null)
+            {
+                ReportExportWaitingForScene(session);
+                continue;
+            }
 
             if (string.IsNullOrEmpty(session.inboxPath) || !Directory.Exists(session.inboxPath))
             {
@@ -1080,51 +1086,84 @@ public static class BlenderSyncService
 
             foreach (string readyPath in readyFiles)
             {
-                if (File.Exists(readyPath + ".processed") || File.Exists(readyPath + ".failed")) continue;
+                if (File.Exists(readyPath + ".processed") || IsFailedExportUnchanged(readyPath)) continue;
 
                 try
                 {
                     MCBLogger.Log($"[BlenderSync] Detected Blender export marker: {readyPath}");
                     ProcessReadyFile(session, readyPath);
-                    File.Move(readyPath, readyPath + ".processed");
                 }
                 catch (Exception ex)
                 {
-                    SetStatus("Blender sync import failed: " + ex.Message, MessageType.Error);
+                    SetStatus("Blender sync import failed: " + ex.Message + "\nThe avatar was not changed. Fix the export files or export again from Blender to retry.", MessageType.Error);
                     MCBLogger.LogError($"[BlenderSync] Import failed for {readyPath}: {ex}");
                     MarkReadyFileFailed(readyPath, ex);
+                    continue;
                 }
+
+                MarkReadyFileProcessed(readyPath);
             }
         }
     }
 
-    private static void MarkReadyFileFailed(string readyPath, Exception ex)
+    private static void MarkReadyFileProcessed(string readyPath)
     {
-        if (string.IsNullOrWhiteSpace(readyPath))
-        {
-            return;
-        }
-
-        string failedPath = readyPath + ".failed";
         try
         {
-            if (File.Exists(failedPath))
-            {
-                File.Delete(failedPath);
-            }
-
-            File.Move(readyPath, failedPath);
+            if (File.Exists(readyPath + ".failed")) File.Delete(readyPath + ".failed");
+            File.Move(readyPath, readyPath + ".processed");
         }
-        catch (Exception moveEx)
+        catch (Exception ex)
         {
-            try
+            // The marker alone keeps an applied export from being applied again.
+            try { File.WriteAllText(readyPath + ".processed", ex.ToString()); } catch { }
+        }
+    }
+
+    // ready.json stays in place with the export's fingerprint: the export is retried once its files change.
+    private static void MarkReadyFileFailed(string readyPath, Exception ex)
+    {
+        try
+        {
+            File.WriteAllText(readyPath + ".failed", GetExportFingerprint(readyPath) + "\n\n" + ex);
+        }
+        catch (Exception writeEx)
+        {
+            MCBLogger.LogWarning($"[BlenderSync] Could not record the failed Blender export {readyPath}: {writeEx.Message}");
+        }
+    }
+
+    private static bool IsFailedExportUnchanged(string readyPath)
+    {
+        string failedPath = readyPath + ".failed";
+        if (!File.Exists(failedPath)) return false;
+        try
+        {
+            using (var reader = new StreamReader(failedPath))
             {
-                File.WriteAllText(failedPath, (ex != null ? ex.ToString() : "Unknown Blender sync import failure") + "\n\nFailed to move ready marker: " + moveEx);
+                return string.Equals(reader.ReadLine(), GetExportFingerprint(readyPath), StringComparison.Ordinal);
             }
-            catch
-            {
-                // Best-effort failure marker only; the import error above is the actionable log.
-            }
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static string GetExportFingerprint(string readyPath)
+    {
+        string exportDir = Path.GetDirectoryName(readyPath);
+        var builder = new System.Text.StringBuilder();
+        foreach (string path in Directory.GetFiles(exportDir, "*", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            if (path.EndsWith(".failed", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".processed", StringComparison.OrdinalIgnoreCase)) continue;
+            var info = new FileInfo(path);
+            builder.Append(path, exportDir.Length, path.Length - exportDir.Length).Append('|').Append(info.Length).Append('|').Append(info.LastWriteTimeUtc.Ticks).Append(';');
+        }
+
+        using (var sha = System.Security.Cryptography.SHA256.Create())
+        {
+            return BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(builder.ToString()))).Replace("-", "");
         }
     }
 
@@ -1177,81 +1216,79 @@ public static class BlenderSyncService
             throw new InvalidOperationException("Open the scene containing this Blender session's avatar before syncing.");
         }
 
-        var updatedTargets = new List<string>();
-        int generatedAvatarCount = 0;
-        int advancedQueuedCount = 0;
-        for (int modelIndex = 0; modelIndex < models.Count; modelIndex++)
-        {
-            var model = models[modelIndex];
-            string modelRelativePath = model.path;
-            if (string.IsNullOrWhiteSpace(modelRelativePath))
-            {
-                continue;
-            }
-
-            string sourceFbxPath = Path.GetFullPath(Path.Combine(exportDir, modelRelativePath.Replace('/', Path.DirectorySeparatorChar)));
-            if (!File.Exists(sourceFbxPath))
-            {
-                throw new FileNotFoundException("Blender exported FBX was not found.", sourceFbxPath);
-            }
-
-            string targetFbxPath = ResolveTargetFbxPath(session, manifest, model);
-            if (string.IsNullOrWhiteSpace(targetFbxPath))
-            {
-                throw new InvalidOperationException("Could not resolve the target Unity FBX path.");
-            }
-
-            bool useAdvancedMeshForModel = ShouldUseAdvancedMeshBlenderLink(session, manifest, model);
-            if (useAdvancedMeshForModel)
-            {
-                string externalFbxPath = CopyModelToAdvancedIgnoredExports(session, sourceFbxPath, targetFbxPath, modelIndex);
-                ApplyAdvancedMeshPreview(session, externalFbxPath, targetFbxPath, model.meshNames);
-                AssignCreatorExternalCustomFbx(session, targetFbxPath, externalFbxPath);
-                updatedTargets.Add(externalFbxPath);
-                advancedQueuedCount++;
-                MCBLogger.Log($"[BlenderSync] Applied native mesh preview and stored Blender export for submission. source={sourceFbxPath} external={externalFbxPath} target={targetFbxPath}");
-            }
-            else if (session.useProjectExports)
-            {
-                string exportedUnityPath = CopyModelToProjectExports(session, sourceFbxPath, targetFbxPath, modelIndex);
-                AssetDatabase.ImportAsset(exportedUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-                Avatar generatedAvatar = GenerateAvatarForImportedFbx(exportedUnityPath, targetFbxPath, keepImporterConfiguredForEditing: true);
-                if (generatedAvatar != null)
-                {
-                    generatedAvatarCount++;
-                }
-                RefreshTargetMeshesFromFbx(session, exportedUnityPath, targetFbxPath, model.meshNames);
-                AssignCreatorCustomFbx(session, targetFbxPath, exportedUnityPath, generatedAvatar);
-                ApplyGeneratedAvatarToPreview(session, exportedUnityPath, generatedAvatar);
-                updatedTargets.Add(exportedUnityPath);
-                MCBLogger.Log($"[BlenderSync] Imported Blender export. source={sourceFbxPath} projectExport={exportedUnityPath} target={targetFbxPath}");
-            }
-            else
-            {
-                ReplaceTargetFbx(sourceFbxPath, targetFbxPath);
-                AssetDatabase.ImportAsset(targetFbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-                Avatar generatedAvatar = GenerateAvatarForImportedFbx(targetFbxPath, targetFbxPath, keepImporterConfiguredForEditing: false);
-                if (generatedAvatar != null)
-                {
-                    generatedAvatarCount++;
-                }
-                RefreshTargetMeshesFromFbx(session, targetFbxPath, targetFbxPath, model.meshNames);
-                ApplyGeneratedAvatarToPreview(session, targetFbxPath, generatedAvatar);
-                updatedTargets.Add(targetFbxPath);
-                MCBLogger.Log($"[BlenderSync] Imported Blender export. source={sourceFbxPath} target={targetFbxPath}");
-            }
-        }
-
-        if (updatedTargets.Count == 0)
+        // Check every model before touching the avatar, then apply them as one step: a bad second model
+        // must not leave the first one applied.
+        var plans = PlanModelUpdates(session, manifest, models, exportDir);
+        if (plans.Count == 0)
         {
             throw new InvalidOperationException("Blender export manifest did not contain any usable CUSTOM_BASE model paths.");
         }
 
-        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-
-        if (session.customBase != null)
+        var updatedTargets = new List<string>();
+        int generatedAvatarCount = 0;
+        int advancedQueuedCount = 0;
+        Undo.IncrementCurrentGroup();
+        int undoGroup = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName("Apply Blender Export");
+        using (var files = new ExportFileRollback())
         {
-            EditorUtility.SetDirty(session.customBase);
+            try
+            {
+                foreach (var plan in plans)
+                {
+                    if (plan.advancedMesh)
+                    {
+                        string externalFbxPath = CopyModelToAdvancedIgnoredExports(session, plan.sourceFbxPath, plan.targetFbxPath, plan.modelIndex, files);
+                        ApplyAdvancedMeshPreview(session, externalFbxPath, plan.targetFbxPath, plan.previewMappings);
+                        AssignCreatorExternalCustomFbx(session, plan.targetFbxPath, externalFbxPath);
+                        updatedTargets.Add(externalFbxPath);
+                        advancedQueuedCount++;
+                        MCBLogger.Log($"[BlenderSync] Applied native mesh preview and stored Blender export for submission. source={plan.sourceFbxPath} external={externalFbxPath} target={plan.targetFbxPath}");
+                    }
+                    else if (session.useProjectExports)
+                    {
+                        string exportedUnityPath = CopyModelToProjectExports(session, plan.sourceFbxPath, plan.targetFbxPath, plan.modelIndex, files);
+                        AssetDatabase.ImportAsset(exportedUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                        files.Track(AvatarDefinitionGenerationService.GetDefaultAvatarPath(exportedUnityPath));
+                        Avatar generatedAvatar = GenerateAvatarForImportedFbx(exportedUnityPath, plan.targetFbxPath, keepImporterConfiguredForEditing: true);
+                        if (generatedAvatar != null)
+                        {
+                            generatedAvatarCount++;
+                        }
+                        RefreshTargetMeshesFromFbx(session, exportedUnityPath, plan.targetFbxPath, plan.model.meshNames);
+                        AssignCreatorCustomFbx(session, plan.targetFbxPath, exportedUnityPath, generatedAvatar);
+                        ApplyGeneratedAvatarToPreview(session, exportedUnityPath, generatedAvatar);
+                        updatedTargets.Add(exportedUnityPath);
+                        MCBLogger.Log($"[BlenderSync] Imported Blender export. source={plan.sourceFbxPath} projectExport={exportedUnityPath} target={plan.targetFbxPath}");
+                    }
+                    else
+                    {
+                        ReplaceTargetFbx(plan.sourceFbxPath, plan.targetFbxPath, files);
+                        AssetDatabase.ImportAsset(plan.targetFbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                        files.Track(AvatarDefinitionGenerationService.GetDefaultAvatarPath(plan.targetFbxPath));
+                        Avatar generatedAvatar = GenerateAvatarForImportedFbx(plan.targetFbxPath, plan.targetFbxPath, keepImporterConfiguredForEditing: false);
+                        if (generatedAvatar != null)
+                        {
+                            generatedAvatarCount++;
+                        }
+                        RefreshTargetMeshesFromFbx(session, plan.targetFbxPath, plan.targetFbxPath, plan.model.meshNames);
+                        ApplyGeneratedAvatarToPreview(session, plan.targetFbxPath, generatedAvatar);
+                        updatedTargets.Add(plan.targetFbxPath);
+                        MCBLogger.Log($"[BlenderSync] Imported Blender export. source={plan.sourceFbxPath} target={plan.targetFbxPath}");
+                    }
+                }
+
+                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                EditorUtility.SetDirty(session.customBase);
+                Undo.CollapseUndoOperations(undoGroup);
+            }
+            catch
+            {
+                // Runs inside one editor update, so the group holds only this export's changes.
+                Undo.RevertAllDownToGroup(undoGroup);
+                files.Restore();
+                throw;
+            }
         }
 
         bool usedAdvancedMeshBlenderLink = advancedQueuedCount > 0;
@@ -1263,6 +1300,133 @@ public static class BlenderSyncService
             : (usedAdvancedMeshBlenderLink ? "\nOriginal FBX files are unchanged; exports are ready for submission." : "\nNo Avatar asset was generated.");
         string statusVerb = usedAdvancedMeshBlenderLink ? "processed" : "imported";
         SetStatus($"Blender export {statusVerb} for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}", MessageType.Info);
+    }
+
+    private sealed class ModelUpdatePlan
+    {
+        public ModelInfo model;
+        public int modelIndex;
+        public string sourceFbxPath;
+        public string targetFbxPath;
+        public bool advancedMesh;
+        public List<ModelFileSmrPathData> previewMappings;
+    }
+
+    private static List<ModelUpdatePlan> PlanModelUpdates(ActiveSession session, BlenderExportManifest manifest, List<ModelInfo> models, string exportDir)
+    {
+        var plans = new List<ModelUpdatePlan>();
+        for (int modelIndex = 0; modelIndex < models.Count; modelIndex++)
+        {
+            var model = models[modelIndex];
+            if (string.IsNullOrWhiteSpace(model.path))
+            {
+                continue;
+            }
+
+            string sourceFbxPath = Path.GetFullPath(Path.Combine(exportDir, model.path.Replace('/', Path.DirectorySeparatorChar)));
+            if (!File.Exists(sourceFbxPath))
+            {
+                throw new FileNotFoundException("Blender exported FBX was not found.", sourceFbxPath);
+            }
+
+            string targetFbxPath = ResolveTargetFbxPath(session, manifest, model);
+            if (string.IsNullOrWhiteSpace(targetFbxPath))
+            {
+                throw new InvalidOperationException("Could not resolve the target Unity FBX path.");
+            }
+
+            var plan = new ModelUpdatePlan
+            {
+                model = model,
+                modelIndex = modelIndex,
+                sourceFbxPath = sourceFbxPath,
+                targetFbxPath = targetFbxPath,
+                advancedMesh = ShouldUseAdvancedMeshBlenderLink(session, manifest, model)
+            };
+            if (plan.advancedMesh || session.useProjectExports)
+            {
+                if (plan.advancedMesh) plan.previewMappings = GetPreviewMappings(session, targetFbxPath, model.meshNames);
+                else if (string.IsNullOrWhiteSpace(session.blenderExportsUnityPath)) throw new InvalidOperationException("This Blender session does not have a project export folder.");
+                GetCreatorTargetIndex(session.customBase, targetFbxPath);
+            }
+            else if (!File.Exists(UnityPathToAbsolute(targetFbxPath)))
+            {
+                throw new FileNotFoundException("Target FBX file was not found.", UnityPathToAbsolute(targetFbxPath));
+            }
+
+            plans.Add(plan);
+        }
+
+        return plans;
+    }
+
+    // Snapshots the project files an export overwrites or creates, so a failed export can put them back.
+    private sealed class ExportFileRollback : IDisposable
+    {
+        private readonly string folder = Path.Combine(GetProjectRoot(), "Library", "MCB", "BlenderSyncRollback", Guid.NewGuid().ToString("N"));
+        private readonly List<KeyValuePair<string, string>> backups = new List<KeyValuePair<string, string>>();
+
+        private bool restoreFailed;
+
+        public void Track(string path)
+        {
+            string absolutePath = UnityPathToAbsolute(path);
+            foreach (string file in new[] { absolutePath, absolutePath + ".meta" })
+            {
+                if (backups.Any(entry => string.Equals(entry.Key, file, StringComparison.OrdinalIgnoreCase))) continue;
+                string backup = null;
+                if (File.Exists(file))
+                {
+                    Directory.CreateDirectory(folder);
+                    backup = Path.Combine(folder, backups.Count.ToString());
+                    File.Copy(file, backup);
+                }
+                backups.Add(new KeyValuePair<string, string>(file, backup));
+            }
+        }
+
+        public void Restore()
+        {
+            var reimport = new List<string>();
+            foreach (var entry in backups)
+            {
+                string unityPath = MCBUtils.ToUnityPath(entry.Key);
+                bool isAsset = !entry.Key.EndsWith(".meta", StringComparison.OrdinalIgnoreCase) &&
+                               !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(unityPath));
+                try
+                {
+                    if (entry.Value != null)
+                    {
+                        File.Copy(entry.Value, entry.Key, true);
+                        if (isAsset) reimport.Add(unityPath);
+                    }
+                    else if (isAsset) AssetDatabase.DeleteAsset(unityPath);
+                    else if (File.Exists(entry.Key)) File.Delete(entry.Key);
+                }
+                catch (Exception ex)
+                {
+                    restoreFailed = true;
+                    MCBLogger.LogError($"[BlenderSync] Could not restore '{entry.Key}' after a failed Blender export: {ex.Message}");
+                }
+            }
+
+            foreach (string unityPath in reimport)
+            {
+                try { AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate); }
+                catch { restoreFailed = true; throw; }
+            }
+        }
+
+        public void Dispose()
+        {
+            if (restoreFailed)
+            {
+                MCBLogger.LogError($"[BlenderSync] Some export files could not be restored. Recovery copies were retained at '{folder}'.");
+                return;
+            }
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+            catch (Exception ex) { MCBLogger.LogWarning($"[BlenderSync] Could not delete Blender export backups '{folder}': {ex.Message}"); }
+        }
     }
 
     private static bool ShouldUseAdvancedMeshBlenderLink(ActiveSession session, BlenderExportManifest manifest, ModelInfo model)
@@ -1282,7 +1446,7 @@ public static class BlenderSyncService
                 string.Equals(model.transportFormat, NativeMeshPayloadService.PayloadFormat, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static void ApplyAdvancedMeshPreview(ActiveSession session, string externalFbxPath, string targetFbxPath, IEnumerable<string> meshNames)
+    private static List<ModelFileSmrPathData> GetPreviewMappings(ActiveSession session, string targetFbxPath, IEnumerable<string> meshNames)
     {
         var target = session.targetFbxFiles.FirstOrDefault(file => file != null &&
             string.Equals(MCBUtils.ToUnityPath(file.unityPath), MCBUtils.ToUnityPath(targetFbxPath), StringComparison.OrdinalIgnoreCase));
@@ -1292,7 +1456,11 @@ public static class BlenderSyncService
             .ToList();
         if (mappings.Count == 0)
             throw new InvalidOperationException($"No avatar renderer mapping matches the Blender export for '{targetFbxPath}'. Reconnect the intended avatar and sync again.");
+        return mappings;
+    }
 
+    private static void ApplyAdvancedMeshPreview(ActiveSession session, string externalFbxPath, string targetFbxPath, List<ModelFileSmrPathData> mappings)
+    {
         string temporaryPath = null;
         try
         {
@@ -1389,7 +1557,7 @@ public static class BlenderSyncService
         }
     }
 
-    private static void ReplaceTargetFbx(string sourceFbxPath, string targetUnityPath)
+    private static void ReplaceTargetFbx(string sourceFbxPath, string targetUnityPath, ExportFileRollback files)
     {
         string targetAbsolutePath = UnityPathToAbsolute(targetUnityPath);
         if (!File.Exists(targetAbsolutePath))
@@ -1404,10 +1572,11 @@ public static class BlenderSyncService
             MCBLogger.Log($"[BlenderSync] Created original FBX backup: {backupPath}");
         }
 
+        files.Track(targetAbsolutePath);
         File.Copy(sourceFbxPath, targetAbsolutePath, true);
     }
 
-    private static string CopyModelToProjectExports(ActiveSession session, string sourceFbxPath, string targetFbxPath, int modelIndex)
+    private static string CopyModelToProjectExports(ActiveSession session, string sourceFbxPath, string targetFbxPath, int modelIndex, ExportFileRollback files)
     {
         if (session == null || string.IsNullOrWhiteSpace(session.blenderExportsUnityPath))
         {
@@ -1422,6 +1591,7 @@ public static class BlenderSyncService
         string targetName = Path.GetFileNameWithoutExtension(targetFbxPath);
         string fileName = $"{modelIndex + 1:00}_{BlenderProjectService.SanitizeFileName(targetName)}.fbx";
         string destinationAbsolutePath = Path.Combine(exportsAbsolutePath, fileName);
+        files.Track(destinationAbsolutePath);
         File.Copy(sourceFbxPath, destinationAbsolutePath, true);
 
         string exportedUnityPath = MCBUtils.CombineUnityPath(session.blenderExportsUnityPath, fileName);
@@ -1429,7 +1599,7 @@ public static class BlenderSyncService
         return exportedUnityPath;
     }
 
-    private static string CopyModelToAdvancedIgnoredExports(ActiveSession session, string sourceFbxPath, string targetFbxPath, int modelIndex)
+    private static string CopyModelToAdvancedIgnoredExports(ActiveSession session, string sourceFbxPath, string targetFbxPath, int modelIndex, ExportFileRollback files)
     {
         if (string.IsNullOrWhiteSpace(sourceFbxPath) || !File.Exists(sourceFbxPath))
         {
@@ -1443,6 +1613,7 @@ public static class BlenderSyncService
         string targetName = Path.GetFileNameWithoutExtension(targetFbxPath);
         string fileName = $"{modelIndex + 1:00}_{BlenderProjectService.SanitizeFileName(targetName)}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.fbx";
         string destination = Path.Combine(sessionFolder, fileName);
+        files.Track(destination);
         File.Copy(sourceFbxPath, destination, true);
         return Path.GetFullPath(destination);
     }
@@ -1948,6 +2119,7 @@ public static class BlenderSyncService
         }
     }
 
+    // Only the recorded object owns the session: an avatar with the same name in another scene is a different avatar.
     private static void ResolveCustomBase(ActiveSession session)
     {
         if (session == null || session.customBase != null)
@@ -1960,11 +2132,35 @@ public static class BlenderSyncService
         {
             session.customBase = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(globalId) as MyCustomBase;
         }
+    }
 
-        if (session.customBase == null && !string.IsNullOrWhiteSpace(session.customBaseName))
+    // An avatar connected in a scene that was never saved gets its lasting id only when the scene is saved.
+    private static void UpdateSessionIdsForSavedScene(UnityEngine.SceneManagement.Scene scene)
+    {
+        foreach (var session in ActiveSessions)
         {
-            session.customBase = UnityEngine.Object.FindObjectsOfType<MyCustomBase>(true)
-                .FirstOrDefault(customBase => customBase != null && string.Equals(customBase.name, session.customBaseName, StringComparison.Ordinal));
+            if (session?.customBase == null || session.customBase.gameObject.scene != scene) continue;
+            string globalId = GlobalObjectId.GetGlobalObjectIdSlow(session.customBase).ToString();
+            if (string.Equals(globalId, session.customBaseGlobalId, StringComparison.Ordinal)) continue;
+            session.customBaseGlobalId = globalId;
+            WriteSessionFile(session);
+        }
+    }
+
+    private static void ReportExportWaitingForScene(ActiveSession session)
+    {
+        if (session == null || string.IsNullOrEmpty(session.inboxPath) || !Directory.Exists(session.inboxPath)) return;
+        try
+        {
+            string readyPath = Directory.GetFiles(session.inboxPath, "ready.json", SearchOption.AllDirectories)
+                .FirstOrDefault(path => !File.Exists(path + ".processed") && !File.Exists(path + ".failed"));
+            if (readyPath == null || !WaitingExportsReported.Add(readyPath)) return;
+            SetStatus($"A Blender export for {session.customBaseName} is waiting: the avatar of this Blender session is in another scene. Open that scene to apply it.", MessageType.Warning);
+            try { InternalEditorUtility.RepaintAllViews(); } catch { }
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogWarning("[BlenderSync] Failed to scan a waiting Blender export: " + ex.Message);
         }
     }
 

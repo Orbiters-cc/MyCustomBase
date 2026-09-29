@@ -82,6 +82,10 @@ public static class OriginalBaseVariantBuilder
                 }
                 patch.path = VariantPath(originalPatch.path);
                 Write(folder, patch.path, output); patch.hash = Hash(output);
+                // An Avatar-only patch names its own file as the custom Avatar: follow the rename.
+                if (patch.metadata.TryGetValue("customAvatarPath", out object avatarPath) &&
+                    string.Equals(Path.GetFileName(Convert.ToString(avatarPath)), Path.GetFileName(originalPatch.path), StringComparison.OrdinalIgnoreCase))
+                    patch.metadata["customAvatarPath"] = patch.path;
             }
             patches.Add(patch);
         }

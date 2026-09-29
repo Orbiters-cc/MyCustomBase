@@ -110,6 +110,9 @@ public class CustomBaseVersion
     [JsonProperty] public OriginalBaseVersionData[] originalBaseVersions;
     [JsonProperty] public string sourceVersionKey;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int uploaderId;
+    // Server-provided display metadata. Code installation verifies current creator trust separately.
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public bool? creatorTrusted;
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string creatorName;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string parentVersion;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int assetId;
     

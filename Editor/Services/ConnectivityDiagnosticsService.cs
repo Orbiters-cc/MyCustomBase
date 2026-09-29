@@ -529,7 +529,7 @@ public static partial class MCBConnectivityMonitor
             title = string.IsNullOrWhiteSpace(policy.warningTitle) ? "Non-critical request failed" : policy.warningTitle,
             message = BuildWarningMessage(policy.context, requestUrl, responseCode, error),
             context = policy.context,
-            url = requestUrl,
+            url = NetworkService.SanitizeUrlForLogs(requestUrl),
             statusCode = responseCode,
             error = error,
             timestampUtc = DateTime.UtcNow
@@ -579,7 +579,7 @@ public static partial class MCBConnectivityMonitor
 
         if (!string.IsNullOrWhiteSpace(requestUrl))
         {
-            sb.Append("\nURL: ").Append(requestUrl);
+            sb.Append("\nURL: ").Append(NetworkService.SanitizeUrlForLogs(requestUrl));
         }
 
         return sb.ToString();
@@ -684,7 +684,7 @@ public static partial class MCBConnectivityMonitor
         }
         if (!string.IsNullOrWhiteSpace(requestUrl))
         {
-            sb.AppendLine("Failed URL: " + requestUrl);
+            sb.AppendLine("Failed URL: " + NetworkService.SanitizeUrlForLogs(requestUrl));
         }
         sb.AppendLine("HTTP: " + responseCode + " " + (error ?? string.Empty));
         return sb.ToString().TrimEnd();
@@ -889,7 +889,7 @@ public static class ConnectivityDiagnosticsService
     {
         var sb = new StringBuilder();
         sb.AppendLine("Timestamp: " + DateTime.UtcNow.ToString("O"));
-        sb.AppendLine("Target URL: " + url);
+        sb.AppendLine("Target URL: " + NetworkService.SanitizeUrlForLogs(url));
         sb.AppendLine();
 
         var httpResult = await RunHttpClientProbeAsync(url, options);

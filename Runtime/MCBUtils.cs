@@ -163,6 +163,10 @@ public static class MCBUtils
         return VERSION_ENDPOINT.Replace(":assetId", assetId.ToString());
     }
 
+    public static string GetAssetModelTrustUrl(int assetId, string version, string modelHash, string authToken, string sourceKey) =>
+        $"{getApiUrl()}{GetAssetModelEndpoint(assetId)}-trust?version={Uri.EscapeDataString(version ?? "")}" +
+        $"&d={Uri.EscapeDataString(modelHash ?? "")}&t={Uri.EscapeDataString(authToken ?? "")}&sourceKey={Uri.EscapeDataString(sourceKey ?? "")}";
+
     public static string GetAssetModelEndpoint(int assetId)
     {
         return MODEL_ENDPOINT.Replace(":assetId", assetId.ToString());

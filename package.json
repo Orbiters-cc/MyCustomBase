@@ -1,18 +1,19 @@
 {
   "name": "orbiters.mcb",
   "displayName": "My Custom Base (MCB)",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "license": "LicenseRef-MCB-Proprietary",
   "unity": "2022.3",
   "description": "Wizard to apply a custom base with the MCB tool",
   "type": "tool",
-  "url": "https://github.com/Orbiters-cc/MyCustomBase/releases/download/1.8.0/My.Custom.Base.MCB.-1.8.0.zip",
+  "url": "https://github.com/Orbiters-cc/MyCustomBase/releases/download/1.8.1/My.Custom.Base.MCB.-1.8.1.zip",
   "dependencies": {},
   "gitDependencies": {},
   "vpmDependencies": {
     "com.vrchat.core.vpm-resolver": ">=0.1.29 <0.2.0",
     "com.vrcfury.vrcfury": ">=1.1241.0",
-    "orbiters.toolkit": ">=0.3.0 <0.4.0"
+    "com.vrchat.avatars": ">=3.7.0 <4.0.0",
+    "orbiters.toolkit": ">=0.3.1 <0.4.0"
   },
   "orbiters": {
     "dependencyDisplayNames": {

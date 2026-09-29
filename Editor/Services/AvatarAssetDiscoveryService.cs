@@ -29,6 +29,7 @@ public class AvatarDiscoveredAsset
     [JsonProperty] public string name;
     [JsonProperty] public int? ownerId;
     [JsonProperty] public string ownerUsername;
+    [JsonProperty] public bool creatorTrusted;
     [JsonProperty] public string ownerAvatarUrl;
     [JsonProperty] public string thumbnailUrl;
     [JsonProperty] public string bannerUrl;
@@ -642,7 +643,7 @@ public static class AvatarAssetDiscoveryService
             if (downloadTask.IsFaulted)
             {
                 FailedImageDownloads.Add(cacheKey);
-                MCBLogger.LogWarning($"[AvatarAssetDiscovery] Failed to download {kind} for assetId={assetId}: {downloadTask.Exception?.GetBaseException().Message} (url: {SanitizeUrlForLogs(url)})");
+                MCBLogger.LogWarning($"[AvatarAssetDiscovery] Failed to download {kind} for assetId={assetId}: {downloadTask.Exception?.GetBaseException().Message} (url: {NetworkService.SanitizeUrlForLogs(url)})");
                 yield break;
             }
 
@@ -650,7 +651,7 @@ public static class AvatarAssetDiscoveryService
             if (!string.IsNullOrEmpty(result.error))
             {
                 FailedImageDownloads.Add(cacheKey);
-                MCBLogger.LogWarning($"[AvatarAssetDiscovery] Failed to download {kind} for assetId={assetId}: {result.error} (url: {SanitizeUrlForLogs(url)})");
+                MCBLogger.LogWarning($"[AvatarAssetDiscovery] Failed to download {kind} for assetId={assetId}: {result.error} (url: {NetworkService.SanitizeUrlForLogs(url)})");
                 yield break;
             }
 
@@ -777,7 +778,7 @@ public static class AvatarAssetDiscoveryService
 
             if (LoggedInsecureImageUrls.Add(url))
             {
-                MCBLogger.LogWarning($"[AvatarAssetDiscovery] Skipping insecure local {kind} image for assetId={assetId}: {SanitizeUrlForLogs(url)}");
+                MCBLogger.LogWarning($"[AvatarAssetDiscovery] Skipping insecure local {kind} image for assetId={assetId}: {NetworkService.SanitizeUrlForLogs(url)}");
             }
             return null;
         }
@@ -814,7 +815,7 @@ public static class AvatarAssetDiscoveryService
         }
 
         PendingThumbnailDownloads.Remove(cacheKey);
-        MCBLogger.LogWarning($"[AvatarAssetDiscovery] Cleared stale pending {kind} download for assetId={assetId} url={SanitizeUrlForLogs(url)}");
+        MCBLogger.LogWarning($"[AvatarAssetDiscovery] Cleared stale pending {kind} download for assetId={assetId} url={NetworkService.SanitizeUrlForLogs(url)}");
     }
 
     private static Texture2D LoadTextureFromDisk(string localPath)
@@ -1024,23 +1025,13 @@ public static class AvatarAssetDiscoveryService
 
     private static string BuildRequestSummary(string url, List<string> normalizedPaths, bool filterOnlyCompatible)
     {
-        return $"url={url} | filterOnlyCompatible={filterOnlyCompatible} | paths=[{string.Join(", ", normalizedPaths ?? new List<string>())}]";
+        return $"url={NetworkService.SanitizeUrlForLogs(url)} | filterOnlyCompatible={filterOnlyCompatible} | paths=[{string.Join(", ", normalizedPaths ?? new List<string>())}]";
     }
 
     private static string BuildResponseContext(UnityWebRequest request, string url, string body)
     {
-        return $"HTTP {(long)request.responseCode} {request.error} | url={(url)}" +
+        return $"HTTP {(long)request.responseCode} {request.error} | url={NetworkService.SanitizeUrlForLogs(url)}" +
                (string.IsNullOrWhiteSpace(body) ? string.Empty : $" | body={CreateBodySnippet(body)}");
-    }
-
-    private static string SanitizeUrlForLogs(string url)
-    {
-        if (string.IsNullOrEmpty(url))
-        {
-            return url;
-        }
-
-        return System.Text.RegularExpressions.Regex.Replace(url, @"([?&]t=)([^&]+)", "$1<redacted>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     private static string CreateBodySnippet(string body, int maxLength = 240)
