@@ -3402,10 +3402,17 @@ public class VersionActions
         }
     }
 
+    // Before the mutation: the files it may change, to restore them on failure. On success the state after it is kept
+    // too, so Undo/Redo of the switch also puts those files back (VersionSwitchFileUndo).
     private sealed class VersionTransitionRollbackSnapshot
     {
+        private const string UndoName = "Switch MCB Version";
         private readonly VersionSwitchUndoScope undo;
-        private readonly List<FbxRollbackFile> files = new List<FbxRollbackFile>();
+        private readonly string id = Guid.NewGuid().ToString("N");
+        private readonly string folder;
+        private readonly List<string> fbxPaths = new List<string>();
+        private readonly List<VersionSwitchFileUndo.Entry> entries = new List<VersionSwitchFileUndo.Entry>();
+        private VersionSwitchFileUndo.Setting veinsBefore;
         private readonly MCBEditor editor;
         private readonly bool editorWasCustomBase;
         private readonly bool editorCurrentWasCustom;
@@ -3414,12 +3421,13 @@ public class VersionActions
         private VersionTransitionRollbackSnapshot(MyCustomBase target, MCBEditor editor)
         {
             this.editor = editor;
+            folder = Path.Combine(VersionSwitchFileUndo.Folder, id);
             editorWasCustomBase = editor != null && editor.isCustomBase;
             editorCurrentWasCustom = editor != null && editor.currentIsCustom;
-            undo = new VersionSwitchUndoScope(target != null ? target.transform.root : null, "Switch MCB Version");
+            undo = new VersionSwitchUndoScope(target != null ? target.transform.root : null, UndoName);
             if (target != null)
             {
-                Undo.RegisterCompleteObjectUndo(target, "Switch MCB Version");
+                Undo.RegisterCompleteObjectUndo(target, UndoName);
             }
         }
 
@@ -3431,38 +3439,16 @@ public class VersionActions
             var snapshot = new VersionTransitionRollbackSnapshot(target, editor);
             try
             {
-                foreach (string rawPath in fbxPaths ?? Enumerable.Empty<string>())
+                snapshot.fbxPaths.AddRange(fbxPaths ?? Enumerable.Empty<string>());
+                foreach (string path in VersionSwitchFileUndo.AffectedPaths(snapshot.fbxPaths))
                 {
-                    if (string.IsNullOrWhiteSpace(rawPath)) continue;
-
-                    string unityPath = MCBUtils.ToUnityPath(rawPath);
-                    string fullPath = Path.GetFullPath(unityPath);
-                    if (!File.Exists(fullPath) || snapshot.files.Any(value =>
-                            string.Equals(value.fullPath, fullPath, StringComparison.OrdinalIgnoreCase)))
+                    snapshot.entries.Add(new VersionSwitchFileUndo.Entry
                     {
-                        continue;
-                    }
-
-                    string rollbackPath = Path.Combine(
-                        Path.GetTempPath(),
-                        $"mcb-version-switch-{Guid.NewGuid():N}.fbx");
-                    File.Copy(fullPath, rollbackPath, false);
-                    string metaFullPath = fullPath + ".meta";
-                    var rollbackFile = new FbxRollbackFile
-                    {
-                        unityPath = unityPath,
-                        fullPath = fullPath,
-                        rollbackPath = rollbackPath,
-                        metaFullPath = metaFullPath
-                    };
-                    snapshot.files.Add(rollbackFile);
-                    if (File.Exists(metaFullPath))
-                    {
-                        rollbackFile.metaRollbackPath = rollbackPath + ".meta";
-                        File.Copy(metaFullPath, rollbackFile.metaRollbackPath, false);
-                    }
+                        unityPath = path,
+                        before = VersionSwitchFileUndo.Save(path, snapshot.folder, "before")
+                    });
                 }
-
+                snapshot.veinsBefore = VersionSwitchFileUndo.SaveVeins();
                 return snapshot;
             }
             catch
@@ -3477,9 +3463,29 @@ public class VersionActions
         {
             if (completed) return;
 
+            try
+            {
+                foreach (string path in VersionSwitchFileUndo.AffectedPaths(fbxPaths))
+                {
+                    if (entries.Any(entry => string.Equals(entry.unityPath, path, StringComparison.OrdinalIgnoreCase))) continue;
+                    // Created by the switch (a dynamic normals mesh): Undo removes it.
+                    entries.Add(new VersionSwitchFileUndo.Entry { unityPath = path, before = new VersionSwitchFileUndo.FileState() });
+                }
+                foreach (var entry in entries)
+                {
+                    var asset = AssetDatabase.LoadMainAssetAtPath(entry.unityPath);
+                    if (asset != null && !(asset is GameObject)) AssetDatabase.SaveAssetIfDirty(asset);
+                    entry.after = VersionSwitchFileUndo.Save(entry.unityPath, folder, "after", entry.before);
+                }
+                VersionSwitchFileUndo.Record(id, folder, entries, veinsBefore, VersionSwitchFileUndo.SaveVeins(), UndoName);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                MCBLogger.LogWarning($"[VersionActions] The version switch worked, but its files could not be kept for Undo ({ex.Message}). Undoing it will only restore the scene.");
+                CleanupFiles();
+            }
             undo.Commit();
             completed = true;
-            CleanupFiles();
         }
 
         public void Rollback()
@@ -3487,18 +3493,11 @@ public class VersionActions
             if (completed) return;
 
             Exception rollbackFailure = null;
-            foreach (var file in files)
+            foreach (var entry in entries)
             {
                 try
                 {
-                    File.Copy(file.rollbackPath, file.fullPath, true);
-                    if (!string.IsNullOrWhiteSpace(file.metaRollbackPath) && File.Exists(file.metaRollbackPath))
-                    {
-                        File.Copy(file.metaRollbackPath, file.metaFullPath, true);
-                    }
-                    AssetDatabase.ImportAsset(
-                        file.unityPath,
-                        ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                    VersionSwitchFileUndo.Restore(entry.unityPath, entry.before);
                 }
                 catch (Exception ex)
                 {
@@ -3526,37 +3525,20 @@ public class VersionActions
 
             if (rollbackFailure != null)
             {
-                throw new InvalidOperationException("Could not restore the previous version-switch state. Recovery copies are retained at: " + string.Join(", ", files.Select(file => file.rollbackPath)), rollbackFailure);
+                throw new InvalidOperationException("Could not restore the previous version-switch state. Recovery copies are retained at: " + folder, rollbackFailure);
             }
         }
 
         private void CleanupFiles()
         {
-            foreach (var file in files)
+            try
             {
-                try
-                {
-                    if (File.Exists(file.rollbackPath)) File.Delete(file.rollbackPath);
-                    if (!string.IsNullOrWhiteSpace(file.metaRollbackPath) && File.Exists(file.metaRollbackPath))
-                    {
-                        File.Delete(file.metaRollbackPath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MCBLogger.LogWarning($"[VersionActions] Could not delete temporary version rollback file '{file.rollbackPath}': {ex.Message}");
-                }
+                if (Directory.Exists(folder)) Directory.Delete(folder, true);
             }
-            files.Clear();
-        }
-
-        private sealed class FbxRollbackFile
-        {
-            public string unityPath;
-            public string fullPath;
-            public string rollbackPath;
-            public string metaFullPath;
-            public string metaRollbackPath;
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                MCBLogger.LogWarning($"[VersionActions] Could not delete temporary version rollback files '{folder}': {ex.Message}");
+            }
         }
     }
 

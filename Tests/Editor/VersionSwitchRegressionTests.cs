@@ -95,6 +95,40 @@ public sealed class VersionSwitchRegressionTests
         Assert.AreEqual("Orbit", version.creatorName);
     }
 
+    // Ctrl+Z of a committed switch puts back the files it changed, Ctrl+Y the switched ones.
+    [Test]
+    public void UndoAndRedoOfASwitchRestoreItsFiles()
+    {
+        string folder = "Assets/MCB_UndoTest_" + Guid();
+        string path = folder + "/body.txt";
+        var type = typeof(VersionActions).GetNestedType("VersionTransitionRollbackSnapshot", BindingFlags.NonPublic);
+        Undo.IncrementCurrentGroup();
+        int setupGroup = Undo.GetCurrentGroup();
+        try
+        {
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            File.WriteAllText(path, "version A");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            string meta = File.ReadAllText(path + ".meta");
+            var snapshot = type.GetMethod("Capture").Invoke(null, new object[] { new[] { path }, null, null });
+            File.WriteAllText(path, "version B");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            type.GetMethod("Commit").Invoke(snapshot, null);
+
+            Undo.PerformUndo();
+            Assert.AreEqual("version A", File.ReadAllText(path));
+            Assert.AreEqual(meta, File.ReadAllText(path + ".meta"));
+            Undo.PerformRedo();
+            Assert.AreEqual("version B", File.ReadAllText(path));
+        }
+        finally
+        {
+            Undo.RevertAllDownToGroup(setupGroup);
+            VersionSwitchFileUndo.Forget(folder);
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
     [Test]
     public void TrustedOrCodeFreeDownloadsNeedNoConfirmation()
     {
