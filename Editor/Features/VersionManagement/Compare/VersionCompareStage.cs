@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -25,7 +26,7 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
 
     private PreviewRenderUtility preview;
     private RenderTexture beforeTexture, afterTexture;
-    private Material clay, ghost, backdrop, floor;
+    private Material clay, ghost, unchanged, backdrop, floor;
     private Mesh quad;
     private readonly MaterialPropertyBlock block = new MaterialPropertyBlock();
     private readonly IVisualElementScheduledItem ticker;
@@ -42,6 +43,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
     private float yaw = 180f, pitch = 6f, distance = 3f, targetYaw = 180f, targetPitch = 6f, targetDistance = 3f;
     private Vector3 pivot, targetPivot;
     private Bounds frame = new Bounds(Vector3.up, Vector3.one);
+    // What the camera turns around when nothing is focused: the hips when the avatar has them.
+    private Vector3 home = Vector3.up;
 
     private int dragPointer = -1;
     private bool dragPans, dragSplit;
@@ -118,10 +121,11 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         focused = null;
         if (comparison == null) { dirty = true; return; }
         frame = comparison.Bounds;
-        targetPivot = frame.center;
+        home = comparison.Pivot;
+        targetPivot = home;
         targetYaw = 180f;
         targetPitch = 6f;
-        targetDistance = Fit(frame);
+        targetDistance = FitFrame();
         if (intro)
         {
             // From a little further, turned a quarter, so the avatar swings round to face the viewer.
@@ -174,8 +178,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         focused = part;
         if (part == null)
         {
-            targetPivot = frame.center;
-            targetDistance = Fit(frame);
+            targetPivot = home;
+            targetDistance = FitFrame();
         }
         else
         {
@@ -183,9 +187,9 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
             // Never so close that the change loses its surroundings.
             bounds.Expand(Mathf.Max(frame.size.magnitude * 0.06f, 0.02f));
             targetPivot = bounds.center;
-            targetDistance = Mathf.Max(Fit(bounds), Fit(frame) * 0.18f);
+            targetDistance = Mathf.Max(Fit(bounds), FitFrame() * 0.18f);
             // Face the change: from the side it is on.
-            Vector3 direction = bounds.center - frame.center;
+            Vector3 direction = bounds.center - home;
             direction.y = 0f;
             if (direction.sqrMagnitude > frame.extents.x * frame.extents.x * 0.05f)
                 targetYaw = Mathf.Atan2(-direction.x, -direction.z) * Mathf.Rad2Deg + 360f * Mathf.Round((targetYaw - Mathf.Atan2(-direction.x, -direction.z) * Mathf.Rad2Deg) / 360f);
@@ -197,14 +201,23 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
     public void ResetView()
     {
         focused = null;
-        targetPivot = frame.center;
-        targetDistance = Fit(frame);
+        targetPivot = home;
+        targetDistance = FitFrame();
         targetPitch = 6f;
         targetYaw = 180f + 360f * Mathf.Round((targetYaw - 180f) / 360f);
         dirty = true;
     }
 
     private void Pulse() => pulseStart = EditorApplication.timeSinceStartup;
+
+    // The whole avatar seen from its pivot: the frame made symmetric around it, so nothing leaves the view as it turns.
+    private float FitFrame()
+    {
+        var around = frame;
+        around.Encapsulate(2f * home - frame.min);
+        around.Encapsulate(2f * home - frame.max);
+        return Fit(around);
+    }
 
     private static float Fit(Bounds bounds)
     {
@@ -274,7 +287,7 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
     private void OnWheel(WheelEvent evt)
     {
         if (comparison == null) return;
-        float fit = Fit(frame);
+        float fit = FitFrame();
         targetDistance = Mathf.Clamp(targetDistance * Mathf.Exp(evt.delta.y * 0.06f), fit * 0.06f, fit * 3f);
         dirty = true;
         evt.StopPropagation();
@@ -407,14 +420,21 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
 
         preview.DrawMesh(quad, Matrix4x4.identity, backdrop, 0);
         float floorSize = Mathf.Max(frame.size.x, frame.size.z, frame.size.y * 0.35f) * 2.6f;
-        preview.DrawMesh(quad, Matrix4x4.TRS(new Vector3(frame.center.x, frame.min.y, frame.center.z), Quaternion.identity, new Vector3(floorSize, 1f, floorSize)), floor, 0);
+        preview.DrawMesh(quad, Matrix4x4.TRS(new Vector3(home.x, frame.min.y, home.z), Quaternion.identity, new Vector3(floorSize, 1f, floorSize)), floor, 0);
 
         bool textured = look == CompareLook.Textured;
+        bool anyChange = comparison.Parts.Any(p => p.Changed);
         foreach (var part in comparison.Parts)
         {
             var mesh = before ? part.BeforeMesh : part.AfterMesh;
             if (mesh == null) continue;
             var materials = before ? part.BeforeMaterials : part.AfterMaterials;
+            // With the changes shown, what the version leaves as it is turns see-through, so it reads as untouched.
+            if (look == CompareLook.Changes && part.Change == Orbiters.Toolkit.Editor.Meshes.PartChange.Same && anyChange)
+            {
+                for (int sub = 0; sub < mesh.subMeshCount; sub++) preview.DrawMesh(mesh, Matrix4x4.identity, unchanged, sub);
+                continue;
+            }
             block.Clear();
             block.SetFloat(HeatId, look == CompareLook.Changes ? 1f : 0f);
             block.SetFloat(PulseId, pulse);
@@ -470,6 +490,7 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         preview.camera.allowHDR = false;
         clay = NewMaterial("Hidden/MCB/VersionCompare", -1);
         ghost = NewMaterial("Hidden/MCB/VersionCompareGhost", -1);
+        unchanged = NewMaterial("Hidden/MCB/VersionCompareUnchanged", -1);
         backdrop = NewMaterial("Hidden/MCB/VersionCompareStage", (int)RenderQueue.Background);
         backdrop.SetFloat("_Mode", 0f);
         floor = NewMaterial("Hidden/MCB/VersionCompareStage", (int)RenderQueue.Transparent - 10);
@@ -506,8 +527,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
     {
         ticker?.Pause();
         if (preview != null) { preview.Cleanup(); preview = null; }
-        foreach (var material in new[] { clay, ghost, backdrop, floor }) if (material != null) UnityEngine.Object.DestroyImmediate(material);
-        clay = ghost = backdrop = floor = null;
+        foreach (var material in new[] { clay, ghost, unchanged, backdrop, floor }) if (material != null) UnityEngine.Object.DestroyImmediate(material);
+        clay = ghost = unchanged = backdrop = floor = null;
         if (quad != null) UnityEngine.Object.DestroyImmediate(quad);
         quad = null;
         foreach (var texture in new[] { beforeTexture, afterTexture })
@@ -587,6 +608,10 @@ internal sealed class CompareGlyph : VisualElement
                 painter.Arc(P(12f, 12f), 8.5f * scale, 90f, 270f);
                 painter.ClosePath();
                 painter.Fill();
+                painter.BeginPath();
+                painter.MoveTo(P(12f, 1.5f));
+                painter.LineTo(P(12f, 22.5f));
+                painter.Stroke();
                 break;
         }
     }

@@ -682,18 +682,18 @@ public partial class VersionListDrawer
     {
         var row = new VisualElement();
         row.AddToClassList("mcb-version-mesh-row");
-        var chip = CreateChip("Mesh updated", new Color(0.45f, 0.85f, 1f), lowercase: false);
-        chip.AddToClassList("mcb-version-mesh-row__chip");
-        row.Add(chip);
+        var status = new Label("Mesh updated");
+        status.AddToClassList("mcb-version-mesh-row__status");
+        row.Add(status);
 
         var button = new Button { tooltip = "See in 3D what this version changes on your avatar, before applying it." };
         button.AddToClassList("mcb-version-mesh-row__button");
-        var icon = new CompareGlyph(CompareGlyph.Kind.Compare);
-        icon.AddToClassList("mcb-version-mesh-row__icon");
-        button.Add(icon);
         var label = new Label("See differences") { pickingMode = PickingMode.Ignore };
         label.AddToClassList("mcb-version-mesh-row__label");
         button.Add(label);
+        var icon = new CompareGlyph(CompareGlyph.Kind.Compare);
+        icon.AddToClassList("mcb-version-mesh-row__icon");
+        button.Add(icon);
         button.RegisterCallback<PointerDownEvent>(_ => button.AddToClassList("mcb-version-mesh-row__button--pressed"), TrickleDown.TrickleDown);
         button.RegisterCallback<PointerUpEvent>(_ => button.RemoveFromClassList("mcb-version-mesh-row__button--pressed"), TrickleDown.TrickleDown);
         button.RegisterCallback<PointerLeaveEvent>(_ => button.RemoveFromClassList("mcb-version-mesh-row__button--pressed"));

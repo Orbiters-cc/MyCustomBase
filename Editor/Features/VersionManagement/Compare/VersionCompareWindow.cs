@@ -417,6 +417,7 @@ internal sealed class VersionCompareWindow : EditorWindow
         legendKinds.Clear();
         if (comparison.Parts.Any(p => p.Change == PartChange.Added)) legendKinds.Add(LegendKind("New part", "mcb-cmp-swatch--added"));
         if (comparison.Parts.Any(p => p.Change == PartChange.Removed)) legendKinds.Add(LegendKind("Removed part", "mcb-cmp-swatch--removed"));
+        if (comparison.Parts.Any(p => p.Change == PartChange.Same)) legendKinds.Add(LegendKind("See-through: unchanged", "mcb-cmp-swatch--unchanged"));
         RefreshLegend();
     }
 

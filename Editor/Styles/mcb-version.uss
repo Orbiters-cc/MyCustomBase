@@ -410,34 +410,38 @@
 .mcb-version-mesh-row {
     flex-direction: row;
     align-items: center;
-    flex-wrap: wrap;
+    align-self: flex-start;
+    height: 34px;
     margin-bottom: 10px;
+    padding: 3px 3px 3px 14px;
+    border-radius: 17px;
+    background-color: #161616;
 }
 
-.mcb-version-mesh-row .mcb-version-mesh-row__chip {
-    margin-left: 0;
-    margin-right: 8px;
+.mcb-version-mesh-row__status {
+    margin: 0 12px 0 0;
+    padding: 0;
+    color: #1fd67a;
+    font-size: 12px;
 }
 
 .mcb-version-mesh-row__button {
     flex-direction: row;
     align-items: center;
-    height: 24px;
+    height: 28px;
     margin: 0;
-    padding-left: 8px;
-    padding-right: 12px;
-    border-width: 1px;
-    border-radius: 12px;
-    border-color: rgba(255, 255, 255, 0.16);
-    background-color: rgba(255, 255, 255, 0.06);
-    transition-property: background-color, border-color, scale;
-    transition-duration: 0.14s, 0.14s, 0.2s;
-    transition-timing-function: ease-out, ease-out, ease-out-back;
+    padding-left: 12px;
+    padding-right: 10px;
+    border-width: 0;
+    border-radius: 14px;
+    background-color: #2a2a2a;
+    transition-property: background-color, scale;
+    transition-duration: 0.14s, 0.2s;
+    transition-timing-function: ease-out, ease-out-back;
 }
 
 .mcb-version-mesh-row__button:hover {
-    background-color: rgba(0, 218, 109, 0.14);
-    border-color: rgba(0, 218, 109, 0.6);
+    background-color: #363636;
 }
 
 .mcb-version-mesh-row__button--pressed {
@@ -445,18 +449,17 @@
 }
 
 .mcb-version-mesh-row__icon {
-    width: 14px;
-    height: 14px;
-    margin-right: 6px;
-    --glyph-color: #e6e6e6;
+    width: 16px;
+    height: 16px;
+    margin-left: 10px;
+    --glyph-color: #f2f2f2;
 }
 
 .mcb-version-mesh-row__label {
     margin: 0;
     padding: 0;
-    color: #ececec;
-    font-size: 11px;
-    -unity-font-style: bold;
+    color: #f2f2f2;
+    font-size: 12px;
 }
 
 .mcb-version-edit {

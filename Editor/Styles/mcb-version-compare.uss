@@ -363,6 +363,12 @@
     background-color: #ff5c61;
 }
 
+.mcb-cmp-swatch--unchanged {
+    background-color: rgba(200, 205, 220, 0.25);
+    border-width: 1px;
+    border-color: rgba(220, 225, 240, 0.7);
+}
+
 .mcb-cmp-stage__hint {
     position: absolute;
     left: 50%;

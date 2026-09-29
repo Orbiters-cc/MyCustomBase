@@ -233,6 +233,7 @@ internal sealed class VersionMeshComparison : IDisposable
     private float progress;
 
     private readonly List<PartSources> sources = new List<PartSources>();
+    private Vector3? hips;
     private bool contextBuilt;
 
     public readonly CustomBaseVersion Version;
@@ -242,6 +243,8 @@ internal sealed class VersionMeshComparison : IDisposable
     /// <summary>Whether the avatar now differs from its original model (a version is applied).</summary>
     public bool AvatarHasVersion { get; private set; }
     public Bounds Bounds { get; private set; }
+    /// <summary>Where the view turns around: the avatar's hips, or the middle of its meshes when it has none.</summary>
+    public Vector3 Pivot { get; private set; }
     /// <summary>The largest change of any part: the red end of the heat scale.</summary>
     public float MaxDistance { get; private set; }
     public float Threshold { get; private set; }
@@ -375,6 +378,7 @@ internal sealed class VersionMeshComparison : IDisposable
         Report(0.62f, "Matching the avatar's meshes…");
         yield return null;
         Gather(root, targets, cachedPayloads, prepared);
+        hips = FindHips(root);
         AvatarHasVersion = sources.Any(s => s.Now != s.Original);
 
         var compare = Run(reference);
@@ -403,6 +407,7 @@ internal sealed class VersionMeshComparison : IDisposable
             part.BeforeVertices = part.BeforeNormals = part.AfterVertices = part.AfterNormals = null;
             part.BeforeHeat = part.AfterHeat = null;
         }
+        Pivot = hips ?? Bounds.center;
         Report(1f, "Ready");
         Ready = true;
     }
@@ -423,6 +428,16 @@ internal sealed class VersionMeshComparison : IDisposable
             break;
         }
         return root.worldToLocalMatrix * fbxRoot.localToWorldMatrix * Matrix4x4.Scale(Vector3.one * scale);
+    }
+
+    // The humanoid's hips, else a bone named Hips, in the avatar root's space.
+    private static Vector3? FindHips(Transform root)
+    {
+        var animator = root.GetComponentInChildren<Animator>(true);
+        Transform bone = animator != null && animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.Hips) : null;
+        if (bone == null)
+            bone = root.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => string.Equals(t.name, "Hips", StringComparison.OrdinalIgnoreCase));
+        return bone != null ? root.InverseTransformPoint(bone.position) : (Vector3?)null;
     }
 
     private static byte[] DecodeHdiff(VersionActions.VersionModelPatch patch)
