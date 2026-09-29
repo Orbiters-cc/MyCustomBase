@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+﻿#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -660,6 +660,11 @@ public class MCBEditor : UnityEditor.Editor
         if (GUILayout.Button("Blendshape Links", EditorStyles.toolbarButton, GUILayout.Width(126f)))
         {
             BlendShapeLinksDebugWindow.OpenWindow();
+        }
+
+        if (GUILayout.Button(new GUIContent("About", "MCB's version, license and the third-party software it ships with."), EditorStyles.toolbarButton, GUILayout.Width(70f)))
+        {
+            MCBAboutWindow.Open();
         }
 
         GUILayout.FlexibleSpace();

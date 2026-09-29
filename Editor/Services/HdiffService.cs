@@ -138,6 +138,23 @@ public static class HdiffService
                 newSize = (ulong)Math.Max(0, outputInfo.Length);
             }
 
+            // "-d" skips HDiff's own check while diffing: apply the patch once here, so a broken one never ships.
+            string roundTripPath = CreateTempWorkPath(".fbx");
+            try
+            {
+                HdiffPatchResult check = MCBHdiffPatchWrapper.ApplyPatch(baseFbxPath, tempHdiffPath, roundTripPath);
+                if (check != HdiffPatchResult.HPATCH_SUCCESS ||
+                    !string.Equals(fileManagerService.CalculateFileHash(roundTripPath), fileManagerService.CalculateFileHash(modifiedFbxPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    failureReason = "HDiff patch did not reproduce the modified FBX (" + check + ").";
+                    return false;
+                }
+            }
+            finally
+            {
+                DeleteTempFile(roundTripPath);
+            }
+
             byte[] baseData = File.ReadAllBytes(baseFbxPath);
             byte[] hdiffData = File.ReadAllBytes(tempHdiffPath);
             byte[] encryptedData = fileManagerService.XorTransform(baseData, hdiffData);
@@ -465,14 +482,14 @@ internal static class MCBHdiffPatchTrust
 internal static class MCBHdiffPatchWrapper
 {
 #if UNITY_EDITOR_WIN
+    // LOAD_WITH_ALTERED_SEARCH_PATH: dependencies resolve next to the DLL, without changing the process-wide search path.
+    private const uint LoadWithAlteredSearchPath = 0x00000008;
+
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern IntPtr LoadLibrary(string lpFileName);
+    private static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint dwFlags);
 
     [DllImport("kernel32", SetLastError = true)]
     private static extern bool FreeLibrary(IntPtr hModule);
-
-    [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool SetDllDirectory(string lpPathName);
 
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
     private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
@@ -483,14 +500,16 @@ internal static class MCBHdiffPatchWrapper
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void HpatchStringOutput(string str);
 
-    [DllImport("hdiffz", EntryPoint = "RegisterDelegate")]
-    private static extern void RegisterDelegateHdiffz(HdiffStringOutput del);
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate void RegisterDelegateHdiffzNative(HdiffStringOutput del);
 
-    [DllImport("hdiffz", EntryPoint = "RegisterErrorDelegate")]
-    private static extern void RegisterErrorDelegateHdiffz(HdiffStringOutput del);
-
-    [DllImport("hdiffz")]
-    private static extern int hdiff_unity(string oldFileName, string newFileName, string outDiffFileName, string[] diffOptions, int diffOptionSize);
+    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Ansi)]
+    private delegate int HDiffUnityNative(
+        string oldFileName,
+        string newFileName,
+        string outDiffFileName,
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] diffOptions,
+        int diffOptionSize);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate void RegisterDelegateHpatchzNative(HpatchStringOutput del);
@@ -518,6 +537,9 @@ internal static class MCBHdiffPatchWrapper
     private static IntPtr s_hdiffzHandle = IntPtr.Zero;
     private static IntPtr s_hpatchzHandle = IntPtr.Zero;
     private static IntPtr s_hdiffinfoHandle = IntPtr.Zero;
+    private static RegisterDelegateHdiffzNative s_registerDelegateHdiffz;
+    private static RegisterDelegateHdiffzNative s_registerErrorDelegateHdiffz;
+    private static HDiffUnityNative s_hdiffUnity;
     private static RegisterDelegateHpatchzNative s_registerDelegateHpatchz;
     private static RegisterErrorDelegateHpatchzNative s_registerErrorDelegateHpatchz;
     private static HPatchUnityNative s_hpatchUnity;
@@ -526,8 +548,18 @@ internal static class MCBHdiffPatchWrapper
     private static Action<string> s_hdiffErrorCallback;
     private static Action<string> s_hpatchLogCallback;
     private static Action<string> s_hpatchErrorCallback;
+    // The native side keeps these pointers after registration: they live as long as the domain, so a later call can
+    // never reach a collected delegate. The wrappers forward to the callbacks of the running call, if any.
+    private static readonly HdiffStringOutput s_hdiffLog = HdiffLogWrapper;
+    private static readonly HdiffStringOutput s_hdiffError = HdiffErrorWrapper;
+    private static readonly HpatchStringOutput s_hpatchLog = HpatchLogWrapper;
+    private static readonly HpatchStringOutput s_hpatchError = HpatchErrorWrapper;
 
-    private const string DefaultDiffOptions = "-m-6 -SD -c-zstd-21-24 -d";
+    // In-memory matching gives the smallest patches but needs roughly the new file plus five times the old one in RAM.
+    private const string InMemoryDiffOptions = "-m-6 -SD -c-zstd-21-24 -d";
+    // Stream matching works in blocks with far less memory, for files where the in-memory estimate is too large.
+    private const string StreamDiffOptions = "-s-64 -SD -c-zstd-21-24 -d";
+    private const long InMemoryBudgetBytes = 3L * 1024 * 1024 * 1024;
 #endif
 
     public static void EnsureAvailable()
@@ -546,7 +578,8 @@ internal static class MCBHdiffPatchWrapper
         string modifiedFbxPath,
         string hdiffOutputPath,
         Action<string> logCallback = null,
-        Action<string> errorCallback = null)
+        Action<string> errorCallback = null,
+        bool streamOnly = false)
     {
 #if UNITY_EDITOR_WIN
         EnsureDllsLoaded();
@@ -555,18 +588,20 @@ internal static class MCBHdiffPatchWrapper
         s_hdiffErrorCallback = errorCallback;
         try
         {
-            if (logCallback != null)
+            long estimate = 5L * new FileInfo(baseFbxPath).Length + new FileInfo(modifiedFbxPath).Length;
+            var result = streamOnly || estimate > InMemoryBudgetBytes ? HdiffDiffResult.HDIFF_MEM_ERROR : Diff(InMemoryDiffOptions);
+            if (result == HdiffDiffResult.HDIFF_MEM_ERROR)
             {
-                RegisterDelegateHdiffz(HdiffLogWrapper);
+                if (File.Exists(hdiffOutputPath)) File.Delete(hdiffOutputPath);
+                result = Diff(StreamDiffOptions);
             }
+            return result;
 
-            if (errorCallback != null)
+            HdiffDiffResult Diff(string optionLine)
             {
-                RegisterErrorDelegateHdiffz(HdiffErrorWrapper);
+                string[] options = optionLine.Split(' ');
+                return (HdiffDiffResult)s_hdiffUnity(baseFbxPath, modifiedFbxPath, hdiffOutputPath, options, options.Length);
             }
-
-            string[] options = DefaultDiffOptions.Split(' ');
-            return (HdiffDiffResult)hdiff_unity(baseFbxPath, modifiedFbxPath, hdiffOutputPath, options, options.Length);
         }
         finally
         {
@@ -592,16 +627,6 @@ internal static class MCBHdiffPatchWrapper
         s_hpatchErrorCallback = errorCallback;
         try
         {
-            if (logCallback != null)
-            {
-                s_registerDelegateHpatchz(HpatchLogWrapper);
-            }
-
-            if (errorCallback != null)
-            {
-                s_registerErrorDelegateHpatchz(HpatchErrorWrapper);
-            }
-
             return (HdiffPatchResult)s_hpatchUnity(0, new string[0], baseFbxPath, hdiffPath, outputFbxPath);
         }
         finally
@@ -659,11 +684,13 @@ internal static class MCBHdiffPatchWrapper
                 s_hdiffinfoHandle = IntPtr.Zero;
             }
 
+            s_registerDelegateHdiffz = null;
+            s_registerErrorDelegateHdiffz = null;
+            s_hdiffUnity = null;
             s_registerDelegateHpatchz = null;
             s_registerErrorDelegateHpatchz = null;
             s_hpatchUnity = null;
             s_hdiffGetInfo = null;
-            SetDllDirectory(null);
             s_dllsLoaded = false;
         }
         catch (Exception ex)
@@ -690,8 +717,6 @@ internal static class MCBHdiffPatchWrapper
         string hpatchzPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hpatchz.dll");
         string hdiffinfoPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hdiffinfo.dll");
 
-        SetDllDirectory(libraryDir);
-
         if (s_hdiffzHandle == IntPtr.Zero)
         {
             s_hdiffzHandle = LoadNativeLibrary(hdiffzPath);
@@ -708,13 +733,18 @@ internal static class MCBHdiffPatchWrapper
         }
 
         BindRuntimeExports();
+        // Registered once per load: the libraries then always call the long-lived wrappers above.
+        s_registerDelegateHdiffz(s_hdiffLog);
+        s_registerErrorDelegateHdiffz(s_hdiffError);
+        s_registerDelegateHpatchz(s_hpatchLog);
+        s_registerErrorDelegateHpatchz(s_hpatchError);
         s_dllsLoaded = true;
     }
 
     private static IntPtr LoadNativeLibrary(string path)
     {
         string fullPath = Path.GetFullPath(path);
-        IntPtr handle = LoadLibrary(fullPath);
+        IntPtr handle = LoadLibraryEx(fullPath, IntPtr.Zero, LoadWithAlteredSearchPath);
         if (handle == IntPtr.Zero)
         {
             int error = Marshal.GetLastWin32Error();
@@ -726,6 +756,21 @@ internal static class MCBHdiffPatchWrapper
 
     private static void BindRuntimeExports()
     {
+        if (s_registerDelegateHdiffz == null)
+        {
+            s_registerDelegateHdiffz = GetRequiredExport<RegisterDelegateHdiffzNative>(s_hdiffzHandle, "RegisterDelegate");
+        }
+
+        if (s_registerErrorDelegateHdiffz == null)
+        {
+            s_registerErrorDelegateHdiffz = GetRequiredExport<RegisterDelegateHdiffzNative>(s_hdiffzHandle, "RegisterErrorDelegate");
+        }
+
+        if (s_hdiffUnity == null)
+        {
+            s_hdiffUnity = GetRequiredExport<HDiffUnityNative>(s_hdiffzHandle, "hdiff_unity");
+        }
+
         if (s_registerDelegateHpatchz == null)
         {
             s_registerDelegateHpatchz = GetRequiredExport<RegisterDelegateHpatchzNative>(s_hpatchzHandle, "RegisterDelegate");

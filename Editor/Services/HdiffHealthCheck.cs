@@ -53,20 +53,26 @@ public static class HdiffHealthCheck
             File.WriteAllBytes(basePath, baseBytes);
             File.WriteAllBytes(modifiedPath, modifiedBytes);
 
-            HdiffDiffResult diffResult = MCBHdiffPatchWrapper.CreateDiff(basePath, modifiedPath, hdiffPath);
-            ThrowIf(diffResult != HdiffDiffResult.HDIFF_SUCCESS, "Synthetic HDiff creation failed: " + diffResult);
-
-            var fileManager = new FileManagerService();
-            File.WriteAllBytes(binPath, fileManager.XorTransform(baseBytes, File.ReadAllBytes(hdiffPath)));
-            HdiffService.ApplyXorEncryptedPatchToTempFbx(basePath, binPath, outputPath, fileManager);
-
-            byte[] outputBytes = File.ReadAllBytes(outputPath);
-            ThrowIf(outputBytes.Length != modifiedBytes.Length, "Synthetic HDiff output length mismatch.");
-            for (int i = 0; i < outputBytes.Length; i++)
+            // In-memory matching, then the stream matching used for very large files.
+            foreach (bool stream in new[] { false, true })
             {
-                if (outputBytes[i] != modifiedBytes[i])
+                string mode = stream ? "stream" : "in-memory";
+                if (File.Exists(outputPath)) File.Delete(outputPath);
+                HdiffDiffResult diffResult = MCBHdiffPatchWrapper.CreateDiff(basePath, modifiedPath, hdiffPath, streamOnly: stream);
+                ThrowIf(diffResult != HdiffDiffResult.HDIFF_SUCCESS, "Synthetic " + mode + " HDiff creation failed: " + diffResult);
+
+                var fileManager = new FileManagerService();
+                File.WriteAllBytes(binPath, fileManager.XorTransform(baseBytes, File.ReadAllBytes(hdiffPath)));
+                HdiffService.ApplyXorEncryptedPatchToTempFbx(basePath, binPath, outputPath, fileManager);
+
+                byte[] outputBytes = File.ReadAllBytes(outputPath);
+                ThrowIf(outputBytes.Length != modifiedBytes.Length, "Synthetic " + mode + " HDiff output length mismatch.");
+                for (int i = 0; i < outputBytes.Length; i++)
                 {
-                    throw new InvalidDataException("Synthetic HDiff output byte mismatch at " + i + ".");
+                    if (outputBytes[i] != modifiedBytes[i])
+                    {
+                        throw new InvalidDataException("Synthetic " + mode + " HDiff output byte mismatch at " + i + ".");
+                    }
                 }
             }
         }

@@ -1,0 +1,32 @@
+/* About MCB: the My Avatar / MCB look. */
+.mcb-about { background-color: #1f1f1f; color: #d0d0d0; font-size: 11px; }
+.mcb-about .unity-label { margin: 0; padding: 0; }
+.mcb-about .mcb-about__scroll { flex-grow: 1; }
+.mcb-about .mcb-about__content { padding: 16px 16px 14px 16px; }
+
+.mcb-about .mcb-about__header { align-items: center; padding: 18px 16px 16px 16px; margin-bottom: 18px; border-radius: 16px; background-color: #242424; border-width: 1px; border-color: rgba(255, 255, 255, 0.05); }
+.mcb-about .mcb-about__logo { width: 120px; height: 72px; margin-bottom: 10px; }
+.mcb-about .mcb-about__name { color: #ffffff; font-size: 16px; -unity-font-style: bold; }
+.mcb-about .mcb-about__meta { margin-top: 4px; color: #8f8f8f; font-size: 11px; }
+.mcb-about .mcb-about__button.mcb-about__license { margin-top: 12px; }
+
+.mcb-about .mcb-about__section { color: #ffffff; font-size: 13px; -unity-font-style: bold; }
+.mcb-about .mcb-about__caption { margin: 3px 0 10px 0; color: #8f8f8f; font-size: 11px; white-space: normal; }
+
+.mcb-about .mcb-about__card { margin-bottom: 6px; border-radius: 10px; background-color: #242424; border-width: 1px; border-color: rgba(255, 255, 255, 0.04); transition-property: background-color, border-color; transition-duration: 0.15s; }
+.mcb-about .mcb-about__card-head { flex-direction: row; align-items: center; padding: 9px 8px 9px 12px; border-radius: 10px; cursor: link; }
+.mcb-about .mcb-about__card-head:hover { background-color: #2a2a2a; }
+.mcb-about .mcb-about__card--open { background-color: #272727; border-color: rgba(0, 218, 109, 0.25); }
+.mcb-about .mcb-about__card-texts { flex-grow: 1; flex-shrink: 1; min-width: 0; margin-right: 8px; }
+.mcb-about .mcb-about__card-title { color: #f2f2f2; font-size: 12px; -unity-font-style: bold; }
+.mcb-about .mcb-about__card-intro { margin-top: 2px; color: #8f8f8f; font-size: 10px; white-space: normal; }
+.mcb-about .mcb-about__chip { flex-shrink: 0; padding: 1px 8px; border-radius: 9px; font-size: 10px; -unity-font-style: bold; color: #00DA6D; background-color: rgba(0, 218, 109, 0.12); }
+.mcb-about .mcb-about__license-text { margin: 0 12px 12px 12px; padding: 10px 12px; border-radius: 8px; background-color: #1a1a1a; color: #bdbdbd; font-size: 10px; white-space: normal; opacity: 0; translate: 0 -4px; transition-property: opacity, translate; transition-duration: 0.2s; transition-timing-function: ease-out; }
+.mcb-about .mcb-about__license-text--shown { opacity: 1; translate: 0 0; }
+
+.mcb-about .mcb-about__button { height: 26px; min-height: 26px; margin: 0; padding: 0 14px; border-width: 0; border-radius: 13px; background-color: #3a3a3a; color: #e6e6e6; font-size: 11px; cursor: link; transition-property: scale, background-color; transition-duration: 0.1s; }
+.mcb-about .mcb-about__button:hover { background-color: #4a4a4a; }
+.mcb-about .mcb-about__button--pressed { scale: 0.95 0.95; }
+.mcb-about .mcb-about__button.mcb-about__link { width: 26px; padding: 0; margin-left: 6px; background-color: rgba(0, 0, 0, 0); color: #9a9a9a; }
+.mcb-about .mcb-about__button.mcb-about__link:hover { background-color: rgba(255, 255, 255, 0.08); color: #ffffff; }
+.mcb-about .mcb-about__footer { flex-direction: row; justify-content: center; margin-top: 12px; }
