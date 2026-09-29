@@ -4,6 +4,18 @@
 
 MCB editor UI is transitioning to Unity UI Toolkit with the shared styled surfaces used by the gallery and account modules. New UI elements and changes to existing UI should be built with UI Toolkit and the package USS style sheets instead of adding new IMGUI blocks.
 
+## About and third-party notices
+
+**About** in the bottom toolbar (next to Advanced Options and Blendshape Links) shows MCB's version and license and the
+third-party software it ships with (HDiffPatch with libdivsufsort, CocoTools, YUCP Dev Tools, Zstandard, zlib, bzip2,
+the LZMA SDK and LZ4), each with its license. The texts live in `Editor/Plugins/Hdiff/THIRD_PARTY_NOTICES.md`.
+
+## Small accessories on the body (beta)
+
+Advanced Options › Blendshape processing › **Keep Small Accessories On The Body (beta)** adds Toolkit's Follow Body
+Blendshapes to the avatar root: piercings, studs and other small rigid accessories on the skin move and tilt with the
+body's blendshapes (muscles, versions) at upload and in Play Mode.
+
 ## Custom base FBX backup invariant
 
 MCB custom base versions are applied over the original/default base FBX. If the default base is `A` and custom bases are `B` or `C`, then `*.fbx.old` is always the preserved copy of `A`.

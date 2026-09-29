@@ -108,6 +108,34 @@ public class AdvancedModeModule
         }
     }
 
+    // Small accessories (piercings, studs) follow the body's blendshapes at build: Toolkit's Follow Body Blendshapes on
+    // the avatar root, in "small accessories" mode. The toggle adds or removes that component.
+    private void DrawKeepAccessoriesOnBody()
+    {
+        var root = editor.customBaseTarget.GetComponentInParent<VRC.SDK3.Avatars.Components.VRCAvatarDescriptor>(true);
+        var avatar = root != null ? root.gameObject : editor.customBaseTarget.transform.root.gameObject;
+        var follow = avatar.GetComponent<Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow>();
+        bool on = follow != null && follow.scope == Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow.Scope.SmallAccessories;
+        EditorGUI.BeginChangeCheck();
+        bool wanted = EditorGUILayout.Toggle(
+            new GUIContent(
+                "Keep Small Accessories On The Body (beta)",
+                "Piercings, studs and other small rigid accessories on the skin move and tilt with the body's blendshapes (muscles, breasts, versions) when the avatar is built. Adds Orbiters Follow Body Blendshapes to the avatar root."),
+            on);
+        if (!EditorGUI.EndChangeCheck()) return;
+        if (wanted)
+        {
+            if (follow == null) follow = Undo.AddComponent<Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow>(avatar);
+            else Undo.RecordObject(follow, "Keep accessories on the body");
+            follow.scope = Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow.Scope.SmallAccessories;
+            EditorUtility.SetDirty(follow);
+        }
+        else if (follow != null)
+        {
+            Undo.DestroyObjectImmediate(follow);
+        }
+    }
+
     public void DrawWindowContents()
     {
         EditorGUILayout.Space();
@@ -320,6 +348,7 @@ public class AdvancedModeModule
                         EditorUtility.SetDirty(editor.customBaseTarget);
                     }
 
+                    DrawKeepAccessoriesOnBody();
                     EditorGUILayout.Space();
                 }
                 

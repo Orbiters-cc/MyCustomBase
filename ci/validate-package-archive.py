@@ -40,6 +40,7 @@ REQUIRED_COMPRESSION_FILES = (
 )
 ALLOWED_EXTERNAL_ASMDEF_REFERENCES = {
     "Orbiters.Toolkit",
+    "Orbiters.Toolkit.VRChat",
     "Orbiters.Toolkit.Editor",
     "Orbiters.Toolkit.Editor.VRChat",
     "Orbiters.Toolkit.Editor.Vpm",
