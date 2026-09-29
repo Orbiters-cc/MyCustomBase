@@ -601,16 +601,20 @@ internal sealed class CompareGlyph : VisualElement
                 painter.Fill();
                 break;
             case Kind.Compare:
-                painter.BeginPath();
-                painter.Arc(P(12f, 12f), 8.5f * scale, 0f, 360f);
-                painter.Stroke();
+                // Before as a solid half, after as a dashed one, split by the line of the slider.
                 painter.BeginPath();
                 painter.Arc(P(12f, 12f), 8.5f * scale, 90f, 270f);
-                painter.ClosePath();
-                painter.Fill();
+                painter.Stroke();
+                for (float start = 285f; start < 435f; start += 37.5f)
+                {
+                    painter.BeginPath();
+                    painter.Arc(P(12f, 12f), 8.5f * scale, start, start + 18f);
+                    painter.Stroke();
+                }
+                painter.lineWidth = 2.4f * scale;
                 painter.BeginPath();
-                painter.MoveTo(P(12f, 1.5f));
-                painter.LineTo(P(12f, 22.5f));
+                painter.MoveTo(P(12f, 2f));
+                painter.LineTo(P(12f, 22f));
                 painter.Stroke();
                 break;
         }
