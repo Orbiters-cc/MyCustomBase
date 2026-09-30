@@ -327,6 +327,7 @@ public class MCBEditor : UnityEditor.Editor
 
     public void RefreshUiToolkitSections()
     {
+        SyncAppliedCustomBaseName();
         if (uiToolkitRoot == null)
         {
             if (creatorWindowAsset != null) creatorModule?.RefreshUIToolkit();
@@ -1507,6 +1508,17 @@ public class MCBEditor : UnityEditor.Editor
         MCBLogger.Log($"[MCBEditor] Synced {baseFbxFilesProp.arraySize} target FBX file(s) from selected custom base source ModelFiles.");
         versionModule?.actions?.UpdateCurrentBaseFbxHash();
         return true;
+    }
+
+    // Other tools (My Avatar) show the applied custom base by name: keep it from the gallery's asset once it is known.
+    private void SyncAppliedCustomBaseName()
+    {
+        var asset = GetSelectedAsset();
+        if (customBaseTarget == null || asset == null || asset.id <= 0 || asset.id != customBaseTarget.appliedCustomBaseAssetId ||
+            string.IsNullOrWhiteSpace(asset.name) || asset.name == customBaseTarget.appliedCustomBaseName) return;
+        customBaseTarget.appliedCustomBaseName = asset.name;
+        EditorUtility.SetDirty(customBaseTarget);
+        MCBReFitIntegration.NotifyCustomBaseChanged(customBaseTarget);
     }
 
     public string GetSelectedAssetDisplayName()

@@ -1,8 +1,11 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using NUnit.Framework;
+using Orbiters.Toolkit.Editor.Refit;
+using Orbiters.Toolkit.Editor.VRChat.Refit;
+using Orbiters.Toolkit.VRChat;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -35,11 +38,10 @@ public class MCBRefitVersionCacheTests
             renderer.bones = new[] { bone };
             renderer.rootBone = bone;
             renderer.SetBlendShapeWeight(0, 17);
-            var capture = typeof(MCBReFitIntegration).GetMethod("CaptureRendererState", BindingFlags.Static | BindingFlags.NonPublic);
             var versionB = new CustomBaseVersion { assetId = 999995, version = "0.5.2", defaultAviVersion = "1.0.0" };
             var versionC = new CustomBaseVersion { assetId = 999995, version = "0.5.3", defaultAviVersion = "1.0.0" };
             mcb.appliedCustomBaseVersion = versionB;
-            var entry = (RefitAppliedMeshEntry)capture.Invoke(null, new object[] { root.transform, "Jacket", renderer });
+            var originalState = RefitRecords.Capture(root.transform, renderer);
             var fitted = UnityEngine.Object.Instantiate(original);
             fitted.vertices = new[] { Vector3.forward, Vector3.right, Vector3.up };
             AssetDatabase.CreateAsset(fitted, fixture + "/fitted.asset");
@@ -47,11 +49,11 @@ public class MCBRefitVersionCacheTests
             renderer.localBounds = new Bounds(Vector3.one, Vector3.one * 3);
             renderer.SetBlendShapeWeight(0, 42);
             accessory.transform.localPosition = Vector3.right;
-            entry.refitMesh = fitted;
-            mcb.appliedRefits.Add(entry);
+            RefitRecords.Register(renderer, originalState, fitted, fixture + "/fitted.asset", null, new List<RefitShape>(),
+                OrbitersRefit.FitKind.Fitted, "b", "B", "MCB");
             var metadataType = AppDomain.CurrentDomain.GetAssemblies()
                 .Select(a => a.GetType("Orbiters.ReFit.ReFitGeneratedAssetMetadata")).FirstOrDefault(t => t != null);
-            if (metadataType != null)
+            if (metadataType != null && RefitEngine.Available)
             {
                 var metadata = accessory.AddComponent(metadataType);
                 var dataField = metadataType.GetField("data");
@@ -63,6 +65,7 @@ public class MCBRefitVersionCacheTests
             cacheRoot = "Assets/MCB/refits/" + mcb.mcbComponentId;
             var saved = renderer.sharedMesh;
             Assert.That(AssetDatabase.GetAssetPath(saved), Does.StartWith(MCBReFitIntegration.GetVersionRefitFolder(mcb, versionB)));
+            Assert.That(accessory.GetComponent<OrbitersRefit>().mesh, Is.SameAs(saved), "The record follows the saved copy.");
             Assert.That(saved.boneWeights.Select(w => w.weight0), Is.EqualTo(fitted.boneWeights.Select(w => w.weight0)));
             Assert.That(saved.bindposes, Is.EqualTo(fitted.bindposes));
 
@@ -70,6 +73,7 @@ public class MCBRefitVersionCacheTests
             Assert.That(renderer.sharedMesh, Is.SameAs(original));
             Assert.That(renderer.GetBlendShapeWeight(0), Is.EqualTo(17));
             Assert.That(accessory.transform.localPosition, Is.EqualTo(Vector3.zero));
+            Assert.That(accessory.GetComponent<OrbitersRefit>(), Is.Null);
             Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, versionC), Is.Zero);
             Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, versionB), Is.EqualTo(1));
             Assert.That(renderer.sharedMesh, Is.SameAs(saved));
@@ -78,14 +82,16 @@ public class MCBRefitVersionCacheTests
             Assert.That(renderer.GetBlendShapeWeight(0), Is.EqualTo(42));
             Assert.That(accessory.transform.localPosition, Is.EqualTo(Vector3.right));
             Assert.That(renderer.localBounds, Is.EqualTo(new Bounds(Vector3.one, Vector3.one * 3)));
+            Assert.That(RefitRecords.IsApplied(renderer), Is.True);
+            Assert.That(accessory.GetComponent<OrbitersRefit>().original.mesh, Is.SameAs(original));
 
             MCBReFitIntegration.RestoreOriginalAssetMeshes(mcb);
             mcb.appliedCustomBaseVersion = versionC;
-            var entryC = (RefitAppliedMeshEntry)capture.Invoke(null, new object[] { root.transform, "Jacket", renderer });
+            var originalC = RefitRecords.Capture(root.transform, renderer);
             renderer.sharedMesh = fitted;
             renderer.SetBlendShapeWeight(0, 80);
-            entryC.refitMesh = fitted;
-            mcb.appliedRefits.Add(entryC);
+            RefitRecords.Register(renderer, originalC, fitted, fixture + "/fitted.asset", null, new List<RefitShape>(),
+                OrbitersRefit.FitKind.Fitted, "c", "C", "My Avatar");
             MCBReFitIntegration.SaveVersionFits(mcb, versionC);
             var savedC = renderer.sharedMesh;
             Assert.That(savedC, Is.Not.SameAs(saved));
@@ -96,7 +102,8 @@ public class MCBRefitVersionCacheTests
             Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, versionC), Is.EqualTo(1));
             Assert.That(renderer.sharedMesh, Is.SameAs(savedC));
             Assert.That(renderer.GetBlendShapeWeight(0), Is.EqualTo(80));
-            MCBReFitIntegration.RestoreAsset(mcb, "Jacket");
+            Assert.That(accessory.GetComponent<OrbitersRefit>().tool, Is.EqualTo("My Avatar"), "Fits of every tool are kept per version.");
+            MCBReFitIntegration.RestoreAsset(mcb, renderer);
             Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, versionC), Is.Zero);
             renderer.sharedMesh = fitted; // User replaced this accessory: do not overwrite it.
             Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, versionB), Is.Zero);
@@ -121,7 +128,7 @@ public class MCBRefitVersionCacheTests
             Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, versionB), Is.EqualTo(1));
             Assert.That(renderer.bones[0], Is.SameAs(newBone));
             Assert.That(renderer.rootBone, Is.SameAs(newBone));
-            if (metadataType != null)
+            if (metadataType != null && RefitEngine.Available)
             {
                 var metadata = renderer.GetComponent(metadataType);
                 Assert.That(metadata, Is.Not.Null);

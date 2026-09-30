@@ -934,6 +934,8 @@ public class VersionActions
             ResetApplyProgressRange();
             editor.Repaint();
             EditorCoroutineUtility.StartCoroutineOwnerless(CompleteApplyProgressAfterVisualHold(generation));
+            // Other tools (My Avatar) check the avatar's clothing against the new custom base.
+            if (editor.customBaseTarget != null) MCBReFitIntegration.NotifyCustomBaseChanged(editor.customBaseTarget);
         }
         else
         {
@@ -2956,6 +2958,11 @@ public class VersionActions
         }
 
         editor.customBaseTarget.appliedCustomBaseVersion = version;
+        var appliedAsset = editor.GetSelectedAsset();
+        if (appliedAsset != null && appliedAsset.id == version.assetId && !string.IsNullOrWhiteSpace(appliedAsset.name))
+            editor.customBaseTarget.appliedCustomBaseName = appliedAsset.name;
+        else if (editor.customBaseTarget.appliedCustomBaseAssetId != version.assetId)
+            editor.customBaseTarget.appliedCustomBaseName = "";
         editor.customBaseTarget.appliedCustomBaseAssetId = version.assetId;
         editor.customBaseTarget.appliedCustomBaseVersionString = version.version ?? "";
         editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = version.defaultAviVersion ?? "";
@@ -2977,6 +2984,7 @@ public class VersionActions
 
         editor.customBaseTarget.appliedCustomBaseVersion = null;
         editor.customBaseTarget.appliedCustomBaseAssetId = 0;
+        editor.customBaseTarget.appliedCustomBaseName = "";
         editor.customBaseTarget.appliedCustomBaseVersionString = "";
         editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = "";
         editor.customBaseTarget.appliedCustomBaseSourceVersionKey = "";

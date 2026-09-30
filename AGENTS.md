@@ -134,13 +134,23 @@
 - Keep link operations idempotent and safe across repeated preprocess calls.
 - Keep naming deterministic for parameters and generated assets.
 
-### ReFit Flex Links
-- MCB ReFit adds all target-body mesh shapes containing `flex` (case-insensitive) to the exposed version shapes, preserving exact names and removing exact duplicates.
-- Use the existing `BlendShapeLinkService` for build-time synchronization. Do not add VRCFury Blendshape Link components or a second animation-rewrite system.
-- `MCBReFitLinkCaptureHook` captures the build-copy renderer references before hierarchy/mesh processing; `BlendShapeLinkPostVrcfuryHook` applies the links after version/manual correctives.
-- `BlendShapeLinkService.ReFit.cs` uses recorded source/generated pairs, including renamed outputs. Only currently applied ReFit meshes qualify; native accessory shapes are not inferred as transfers.
-- One-to-one ReFit links use `BlendShapeLink.Copy` (`DirectCopy`): clone the clip through the shared rewrite path, copy the source curve exactly, and add no factor parameter or wrapper tree. Factor-driven corrective behavior must remain unchanged.
-- Verify with `MCBReFitFlexTests`: actual animation sampling, exact bindings, authoring-asset isolation, repeat-build idempotence, and build-copy renderer identity. A mapping count alone is not evidence that the accessory animates.
+### ReFit (Orbiters Toolkit)
+- Refits, their records and their build-time links are Orbiters Toolkit's (`Orbiters.Toolkit.Editor.VRChat.Refit`); the
+  ReFit package registers the engine (`RefitEngine`). MCB never references ReFit and keeps no refit list of its own:
+  each refitted renderer carries an `OrbitersRefit` record, whichever tool (MCB, My Avatar, ReFit's wizard) made it.
+- MCB is the custom base provider (`McbCustomBaseProvider`, `MCBReFitIntegration.Describe`): body renderer (by the base
+  FBX mesh names), shapes (`CustomBases.Shapes`: the version's declared blendshapes, falling back to
+  `appliedVersionBlendshapeLinksCache`, then every body shape containing `flex`) and the original base
+  (`ResolveOriginal`: the base FBX, or a temporary import of its `*.fbx.originalbase` backup when the version replaced
+  the FBX). Call `MCBReFitIntegration.NotifyCustomBaseChanged` after a version apply/reset (done in `FinishApplyProgress`).
+- Build-time links cover every transferred shape, with the recorded source/generated pairs (renamed outputs too):
+  `RefitBuild` captures at -10110 and links at -8960, after `BlendShapeLinkPostVrcfuryHook` (-9000), so curves the
+  correctives add are copied. Do not add VRCFury Blendshape Link components or a second animation-rewrite system.
+- Version switching: `SaveVersionFits` keeps every applied record of the avatar per version (mesh copied into the version
+  folder, `MCBRefitVersionSnapshot`), `RestoreOriginalAssetMeshes` restores and removes them, `RestoreVersionFits` puts
+  back those saved for the applied version on renderers still using the original or saved mesh.
+- Verify link behavior with Toolkit's `RefitBuildTests` (actual animation sampling, exact bindings, authoring-asset
+  isolation, repeat-build idempotence, build-copy renderer identity) and MCB's `MCBReFitTests` / `MCBRefitVersionCacheTests`.
 
 ## Custom Base FBX Backup Invariant
 - For a custom base version B/C applied over a default base A, every affected `*.fbx.old` file must always remain a copy of A.

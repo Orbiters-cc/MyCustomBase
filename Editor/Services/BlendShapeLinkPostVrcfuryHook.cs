@@ -5,7 +5,8 @@ using VRC.SDKBase.Editor.BuildPipeline;
 
 public class BlendShapeLinkPostVrcfuryHook : IVRCSDKPreprocessAvatarCallback
 {
-    // VRCFury uses -10000; this runs after generated controllers are assigned.
+    // VRCFury uses -10000; this runs after generated controllers are assigned, and before Orbiters Toolkit links refitted
+    // blendshapes (-8960), which then also copy the curves these correctives add.
     public int callbackOrder => -9000;
 
     public bool OnPreprocessAvatar(GameObject avatarRoot)
@@ -29,17 +30,6 @@ public class BlendShapeLinkPostVrcfuryHook : IVRCSDKPreprocessAvatarCallback
         else
         {
             MCBLogger.Log("[MCB] Manual BlendShape links skipped: " + manualResult.Message);
-        }
-
-        try
-        {
-            var refitResult = BlendShapeLinkService.Instance.ApplyReFitFlexLinks(avatarRoot);
-            MCBLogger.Log("[MCB] " + refitResult.Message);
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("[MCB] ReFit flex links failed: " + ex.Message);
-            return false;
         }
 
         var animationOffsetResult = AnimationPositionOffsetService.Instance.ApplyActiveVersionOffsets(avatarRoot);

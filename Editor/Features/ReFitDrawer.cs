@@ -1,18 +1,20 @@
 #if UNITY_EDITOR
 using System.Collections;
 using System.Collections.Generic;
+using Orbiters.Toolkit.Editor.Refit;
+using Orbiters.Toolkit.Editor.VRChat.Refit;
+using Orbiters.Toolkit.Editor.Vpm;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
-using Orbiters.Toolkit.Editor.Vpm;
 
 /// <summary>
 /// "ReFit" avatar option frame (same style as Custom Veins / Sliders / Blendshapes), shown at the top of the
-/// version options when a custom version is applied and the optional ReFit package is installed. Lists the
-/// avatar's asset meshes (everything that is not part of the version's targeted FBX list) as toggles: tick the
-/// ones that should follow this custom base and press Apply. Apply re-fits newly-ticked assets from the default
-/// base body to the version body (with the version's exposed blendshapes) and restores assets that were
-/// unticked. Re-fitted meshes are tracked on the component and restored when resetting to the default base.
+/// version options when a custom version is applied. Lists the avatar's asset meshes (everything that is not part of
+/// the base body) as toggles: tick the ones that should follow this custom base and press Apply. Apply re-fits
+/// newly-ticked assets from the default base body to the version body (with the version's blendshapes) and restores
+/// assets that were unticked. Re-fitted meshes carry their refit record (Orbiters Toolkit), are kept per version and
+/// restored when resetting to the default base. The fit tightness is shared with My Avatar.
 /// </summary>
 public class ReFitDrawer
 {
@@ -38,12 +40,8 @@ public class ReFitDrawer
 
     public bool BuildUIToolkit(VisualElement root)
     {
-        if (!editor.isCustomBase ||
-            editor.customBaseTarget == null ||
-            editor.customBaseTarget.appliedCustomBaseVersion == null)
-        {
-            return false;
-        }
+        var mcb = editor.customBaseTarget;
+        if (!editor.isCustomBase || mcb == null || !MCBReFitIntegration.HasAppliedVersion(mcb)) return false;
 
         if (!MCBReFitIntegration.IsReFitAvailable)
         {
@@ -51,23 +49,16 @@ public class ReFitDrawer
             return true;
         }
 
-        var candidates = MCBReFitIntegration.GetRefitCandidates(editor);
-        if (candidates.Count == 0)
-        {
-            return false;
-        }
-
-        var mcb = editor.customBaseTarget;
-        var avatarRoot = mcb.transform.root;
+        var candidates = MCBReFitIntegration.GetRefitCandidates(mcb);
+        if (candidates.Count == 0) return false;
+        var avatarRoot = MCBReFitIntegration.Root(mcb);
 
         // Seed the selection from the assets already re-fitted (so they stay ticked).
         if (!initializedSelection)
         {
             foreach (var smr in candidates)
-            {
-                if (MCBReFitIntegration.IsRefitApplied(mcb, smr))
+                if (MCBReFitIntegration.IsRefitApplied(smr))
                     selectedPaths.Add(MCBReFitIntegration.GetRendererPath(avatarRoot, smr.transform));
-            }
             initializedSelection = true;
         }
 
@@ -79,20 +70,18 @@ public class ReFitDrawer
         renderedToggles.Clear();
         renderedLabels.Clear();
 
-        // Toggle list of asset meshes.
         var pathOf = new Dictionary<SkinnedMeshRenderer, string>();
         foreach (var smr in candidates)
         {
             string path = MCBReFitIntegration.GetRendererPath(avatarRoot, smr.transform);
             pathOf[smr] = path;
-            bool selected = selectedPaths.Contains(path);
-            bool applied = MCBReFitIntegration.IsRefitApplied(mcb, smr);
+            bool applied = MCBReFitIntegration.IsRefitApplied(smr);
 
             var row = new VisualElement();
             row.style.flexDirection = FlexDirection.Row;
             row.style.alignItems = Align.Center;
 
-            var toggle = new Toggle { value = selected };
+            var toggle = new Toggle { value = selectedPaths.Contains(path) };
             toggle.AddToClassList("mcb-avatar-toggle");
             toggle.SetEnabled(!isRunning);
             toggle.RegisterValueChangedCallback(evt =>
@@ -102,17 +91,17 @@ public class ReFitDrawer
             });
             row.Add(toggle);
 
-            var label = AvatarOptionsModule.CreateOptionLabel(
-                applied ? smr.name + "  (re-fitted)" : smr.name, 12, FontStyle.Normal, Color.white);
+            var label = AvatarOptionsModule.CreateOptionLabel(applied ? smr.name + "  (re-fitted)" : smr.name, 12, FontStyle.Normal, Color.white);
             label.style.marginLeft = 4;
             row.Add(label);
 
             renderedRenderers[path] = smr;
             renderedToggles[path] = toggle;
             renderedLabels[path] = label;
-
             card.Add(row);
         }
+
+        card.Add(CreateTightnessSlider());
 
         // Integrated progress button (same component / look as Apply / Downgrade / Reset).
         var button = new MCBProgressButtonElement(
@@ -142,19 +131,35 @@ public class ReFitDrawer
         card.Add(statusHost);
         RefreshRenderedState();
 
-        void HandleRefitStateChanged(MyCustomBase changedMcb, string rendererPath)
+        void HandleRefitChanged(SkinnedMeshRenderer renderer)
         {
-            if (changedMcb == mcb && renderedRenderers.ContainsKey(rendererPath))
-                RefreshRenderedState();
+            if (renderer != null && renderedRenderers.ContainsValue(renderer)) RefreshRenderedState();
         }
 
-        card.RegisterCallback<AttachToPanelEvent>(_ =>
-            MCBReFitIntegration.RefitStateChanged += HandleRefitStateChanged);
-        card.RegisterCallback<DetachFromPanelEvent>(_ =>
-            MCBReFitIntegration.RefitStateChanged -= HandleRefitStateChanged);
+        card.RegisterCallback<AttachToPanelEvent>(_ => RefitRecords.Changed += HandleRefitChanged);
+        card.RegisterCallback<DetachFromPanelEvent>(_ => RefitRecords.Changed -= HandleRefitChanged);
 
         root.Add(card);
         return true;
+    }
+
+    // How close refitted clothing sits on the body; shared with My Avatar's refits.
+    private static VisualElement CreateTightnessSlider()
+    {
+        var box = new VisualElement();
+        box.style.marginTop = 8;
+        var slider = new Slider("Fit", 0f, 1f) { value = RefitPreferences.Tightness };
+        slider.tooltip = "How close re-fitted clothing sits on the body: loose suits accessories, tight suits clothing. Shared with My Avatar.";
+        slider.RegisterValueChangedCallback(evt => RefitPreferences.Tightness = evt.newValue);
+        box.Add(slider);
+        var ends = new VisualElement();
+        ends.style.flexDirection = FlexDirection.Row;
+        ends.style.justifyContent = Justify.SpaceBetween;
+        var gray = new Color(0.62f, 0.62f, 0.62f);
+        ends.Add(AvatarOptionsModule.CreateOptionLabel("Loose", 10, FontStyle.Normal, gray));
+        ends.Add(AvatarOptionsModule.CreateOptionLabel("Tight", 10, FontStyle.Normal, gray));
+        box.Add(ends);
+        return box;
     }
 
     private static VisualElement CreateReFitIcon()
@@ -181,28 +186,20 @@ public class ReFitDrawer
 
     private void RefreshRenderedState()
     {
-        var mcb = editor.customBaseTarget;
         foreach (var pair in renderedRenderers)
         {
-            bool applied = mcb != null && MCBReFitIntegration.IsRefitApplied(mcb, pair.Value);
+            bool applied = pair.Value != null && MCBReFitIntegration.IsRefitApplied(pair.Value);
             if (renderedLabels.TryGetValue(pair.Key, out var label) && label != null && pair.Value != null)
-            {
                 label.text = applied ? pair.Value.name + "  (re-fitted)" : pair.Value.name;
-            }
-
             if (renderedToggles.TryGetValue(pair.Key, out var toggle) && toggle != null)
-            {
                 toggle.SetEnabled(!isRunning);
-            }
         }
 
         if (statusHost != null)
         {
             statusHost.Clear();
             if (lastFailed && !string.IsNullOrEmpty(lastMessage))
-            {
                 statusHost.Add(AvatarOptionsModule.CreateOptionHelpBox(lastMessage, HelpBoxMessageType.Warning));
-            }
         }
 
         editor.Repaint();
@@ -223,22 +220,11 @@ public class ReFitDrawer
         card.Add(description);
 
         var status = McbDependencies.Vpm.OptionalStatus(McbDependencies.ReFitPackageId);
-        string apiMessage = MCBReFitIntegration.ReFitAvailabilityMessage;
-        bool assumedInstalled = status != null && status.IsAssumedInstalled;
-        if (assumedInstalled)
+        if (status != null && (status.IsAssumedInstalled || status.IsInstalled))
         {
-            card.Add(AvatarOptionsModule.CreateOptionHelpBox(
-                string.IsNullOrWhiteSpace(apiMessage)
-                    ? "Advanced settings currently assume ReFit is installed, but the ReFit editor API was not found. Disable the optional integration bypass to add ReFit through VPM."
-                    : apiMessage,
-                HelpBoxMessageType.Warning));
-        }
-        else if (status != null && status.IsInstalled)
-        {
-            card.Add(AvatarOptionsModule.CreateOptionHelpBox(
-                string.IsNullOrWhiteSpace(apiMessage)
-                    ? "ReFit is listed as installed, but its editor API was not found. Wait for Unity to finish compiling, or check the Console for ReFit assembly errors."
-                    : apiMessage,
+            card.Add(AvatarOptionsModule.CreateOptionHelpBox(status.IsAssumedInstalled
+                    ? "Advanced settings assume ReFit is installed, but ReFit did not register with Orbiters Toolkit. Disable the optional integration bypass to add ReFit through VPM."
+                    : "ReFit is installed but did not register with Orbiters Toolkit. Update ReFit to 0.5 or later, or wait for Unity to finish compiling and check the Console for ReFit errors.",
                 HelpBoxMessageType.Warning));
         }
         else
@@ -255,14 +241,11 @@ public class ReFitDrawer
     /// <summary>Number of assets whose applied state differs from the current selection (drives Apply's enabled state).</summary>
     private int CountPendingChanges(List<SkinnedMeshRenderer> candidates, Dictionary<SkinnedMeshRenderer, string> pathOf)
     {
-        var mcb = editor.customBaseTarget;
         int count = 0;
         foreach (var smr in candidates)
         {
             if (smr == null || !pathOf.TryGetValue(smr, out var path)) continue;
-            bool selected = selectedPaths.Contains(path);
-            bool applied = MCBReFitIntegration.IsRefitApplied(mcb, smr);
-            if (selected != applied) count++;
+            if (selectedPaths.Contains(path) != MCBReFitIntegration.IsRefitApplied(smr)) count++;
         }
         return count;
     }
@@ -273,18 +256,18 @@ public class ReFitDrawer
         var mcb = editor.customBaseTarget;
 
         var toRefit = new List<SkinnedMeshRenderer>();
-        var toRestore = new List<string>();
+        var toRestore = new List<SkinnedMeshRenderer>();
         foreach (var smr in candidates)
         {
             if (smr == null || !pathOf.TryGetValue(smr, out var path)) continue;
             bool selected = selectedPaths.Contains(path);
-            bool applied = MCBReFitIntegration.IsRefitApplied(mcb, smr);
+            bool applied = MCBReFitIntegration.IsRefitApplied(smr);
             if (selected && !applied) toRefit.Add(smr);
-            else if (!selected && applied) toRestore.Add(path);
+            else if (!selected && applied) toRestore.Add(smr);
         }
 
         // Restores are immediate; re-fits run in the background.
-        foreach (var path in toRestore) MCBReFitIntegration.RestoreAsset(mcb, path);
+        foreach (var smr in toRestore) MCBReFitIntegration.RestoreAsset(mcb, smr);
 
         if (toRefit.Count == 0)
         {
@@ -298,12 +281,12 @@ public class ReFitDrawer
         lastMessage = null;
         lastFailed = false;
         RefreshRenderedState();
-        EditorCoroutineUtility.StartCoroutineOwnerless(RunCoroutine(toRefit));
+        EditorCoroutineUtility.StartCoroutineOwnerless(RunCoroutine(mcb, toRefit));
     }
 
-    private IEnumerator RunCoroutine(List<SkinnedMeshRenderer> targets)
+    private IEnumerator RunCoroutine(MyCustomBase mcb, List<SkinnedMeshRenderer> targets)
     {
-        yield return MCBReFitIntegration.RunReFitCoroutine(editor, targets, progress, (success, message) =>
+        yield return MCBReFitIntegration.RunReFitCoroutine(mcb, targets, progress, (success, message) =>
         {
             lastFailed = !success;
             lastMessage = success ? null : message;

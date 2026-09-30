@@ -4,9 +4,16 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using Orbiters.Toolkit.Editor.Refit;
+using Orbiters.Toolkit.Editor.VRChat.Refit;
+using Orbiters.Toolkit.VRChat;
 using UnityEditor;
 using UnityEngine;
 
+/// <summary>
+/// Refitted meshes are kept per custom base version: switching versions saves the fits of the version being left and puts
+/// back those saved for the version being applied, so clothing fits every version it was refitted for.
+/// </summary>
 public static partial class MCBReFitIntegration
 {
     private static CustomBaseVersion GetAppliedRefitVersion(MyCustomBase target)
@@ -32,35 +39,25 @@ public static partial class MCBReFitIntegration
             return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(value ?? ""))).Replace("-", "").ToLowerInvariant();
     }
 
-    // Unity object references to meshes are serialized as assets; scene transforms are stored only by path.
-    private static RefitAppliedMeshEntry PersistentState(RefitAppliedMeshEntry state)
-    {
-        var copy = JsonUtility.FromJson<RefitAppliedMeshEntry>(JsonUtility.ToJson(state));
-        copy.originalBones.Clear();
-        copy.originalRootBone = null;
-        foreach (var transform in copy.originalTransformStates) transform.transform = null;
-        return copy;
-    }
-
+    /// <summary>Saves the applied fits of the avatar (by any tool) for this version, their meshes copied next to them.</summary>
     public static void SaveVersionFits(MyCustomBase target, CustomBaseVersion version)
     {
-        if (target?.appliedRefits == null || target.appliedRefits.Count == 0) return;
         string folder = GetVersionRefitFolder(target, version);
         if (folder == null) return;
-        var root = target.transform.root;
-        Undo.RecordObject(target, "Save version ReFit");
-        foreach (var entry in target.appliedRefits)
+        var root = Root(target);
+        foreach (var record in RefitRecords.All(root))
         {
-            var renderer = root.Find(entry.rendererPath)?.GetComponent<SkinnedMeshRenderer>();
-            if (renderer == null || entry.refitMesh == null || renderer.sharedMesh != entry.refitMesh) continue;
-            if (entry.originalMesh == null || !EditorUtility.IsPersistent(entry.originalMesh))
+            var renderer = record.GetComponent<SkinnedMeshRenderer>();
+            string rendererPath = renderer != null ? RefitRecords.PathUnder(root, renderer.transform) : null;
+            if (!record.Applied || rendererPath == null) continue;
+            if (record.original?.mesh == null || !EditorUtility.IsPersistent(record.original.mesh))
                 throw new InvalidOperationException("Save the original accessory mesh as an asset before saving its version-specific ReFit.");
             if (!AssetDatabase.IsValidFolder(folder))
             {
                 Directory.CreateDirectory(Path.GetFullPath(folder));
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
             }
-            string key = CacheKey(entry.rendererPath);
+            string key = CacheKey(rendererPath);
             string path = folder + "/" + key + ".asset";
             var snapshot = AssetDatabase.LoadAssetAtPath<MCBRefitVersionSnapshot>(path);
             if (snapshot == null)
@@ -68,93 +65,87 @@ public static partial class MCBReFitIntegration
                 snapshot = ScriptableObject.CreateInstance<MCBRefitVersionSnapshot>();
                 AssetDatabase.CreateAsset(snapshot, path);
             }
-            string meshPath = AssetDatabase.GetAssetPath(entry.refitMesh);
+            string meshPath = AssetDatabase.GetAssetPath(record.mesh);
             if (!meshPath.StartsWith(folder + "/", StringComparison.Ordinal))
             {
-                var savedMesh = UnityEngine.Object.Instantiate(entry.refitMesh);
-                savedMesh.name = entry.refitMesh.name;
+                var savedMesh = UnityEngine.Object.Instantiate(record.mesh);
+                savedMesh.name = record.mesh.name;
                 meshPath = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + key + "-mesh.asset");
                 AssetDatabase.CreateAsset(savedMesh, meshPath);
                 Undo.RecordObject(renderer, "Save version ReFit");
                 renderer.sharedMesh = savedMesh;
-                entry.refitMesh = savedMesh;
-                entry.refitMeshAssetPath = meshPath;
                 EditorUtility.SetDirty(renderer);
+                Undo.RecordObject(record, "Save version ReFit");
+                record.mesh = savedMesh;
+                record.meshPath = meshPath;
+                EditorUtility.SetDirty(record);
             }
-            var fittedState = PersistentState(CaptureRendererState(root, entry.rendererPath, renderer));
-            var originalState = PersistentState(entry);
-            if (snapshot.enabledForVersion && JsonUtility.ToJson(snapshot.fitted) == JsonUtility.ToJson(fittedState) &&
-                JsonUtility.ToJson(snapshot.original) == JsonUtility.ToJson(originalState)) continue;
-            if (snapshot.fitted == null || snapshot.fitted.originalMesh != fittedState.originalMesh)
-            {
-                var metadataType = ReFitApi.FindOptionalType("Orbiters.ReFit.ReFitGeneratedAssetMetadata");
-                var metadata = metadataType != null ? renderer.GetComponent(metadataType) : null;
-                var data = metadata != null ? ReFitApi.GetMemberValue(metadata, "data") : null;
-                snapshot.metadataJson = data != null ? JsonUtility.ToJson(data) : null;
-            }
+            var fitted = RefitRecords.Persistent(RefitRecords.Capture(root, renderer));
+            var original = RefitRecords.Persistent(record.original);
+            string metadata = RefitEngine.Current?.SaveMetadata(renderer);
+            if (snapshot.enabledForVersion && snapshot.rendererPath == rendererPath &&
+                JsonUtility.ToJson(snapshot.fitted) == JsonUtility.ToJson(fitted) && JsonUtility.ToJson(snapshot.original) == JsonUtility.ToJson(original) &&
+                (metadata == null || metadata == snapshot.metadataJson)) continue;
             snapshot.enabledForVersion = true;
-            snapshot.original = originalState;
-            snapshot.fitted = fittedState;
+            snapshot.rendererPath = rendererPath;
+            snapshot.original = original;
+            snapshot.fitted = fitted;
+            snapshot.shapes = record.shapes.ToList();
+            snapshot.kind = record.kind;
+            snapshot.tool = record.tool;
+            if (metadata != null) snapshot.metadataJson = metadata;
             EditorUtility.SetDirty(snapshot);
             AssetDatabase.SaveAssetIfDirty(snapshot);
-            AssetDatabase.SaveAssetIfDirty(entry.refitMesh);
+            AssetDatabase.SaveAssetIfDirty(record.mesh);
         }
-        EditorUtility.SetDirty(target);
     }
 
+    /// <summary>Puts back the fits saved for this version on meshes still as they were; returns how many.</summary>
     public static int RestoreVersionFits(MyCustomBase target, CustomBaseVersion version)
     {
         string folder = GetVersionRefitFolder(target, version);
         if (folder == null || !AssetDatabase.IsValidFolder(folder)) return 0;
         int restored = 0;
-        var root = target.transform.root;
+        var root = Root(target);
+        var body = FindPrimaryBodyRenderer(root, BuildBaseMeshMap(target));
         foreach (string guid in AssetDatabase.FindAssets("t:MCBRefitVersionSnapshot", new[] { folder }))
         {
             var snapshot = AssetDatabase.LoadAssetAtPath<MCBRefitVersionSnapshot>(AssetDatabase.GUIDToAssetPath(guid));
-            if (!snapshot.enabledForVersion || snapshot.original == null || snapshot.fitted?.originalMesh == null) continue;
-            var renderer = root.Find(snapshot.original.rendererPath)?.GetComponent<SkinnedMeshRenderer>();
+            if (snapshot == null || !snapshot.enabledForVersion || snapshot.original == null || snapshot.fitted?.mesh == null ||
+                string.IsNullOrEmpty(snapshot.rendererPath)) continue;
+            var renderer = root.Find(snapshot.rendererPath)?.GetComponent<SkinnedMeshRenderer>();
             // A replaced or manually edited accessory must never be overwritten by an unrelated saved fit.
-            if (renderer == null || (renderer.sharedMesh != snapshot.original.originalMesh &&
-                renderer.sharedMesh != snapshot.fitted.originalMesh)) continue;
-            var states = snapshot.fitted.originalTransformStates;
-            bool canRestore = snapshot.fitted.originalBonePaths.All(p => p != null);
-            foreach (string storedPath in snapshot.fitted.originalBonePaths.Concat(new[] { snapshot.fitted.originalRootBonePath }))
+            if (renderer == null || (renderer.sharedMesh != snapshot.original.mesh && renderer.sharedMesh != snapshot.fitted.mesh)) continue;
+            if (!CanResolve(root, snapshot.fitted))
             {
-                string missing = storedPath;
-                while (!string.IsNullOrEmpty(missing) && root.Find(missing) == null)
-                {
-                    if (!states.Any(s => s.path == missing)) { canRestore = false; break; }
-                    int separator = missing.LastIndexOf('/');
-                    missing = separator < 0 ? "" : missing.Substring(0, separator);
-                }
-            }
-            if (!canRestore)
-            {
-                MCBLogger.LogWarning("[MCB] Saved ReFit cannot safely resolve its armature; skipping " + snapshot.original.rendererPath);
+                MCBLogger.LogWarning("[MCB] Saved ReFit cannot safely resolve its armature; skipping " + snapshot.rendererPath);
                 continue;
             }
-            RestoreRendererState(root, renderer, snapshot.fitted, "Restore version ReFit");
-            var entry = PersistentState(snapshot.original);
-            entry.refitMesh = snapshot.fitted.originalMesh;
-            entry.refitMeshAssetPath = AssetDatabase.GetAssetPath(entry.refitMesh);
-            Undo.RecordObject(target, "Restore version ReFit");
-            target.appliedRefits.RemoveAll(e => e != null && e.rendererPath == entry.rendererPath);
-            target.appliedRefits.Add(entry);
-            var metadataType = ReFitApi.FindOptionalType("Orbiters.ReFit.ReFitGeneratedAssetMetadata");
-            if (metadataType != null && !string.IsNullOrEmpty(snapshot.metadataJson))
-            {
-                var metadata = renderer.GetComponent(metadataType) ?? Undo.AddComponent(renderer.gameObject, metadataType);
-                var dataField = metadataType.GetField("data");
-                if (dataField != null)
-                    dataField.SetValue(metadata, JsonUtility.FromJson(snapshot.metadataJson, dataField.FieldType));
-                EditorUtility.SetDirty(metadata);
-            }
-            SyncTransferredBlendShapeWeightsFromAvatar(entry, target, renderer);
-            RefitStateChanged?.Invoke(target, entry.rendererPath);
+            RefitRecords.Restore(root, renderer, snapshot.fitted, "Restore version ReFit");
+            if (!string.IsNullOrEmpty(snapshot.metadataJson)) RefitEngine.Current?.LoadMetadata(renderer, snapshot.metadataJson);
+            RefitRecords.Register(renderer, RefitRecords.Persistent(snapshot.original), snapshot.fitted.mesh,
+                AssetDatabase.GetAssetPath(snapshot.fitted.mesh), body, snapshot.shapes, snapshot.kind, BaseKey(version),
+                DisplayName(target, version), string.IsNullOrEmpty(snapshot.tool) ? ToolName : snapshot.tool);
             restored++;
         }
-        if (restored > 0) EditorUtility.SetDirty(target);
         return restored;
+    }
+
+    // Every bone of the saved fit exists, or can be recreated under an existing parent from the saved transforms.
+    private static bool CanResolve(Transform root, RefitRendererState state)
+    {
+        if (state.bonePaths.Any(p => p == null)) return false;
+        foreach (string storedPath in state.bonePaths.Concat(new[] { state.rootBonePath }))
+        {
+            string missing = storedPath;
+            while (!string.IsNullOrEmpty(missing) && root.Find(missing) == null)
+            {
+                if (!state.transforms.Any(s => s.path == missing)) return false;
+                int separator = missing.LastIndexOf('/');
+                missing = separator < 0 ? "" : missing.Substring(0, separator);
+            }
+        }
+        return true;
     }
 
     private static void DisableSavedFit(MyCustomBase target, string rendererPath)
