@@ -26,7 +26,7 @@ public static partial class MCBPerformance
         cancel.ThrowIfCancellationRequested();
         string url = MCBUtils.ResolveApiUrl("mcb/performance/bootstrap");
         using (var request = UnityWebRequest.Get(url)) {
-            request.SetRequestHeader("Authorization", "Bearer " + token);
+            MCBRequestHeaders.SetAuthorization(request, token);
             request.timeout = 60;
             using (cancel.Register(request.Abort))
                 await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Diagnostics("MCB download calibration"));
@@ -39,16 +39,16 @@ public static partial class MCBPerformance
     {
         cancel.ThrowIfCancellationRequested();
         long expected = megabytes * 1_000_000L;
-        string url = MCBUtils.ResolveApiUrl("mcb/performance/probe/" + megabytes)
-            + "?t=" + Uri.EscapeDataString(token) + "&nonce=" + Guid.NewGuid().ToString("N");
-        using (var request = new UnityWebRequest(url, "GET")) {
-            var counter = new CountingDownload(expected);
-            request.downloadHandler = counter;
-            request.timeout = 30;
-            request.SetRequestHeader("Cache-Control", "no-cache, no-store");
-            var watch = Stopwatch.StartNew();
-            using (cancel.Register(request.Abort))
-                await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Diagnostics("MCB bandwidth probe"));
+        string url = MCBUtils.ResolveApiUrl("mcb/performance/probe/" + megabytes) + "?nonce=" + Guid.NewGuid().ToString("N");
+        CountingDownload counter = null;
+        var watch = Stopwatch.StartNew();
+        using (var request = await MCBManagedRequest.SendAuthorizedAsync(target => {
+                   var hop = new UnityWebRequest(target, "GET") { downloadHandler = counter = new CountingDownload(expected), timeout = 30 };
+                   hop.SetRequestHeader("Cache-Control", "no-cache, no-store");
+                   return hop;
+               }, url, token, MCBRequestPolicy.Diagnostics("MCB bandwidth probe"), running => {
+                   if (cancel.IsCancellationRequested) running.Abort();
+               })) {
             watch.Stop();
             cancel.ThrowIfCancellationRequested();
             string encoding = request.GetResponseHeader("Content-Encoding");
@@ -64,7 +64,7 @@ public static partial class MCBPerformance
         string url = MCBUtils.ResolveApiUrl("mcb/performance/reports");
         try {
             using (var request = new UnityWebRequest(url, "POST")) {
-                request.SetRequestHeader("Authorization", "Bearer " + token);
+                MCBRequestHeaders.SetAuthorization(request, token);
                 request.SetRequestHeader("Content-Type", "application/json");
                 request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(report)));
                 request.downloadHandler = new DownloadHandlerBuffer();

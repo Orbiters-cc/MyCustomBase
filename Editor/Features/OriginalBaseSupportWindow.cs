@@ -114,7 +114,7 @@ public sealed class OriginalBaseSupportWindow : EditorWindow
         try
         {
             originals = await OriginalBaseSupportService.Load(asset.id, editor.authToken);
-            var response = await new NetworkService().FetchVersionsAsync(OriginalBaseSupportService.Url(asset.id, "/versions", editor.authToken) + "&allSourceVersions=1");
+            var response = await new NetworkService().FetchVersionsAsync(OriginalBaseSupportService.Url(asset.id, "/versions") + "?allSourceVersions=1", editor.authToken);
             if (!response.success) throw new InvalidOperationException(response.error);
             versions = response.response.versions.OrderByDescending(v => Version.TryParse(v.version, out var number) ? number : new Version()).ToArray();
             if (!loaded) selected.UnionWith(versions.Select(v => v.version));

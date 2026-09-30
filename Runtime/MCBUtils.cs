@@ -163,9 +163,10 @@ public static class MCBUtils
         return VERSION_ENDPOINT.Replace(":assetId", assetId.ToString());
     }
 
-    public static string GetAssetModelTrustUrl(int assetId, string version, string modelHash, string authToken, string sourceKey) =>
+    // Authenticated with the Authorization header (MCBRequestHeaders.SetAuthorization), never a token in the URL.
+    public static string GetAssetModelTrustUrl(int assetId, string version, string modelHash, string sourceKey) =>
         $"{getApiUrl()}{GetAssetModelEndpoint(assetId)}-trust?version={Uri.EscapeDataString(version ?? "")}" +
-        $"&d={Uri.EscapeDataString(modelHash ?? "")}&t={Uri.EscapeDataString(authToken ?? "")}&sourceKey={Uri.EscapeDataString(sourceKey ?? "")}";
+        $"&d={Uri.EscapeDataString(modelHash ?? "")}&sourceKey={Uri.EscapeDataString(sourceKey ?? "")}";
 
     public static string GetAssetModelEndpoint(int assetId)
     {

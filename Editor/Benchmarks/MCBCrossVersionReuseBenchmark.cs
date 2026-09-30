@@ -139,7 +139,7 @@ public static class MCBCrossVersionReuseBenchmark
             string zip = Path.Combine(rootFolder, "download-" + name + ".zip");
             var watch = System.Diagnostics.Stopwatch.StartNew();
             var download = MCBMeshDelivery.DownloadAsync(new NetworkService(), url + "/mcb/999996/model?version=" + version.version
-                + "&d=" + version.sourceFiles[0].hash + "&t=fixture", version, zip, null, null, recordMeasurements: false);
+                + "&d=" + version.sourceFiles[0].hash, version, zip, null, null, recordMeasurements: false, authToken: "fixture");
             while (!download.IsCompleted) yield return null;
             if (!download.Result.success) throw new Exception(download.Result.error);
             results.Add(new { stage = "download", version = name, ms = watch.Elapsed.TotalMilliseconds, metrics = MCBMeshDelivery.LastDownload });

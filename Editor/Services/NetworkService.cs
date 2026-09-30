@@ -40,12 +40,13 @@ public class NetworkService
         }
     }
 
-    public async Task<VersionContentTrust.CreatorTrustSnapshot> FetchCreatorTrustAsync(string url)
+    public async Task<VersionContentTrust.CreatorTrustSnapshot> FetchCreatorTrustAsync(string url, string authToken)
     {
         try
         {
             using (var request = UnityWebRequest.Get(url))
             {
+                MCBRequestHeaders.SetAuthorization(request, authToken);
                 request.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
                 request.redirectLimit = 0; // Trust must come from the authenticated API, never a file/CDN redirect.
                 await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Backend("Verify version creator"));
@@ -60,10 +61,11 @@ public class NetworkService
         }
     }
 
-    public async Task<(bool success, CustomBaseVersionResponse response, string error)> FetchVersionsAsync(string url)
+    public async Task<(bool success, CustomBaseVersionResponse response, string error)> FetchVersionsAsync(string url, string authToken)
     {
         using (var req = UnityWebRequest.Get(url))
         {
+            MCBRequestHeaders.SetAuthorization(req, authToken);
             MCBLogger.Log($"[NetworkService] FetchVersionsAsync GET {SanitizeUrlForLogs(url)}");
             req.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
             await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Fetch versions"));
@@ -174,7 +176,8 @@ public class NetworkService
         string url,
         string destinationPath,
         Action<float> onProgress = null,
-        Action<ulong> onDownloadedBytes = null)
+        Action<ulong> onDownloadedBytes = null,
+        string authToken = null)
     {
         int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
         try
@@ -185,31 +188,21 @@ public class NetworkService
                 Directory.CreateDirectory(directory);
             }
 
-            using (var request = new UnityWebRequest(url, UnityWebRequest.kHttpVerbGET))
+            using (var request = await MCBManagedRequest.SendAuthorizedAsync(
+                       target => new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
+                       {
+                           downloadHandler = new DownloadHandlerFile(destinationPath),
+                           timeout = timeoutSeconds
+                       },
+                       url, authToken, MCBRequestPolicy.Backend("Download file"),
+                       running =>
+                       {
+                           onProgress?.Invoke(NormalizeDownloadProgress(running.downloadProgress));
+                           onDownloadedBytes?.Invoke(running.downloadedBytes);
+                       }))
             {
-                request.downloadHandler = new DownloadHandlerFile(destinationPath);
-                request.timeout = timeoutSeconds;
-                UnityWebRequestAsyncOperation operation;
-                try
-                {
-                    operation = request.SendWebRequest();
-                }
-                catch (Exception ex)
-                {
-                    MCBConnectivityMonitor.ReportManagedException(url, ex, MCBRequestPolicy.Backend("Download file"));
-                    throw;
-                }
-
-                while (!operation.isDone)
-                {
-                    onProgress?.Invoke(NormalizeDownloadProgress(request.downloadProgress));
-                    onDownloadedBytes?.Invoke(request.downloadedBytes);
-                    await Task.Yield();
-                }
-
                 onProgress?.Invoke(1f);
                 onDownloadedBytes?.Invoke(request.downloadedBytes);
-                MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, url, MCBRequestPolicy.Backend("Download file"));
 
                 if (request.result == UnityWebRequest.Result.Success)
                 {
@@ -248,31 +241,15 @@ public class NetworkService
         }
     }
 
-    public async Task<(bool success, long contentLength, string error)> GetDownloadContentLengthAsync(string url)
+    public async Task<(bool success, long contentLength, string error)> GetDownloadContentLengthAsync(string url, string authToken = null)
     {
         int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
         try
         {
-            using (var request = new UnityWebRequest(url, "HEAD"))
+            using (var request = await MCBManagedRequest.SendAuthorizedAsync(
+                       target => new UnityWebRequest(target, "HEAD") { timeout = timeoutSeconds },
+                       url, authToken, MCBRequestPolicy.Backend("Download metadata")))
             {
-                request.timeout = timeoutSeconds;
-                UnityWebRequestAsyncOperation operation;
-                try
-                {
-                    operation = request.SendWebRequest();
-                }
-                catch (Exception ex)
-                {
-                    MCBConnectivityMonitor.ReportManagedException(url, ex, MCBRequestPolicy.Backend("Download metadata"));
-                    throw;
-                }
-
-                while (!operation.isDone)
-                {
-                    await Task.Yield();
-                }
-
-                MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, url, MCBRequestPolicy.Backend("Download metadata"));
                 if (request.result != UnityWebRequest.Result.Success)
                 {
                     string errorMsg = $"Download metadata failed: HTTP {request.responseCode} {request.error}";
@@ -300,36 +277,27 @@ public class NetworkService
     public async Task<(bool success, byte[] data, string error)> DownloadBytesAsync(
         string url,
         Action<float> onProgress = null,
-        Action<ulong> onDownloadedBytes = null)
+        Action<ulong> onDownloadedBytes = null,
+        string authToken = null)
     {
         int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
         try
         {
-            using (var request = new UnityWebRequest(url, UnityWebRequest.kHttpVerbGET))
+            using (var request = await MCBManagedRequest.SendAuthorizedAsync(
+                       target => new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
+                       {
+                           downloadHandler = new DownloadHandlerBuffer(),
+                           timeout = timeoutSeconds
+                       },
+                       url, authToken, MCBRequestPolicy.Backend("Download bytes"),
+                       running =>
+                       {
+                           onProgress?.Invoke(NormalizeDownloadProgress(running.downloadProgress));
+                           onDownloadedBytes?.Invoke(running.downloadedBytes);
+                       }))
             {
-                request.downloadHandler = new DownloadHandlerBuffer();
-                request.timeout = timeoutSeconds;
-                UnityWebRequestAsyncOperation operation;
-                try
-                {
-                    operation = request.SendWebRequest();
-                }
-                catch (Exception ex)
-                {
-                    MCBConnectivityMonitor.ReportManagedException(url, ex, MCBRequestPolicy.Backend("Download bytes"));
-                    throw;
-                }
-
-                while (!operation.isDone)
-                {
-                    onProgress?.Invoke(NormalizeDownloadProgress(request.downloadProgress));
-                    onDownloadedBytes?.Invoke(request.downloadedBytes);
-                    await Task.Yield();
-                }
-
                 onProgress?.Invoke(1f);
                 onDownloadedBytes?.Invoke(request.downloadedBytes);
-                MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, url, MCBRequestPolicy.Backend("Download bytes"));
 
                 if (request.result == UnityWebRequest.Result.Success)
                 {
@@ -406,7 +374,7 @@ public class NetworkService
                 req.uploadHandler = new UploadHandlerFile(bodyPath);
                 req.downloadHandler = new DownloadHandlerBuffer();
                 req.SetRequestHeader("Content-Type", $"multipart/form-data; boundary={boundary}");
-                req.SetRequestHeader("Authorization", $"Bearer {authToken}");
+                MCBRequestHeaders.SetAuthorization(req, authToken);
                 req.timeout = 0; // stall detection below replaces the fixed timeout
 
                 UnityWebRequestAsyncOperation operation;
@@ -534,10 +502,7 @@ public class NetworkService
             req.uploadHandler = new UploadHandlerRaw(bodyRaw);
             req.downloadHandler = new DownloadHandlerBuffer();
             req.SetRequestHeader("Content-Type", "application/json");
-            if (!string.IsNullOrEmpty(authToken))
-            {
-                req.SetRequestHeader("Authorization", $"Bearer {authToken}");
-            }
+            MCBRequestHeaders.SetAuthorization(req, authToken);
             req.timeout = GetTimeoutSeconds(NetworkRequestType.Upload);
 
             await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Update version metadata"));
@@ -596,10 +561,7 @@ public class NetworkService
     {
         using (var req = UnityWebRequest.Get(url))
         {
-            if (!string.IsNullOrEmpty(authToken))
-            {
-                req.SetRequestHeader("Authorization", $"Bearer {authToken}");
-            }
+            MCBRequestHeaders.SetAuthorization(req, authToken);
 
             try
             {

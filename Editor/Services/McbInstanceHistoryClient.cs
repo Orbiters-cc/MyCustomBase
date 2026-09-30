@@ -350,8 +350,8 @@ public static class McbInstanceHistoryClient
 
     private static IEnumerator SendSyncRequest(string authToken, SyncRequest payload, Action<SyncResponse, string> onComplete)
     {
-        string url = $"{MCBUtils.getApiUrl()}/instances/sync?t={UnityWebRequest.EscapeURL(authToken)}";
-        using (var request = CreateJsonPost(url, payload))
+        string url = $"{MCBUtils.getApiUrl()}/instances/sync";
+        using (var request = CreateJsonPost(url, payload, authToken))
         {
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Sync MCB instance"));
             if (request.result != UnityWebRequest.Result.Success)
@@ -371,8 +371,8 @@ public static class McbInstanceHistoryClient
         bool accepted,
         List<BindingPayload> bindings)
     {
-        string url = $"{MCBUtils.getApiUrl()}/instances/{UnityWebRequest.EscapeURL(instanceId)}/recovery-decision?t={UnityWebRequest.EscapeURL(authToken)}";
-        using (var request = CreateJsonPost(url, new RecoveryDecisionRequest { accepted = accepted, bindings = bindings }))
+        string url = $"{MCBUtils.getApiUrl()}/instances/{UnityWebRequest.EscapeURL(instanceId)}/recovery-decision";
+        using (var request = CreateJsonPost(url, new RecoveryDecisionRequest { accepted = accepted, bindings = bindings }, authToken))
         {
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Save MCB path recovery decision"));
             if (request.result != UnityWebRequest.Result.Success)
@@ -382,9 +382,10 @@ public static class McbInstanceHistoryClient
         }
     }
 
-    private static UnityWebRequest CreateJsonPost(string url, object payload)
+    private static UnityWebRequest CreateJsonPost(string url, object payload, string authToken)
     {
         var request = new UnityWebRequest(url, "POST");
+        MCBRequestHeaders.SetAuthorization(request, authToken);
         request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload)));
         request.downloadHandler = new DownloadHandlerBuffer();
         request.SetRequestHeader("Content-Type", "application/json");

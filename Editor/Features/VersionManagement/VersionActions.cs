@@ -223,10 +223,9 @@ public class VersionActions
         string requestedToken = editor.authToken;
         string requestedBaseHash = editor.currentBaseFbxHash;
         string requestedSourceVersionKey = OriginalBaseLibrary.ActiveKey(selectedAsset);
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={editor.currentBaseFbxHash}&t={editor.authToken}&sourceKey={OriginalBaseLibrary.ActiveKey(selectedAsset)}";
-        string sanitizedUrl = System.Text.RegularExpressions.Regex.Replace(url, @"([?&]t=)([^&]+)", "$1<redacted>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        MCBLogger.Log($"[VersionActions] Starting version fetch. assetId={selectedAsset.id} | url={sanitizedUrl} | currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash}");
-        var fetchTask = networkService.FetchVersionsAsync(url);
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={editor.currentBaseFbxHash}&sourceKey={OriginalBaseLibrary.ActiveKey(selectedAsset)}";
+        MCBLogger.Log($"[VersionActions] Starting version fetch. assetId={selectedAsset.id} | url={url} | currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash}");
+        var fetchTask = networkService.FetchVersionsAsync(url, requestedToken);
         
         while (!fetchTask.IsCompleted)
         {
@@ -318,7 +317,7 @@ public class VersionActions
         }
         editor.currentBaseFbxHash = requestBaseHash;
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={requestBaseHash}&t={requestedToken}&sourceKey={version.sourceVersionKey}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={requestBaseHash}&sourceKey={version.sourceVersionKey}";
         var deliveryDecision = MCBPerformance.Choose(version.deliveryVariants);
         var delivery = version.deliveryVariants?.FirstOrDefault(v => v.codec == deliveryDecision.codec);
         if (delivery != null) url += "&codec=" + Uri.EscapeDataString(delivery.codec);
@@ -334,7 +333,7 @@ public class VersionActions
         {
             var sizeTask = delivery != null
                 ? Task.FromResult((success: true, contentLength: delivery.packageBytes, error: (string)null))
-                : networkService.GetDownloadContentLengthAsync(url);
+                : networkService.GetDownloadContentLengthAsync(url, requestedToken);
             while (!sizeTask.IsCompleted)
             {
                 if (applyAfter)
@@ -377,7 +376,7 @@ public class VersionActions
         {
             useInMemoryPackage = false;
             diskDownloadTask = MCBMeshDelivery.DownloadAsync(networkService, url, version, tempZipPath,
-                progress => downloadProgress = Mathf.Clamp01(progress), bytes => downloadedBytes = bytes);
+                progress => downloadProgress = Mathf.Clamp01(progress), bytes => downloadedBytes = bytes, authToken: requestedToken);
         }
         else if (useInMemoryPackage)
         {
@@ -391,7 +390,7 @@ public class VersionActions
             }, bytes =>
             {
                 downloadedBytes = bytes;
-            });
+            }, requestedToken);
         }
         else
         {
@@ -409,7 +408,7 @@ public class VersionActions
             }, bytes =>
             {
                 downloadedBytes = bytes;
-            });
+            }, requestedToken);
         }
         bool setupSucceeded = memoryDownloadTask != null || diskDownloadTask != null;
         
@@ -488,7 +487,7 @@ public class VersionActions
         {
             if (applyAfter) ReportApplyProgress(DownloadApplyProgressComplete, "Checking the creator...");
             var trustRequest = networkService.FetchCreatorTrustAsync(MCBUtils.GetAssetModelTrustUrl(
-                selectedAsset.id, version.version, requestBaseHash, requestedToken, version.sourceVersionKey));
+                selectedAsset.id, version.version, requestBaseHash, version.sourceVersionKey), requestedToken);
             while (!trustRequest.IsCompleted) yield return null;
             if (!trustRequest.IsFaulted && !trustRequest.IsCanceled) currentCreatorTrust = trustRequest.Result;
         }

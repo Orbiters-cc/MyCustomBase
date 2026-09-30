@@ -46,6 +46,8 @@ public static class EditorCoroutineUtility
             EditorApplication.update += _updateDelegate;
         }
 
+        // Stopping (finished, failed, or on assembly reload and quit) disposes every enumerator still on the stack, innermost
+        // first, so the finally/using blocks of suspended coroutines run: temp files, progress bars, asset editing scopes.
         public void Stop()
         {
             if (!_isRunning)
@@ -56,6 +58,22 @@ public static class EditorCoroutineUtility
             _isRunning = false;
             EditorApplication.update -= _updateDelegate;
             ActiveRunners.Remove(this);
+            while (_coroutineStack.Count > 0)
+            {
+                Dispose(_coroutineStack.Pop());
+            }
+        }
+
+        private static void Dispose(IEnumerator coroutine)
+        {
+            try
+            {
+                (coroutine as IDisposable)?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogError("Exception while cleaning up an editor coroutine: " + ex);
+            }
         }
 
         private void Update()
@@ -72,14 +90,14 @@ public static class EditorCoroutineUtility
             {
                 if (!MoveNext(currentCoroutine))
                 {
-                    _coroutineStack.Pop();
+                    Dispose(_coroutineStack.Pop());
                 }
             }
             catch (Exception ex)
             {
                 MCBLogger.LogError("Exception in editor coroutine: " + ex);
-                // Optionally log the stack trace of the coroutine itself
-                // LogCoroutineStackTrace(currentCoroutine);
+                // A failed enumerator has already unwound its own finally blocks; disposing it again is harmless, and it may
+                // still be suspended when the failure came from a wait predicate. Every level is disposed.
                 Stop(); // Stop processing on error to prevent spam
             }
         }
@@ -180,12 +198,11 @@ public static class EditorCoroutineUtility
 
     public static void StopAllCoroutines()
     {
-        for (int i = ActiveRunners.Count - 1; i >= 0; i--)
+        // A cleanup block may start another coroutine; stop exactly the runners active now, each removing itself.
+        foreach (var runner in ActiveRunners.ToArray())
         {
-            ActiveRunners[i]?.Stop();
+            runner?.Stop();
         }
-
-        ActiveRunners.Clear();
     }
 
     // You could add StartCoroutine methods that take an owner object

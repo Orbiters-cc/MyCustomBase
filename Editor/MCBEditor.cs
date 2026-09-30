@@ -801,8 +801,21 @@ public class MCBEditor : UnityEditor.Editor
         };
     }
 
-    private void OnVersionsUpdated(System.Collections.Generic.List<CustomBaseVersion> versions, CustomBaseVersion recommended)
+    // Every inspector hears the shared service: keep only the answers to this inspector's current selection.
+    private bool IsCurrentVersionRequest(VersionFetchRequest request)
     {
+        var selectedAsset = GetSelectedAsset();
+        return request != null && selectedAsset != null &&
+               request.Matches(GetCurrentFBXPath(), authToken, selectedAsset.id, OriginalBaseLibrary.ActiveKey(selectedAsset));
+    }
+
+    private void OnVersionsUpdated(VersionFetchRequest request, System.Collections.Generic.List<CustomBaseVersion> versions, CustomBaseVersion recommended)
+    {
+        if (!IsCurrentVersionRequest(request))
+        {
+            return;
+        }
+
         serverVersions = versions;
         recommendedVersion = recommended;
         fetchError = null; // Clear any previous errors
@@ -876,8 +889,13 @@ public class MCBEditor : UnityEditor.Editor
         assetGalleryModule?.RefreshIfNeeded(force: true);
     }
 
-    private void OnVersionFetchError(string error)
+    private void OnVersionFetchError(VersionFetchRequest request, string error)
     {
+        if (!IsCurrentVersionRequest(request))
+        {
+            return;
+        }
+
         fetchError = error;
         RefreshUiToolkitSections();
         Repaint();

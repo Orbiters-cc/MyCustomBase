@@ -13,6 +13,74 @@ using UnityEngine;
 public class MCBRefitVersionCacheTests
 {
     [Test]
+    public void SameNamedAccessoriesKeepTheirOwnSavedFits()
+    {
+        var scene = EditorSceneManager.NewPreviewScene();
+        var root = new GameObject("Avatar");
+        UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(root, scene);
+        string fixture = "Assets/MCB-RefitDuplicateTest-" + Guid.NewGuid().ToString("N");
+        AssetDatabase.CreateFolder("Assets", fixture.Substring("Assets/".Length));
+        string cacheRoot = null;
+        try
+        {
+            var mcb = root.AddComponent<MyCustomBase>();
+            var bone = new GameObject("Bone").transform;
+            bone.SetParent(root.transform, false);
+            var version = new CustomBaseVersion { assetId = 999994, version = "0.5.2", defaultAviVersion = "1.0.0" };
+            mcb.appliedCustomBaseVersion = version;
+            var renderers = new List<SkinnedMeshRenderer>();
+            var originals = new List<Mesh>();
+            for (int i = 0; i < 2; i++)
+            {
+                var accessory = new GameObject("Jacket");
+                accessory.transform.SetParent(root.transform, false);
+                var renderer = accessory.AddComponent<SkinnedMeshRenderer>();
+                var original = new Mesh { name = "Original" + i, vertices = new[] { Vector3.zero, Vector3.right, Vector3.up }, triangles = new[] { 0, 1, 2 } };
+                original.bindposes = new[] { Matrix4x4.identity };
+                original.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, 3).ToArray();
+                AssetDatabase.CreateAsset(original, fixture + "/original" + i + ".asset");
+                renderer.sharedMesh = original;
+                renderer.bones = new[] { bone };
+                renderer.rootBone = bone;
+                var originalState = RefitRecords.Capture(root.transform, renderer);
+                var fitted = UnityEngine.Object.Instantiate(original);
+                fitted.vertices = new[] { Vector3.forward * (i + 1), Vector3.right, Vector3.up };
+                AssetDatabase.CreateAsset(fitted, fixture + "/fitted" + i + ".asset");
+                renderer.sharedMesh = fitted;
+                RefitRecords.Register(renderer, originalState, fitted, fixture + "/fitted" + i + ".asset", null, new List<RefitShape>(),
+                    OrbitersRefit.FitKind.Fitted, "b", "B", "MCB");
+                renderers.Add(renderer);
+                originals.Add(original);
+            }
+
+            MCBReFitIntegration.SaveVersionFits(mcb, version);
+            cacheRoot = "Assets/MCB/refits/" + mcb.mcbComponentId;
+            var saved = renderers.Select(renderer => renderer.sharedMesh).ToArray();
+            Assert.That(saved[0], Is.Not.SameAs(saved[1]));
+            Assert.That(AssetDatabase.FindAssets("t:MCBRefitVersionSnapshot", new[] { MCBReFitIntegration.GetVersionRefitFolder(mcb, version) }),
+                Has.Length.EqualTo(2), "Each accessory has its own saved fit.");
+
+            MCBReFitIntegration.RestoreOriginalAssetMeshes(mcb);
+            Assert.That(renderers.Select(renderer => renderer.sharedMesh), Is.EqualTo(originals));
+            Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, version), Is.EqualTo(2));
+            Assert.That(renderers.Select(renderer => renderer.sharedMesh), Is.EqualTo(saved), "Each fit returns to its own accessory.");
+
+            MCBReFitIntegration.RestoreAsset(mcb, renderers[1]);
+            MCBReFitIntegration.RestoreOriginalAssetMeshes(mcb);
+            Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, version), Is.EqualTo(1));
+            Assert.That(renderers[0].sharedMesh, Is.SameAs(saved[0]));
+            Assert.That(renderers[1].sharedMesh, Is.SameAs(originals[1]), "Only the removed accessory's fit stops being restored.");
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(root);
+            EditorSceneManager.ClosePreviewScene(scene);
+            if (cacheRoot != null) AssetDatabase.DeleteAsset(cacheRoot);
+            AssetDatabase.DeleteAsset(fixture);
+        }
+    }
+
+    [Test]
     public void SavedFitsRoundTripAcrossBaseAndTwoVersionsAndRespectManualRemoval()
     {
         var scene = EditorSceneManager.NewPreviewScene();

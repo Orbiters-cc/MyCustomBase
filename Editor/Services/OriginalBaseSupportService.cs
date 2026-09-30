@@ -12,18 +12,20 @@ using UnityEngine.Networking;
 /// <summary>Creator-only registration and historical version support, using immutable downloaded payloads.</summary>
 public static class OriginalBaseSupportService
 {
-    public static string Url(int assetId, string suffix, string token) => MCBUtils.getApiUrl() + "/" + assetId + suffix + "?t=" + Uri.EscapeDataString(token);
+    /// <summary>An asset's backend URL; requests carry the token in the Authorization header.</summary>
+    public static string Url(int assetId, string suffix) => MCBUtils.getApiUrl() + "/" + assetId + suffix;
     public static async Task<OriginalBaseVersionData[]> Load(int assetId, string token)
     {
-        var result = await new NetworkService().DownloadBytesAsync(Url(assetId, "/source-versions", token));
+        var result = await new NetworkService().DownloadBytesAsync(Url(assetId, "/source-versions"), authToken: token);
         if (!result.success) throw new IOException(result.error);
         return JObject.Parse(System.Text.Encoding.UTF8.GetString(result.data))["sourceVersions"].ToObject<OriginalBaseVersionData[]>();
     }
     public static async Task<OriginalBaseVersionData[]> Register(int assetId, string token, OriginalBaseVersionData[] versions)
     {
-        string url = Url(assetId, "/source-versions", token);
+        string url = Url(assetId, "/source-versions");
         using (var request = new UnityWebRequest(url, "POST"))
         {
+            MCBRequestHeaders.SetAuthorization(request, token);
             request.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { sourceVersions = versions })));
             request.downloadHandler = new DownloadHandlerBuffer(); request.SetRequestHeader("Content-Type", "application/json");
             await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Backend("Register original base versions"));
@@ -48,18 +50,19 @@ public static class OriginalBaseSupportService
         Directory.CreateDirectory(staging);
         try
         {
-            string url = Url(assetId, "/model", token) + "&version=" + Uri.EscapeDataString(version.version) + "&d=" + version.sourceFiles[0].hash + "&sourceKey=" + version.sourceVersionKey;
+            string url = Url(assetId, "/model") + "?version=" + Uri.EscapeDataString(version.version) + "&d=" + version.sourceFiles[0].hash + "&sourceKey=" + version.sourceVersionKey;
             var network = new NetworkService(); string zip = Path.Combine(staging, "download.zip"); string folder = Path.Combine(staging, "content");
             progress?.Invoke("Downloading saved version " + version.version + "…");
-            var download = await network.DownloadFileAsync(url + (version.meshDelivery > 0 ? "&meshCommon=1" : ""), zip);
+            var download = await network.DownloadFileAsync(url + (version.meshDelivery > 0 ? "&meshCommon=1" : ""), zip, authToken: token);
             if (!download.success) throw new IOException(download.error);
-            ZipFile.ExtractToDirectory(zip, folder);
+            // Validated and bounded like any downloaded version (VersionArchiveBudget).
+            new FileManagerService().UnzipAndMove(zip, null, folder);
             if (version.meshDelivery > 0)
                 foreach (var patch in version.versionFiles.Where(p => p.transform == NativeMeshPayloadService.TransformName))
                     foreach (var codec in MCBVersionDelivery.GetVariants(patch))
                     {
                         string destination = SafePath(folder, codec.path);
-                        var blob = await network.DownloadFileAsync(url + "&meshBlob=" + codec.hash, destination);
+                        var blob = await network.DownloadFileAsync(url + "&meshBlob=" + codec.hash, destination, authToken: token);
                         if (!blob.success) throw new IOException(blob.error);
                         if (MCBUtils.CalculateFileHash(destination) != codec.hash) throw new InvalidDataException("Downloaded historical mesh failed verification.");
                     }
@@ -70,7 +73,7 @@ public static class OriginalBaseSupportService
             foreach (string local in new[] { "version.json", "manifest.json", MCBVersionDelivery.ManifestName })
                 if (File.Exists(Path.Combine(folder, local))) File.Delete(Path.Combine(folder, local));
             string uploadZip = Path.Combine(staging, "support.zip"); ZipFile.CreateFromDirectory(folder, uploadZip);
-            var upload = await network.SubmitNewVersionStreamingAsync(Url(assetId, "/versions/" + Uri.EscapeDataString(version.version) + "/source-support", token), token,
+            var upload = await network.SubmitNewVersionStreamingAsync(Url(assetId, "/versions/" + Uri.EscapeDataString(version.version) + "/source-support"), token,
                 uploadZip, JsonConvert.SerializeObject(new { originalBaseVersions = variants }), (value, bytes) => progress?.Invoke("Uploading " + version.version + "… " + Math.Round(value * 100) + "%"), CancellationToken.None);
             if (!upload.success) throw new IOException(upload.error);
         }

@@ -110,10 +110,11 @@ public class UserService
             yield break;
         }
         
-        string url = $"{MCBUtils.getApiUrl()}/user?u={userId}&t={tokenToUse}";
-        
+        string url = $"{MCBUtils.getApiUrl()}/user?u={userId}";
+
         using (UnityWebRequest request = UnityWebRequest.Get(url))
         {
+            MCBRequestHeaders.SetAuthorization(request, tokenToUse);
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.UserInfo);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Fetch user info"));
             

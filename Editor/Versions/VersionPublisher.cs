@@ -116,7 +116,7 @@ public static class VersionPublisher
 
             string metadataJson = JsonConvert.SerializeObject(metadata, new StringEnumConverter());
             MCBLogger.Log($"[VersionPublisher] Uploading version metadata assetId={metadata.assetId}, version={metadata.version}, scope={metadata.scope}, defaultAviVersion={metadata.defaultAviVersion}, changelogLength={(metadata.changelog ?? string.Empty).Length}");
-            uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}?t={editor.authToken}";
+            uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}";
             uploadTask = networkService.SubmitNewVersionStreamingAsync(
                 uploadUrl,
                 editor.authToken,

@@ -6,6 +6,39 @@ using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 
+/// <summary>
+/// What a version fetch was made for. The service is shared by every inspector: each one only takes the responses to its
+/// own selection (asset, source model, original base and account), never one started for another inspector or selection.
+/// </summary>
+public sealed class VersionFetchRequest
+{
+    public readonly string fbxPath;
+    public readonly int assetId;
+    public readonly string sourceVersionKey;
+    private readonly string authToken;
+
+    public VersionFetchRequest(string fbxPath, string authToken, int assetId, string sourceVersionKey)
+    {
+        this.fbxPath = NormalizePath(fbxPath);
+        this.authToken = authToken ?? "";
+        this.assetId = assetId;
+        this.sourceVersionKey = sourceVersionKey ?? "";
+    }
+
+    public bool Matches(string currentFbxPath, string currentAuthToken, int currentAssetId, string currentSourceVersionKey) =>
+        assetId == currentAssetId &&
+        string.Equals(sourceVersionKey, currentSourceVersionKey ?? "", StringComparison.Ordinal) &&
+        string.Equals(authToken, currentAuthToken ?? "", StringComparison.Ordinal) &&
+        fbxPath != null && string.Equals(fbxPath, NormalizePath(currentFbxPath), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizePath(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        try { return System.IO.Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is System.IO.PathTooLongException) { return path; }
+    }
+}
+
 public class AsyncVersionService
 {
     private static AsyncVersionService _instance;
@@ -28,9 +61,9 @@ public class AsyncVersionService
     private readonly System.Collections.Generic.Dictionary<string, Task> inflightFetches = new System.Collections.Generic.Dictionary<string, Task>();
     private readonly HashSet<string> pendingForcedRefreshes = new HashSet<string>();
 
-    // Events for UI updates
-    public event Action<List<CustomBaseVersion>, CustomBaseVersion> OnVersionsUpdated;
-    public event Action<string> OnVersionFetchError; 
+    // Events for UI updates, with the request they answer.
+    public event Action<VersionFetchRequest, List<CustomBaseVersion>, CustomBaseVersion> OnVersionsUpdated;
+    public event Action<VersionFetchRequest, string> OnVersionFetchError;
 
     private AsyncVersionService()
     {
@@ -43,6 +76,7 @@ public class AsyncVersionService
     public async Task<(List<CustomBaseVersion> versions, CustomBaseVersion recommended, string error)> FetchVersionsAsync(
         string fbxPath, string authToken, int assetId, bool useCache = true, string sourceVersionKey = null)
     {
+        var request = new VersionFetchRequest(fbxPath, authToken, assetId, sourceVersionKey);
         // Fast path: if we can resolve the base hash from cache and versions are cached, avoid creating any task
         if (useCache)
         {
@@ -54,7 +88,7 @@ public class AsyncVersionService
                 {
                     MCBLogger.Log($"[AsyncVersionService] Fast cache hit, returning versions without UI task for hash: {cachedBaseHash}");
                     taskManager.ExecuteOnMainThread(() =>
-                        OnVersionsUpdated?.Invoke(cachedEntryFast.serverVersions, cachedEntryFast.recommendedVersion));
+                        OnVersionsUpdated?.Invoke(request, cachedEntryFast.serverVersions, cachedEntryFast.recommendedVersion));
                     return (cachedEntryFast.serverVersions, cachedEntryFast.recommendedVersion, null);
                 }
             }
@@ -75,7 +109,7 @@ public class AsyncVersionService
             {
                 var error = "Could not calculate FBX hash";
                 taskManager.CompleteTask(taskId, true, error);
-                OnVersionFetchError?.Invoke(error);
+                OnVersionFetchError?.Invoke(request, error);
                 return (new List<CustomBaseVersion>(), null, error);
             }
 
@@ -91,8 +125,8 @@ public class AsyncVersionService
                     taskManager.CompleteTask(taskId);
                     
                     // Fire event on main thread
-                    taskManager.ExecuteOnMainThread(() => 
-                        OnVersionsUpdated?.Invoke(cachedEntry.serverVersions, cachedEntry.recommendedVersion));
+                    taskManager.ExecuteOnMainThread(() =>
+                        OnVersionsUpdated?.Invoke(request, cachedEntry.serverVersions, cachedEntry.recommendedVersion));
                     
                     return (cachedEntry.serverVersions, cachedEntry.recommendedVersion, null);
                 }
@@ -101,8 +135,8 @@ public class AsyncVersionService
             // Step 3: Fetch from server
             taskManager.UpdateTaskProgress(taskId, 0.5f, "Fetching from server...");
             
-            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(assetId)}?d={baseFbxHash}&t={authToken}&sourceKey={sourceVersionKey}";
-            var fetchTask = taskManager.ExecuteOnMainThreadAsync(() => networkService.FetchVersionsAsync(url));
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(assetId)}?d={baseFbxHash}&sourceKey={sourceVersionKey}";
+            var fetchTask = taskManager.ExecuteOnMainThreadAsync(() => networkService.FetchVersionsAsync(url, authToken));
 
             // Wait for network request with progress updates
             var random = new System.Random();
@@ -124,7 +158,7 @@ public class AsyncVersionService
                 {
                     var errorMsg = "Version response is missing assetId.";
                     taskManager.CompleteTask(taskId, true, errorMsg);
-                    taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(errorMsg));
+                    taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(request, errorMsg));
                     return (new List<CustomBaseVersion>(), null, errorMsg);
                 }
                 var recommendedVersion = versions.FirstOrDefault(v => v.version == response.recommendedVersion);
@@ -135,8 +169,8 @@ public class AsyncVersionService
                 taskManager.CompleteTask(taskId);
                 
                 // Fire event on main thread
-                taskManager.ExecuteOnMainThread(() => 
-                    OnVersionsUpdated?.Invoke(versions, recommendedVersion));
+                taskManager.ExecuteOnMainThread(() =>
+                    OnVersionsUpdated?.Invoke(request, versions, recommendedVersion));
 
                 return (versions, recommendedVersion, null);
             }
@@ -144,7 +178,7 @@ public class AsyncVersionService
             {
                 var errorMsg = fetchError ?? "Unknown server error";
                 taskManager.CompleteTask(taskId, true, errorMsg);
-                taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(errorMsg));
+                taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(request, errorMsg));
                 return (new List<CustomBaseVersion>(), null, errorMsg);
             }
         }
@@ -153,7 +187,7 @@ public class AsyncVersionService
             var errorMsg = $"Version fetch failed: {ex.Message}";
             MCBLogger.LogError($"[AsyncVersionService] {errorMsg}");
             taskManager.CompleteTask(taskId, true, errorMsg);
-            taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(errorMsg));
+            taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(request, errorMsg));
             return (new List<CustomBaseVersion>(), null, errorMsg);
         }
     }

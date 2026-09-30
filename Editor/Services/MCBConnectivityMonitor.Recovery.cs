@@ -27,12 +27,13 @@ public static partial class MCBConnectivityMonitor
         recoveryRunning = true;
         int generation = failureReportGeneration;
         string token = AuthenticationService.GetAuth()?.token;
-        string url = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl(token);
+        string url = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl();
         try
         {
             // Only a lightweight probe: retain the offline report and local versions while retrying.
             var result = await ConnectivityDiagnosticsService.RunUnityWebRequestProbeAsync(url, new ConnectivityDiagnosticsOptions());
-            if (generation != failureReportGeneration || url != ConnectivityDiagnosticsService.BuildConnectivityCheckUrl(AuthenticationService.GetAuth()?.token)) return;
+            if (generation != failureReportGeneration || url != ConnectivityDiagnosticsService.BuildConnectivityCheckUrl() ||
+                token != AuthenticationService.GetAuth()?.token) return;
             if (!result.ReachedServer) return;
             MarkServerReachable();
             MCBPackageVersionService.EnsureCheckStarted(token, true);

@@ -379,11 +379,6 @@ public static class MCBPackageVersionService
     {
         string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT
             + "?packageVersion=" + Uri.EscapeDataString(ReadCurrentPackageVersion());
-        if (!string.IsNullOrEmpty(authToken))
-        {
-            url += "&t=" + Uri.EscapeDataString(authToken);
-        }
-
         return await networkService.CheckConnectionDetailedAsync(url, authToken);
     }
 

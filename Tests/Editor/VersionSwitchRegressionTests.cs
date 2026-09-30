@@ -130,6 +130,19 @@ public sealed class VersionSwitchRegressionTests
     }
 
     [Test]
+    public void NestedPackagesAreScannedWithinTheArchiveBudget()
+    {
+        byte[] zip = Zip(("mcb logic.unitypackage", UnityPackage((Guid(), "Assets/Creator/Big.anim", new string('x', 64 * 1024)))));
+        Assert.Less(zip.Length, 16 * 1024);
+        using (var stream = new MemoryStream(zip))
+            Assert.Throws<InvalidDataException>(() => VersionContentTrust.ListCode(stream, new VersionArchiveBudget(maxTotalBytes: 32 * 1024)));
+        using (var stream = new MemoryStream(zip))
+            Assert.Throws<InvalidDataException>(() => VersionContentTrust.ListCode(stream, new VersionArchiveBudget(maxEntries: 2)));
+        using (var stream = new MemoryStream(zip))
+            Assert.IsEmpty(VersionContentTrust.ListCode(stream));
+    }
+
+    [Test]
     public void TrustedOrCodeFreeDownloadsNeedNoConfirmation()
     {
         Assert.IsTrue(VersionContentTrust.ConfirmDownloadedCode(new CustomBaseVersion { assetId = 14, version = "1" }, null,
@@ -190,6 +203,82 @@ public sealed class VersionSwitchRegressionTests
         var entries = UnityPackageIndex.Read(import).Entries;
         Assert.AreEqual(1, entries.Count);
         Assert.AreEqual(missing, entries[0].Guid);
+    }
+
+    // A new version's dependency with an existing GUID is updated only over the copy a stored version installed.
+    [Test]
+    public void ChangedDependencyReplacesOnlyTheCopyAStoredVersionInstalled()
+    {
+        string folder = "Assets/MCB_DependencyTest_" + Guid();
+        string path = folder + "/flex.anim.txt";
+        try
+        {
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            File.WriteAllText(path, "shipped by 1.0");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            Assert.IsNotEmpty(guid);
+            string stored = TempFile(".unitypackage", UnityPackage((guid, "Assets/Creator/flex.anim.txt", "shipped by 1.0")));
+            string same = TempFile(".unitypackage", UnityPackage((guid, "Assets/Creator/flex.anim.txt", "shipped by 1.0")));
+            string updated = TempFile(".unitypackage", UnityPackage((guid, "Assets/Creator/flex.anim.txt", "shipped by 1.1")));
+
+            Assert.IsNull(FileManagerService.PrepareLogicPackageImport(same, new[] { stored }), "Identical content is not imported again.");
+            Assert.AreEqual(updated, FileManagerService.PrepareLogicPackageImport(updated, new[] { stored }),
+                "The installed copy is the one 1.0 shipped: 1.1 updates it.");
+            Assert.IsNull(FileManagerService.PrepareLogicPackageImport(updated, Array.Empty<string>()),
+                "A copy no stored version shipped is not MCB's to replace.");
+
+            File.WriteAllText(path, "edited by the user");
+            Assert.IsNull(FileManagerService.PrepareLogicPackageImport(updated, new[] { stored }), "The user's edits are kept.");
+        }
+        finally
+        {
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
+    // ---- Version responses reach only the inspector whose selection asked for them
+
+    [Test]
+    public void VersionResponsesMatchOnlyTheirOwnRequest()
+    {
+        var request = new VersionFetchRequest("Assets/Base/Body.fbx", "token-a", 14, "source-a");
+        Assert.IsTrue(request.Matches(Path.GetFullPath("Assets/Base/Body.fbx"), "token-a", 14, "source-a"));
+        Assert.IsFalse(request.Matches("Assets/Base/Body.fbx", "token-a", 15, "source-a"), "Another asset.");
+        Assert.IsFalse(request.Matches("Assets/Other/Body.fbx", "token-a", 14, "source-a"), "Another source model.");
+        Assert.IsFalse(request.Matches("Assets/Base/Body.fbx", "token-b", 14, "source-a"), "Another account.");
+        Assert.IsFalse(request.Matches("Assets/Base/Body.fbx", "token-a", 14, "source-b"), "Another original base.");
+        Assert.IsFalse(request.Matches(null, "token-a", 14, "source-a"));
+        Assert.IsTrue(new VersionFetchRequest("Assets/Base/Body.fbx", "token-a", 14, null).Matches("Assets/Base/Body.fbx", "token-a", 14, ""));
+    }
+
+    // ---- Stopped editor coroutines run their cleanup
+
+    [Test]
+    public void StoppingAnEditorCoroutineDisposesEverySuspendedLevel()
+    {
+        var cleaned = new List<string>();
+        IEnumerator Inner()
+        {
+            try { yield return null; yield return null; }
+            finally { cleaned.Add("inner"); }
+        }
+        IEnumerator Outer()
+        {
+            try { yield return Inner(); }
+            finally { cleaned.Add("outer"); }
+        }
+
+        var runners = (IList)typeof(EditorCoroutineUtility).GetField("ActiveRunners", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        EditorCoroutineUtility.StartCoroutineOwnerless(Outer());
+        object runner = runners[runners.Count - 1];
+        var update = runner.GetType().GetMethod("Update", BindingFlags.NonPublic | BindingFlags.Instance);
+        update.Invoke(runner, null); // Outer starts Inner.
+        update.Invoke(runner, null); // Inner is suspended inside its try.
+        Assert.IsEmpty(cleaned);
+        runner.GetType().GetMethod("Stop").Invoke(runner, null);
+        CollectionAssert.AreEqual(new[] { "inner", "outer" }, cleaned);
+        Assert.IsFalse(runners.Contains(runner));
     }
 
     // ---- MCB-04: pending build identity

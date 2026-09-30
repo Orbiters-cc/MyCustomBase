@@ -217,7 +217,7 @@ public static class AvatarAssetDiscoveryService
             filterOnlyCompatible = filterOnlyCompatible
         };
 
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.AVATAR_ASSET_DISCOVERY_ENDPOINT}?t={authToken}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.AVATAR_ASSET_DISCOVERY_ENDPOINT}";
         byte[] requestBytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(requestPayload));
         string requestSummary = BuildRequestSummary(url, normalizedPaths, filterOnlyCompatible);
 
@@ -234,6 +234,7 @@ public static class AvatarAssetDiscoveryService
             request.uploadHandler = new UploadHandlerRaw(requestBytes);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
+            MCBRequestHeaders.SetAuthorization(request, authToken);
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
 
             UnityWebRequestAsyncOperation operation = request.SendWebRequest();

@@ -115,9 +115,10 @@ public static class InteractionService
             yield break;
         }
 
-        string url = $"{MCBUtils.getApiUrl()}/assets/{assetId}/interactions?t={authToken}";
+        string url = $"{MCBUtils.getApiUrl()}/assets/{assetId}/interactions";
         using (var request = UnityWebRequest.Get(url))
         {
+            MCBRequestHeaders.SetAuthorization(request, authToken);
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Load interactions"));
 
@@ -152,12 +153,13 @@ public static class InteractionService
             yield break;
         }
 
-        string url = $"{MCBUtils.getApiUrl()}/interactions?t={authToken}";
+        string url = $"{MCBUtils.getApiUrl()}/interactions";
         string json = JsonConvert.SerializeObject(payload);
         byte[] bytes = Encoding.UTF8.GetBytes(json);
 
         using (var request = new UnityWebRequest(url, "POST"))
         {
+            MCBRequestHeaders.SetAuthorization(request, authToken);
             request.uploadHandler = new UploadHandlerRaw(bytes);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
@@ -195,9 +197,10 @@ public static class InteractionService
             yield break;
         }
 
-        string url = $"{MCBUtils.getApiUrl()}/interactions/{interactionId}?t={authToken}";
+        string url = $"{MCBUtils.getApiUrl()}/interactions/{interactionId}";
         using (var request = UnityWebRequest.Delete(url))
         {
+            MCBRequestHeaders.SetAuthorization(request, authToken);
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Delete interaction"));
 
@@ -229,12 +232,13 @@ public static class InteractionService
             content = content
         };
 
-        string url = $"{MCBUtils.getApiUrl()}/interactions/{interactionId}?t={authToken}";
+        string url = $"{MCBUtils.getApiUrl()}/interactions/{interactionId}";
         string json = JsonConvert.SerializeObject(payload);
         byte[] bytes = Encoding.UTF8.GetBytes(json);
 
         using (var request = new UnityWebRequest(url, "PUT"))
         {
+            MCBRequestHeaders.SetAuthorization(request, authToken);
             request.uploadHandler = new UploadHandlerRaw(bytes);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");

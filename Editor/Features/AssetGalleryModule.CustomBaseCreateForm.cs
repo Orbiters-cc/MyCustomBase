@@ -1334,9 +1334,10 @@ public partial class AssetGalleryModule
         avatarBaseLoadError = null;
         editor.Repaint();
 
-        string url = $"{MCBUtils.getApiUrl()}/avatar-bases?t={editor.authToken}";
+        string url = $"{MCBUtils.getApiUrl()}/avatar-bases";
         using (var request = UnityWebRequest.Get(url))
         {
+            MCBRequestHeaders.SetAuthorization(request, editor.authToken);
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Load avatar bases"));
 
@@ -1464,9 +1465,10 @@ public partial class AssetGalleryModule
             AddImageToForm(form, "banner", createBanner);
         }
 
-        string url = $"{MCBUtils.getApiUrl()}/assets/custom-base?t={editor.authToken}";
+        string url = $"{MCBUtils.getApiUrl()}/assets/custom-base";
         using (var request = UnityWebRequest.Post(url, form))
         {
+            MCBRequestHeaders.SetAuthorization(request, editor.authToken);
             MCBRequestHeaders.SetIdempotencyKey(request, customBaseCreationRequestId);
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Create custom base"));

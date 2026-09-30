@@ -381,17 +381,22 @@ public class FileManagerService
         return MCBXor.Transform(baseData, keyData);
     }
 
-    public void UnzipAndMove(string zipPath, string extractPath, string finalDestinationPath, Action<string> validateExtracted = null)
+    public void UnzipAndMove(string zipPath, string extractPath, string finalDestinationPath, Action<string> validateExtracted = null,
+        VersionArchiveBudget budget = null)
     {
         // Both disk and RAM downloads use the same validated, transactional extraction path.
         using (var stream = File.OpenRead(zipPath))
-            ExtractVersionArchive(stream, finalDestinationPath, null, validateExtracted);
+            ExtractVersionArchive(stream, finalDestinationPath, null, validateExtracted, budget);
     }
 
+    /// <returns>
+    /// The captured entries' bytes. An entry that does not fit <see cref="VersionArchiveBudget.MaxCapturedBytes"/> is only
+    /// written to disk, where callers read it instead.
+    /// </returns>
     public Dictionary<string, byte[]> UnzipAndMoveFromMemory(
         byte[] zipBytes,
         string finalDestinationPath,
-        ISet<string> captureRelativePaths = null, Action<string> validateExtracted = null)
+        ISet<string> captureRelativePaths = null, Action<string> validateExtracted = null, VersionArchiveBudget budget = null)
     {
         if (zipBytes == null || zipBytes.Length == 0)
         {
@@ -399,16 +404,18 @@ public class FileManagerService
         }
 
         using (var stream = new MemoryStream(zipBytes, false))
-            return ExtractVersionArchive(stream, finalDestinationPath, captureRelativePaths, validateExtracted);
+            return ExtractVersionArchive(stream, finalDestinationPath, captureRelativePaths, validateExtracted, budget);
     }
 
     private Dictionary<string, byte[]> ExtractVersionArchive(Stream zipStream, string finalDestinationPath,
-        ISet<string> captureRelativePaths, Action<string> validateExtracted)
+        ISet<string> captureRelativePaths, Action<string> validateExtracted, VersionArchiveBudget budget)
     {
         if (string.IsNullOrWhiteSpace(finalDestinationPath))
         {
             throw new ArgumentNullException(nameof(finalDestinationPath));
         }
+
+        budget = budget ?? new VersionArchiveBudget();
 
         var captured = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var normalizedCapturePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -430,6 +437,7 @@ public class FileManagerService
             using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, true))
             {
                 VersionStorage.RejectLinks(Path.GetDirectoryName(finalPath), finalPath);
+                budget.AddEntries(archive.Entries.Count);
                 Directory.CreateDirectory(staging);
                 var fileEntries = archive.Entries
                     .Where(entry => entry != null && !IsZipDirectory(entry))
@@ -478,25 +486,12 @@ public class FileManagerService
                         Directory.CreateDirectory(outputDirectory);
                     }
 
-                    bool shouldCapture = normalizedCapturePaths.Contains(relativePath);
-                    if (shouldCapture)
+                    // Sizes are counted as the entry decompresses: the sizes an archive declares are never trusted.
+                    using (var entryStream = entry.Open())
+                    using (var fileStream = File.Create(outputPath))
                     {
-                        using (var entryStream = entry.Open())
-                        using (var memory = new MemoryStream())
-                        {
-                            entryStream.CopyTo(memory);
-                            byte[] bytes = memory.ToArray();
-                            File.WriteAllBytes(outputPath, bytes);
-                            captured[relativePath] = bytes;
-                        }
-                    }
-                    else
-                    {
-                        using (var entryStream = entry.Open())
-                        using (var fileStream = File.Create(outputPath))
-                        {
-                            entryStream.CopyTo(fileStream);
-                        }
+                        byte[] bytes = budget.Copy(entryStream, fileStream, relativePath, normalizedCapturePaths.Contains(relativePath));
+                        if (bytes != null) captured[relativePath] = bytes;
                     }
                 }
             }
@@ -697,10 +692,11 @@ public class FileManagerService
     /// The package to import for a version's logic prefab: null when the project already has every creator asset it
     /// carries, a filtered temporary copy when it also carries entries outside Assets/.
     /// </summary>
-    internal static string PrepareLogicPackageImport(string packagePath)
+    internal static string PrepareLogicPackageImport(string packagePath, IEnumerable<string> shippedPackages = null)
     {
-        var index = Orbiters.Toolkit.Editor.UnityPackageIndex.Read(packagePath);
-        var wanted = LogicPackageImportEntries(index).ToList();
+        var index = Orbiters.Toolkit.Editor.UnityPackageIndex.Read(packagePath,
+            maxExpandedBytes: VersionArchiveBudget.DefaultMaxTotalBytes, maxEntries: VersionArchiveBudget.DefaultMaxEntries);
+        var wanted = LogicPackageImportEntries(packagePath, index, shippedPackages);
         if (wanted.Count == 0) return null;
         if (wanted.Count == index.Entries.Count) return packagePath;
 
@@ -717,14 +713,147 @@ public class FileManagerService
         }
     }
 
-    /// <summary>The entries of a logic package MCB imports: the creator's assets under Assets/ the project does not have yet.</summary>
-    internal static IEnumerable<Orbiters.Toolkit.Editor.UnityPackageIndex.Entry> LogicPackageImportEntries(Orbiters.Toolkit.Editor.UnityPackageIndex index) =>
-        index.Entries.Where(entry => IsLogicPackageImportPath(entry.Path) && !ProjectHasAsset(entry.Guid));
-
-    private static bool ProjectHasAsset(string guid)
+    /// <summary>
+    /// The entries of a logic package MCB imports: the creator's assets under Assets/ that the project does not have yet, and
+    /// those the project has with different content when its copy is one MCB installed and nobody changed since.
+    /// </summary>
+    /// <remarks>
+    /// Such dependencies live outside the version folder and can be shared with other versions and assets, or edited by the
+    /// user. A project file equal to this package's copy is skipped. A different one is only replaced when it is byte for byte
+    /// the copy a stored version shipped for that GUID (<paramref name="shippedPackages"/>, by default every logic package
+    /// under <see cref="MCBUtils.ASSET_VERSIONS_FOLDER"/>): that is the version's update, not the user's work. Anything else
+    /// (edited, or installed by other means) is kept and reported.
+    /// </remarks>
+    internal static List<Orbiters.Toolkit.Editor.UnityPackageIndex.Entry> LogicPackageImportEntries(string packagePath,
+        Orbiters.Toolkit.Editor.UnityPackageIndex index, IEnumerable<string> shippedPackages = null)
     {
-        string path = AssetDatabase.GUIDToAssetPath(guid);
-        return !string.IsNullOrEmpty(path) && (AssetDatabase.IsValidFolder(path) || AssetDatabase.GetMainAssetTypeAtPath(path) != null);
+        var wanted = new List<Orbiters.Toolkit.Editor.UnityPackageIndex.Entry>();
+        var installed = new List<(Orbiters.Toolkit.Editor.UnityPackageIndex.Entry entry, string path)>();
+        foreach (var entry in index.Entries.Where(entry => IsLogicPackageImportPath(entry.Path)))
+        {
+            string projectPath = AssetDatabase.GUIDToAssetPath(entry.Guid);
+            if (!ProjectHasAsset(projectPath)) wanted.Add(entry);
+            // Only files of the project's own Assets/ are ever updated, never folders or installed packages.
+            else if (projectPath.StartsWith("Assets/", StringComparison.Ordinal) && !AssetDatabase.IsValidFolder(projectPath))
+                installed.Add((entry, projectPath));
+        }
+        if (installed.Count == 0) return wanted;
+
+        var packageHashes = UnityPackageAssetHashes(packagePath);
+        var changed = new List<(Orbiters.Toolkit.Editor.UnityPackageIndex.Entry entry, string path, string hash)>();
+        foreach (var (entry, projectPath) in installed)
+        {
+            // Records without content (folders) have nothing to update.
+            if (!packageHashes.TryGetValue(entry.Guid, out string packageHash)) continue;
+            string projectFile = Path.GetFullPath(projectPath);
+            string projectHash = File.Exists(projectFile) ? MCBUtils.CalculateFileHash(projectFile) : null;
+            if (projectHash != null && !string.Equals(projectHash, packageHash, StringComparison.OrdinalIgnoreCase))
+                changed.Add((entry, projectPath, projectHash));
+        }
+        if (changed.Count == 0) return wanted;
+
+        string self = Path.GetFullPath(packagePath);
+        var shipped = (shippedPackages ?? StoredLogicPackages())
+            .Where(path => !string.Equals(Path.GetFullPath(path), self, StringComparison.OrdinalIgnoreCase))
+            .Select(TryUnityPackageAssetHashes)
+            .ToList();
+        foreach (var (entry, projectPath, projectHash) in changed)
+        {
+            if (shipped.Any(hashes => hashes.TryGetValue(entry.Guid, out string hash) && string.Equals(hash, projectHash, StringComparison.OrdinalIgnoreCase)))
+                wanted.Add(entry);
+            else
+                MCBLogger.LogWarning($"[FileManager] Kept '{projectPath}': this version ships a different copy, but the project's copy is not one MCB installed, so it may hold your changes.");
+        }
+        return wanted;
+    }
+
+    private static bool ProjectHasAsset(string path) =>
+        !string.IsNullOrEmpty(path) && (AssetDatabase.IsValidFolder(path) || AssetDatabase.GetMainAssetTypeAtPath(path) != null);
+
+    // The logic package of every stored version.
+    private static IEnumerable<string> StoredLogicPackages()
+    {
+        string root = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
+        if (!Directory.Exists(root)) return Enumerable.Empty<string>();
+        return Directory.GetDirectories(root)
+            .Select(asset => Path.Combine(asset, "versions"))
+            .Where(Directory.Exists)
+            .SelectMany(Directory.GetDirectories)
+            .SelectMany(version => Directory.GetFiles(version, "*.unitypackage", SearchOption.TopDirectoryOnly));
+    }
+
+    private static Dictionary<string, string> TryUnityPackageAssetHashes(string packagePath)
+    {
+        try { return UnityPackageAssetHashes(packagePath); }
+        catch (Exception ex) when (ex is IOException || ex is InvalidDataException || ex is UnauthorizedAccessException)
+        {
+            MCBLogger.LogWarning($"[FileManager] Could not read stored logic package '{packagePath}': {ex.Message}");
+            return new Dictionary<string, string>();
+        }
+    }
+
+    private static readonly Dictionary<string, (CachedFileStamp stamp, Dictionary<string, string> hashes)> PackageHashCache =
+        new Dictionary<string, (CachedFileStamp, Dictionary<string, string>)>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>SHA-256 of each asset a Unity package carries, by GUID; cached while the package file is unchanged.</summary>
+    internal static Dictionary<string, string> UnityPackageAssetHashes(string packagePath)
+    {
+        string fullPath = Path.GetFullPath(packagePath);
+        if (!CachedFileStamp.TryRead(fullPath, out var stamp)) throw new FileNotFoundException("Unity package not found.", fullPath);
+        lock (PackageHashCache)
+        {
+            if (PackageHashCache.TryGetValue(fullPath, out var cached) && cached.stamp.Equals(stamp)) return cached.hashes;
+        }
+
+        var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var header = new byte[512];
+        var buffer = new byte[81920];
+        string longName = null;
+        long expanded = 0;
+        using (var input = new GZipStream(File.OpenRead(fullPath), CompressionMode.Decompress))
+        {
+            while (ReadTarBytes(input, header, 0, 512) && header.Any(b => b != 0))
+            {
+                long size = TarSize(header);
+                long padded = (size + 511) / 512 * 512;
+                expanded += 512 + padded;
+                if (expanded > VersionArchiveBudget.DefaultMaxTotalBytes) throw new InvalidDataException("The Unity package expands beyond the size limit for a version.");
+                if (header[156] == (byte)'L')
+                {
+                    if (size > Orbiters.Toolkit.Editor.UnityPackageIndex.MaxPathnameBytes) throw new InvalidDataException("The Unity package has an invalid entry name.");
+                    var name = new byte[padded];
+                    if (!ReadTarBytes(input, name, 0, (int)padded)) throw new EndOfStreamException("The Unity package is truncated.");
+                    longName = Encoding.UTF8.GetString(name, 0, (int)size).TrimEnd('\0');
+                    continue;
+                }
+
+                string prefix = TarText(header, 345, 155);
+                string[] parts = (longName ?? (prefix.Length > 0 ? prefix + "/" : "") + TarText(header, 0, 100)).TrimStart('.', '/').Split('/');
+                longName = null;
+                using (var sha = parts.Length == 2 && parts[1] == "asset" ? MCBHashing.CreateSha256() : null)
+                {
+                    for (long remaining = padded, content = size; remaining > 0;)
+                    {
+                        int read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                        if (read <= 0) throw new EndOfStreamException("The Unity package is truncated.");
+                        int data = (int)Math.Min(read, content);
+                        if (sha != null && data > 0) sha.TransformBlock(buffer, 0, data, null, 0);
+                        content -= data;
+                        remaining -= read;
+                    }
+                    if (sha == null) continue;
+                    sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                    hashes[parts[0]] = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                }
+            }
+        }
+
+        lock (PackageHashCache)
+        {
+            if (PackageHashCache.Count > 64) PackageHashCache.Clear();
+            PackageHashCache[fullPath] = (stamp, hashes);
+        }
+        return hashes;
     }
 
     // A .unitypackage is a gzipped tar of <guid>/pathname, <guid>/asset and <guid>/asset.meta entries.
@@ -739,13 +868,7 @@ public class FileManagerService
         {
             while (ReadTarBytes(input, header, 0, 512) && header.Any(b => b != 0))
             {
-                long size = 0;
-                for (int i = 124; i < 136; i++)
-                {
-                    byte b = header[i];
-                    if (b == 0 || b == (byte)' ') { if (size > 0) break; continue; }
-                    size = size * 8 + (b - '0');
-                }
+                long size = TarSize(header);
                 long padded = (size + 511) / 512 * 512;
                 if (header[156] == (byte)'L')
                 {
@@ -778,6 +901,19 @@ public class FileManagerService
 
             output.Write(new byte[1024], 0, 1024);
         }
+    }
+
+    private static long TarSize(byte[] header)
+    {
+        long size = 0;
+        for (int i = 124; i < 136; i++)
+        {
+            byte b = header[i];
+            if (b == 0 || b == (byte)' ') { if (size > 0) break; continue; }
+            if (b < (byte)'0' || b > (byte)'7') throw new InvalidDataException("The Unity package has an invalid entry size.");
+            size = size * 8 + (b - '0');
+        }
+        return size;
     }
 
     private static bool ReadTarBytes(Stream stream, byte[] buffer, int offset, int count)
@@ -1170,6 +1306,95 @@ public class FileManagerService
         }
         return value;
     }
+}
+
+/// <summary>
+/// How far a downloaded version archive may expand, shared by its extraction and by the scans of the Unity packages it
+/// carries. Entries and bytes are counted as they are actually decompressed; the sizes an archive declares are never trusted.
+/// </summary>
+public sealed class VersionArchiveBudget
+{
+    public const int DefaultMaxEntries = 100000;
+    public const long DefaultMaxTotalBytes = 8L * 1024 * 1024 * 1024;
+    public const long DefaultMaxEntryBytes = 4L * 1024 * 1024 * 1024;
+    public const long DefaultMaxCapturedBytes = 2L * 1024 * 1024 * 1024;
+
+    public readonly int MaxEntries;
+    public readonly long MaxTotalBytes;
+    public readonly long MaxEntryBytes;
+    /// <summary>Bytes kept in memory for callers; an entry that does not fit is only written to disk.</summary>
+    public readonly long MaxCapturedBytes;
+
+    public int Entries { get; private set; }
+    public long TotalBytes { get; private set; }
+    public long CapturedBytes { get; private set; }
+    public int RemainingEntries => Math.Max(0, MaxEntries - Entries);
+    public long RemainingBytes => Math.Max(0L, MaxTotalBytes - TotalBytes);
+
+    public VersionArchiveBudget(int maxEntries = DefaultMaxEntries, long maxTotalBytes = DefaultMaxTotalBytes,
+        long maxEntryBytes = DefaultMaxEntryBytes, long maxCapturedBytes = DefaultMaxCapturedBytes)
+    {
+        if (maxEntries < 1 || maxTotalBytes < 1 || maxEntryBytes < 1 || maxCapturedBytes < 0) throw new ArgumentOutOfRangeException(nameof(maxEntries));
+        MaxEntries = maxEntries;
+        MaxTotalBytes = maxTotalBytes;
+        MaxEntryBytes = maxEntryBytes;
+        MaxCapturedBytes = maxCapturedBytes;
+    }
+
+    public void AddEntries(int count)
+    {
+        if (count < 0 || count > RemainingEntries)
+            throw new InvalidDataException($"The version archive has more than {MaxEntries} files, the limit for a version.");
+        Entries += count;
+    }
+
+    public void AddBytes(long bytes, string name)
+    {
+        if (bytes < 0 || bytes > RemainingBytes)
+            throw new InvalidDataException($"The version archive expands beyond {Format(MaxTotalBytes)}, the size limit for a version (at '{name}').");
+        TotalBytes += bytes;
+    }
+
+    /// <summary>Copies one entry as it decompresses, within the entry and archive limits.</summary>
+    /// <param name="capture">Also keep the bytes in memory, while they fit <see cref="MaxCapturedBytes"/>.</param>
+    /// <returns>The entry's bytes when captured, otherwise null.</returns>
+    public byte[] Copy(Stream source, Stream destination, string name, bool capture = false)
+    {
+        var memory = capture ? new MemoryStream() : null;
+        try
+        {
+            var buffer = new byte[81920];
+            long entryBytes = 0;
+            for (int read; (read = source.Read(buffer, 0, buffer.Length)) > 0;)
+            {
+                entryBytes += read;
+                if (entryBytes > MaxEntryBytes)
+                    throw new InvalidDataException($"'{name}' expands beyond {Format(MaxEntryBytes)}, the size limit for one file of a version.");
+                AddBytes(read, name);
+                destination.Write(buffer, 0, read);
+                if (memory == null) continue;
+                if (CapturedBytes + memory.Length + read > MaxCapturedBytes || memory.Length + read > int.MaxValue - 64)
+                {
+                    MCBLogger.Log($"[FileManager] '{name}' is too large to keep in memory; it is read from disk.");
+                    memory.Dispose();
+                    memory = null;
+                }
+                else memory.Write(buffer, 0, read);
+            }
+
+            if (memory == null) return null;
+            CapturedBytes += memory.Length;
+            return memory.ToArray();
+        }
+        finally
+        {
+            memory?.Dispose();
+        }
+    }
+
+    private static string Format(long bytes) =>
+        bytes >= 1024L * 1024 * 1024 ? $"{bytes / (1024d * 1024 * 1024):0.#} GB" :
+        bytes >= 1024L * 1024 ? $"{bytes / (1024d * 1024):0.#} MB" : $"{bytes} bytes";
 }
 #endif
 

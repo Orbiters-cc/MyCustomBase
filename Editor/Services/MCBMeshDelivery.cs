@@ -76,7 +76,8 @@ public static class MCBMeshDelivery
     }
 
     public static async Task<(bool success, string error)> DownloadAsync(NetworkService network, string url,
-        CustomBaseVersion version, string destination, Action<float> progress, Action<ulong> transferred, bool recordMeasurements = true)
+        CustomBaseVersion version, string destination, Action<float> progress, Action<ulong> transferred, bool recordMeasurements = true,
+        string authToken = null)
     {
         string staging = Path.Combine(Path.GetTempPath(), "mcb-mesh-delivery-" + Guid.NewGuid().ToString("N"));
         MCBDeliveryDecision choice = null;
@@ -85,7 +86,7 @@ public static class MCBMeshDelivery
         try
         {
             Directory.CreateDirectory(staging);
-            var reply = await network.DownloadBytesAsync(url + "&meshManifest=1");
+            var reply = await network.DownloadBytesAsync(url + "&meshManifest=1", authToken: authToken);
             if (!reply.success) throw new IOException(reply.error);
             if (reply.data.Length > 128 * 1024) throw new InvalidDataException("Mesh manifest is too large.");
             var manifest = JsonConvert.DeserializeObject<Manifest>(System.Text.Encoding.UTF8.GetString(reply.data));
@@ -102,7 +103,7 @@ public static class MCBMeshDelivery
             long total = manifest.commonBytes + selected.Where((v, i) => cached[i] == null).Sum(v => v.bytes);
             Action<long> report = bytes => { long current = Interlocked.Add(ref received, bytes); transferred?.Invoke((ulong)current); progress?.Invoke((float)current / Math.Max(1, total)); };
             string commonPath = Path.Combine(staging, "common.zip");
-            var common = await network.DownloadFileAsync(url + "&meshCommon=1", commonPath);
+            var common = await network.DownloadFileAsync(url + "&meshCommon=1", commonPath, authToken: authToken);
             if (!common.success) throw new IOException(common.error);
             if (new FileInfo(commonPath).Length != manifest.commonBytes || MCBUtils.CalculateFileHash(commonPath) != manifest.commonHash)
                 throw new InvalidDataException("Common version package failed integrity verification.");
@@ -114,7 +115,7 @@ public static class MCBMeshDelivery
                     await limit.WaitAsync();
                     try {
                         string temp = Path.Combine(staging, i + ".bin");
-                        var blob = await network.DownloadFileAsync(url + "&meshBlob=" + v.hash, temp);
+                        var blob = await network.DownloadFileAsync(url + "&meshBlob=" + v.hash, temp, authToken: authToken);
                         if (!blob.success) throw new IOException(blob.error);
                         await Task.Run(() => StoreVerifiedBlob(v, temp));
                         report(v.bytes);
@@ -124,13 +125,16 @@ public static class MCBMeshDelivery
             await Task.Run(() => {
                 using (var stream = File.Create(destination)) {
                     using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, true)) {
-                        using (var commonZip = ZipFile.OpenRead(commonPath))
+                        var budget = new VersionArchiveBudget();
+                        using (var commonZip = ZipFile.OpenRead(commonPath)) {
+                            budget.AddEntries(commonZip.Entries.Count);
                             foreach (var entry in commonZip.Entries) {
                                 if (entry.FullName == MCBVersionDelivery.ManifestName || manifest.files.Any(p => p.path == entry.FullName))
                                     throw new InvalidDataException("Repeated mesh path in common package.");
                                 using (var output = zip.CreateEntry(entry.FullName).Open())
-                                using (var input = entry.Open()) input.CopyTo(output);
+                                using (var input = entry.Open()) budget.Copy(input, output, entry.FullName);
                             }
+                        }
                         for (int i = 0; i < selected.Length; i++) {
                             string name = manifest.files[i].path;
                             if (Path.GetFileName(name) != name || name.Contains(":")) throw new InvalidDataException("Unsafe mesh path.");

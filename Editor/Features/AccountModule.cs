@@ -270,7 +270,7 @@ public class AccountModule
                 return;
             }
 
-            string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT + $"?t={authToken}";
+            string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT;
             MCBLogger.Log("[MCB] Refreshing account state...");
             string newState = await networkService.CheckConnectionAsync(url, authToken);
             if (string.IsNullOrEmpty(newState)) newState = "disconnected";

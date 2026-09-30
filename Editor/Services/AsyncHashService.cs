@@ -45,6 +45,12 @@ public class AsyncHashService
 
         // Normalize path for consistent cache/inflight keys
         string normalizedPath = Path.GetFullPath(filePath);
+        // Read before hashing: the cached hash is tied to the contents that were actually hashed.
+        if (!CachedFileStamp.TryRead(normalizedPath, out var hashedStamp))
+        {
+            MCBLogger.LogError($"[AsyncHashService] File not found: {filePath}");
+            return null;
+        }
 
         // Check cache first
         string cachedHash = PersistentCache.Instance.GetCachedHash(normalizedPath);
@@ -96,7 +102,7 @@ public class AsyncHashService
             // Cache the result
             if (!string.IsNullOrEmpty(hash))
             {
-                PersistentCache.Instance.CacheHash(normalizedPath, hash);
+                PersistentCache.Instance.CacheHash(normalizedPath, hash, hashedStamp);
             }
             
             if (!hideUi)
@@ -138,16 +144,15 @@ public class AsyncHashService
         string normalizedPath = Path.GetFullPath(filePath);
         try
         {
-            var before = new FileInfo(normalizedPath);
-            long expectedLength = before.Length;
-            long expectedWriteTicks = before.LastWriteTimeUtc.Ticks;
+            if (!CachedFileStamp.TryRead(normalizedPath, out var before))
+            {
+                MCBLogger.LogError($"[AsyncHashService] File not found: {filePath}");
+                return null;
+            }
             string hash = await Task.Run(() =>
                 CalculateHashInternal(normalizedPath, null, AsyncTaskManager.Instance, false));
 
-            var after = new FileInfo(normalizedPath);
-            if (!after.Exists ||
-                after.Length != expectedLength ||
-                after.LastWriteTimeUtc.Ticks != expectedWriteTicks)
+            if (!CachedFileStamp.TryRead(normalizedPath, out var after) || !after.Equals(before))
             {
                 MCBLogger.LogWarning($"[AsyncHashService] Discarded stale hash because '{Path.GetFileName(normalizedPath)}' changed during calculation.");
                 return null;
@@ -155,7 +160,7 @@ public class AsyncHashService
 
             if (!string.IsNullOrEmpty(hash))
             {
-                PersistentCache.Instance.CacheHash(normalizedPath, hash);
+                PersistentCache.Instance.CacheHash(normalizedPath, hash, before);
             }
             return hash;
         }

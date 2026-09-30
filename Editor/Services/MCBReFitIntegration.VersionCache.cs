@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -39,6 +40,44 @@ public static partial class MCBReFitIntegration
             return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(value ?? ""))).Replace("-", "").ToLowerInvariant();
     }
 
+    // Accessories may share a name with a sibling. A renderer is identified by its name path plus, for each segment, its
+    // position among the same-named siblings, both when its fit is saved and when it is put back.
+    internal static List<int> SiblingOrdinals(Transform root, Transform transform)
+    {
+        var ordinals = new List<int>();
+        for (var current = transform; current != null && current != root && current.parent != null; current = current.parent)
+        {
+            int ordinal = 0, index = current.GetSiblingIndex();
+            for (int i = 0; i < index; i++)
+                if (current.parent.GetChild(i).name == current.name) ordinal++;
+            ordinals.Insert(0, ordinal);
+        }
+        return ordinals;
+    }
+
+    // Unique names keep the plain path as their key.
+    internal static string SnapshotKey(string rendererPath, IReadOnlyList<int> ordinals) =>
+        CacheKey(ordinals != null && ordinals.Any(ordinal => ordinal != 0) ? rendererPath + "|" + string.Join(",", ordinals) : rendererPath);
+
+    internal static Transform FindRenderer(Transform root, string rendererPath, IReadOnlyList<int> ordinals)
+    {
+        if (root == null || string.IsNullOrEmpty(rendererPath)) return null;
+        var current = root;
+        string[] names = rendererPath.Split('/');
+        for (int segment = 0; segment < names.Length && current != null; segment++)
+        {
+            int wanted = ordinals != null && segment < ordinals.Count ? ordinals[segment] : 0;
+            Transform match = null;
+            for (int i = 0, seen = 0; i < current.childCount && match == null; i++)
+            {
+                var child = current.GetChild(i);
+                if (child.name == names[segment] && seen++ == wanted) match = child;
+            }
+            current = match;
+        }
+        return current;
+    }
+
     /// <summary>Saves the applied fits of the avatar (by any tool) for this version, their meshes copied next to them.</summary>
     public static void SaveVersionFits(MyCustomBase target, CustomBaseVersion version)
     {
@@ -50,6 +89,7 @@ public static partial class MCBReFitIntegration
             var renderer = record.GetComponent<SkinnedMeshRenderer>();
             string rendererPath = renderer != null ? RefitRecords.PathUnder(root, renderer.transform) : null;
             if (!record.Applied || rendererPath == null) continue;
+            var ordinals = SiblingOrdinals(root, renderer.transform);
             if (record.original?.mesh == null || !EditorUtility.IsPersistent(record.original.mesh))
                 throw new InvalidOperationException("Save the original accessory mesh as an asset before saving its version-specific ReFit.");
             if (!AssetDatabase.IsValidFolder(folder))
@@ -57,7 +97,7 @@ public static partial class MCBReFitIntegration
                 Directory.CreateDirectory(Path.GetFullPath(folder));
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
             }
-            string key = CacheKey(rendererPath);
+            string key = SnapshotKey(rendererPath, ordinals);
             string path = folder + "/" + key + ".asset";
             var snapshot = AssetDatabase.LoadAssetAtPath<MCBRefitVersionSnapshot>(path);
             if (snapshot == null)
@@ -84,10 +124,12 @@ public static partial class MCBReFitIntegration
             var original = RefitRecords.Persistent(record.original);
             string metadata = RefitEngine.Current?.SaveMetadata(renderer);
             if (snapshot.enabledForVersion && snapshot.rendererPath == rendererPath &&
+                (snapshot.rendererSiblingOrdinals ?? new List<int>()).SequenceEqual(ordinals) &&
                 JsonUtility.ToJson(snapshot.fitted) == JsonUtility.ToJson(fitted) && JsonUtility.ToJson(snapshot.original) == JsonUtility.ToJson(original) &&
                 (metadata == null || metadata == snapshot.metadataJson)) continue;
             snapshot.enabledForVersion = true;
             snapshot.rendererPath = rendererPath;
+            snapshot.rendererSiblingOrdinals = ordinals;
             snapshot.original = original;
             snapshot.fitted = fitted;
             snapshot.shapes = record.shapes.ToList();
@@ -113,7 +155,7 @@ public static partial class MCBReFitIntegration
             var snapshot = AssetDatabase.LoadAssetAtPath<MCBRefitVersionSnapshot>(AssetDatabase.GUIDToAssetPath(guid));
             if (snapshot == null || !snapshot.enabledForVersion || snapshot.original == null || snapshot.fitted?.mesh == null ||
                 string.IsNullOrEmpty(snapshot.rendererPath)) continue;
-            var renderer = root.Find(snapshot.rendererPath)?.GetComponent<SkinnedMeshRenderer>();
+            var renderer = FindRenderer(root, snapshot.rendererPath, snapshot.rendererSiblingOrdinals)?.GetComponent<SkinnedMeshRenderer>();
             // A replaced or manually edited accessory must never be overwritten by an unrelated saved fit.
             if (renderer == null || (renderer.sharedMesh != snapshot.original.mesh && renderer.sharedMesh != snapshot.fitted.mesh)) continue;
             if (!CanResolve(root, snapshot.fitted))
@@ -148,11 +190,14 @@ public static partial class MCBReFitIntegration
         return true;
     }
 
-    private static void DisableSavedFit(MyCustomBase target, string rendererPath)
+    private static void DisableSavedFit(MyCustomBase target, Transform renderer)
     {
-        string folder = GetVersionRefitFolder(target, GetAppliedRefitVersion(target));
+        var root = Root(target);
+        string rendererPath = RefitRecords.PathUnder(root, renderer);
+        string folder = rendererPath == null ? null : GetVersionRefitFolder(target, GetAppliedRefitVersion(target));
         if (folder == null) return;
-        var snapshot = AssetDatabase.LoadAssetAtPath<MCBRefitVersionSnapshot>(folder + "/" + CacheKey(rendererPath) + ".asset");
+        var snapshot = AssetDatabase.LoadAssetAtPath<MCBRefitVersionSnapshot>(
+            folder + "/" + SnapshotKey(rendererPath, SiblingOrdinals(root, renderer)) + ".asset");
         if (snapshot == null) return;
         Undo.RecordObject(snapshot, "Disable version ReFit");
         snapshot.enabledForVersion = false;

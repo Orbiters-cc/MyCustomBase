@@ -217,13 +217,10 @@ public partial class AssetGalleryModule
         AddImageToForm(form, "thumbnail", editThumbnail);
         AddImageToForm(form, "banner", editBanner);
 
-        string url = $"{MCBUtils.getApiUrl()}/assets/{assetId}/media?t={editor.authToken}";
+        string url = $"{MCBUtils.getApiUrl()}/assets/{assetId}/media";
         using (var request = UnityWebRequest.Post(url, form))
         {
-            if (!string.IsNullOrEmpty(editor.authToken))
-            {
-                request.SetRequestHeader("Authorization", $"Bearer {editor.authToken}");
-            }
+            MCBRequestHeaders.SetAuthorization(request, editor.authToken);
 
             request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Update asset media"));

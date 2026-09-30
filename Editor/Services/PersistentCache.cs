@@ -2,34 +2,72 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 using Newtonsoft.Json;
+
+/// <summary>Which contents of a file a hash describes: its length and last write time, read before hashing it.</summary>
+public readonly struct CachedFileStamp : IEquatable<CachedFileStamp>
+{
+    public readonly long length;
+    public readonly long lastWriteTimeUtcTicks;
+
+    public CachedFileStamp(long length, long lastWriteTimeUtcTicks)
+    {
+        this.length = length;
+        this.lastWriteTimeUtcTicks = lastWriteTimeUtcTicks;
+    }
+
+    public static bool TryRead(string path, out CachedFileStamp stamp)
+    {
+        stamp = default;
+        if (string.IsNullOrEmpty(path)) return false;
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists) return false;
+            stamp = new CachedFileStamp(info.Length, info.LastWriteTimeUtc.Ticks);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    public bool Equals(CachedFileStamp other) => length == other.length && lastWriteTimeUtcTicks == other.lastWriteTimeUtcTicks;
+    public override bool Equals(object obj) => obj is CachedFileStamp other && Equals(other);
+    public override int GetHashCode() => (length.GetHashCode() * 397) ^ lastWriteTimeUtcTicks.GetHashCode();
+}
 
 [Serializable]
 public class HashCacheEntry
 {
     public string filePath;
     public string hash;
-    public long lastWriteTime; // File.GetLastWriteTime().ToBinary()
+    public long length;
+    public long lastWriteTimeUtcTicks;
     public DateTime cacheTime;
-    
-    public HashCacheEntry(string filePath, string hash, long lastWriteTime)
+
+    public HashCacheEntry() { }
+
+    public HashCacheEntry(string filePath, string hash, CachedFileStamp hashedStamp)
     {
         this.filePath = filePath;
         this.hash = hash;
-        this.lastWriteTime = lastWriteTime;
-        this.cacheTime = DateTime.Now;
+        length = hashedStamp.length;
+        lastWriteTimeUtcTicks = hashedStamp.lastWriteTimeUtcTicks;
+        cacheTime = DateTime.Now;
     }
-    
-    public bool IsValid()
-    {
-        if (!File.Exists(filePath))
-            return false;
-            
-        var currentWriteTime = File.GetLastWriteTime(filePath).ToBinary();
-        return currentWriteTime == lastWriteTime;
-    }
+
+    /// <summary>The file still has the length and write time it had when it was hashed.</summary>
+    public bool IsValid() =>
+        lastWriteTimeUtcTicks != 0 &&
+        CachedFileStamp.TryRead(filePath, out var current) &&
+        current.Equals(new CachedFileStamp(length, lastWriteTimeUtcTicks));
 }
 
 [Serializable]
@@ -41,23 +79,27 @@ public class VersionCacheEntry
     public List<CustomBaseVersion> serverVersions;
     public CustomBaseVersion recommendedVersion;
     public DateTime cacheTime;
-    public string authToken; // To invalidate cache when user changes
-    
-    public VersionCacheEntry(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string authToken, int assetId)
+    /// <summary>Salted hash of the account's token: invalidates the cache when the account changes. Never the token itself.</summary>
+    public string accountKey;
+
+    public VersionCacheEntry() { }
+
+    public VersionCacheEntry(string baseFbxHash, List<CustomBaseVersion> serverVersions, CustomBaseVersion recommendedVersion, string accountKey, int assetId)
     {
         this.baseFbxHash = baseFbxHash;
         this.assetId = assetId;
         this.serverVersions = serverVersions ?? new List<CustomBaseVersion>();
         this.recommendedVersion = recommendedVersion;
         this.cacheTime = DateTime.Now;
-        this.authToken = authToken;
+        this.accountKey = accountKey;
     }
-    
-    public bool IsValid(string currentBaseFbxHash, string currentAuthToken, int currentAssetId, TimeSpan maxAge)
+
+    public bool IsValid(string currentBaseFbxHash, string currentAccountKey, int currentAssetId, TimeSpan maxAge)
     {
-        return baseFbxHash == currentBaseFbxHash && 
+        return baseFbxHash == currentBaseFbxHash &&
                assetId == currentAssetId &&
-               authToken == currentAuthToken &&
+               !string.IsNullOrEmpty(accountKey) &&
+               accountKey == currentAccountKey &&
                DateTime.Now - cacheTime < maxAge;
     }
 }
@@ -68,6 +110,8 @@ public class PersistentCacheData
     public Dictionary<string, HashCacheEntry> hashCache = new Dictionary<string, HashCacheEntry>();
     public Dictionary<string, VersionCacheEntry> versionCache = new Dictionary<string, VersionCacheEntry>();
     public DateTime lastCleanup = DateTime.Now;
+    /// <summary>Random per-cache salt of <see cref="VersionCacheEntry.accountKey"/>.</summary>
+    public string accountKeySalt;
 }
 
 public class PersistentCache
@@ -115,7 +159,9 @@ public class PersistentCache
             if (File.Exists(cacheFilePath))
             {
                 string json = File.ReadAllText(cacheFilePath);
-                cacheData = JsonConvert.DeserializeObject<PersistentCacheData>(json);
+                cacheData = JsonConvert.DeserializeObject<PersistentCacheData>(json) ?? new PersistentCacheData();
+                cacheData.hashCache = cacheData.hashCache ?? new Dictionary<string, HashCacheEntry>();
+                cacheData.versionCache = cacheData.versionCache ?? new Dictionary<string, VersionCacheEntry>();
                 MCBLogger.Log($"[PersistentCache] Loaded cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
             }
             else
@@ -129,6 +175,36 @@ public class PersistentCache
             MCBLogger.LogError($"[PersistentCache] Failed to load cache: {ex.Message}");
             cacheData = new PersistentCacheData();
         }
+
+        bool rewrite = string.IsNullOrEmpty(cacheData.accountKeySalt);
+        if (rewrite) cacheData.accountKeySalt = CreateSalt();
+        // Entries without an account key were written by versions that stored the token itself (as a field and in the key).
+        foreach (var key in cacheData.versionCache.Where(pair => string.IsNullOrEmpty(pair.Value?.accountKey)).Select(pair => pair.Key).ToList())
+        {
+            cacheData.versionCache.Remove(key);
+            rewrite = true;
+        }
+        if (rewrite && File.Exists(cacheFilePath)) SaveCache();
+    }
+
+    private static string CreateSalt()
+    {
+        var salt = new byte[32];
+        using (var random = RandomNumberGenerator.Create()) random.GetBytes(salt);
+        return BitConverter.ToString(salt).Replace("-", "").ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// The non-secret identity version entries are cached under: an HMAC of the token keyed by this cache's salt, so the
+    /// cache file never holds a usable credential.
+    /// </summary>
+    internal string AccountKey(string authToken)
+    {
+        if (string.IsNullOrEmpty(authToken)) return null;
+        string salt;
+        lock (cacheLock) salt = cacheData.accountKeySalt;
+        using (var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(salt ?? "")))
+            return BitConverter.ToString(hmac.ComputeHash(Encoding.UTF8.GetBytes(authToken))).Replace("-", "").ToLowerInvariant();
     }
 
     private void SaveCache()
@@ -202,19 +278,24 @@ public class PersistentCache
         }
     }
 
-    public void CacheHash(string filePath, string hash)
+    /// <param name="hashedStamp">The file's stamp read before hashing it: a file that changed since is not cached.</param>
+    public void CacheHash(string filePath, string hash, CachedFileStamp hashedStamp)
     {
         if (string.IsNullOrEmpty(filePath) || string.IsNullOrEmpty(hash) || !File.Exists(filePath))
             return;
 
         string normalizedPath = Path.GetFullPath(filePath);
-        long lastWriteTime = File.GetLastWriteTime(normalizedPath).ToBinary();
-        
+        if (!CachedFileStamp.TryRead(normalizedPath, out var current) || !current.Equals(hashedStamp))
+        {
+            MCBLogger.Log($"[PersistentCache] Not caching the hash of {normalizedPath}: the file changed while it was hashed.");
+            return;
+        }
+
         lock (cacheLock)
         {
-            cacheData.hashCache[normalizedPath] = new HashCacheEntry(normalizedPath, hash, lastWriteTime);
+            cacheData.hashCache[normalizedPath] = new HashCacheEntry(normalizedPath, hash, hashedStamp);
         }
-        MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
+MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         
         SaveCache();
     }
@@ -227,13 +308,14 @@ public class PersistentCache
 
         if (!string.IsNullOrEmpty(authToken))
         {
-            string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}_{sourceVersionKey}";
-            
+            string accountKey = AccountKey(authToken);
+            string cacheKey = VersionCacheKey(baseFbxHash, accountKey, assetId, sourceVersionKey);
+
             lock (cacheLock)
             {
                 if (cacheData.versionCache.TryGetValue(cacheKey, out var cacheEntry))
                 {
-                    if (cacheEntry.IsValid(baseFbxHash, authToken, assetId, VERSION_CACHE_MAX_AGE))
+                    if (cacheEntry.IsValid(baseFbxHash, accountKey, assetId, VERSION_CACHE_MAX_AGE))
                     {
                         MCBLogger.Log($"[PersistentCache] Version cache hit for hash: {baseFbxHash}");
                         return cacheEntry;
@@ -274,7 +356,7 @@ public class PersistentCache
 
                 if (fallbackEntry != null)
                 {
-                    if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.authToken, assetId, VERSION_CACHE_MAX_AGE))
+                    if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.accountKey, assetId, VERSION_CACHE_MAX_AGE))
                     {
                         MCBLogger.Log($"[PersistentCache] Version cache fallback hit without auth token for hash: {baseFbxHash}");
                         return fallbackEntry;
@@ -294,8 +376,9 @@ public class PersistentCache
         if (string.IsNullOrEmpty(baseFbxHash) || string.IsNullOrEmpty(authToken))
             return;
 
-        string cacheKey = $"{baseFbxHash}_{authToken}_{assetId}_{sourceVersionKey}";
-        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, authToken, assetId) { sourceVersionKey = sourceVersionKey };
+        string accountKey = AccountKey(authToken);
+        string cacheKey = VersionCacheKey(baseFbxHash, accountKey, assetId, sourceVersionKey);
+        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, accountKey, assetId) { sourceVersionKey = sourceVersionKey };
         
         lock (cacheLock)
         {
@@ -305,6 +388,9 @@ public class PersistentCache
         
         SaveCache();
     }
+
+    private static string VersionCacheKey(string baseFbxHash, string accountKey, int assetId, string sourceVersionKey) =>
+        $"{baseFbxHash}_{accountKey}_{assetId}_{sourceVersionKey}";
 
     // Cleanup Methods
     private void PeriodicCleanup()

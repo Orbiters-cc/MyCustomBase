@@ -193,8 +193,7 @@ public static partial class MCBReFitIntegration
     {
         var record = RefitRecords.Find(renderer);
         if (target == null || record == null) return;
-        string path = RefitRecords.PathUnder(Root(target), renderer.transform);
-        if (path != null) DisableSavedFit(target, path);
+        DisableSavedFit(target, renderer.transform);
         RefitRecords.Remove(record);
     }
 

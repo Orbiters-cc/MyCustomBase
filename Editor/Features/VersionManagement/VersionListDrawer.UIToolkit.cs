@@ -885,7 +885,7 @@ public partial class VersionListDrawer
         RefreshVersionUi();
 
         string token = editor.authToken;
-        string url = $"{MCBUtils.getApiUrl("creator")}/assets/{ver.assetId}/versions/{ver.id}?t={token}";
+        string url = $"{MCBUtils.getApiUrl("creator")}/assets/{ver.assetId}/versions/{ver.id}";
         var result = await networkService.UpdateCreatorVersionMetadataAsync(url, token, nextTitle, editingVersionChangelogDraft ?? string.Empty);
 
         isUpdatingVersionMetadata = false;

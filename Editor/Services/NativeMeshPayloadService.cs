@@ -1409,21 +1409,9 @@ public static partial class NativeMeshPayloadService
         var step = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            using (var stream = new MemoryStream(payloadBytes, false))
+            using (var reader = PayloadReader.Open(payloadBytes, PayloadUsesGZip(payloadCompression)))
             {
-                if (PayloadUsesGZip(payloadCompression))
-                {
-                    using (var gzip = new GZipStream(stream, System.IO.Compression.CompressionMode.Decompress))
-                    using (var reader = new BinaryReader(gzip, Encoding.UTF8))
-                    {
-                        return ReadBinaryPayloadAssetContents(reader, assetName, payloadHash, total, step);
-                    }
-                }
-
-                using (var reader = new BinaryReader(stream, Encoding.UTF8))
-                {
-                    return ReadBinaryPayloadAssetContents(reader, assetName, payloadHash, total, step);
-                }
+                return ReadBinaryPayloadAssetContents(reader, assetName, payloadHash, total, step);
             }
         }
         catch (InvalidDataException ex)
@@ -1433,7 +1421,7 @@ public static partial class NativeMeshPayloadService
     }
 
     private static NativeMeshPayloadAsset ReadBinaryPayloadAssetContents(
-        BinaryReader reader,
+        PayloadReader reader,
         string assetName,
         string payloadHash,
         System.Diagnostics.Stopwatch total,
@@ -1458,7 +1446,7 @@ public static partial class NativeMeshPayloadService
         payload.sourceFbxHash = reader.ReadString();
         payload.payloadHash = payloadHash;
 
-        int rendererCount = reader.ReadInt32();
+        int rendererCount = reader.ReadCount(PayloadReader.MinRendererBytes, "renderers");
         LogApplyProfile("Read payload header", step, total, $"renderers={rendererCount}");
         var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < rendererCount; i++)
@@ -1487,7 +1475,7 @@ public static partial class NativeMeshPayloadService
             step.Restart();
         }
 
-        int boneCount = reader.ReadInt32();
+        int boneCount = reader.ReadCount(PayloadReader.MinBoneBytes, "bones");
         for (int i = 0; i < boneCount; i++)
         {
             payload.bones.Add(new NativeMeshPayloadBone
@@ -1500,7 +1488,7 @@ public static partial class NativeMeshPayloadService
         }
 
         LogApplyProfile("Read payload bone transform table", step, total, $"bones={boneCount}");
-        int authoringPoseBoneCount = reader.ReadInt32();
+        int authoringPoseBoneCount = reader.ReadCount(PayloadReader.MinBoneBytes, "authoring pose bones");
         for (int i = 0; i < authoringPoseBoneCount; i++)
         {
             payload.authoringPoseBones.Add(new NativeMeshPayloadAuthoringPoseBone
@@ -1606,7 +1594,7 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static Mesh ReadMesh(BinaryReader reader)
+    private static Mesh ReadMesh(PayloadReader reader)
     {
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
@@ -1646,7 +1634,7 @@ public static partial class NativeMeshPayloadService
             total,
             $"verts={vertices.Length} normals={normals.Length} tangents={tangents.Length} bindposes={bindposes.Length}");
 
-        int subMeshCount = reader.ReadInt32();
+        int subMeshCount = reader.ReadCount(PayloadReader.MinSubMeshBytes, "submeshes");
         mesh.subMeshCount = subMeshCount;
         for (int i = 0; i < subMeshCount; i++)
         {
@@ -1658,19 +1646,19 @@ public static partial class NativeMeshPayloadService
         mesh.bounds = ReadBounds(reader);
         LogApplyProfile($"Read mesh '{mesh.name}' submeshes", step, total, $"subMeshes={subMeshCount}");
 
-        int blendShapeCount = reader.ReadInt32();
+        int blendShapeCount = reader.ReadCount(PayloadReader.MinBlendShapeBytes, "blendshapes");
         int blendShapeFrameCount = 0;
         for (int shape = 0; shape < blendShapeCount; shape++)
         {
             string shapeName = reader.ReadString();
-            int frameCount = reader.ReadInt32();
+            int frameCount = reader.ReadCount(PayloadReader.MinBlendShapeFrameBytes, "blendshape frames");
             blendShapeFrameCount += frameCount;
             for (int frame = 0; frame < frameCount; frame++)
             {
                 float weight = reader.ReadSingle();
-                var deltaVertices = ReadSparseVector3Array(reader);
-                var deltaNormals = reader.ReadBoolean() ? ReadSparseVector3Array(reader) : null;
-                var deltaTangents = reader.ReadBoolean() ? ReadSparseVector3Array(reader) : null;
+                var deltaVertices = ReadSparseVector3Array(reader, vertices.Length);
+                var deltaNormals = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertices.Length) : null;
+                var deltaTangents = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertices.Length) : null;
                 mesh.AddBlendShapeFrame(shapeName, weight, deltaVertices, deltaNormals, deltaTangents);
             }
         }
@@ -1756,21 +1744,9 @@ public static partial class NativeMeshPayloadService
 
         try
         {
-            using (var stream = new MemoryStream(payloadBytes, false))
+            using (var reader = PayloadReader.Open(payloadBytes, PayloadUsesGZip(payloadCompression)))
             {
-                if (PayloadUsesGZip(payloadCompression))
-                {
-                    using (var gzip = new GZipStream(stream, System.IO.Compression.CompressionMode.Decompress))
-                    using (var reader = new BinaryReader(gzip, Encoding.UTF8))
-                    {
-                        return ReadPreparedPayloadAssetContents(reader, assetName, payloadHash, status, startProgress, endProgress);
-                    }
-                }
-
-                using (var reader = new BinaryReader(stream, Encoding.UTF8))
-                {
-                    return ReadPreparedPayloadAssetContents(reader, assetName, payloadHash, status, startProgress, endProgress);
-                }
+                return ReadPreparedPayloadAssetContents(reader, assetName, payloadHash, status, startProgress, endProgress);
             }
         }
         catch (InvalidDataException ex)
@@ -1780,7 +1756,7 @@ public static partial class NativeMeshPayloadService
     }
 
     private static PreparedPayloadAssetData ReadPreparedPayloadAssetContents(
-        BinaryReader reader,
+        PayloadReader reader,
         string assetName,
         string payloadHash,
         NativeMeshPayloadPreparationStatus status,
@@ -1808,7 +1784,7 @@ public static partial class NativeMeshPayloadService
             payloadHash = payloadHash
         };
 
-        int rendererCount = reader.ReadInt32();
+        int rendererCount = reader.ReadCount(PayloadReader.MinRendererBytes, "renderers");
         status.Report(startProgress, $"Parsing advanced mesh header ({rendererCount} renderer{(rendererCount == 1 ? "" : "s")})...");
         var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < rendererCount; i++)
@@ -1833,7 +1809,7 @@ public static partial class NativeMeshPayloadService
             status.Report(Lerp(startProgress, Lerp(startProgress, endProgress, 0.82f), local), $"Parsing advanced mesh {i + 1}/{rendererCount}...");
         }
 
-        int boneCount = reader.ReadInt32();
+        int boneCount = reader.ReadCount(PayloadReader.MinBoneBytes, "bones");
         for (int i = 0; i < boneCount; i++)
         {
             payload.bones.Add(new NativeMeshPayloadBone
@@ -1846,7 +1822,7 @@ public static partial class NativeMeshPayloadService
         }
 
         status.Report(Lerp(startProgress, endProgress, 0.88f), $"Parsing advanced mesh bone table ({boneCount})...");
-        int authoringPoseBoneCount = reader.ReadInt32();
+        int authoringPoseBoneCount = reader.ReadCount(PayloadReader.MinBoneBytes, "authoring pose bones");
         for (int i = 0; i < authoringPoseBoneCount; i++)
         {
             payload.authoringPoseBones.Add(new NativeMeshPayloadAuthoringPoseBone
@@ -1862,7 +1838,7 @@ public static partial class NativeMeshPayloadService
         return payload;
     }
 
-    private static PreparedMeshData ReadPreparedMesh(BinaryReader reader)
+    private static PreparedMeshData ReadPreparedMesh(PayloadReader reader)
     {
         var mesh = new PreparedMeshData
         {
@@ -1883,7 +1859,7 @@ public static partial class NativeMeshPayloadService
         mesh.boneWeights = ReadBoneWeightArray(reader);
         mesh.bindposes = ReadMatrixArray(reader);
 
-        int subMeshCount = reader.ReadInt32();
+        int subMeshCount = reader.ReadCount(PayloadReader.MinSubMeshBytes, "submeshes");
         for (int i = 0; i < subMeshCount; i++)
         {
             mesh.subMeshes.Add(new PreparedSubMeshData
@@ -1894,22 +1870,23 @@ public static partial class NativeMeshPayloadService
         }
 
         mesh.bounds = ReadBounds(reader);
-        int blendShapeCount = reader.ReadInt32();
+        int vertexCount = mesh.vertices.Length;
+        int blendShapeCount = reader.ReadCount(PayloadReader.MinBlendShapeBytes, "blendshapes");
         for (int shape = 0; shape < blendShapeCount; shape++)
         {
             var blendShape = new PreparedBlendShapeData
             {
                 name = reader.ReadString()
             };
-            int frameCount = reader.ReadInt32();
+            int frameCount = reader.ReadCount(PayloadReader.MinBlendShapeFrameBytes, "blendshape frames");
             for (int frame = 0; frame < frameCount; frame++)
             {
                 blendShape.frames.Add(new PreparedBlendShapeFrameData
                 {
                     weight = reader.ReadSingle(),
-                    deltaVertices = ReadSparseVector3Array(reader),
-                    deltaNormals = reader.ReadBoolean() ? ReadSparseVector3Array(reader) : null,
-                    deltaTangents = reader.ReadBoolean() ? ReadSparseVector3Array(reader) : null
+                    deltaVertices = ReadSparseVector3Array(reader, vertexCount),
+                    deltaNormals = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertexCount) : null,
+                    deltaTangents = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertexCount) : null
                 });
             }
 
@@ -2189,9 +2166,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static List<string> ReadStringList(BinaryReader reader)
+    private static List<string> ReadStringList(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(1, "strings");
         var values = new List<string>(count);
         for (int i = 0; i < count; i++)
         {
@@ -2248,9 +2225,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static Vector3[] ReadVector3Array(BinaryReader reader)
+    private static Vector3[] ReadVector3Array(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(12, "vectors");
         var values = new Vector3[count];
         for (int i = 0; i < count; i++)
         {
@@ -2321,19 +2298,29 @@ public static partial class NativeMeshPayloadService
         return lower.Contains("muscle") || lower.Contains("flex");
     }
 
-    private static Vector3[] ReadSparseVector3Array(BinaryReader reader)
+    // A sparse array expands a few bytes into a whole vertex array: its length is bounded by its mesh's vertices (which were
+    // read from the payload's own bytes) and every expansion is charged to the payload's budget.
+    private static Vector3[] ReadSparseVector3Array(PayloadReader reader, int vertexCount)
     {
         int length = reader.ReadInt32();
-        int nonZeroCount = reader.ReadInt32();
+        int nonZeroCount = reader.ReadCount(16, "blendshape deltas");
+        if (length < 0 || length > vertexCount || nonZeroCount > length)
+        {
+            throw new InvalidDataException($"Native mesh payload has a blendshape delta array of {length} for a mesh of {vertexCount} vertices.");
+        }
+
+        reader.Expand(length * 12L, "blendshape deltas");
         var values = new Vector3[length];
         for (int i = 0; i < nonZeroCount; i++)
         {
             int index = reader.ReadInt32();
             Vector3 value = ReadVector3(reader);
-            if (index >= 0 && index < length)
+            if (index < 0 || index >= length)
             {
-                values[index] = value;
+                throw new InvalidDataException("Native mesh payload has a blendshape delta outside its mesh.");
             }
+
+            values[index] = value;
         }
 
         return values;
@@ -2348,9 +2335,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static Vector4[] ReadVector4Array(BinaryReader reader)
+    private static Vector4[] ReadVector4Array(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(16, "vectors");
         var values = new Vector4[count];
         for (int i = 0; i < count; i++)
         {
@@ -2369,9 +2356,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static List<Vector4> ReadVector4List(BinaryReader reader)
+    private static List<Vector4> ReadVector4List(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(16, "vectors");
         var values = new List<Vector4>(count);
         for (int i = 0; i < count; i++)
         {
@@ -2393,9 +2380,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static Color32[] ReadColor32Array(BinaryReader reader)
+    private static Color32[] ReadColor32Array(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(4, "colors");
         var values = new Color32[count];
         for (int i = 0; i < count; i++)
         {
@@ -2421,9 +2408,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static BoneWeight[] ReadBoneWeightArray(BinaryReader reader)
+    private static BoneWeight[] ReadBoneWeightArray(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(32, "bone weights");
         var values = new BoneWeight[count];
         for (int i = 0; i < count; i++)
         {
@@ -2455,9 +2442,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static Matrix4x4[] ReadMatrixArray(BinaryReader reader)
+    private static Matrix4x4[] ReadMatrixArray(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(64, "bind poses");
         var values = new Matrix4x4[count];
         for (int i = 0; i < count; i++)
         {
@@ -2481,9 +2468,9 @@ public static partial class NativeMeshPayloadService
         }
     }
 
-    private static int[] ReadIntArray(BinaryReader reader)
+    private static int[] ReadIntArray(PayloadReader reader)
     {
-        int count = reader.ReadInt32();
+        int count = reader.ReadCount(4, "indices");
         var values = new int[count];
         for (int i = 0; i < count; i++)
         {
@@ -2502,6 +2489,76 @@ public static partial class NativeMeshPayloadService
     private static Bounds ReadBounds(BinaryReader reader)
     {
         return new Bounds(ReadVector3(reader), ReadVector3(reader));
+    }
+
+    /// <summary>
+    /// Reads a decoded payload whose counts are untrusted: each count is checked against the bytes left in the payload
+    /// before anything is allocated from it, strings against their length prefix, and sparse arrays that expand from a few
+    /// bytes against their mesh and <see cref="MaxExpandedBytes"/>. A corrupt or crafted payload fails with
+    /// <see cref="InvalidDataException"/> instead of exhausting memory.
+    /// </summary>
+    private sealed class PayloadReader : BinaryReader
+    {
+        public const long MaxExpandedBytes = 4L * 1024 * 1024 * 1024;
+        public const int MaxStringBytes = 64 * 1024;
+        // The smallest encoding of each record: strings take at least their one-byte length prefix.
+        public const int MinBoneBytes = 1 + 12 + 16 + 12;
+        public const int MinRendererBytes = 4 + 12 + 16 + 12 + 1 + 4;
+        public const int MinSubMeshBytes = 4 + 4;
+        public const int MinBlendShapeBytes = 1 + 4;
+        public const int MinBlendShapeFrameBytes = 4 + 8 + 1 + 1;
+
+        private long expandedBytes;
+
+        private PayloadReader(MemoryStream stream) : base(stream, Encoding.UTF8) { }
+
+        /// <summary>A reader over the payload's bytes; GZIP payloads are decoded first, within the supported payload size.</summary>
+        public static PayloadReader Open(byte[] payloadBytes, bool gzip)
+        {
+            if (!gzip) return new PayloadReader(new MemoryStream(payloadBytes, false));
+            var decoded = new MemoryStream();
+            using (var input = new GZipStream(new MemoryStream(payloadBytes, false), System.IO.Compression.CompressionMode.Decompress))
+            {
+                var buffer = new byte[81920];
+                for (int read; (read = input.Read(buffer, 0, buffer.Length)) > 0;)
+                {
+                    if (decoded.Length + read > MCBCompression.MaxDecodedBytes)
+                        throw new InvalidDataException("Native mesh payload expands beyond the supported size.");
+                    decoded.Write(buffer, 0, read);
+                }
+            }
+
+            decoded.Position = 0;
+            return new PayloadReader(decoded);
+        }
+
+        private long Remaining => BaseStream.Length - BaseStream.Position;
+
+        /// <summary>Reads a count of records taking at least <paramref name="minimumBytes"/> each.</summary>
+        public int ReadCount(int minimumBytes, string what)
+        {
+            int count = ReadInt32();
+            if (count < 0 || (long)count * minimumBytes > Remaining)
+                throw new InvalidDataException($"Native mesh payload declares {count} {what}, more than it contains.");
+            return count;
+        }
+
+        public void Expand(long bytes, string what)
+        {
+            expandedBytes += bytes;
+            if (expandedBytes > MaxExpandedBytes)
+                throw new InvalidDataException($"Native mesh payload expands beyond {MaxExpandedBytes / (1024 * 1024 * 1024)} GB ({what}).");
+        }
+
+        public override string ReadString()
+        {
+            int length;
+            try { length = Read7BitEncodedInt(); }
+            catch (FormatException ex) { throw new InvalidDataException("Native mesh payload has an invalid string length.", ex); }
+            if (length < 0 || length > MaxStringBytes || length > Remaining)
+                throw new InvalidDataException($"Native mesh payload has a string of {length} bytes.");
+            return length == 0 ? string.Empty : Encoding.UTF8.GetString(ReadBytes(length));
+        }
     }
 
     private sealed class PayloadRendererSource

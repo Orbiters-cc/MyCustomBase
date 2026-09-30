@@ -131,6 +131,28 @@ public sealed class MCBRequestWarning
 internal static class MCBRequestHeaders
 {
     internal const string IdempotencyKeyHeader = "Idempotency-Key";
+    internal const string AuthorizationHeader = "Authorization";
+
+    /// <summary>
+    /// Authenticates a backend request with the signed-in token. Credentials only travel in this header, never in a URL
+    /// (which logs, diagnostics, proxies and redirects would carry along).
+    /// </summary>
+    /// <returns>Whether a token was set.</returns>
+    internal static bool SetAuthorization(UnityWebRequest request, string authToken)
+    {
+        if (request == null)
+        {
+            throw new ArgumentNullException(nameof(request));
+        }
+
+        if (string.IsNullOrWhiteSpace(authToken))
+        {
+            return false;
+        }
+
+        request.SetRequestHeader(AuthorizationHeader, "Bearer " + authToken);
+        return true;
+    }
 
     internal static string CreateIdempotencyKey()
     {
@@ -196,6 +218,70 @@ public static class MCBManagedRequest
         }
 
         MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, requestUrl, policy);
+    }
+
+    /// <summary>
+    /// Sends a request authenticated with <see cref="MCBRequestHeaders.SetAuthorization"/>. The backend answers file
+    /// downloads with a redirect to a signed storage URL: that hop is followed by a fresh request without the header, so the
+    /// credential never leaves the backend and storage never receives two authentication schemes.
+    /// </summary>
+    /// <param name="create">Builds the request for a URL (method, handlers, timeout); called again for a redirect target.</param>
+    /// <param name="whileRunning">Called every editor frame while a request runs (progress, cancellation).</param>
+    /// <returns>The final request; the caller disposes it.</returns>
+    public static async Task<UnityWebRequest> SendAuthorizedAsync(Func<string, UnityWebRequest> create, string requestUrl,
+        string authToken, MCBRequestPolicy policy, Action<UnityWebRequest> whileRunning = null)
+    {
+        var request = create(requestUrl);
+        try
+        {
+            bool authorized = MCBRequestHeaders.SetAuthorization(request, authToken);
+            if (authorized)
+            {
+                request.redirectLimit = 0;
+            }
+
+            await RunAsync(request, requestUrl, policy, whileRunning);
+            string location = authorized && request.responseCode >= 300 && request.responseCode < 400
+                ? request.GetResponseHeader("Location")
+                : null;
+            if (!string.IsNullOrWhiteSpace(location) &&
+                Uri.TryCreate(new Uri(requestUrl), location, out Uri target) &&
+                (target.Scheme == Uri.UriSchemeHttps || target.Scheme == Uri.UriSchemeHttp))
+            {
+                request.Dispose();
+                request = create(target.AbsoluteUri);
+                // Reported under the backend URL: a signed storage URL is a credential too.
+                await RunAsync(request, requestUrl, policy, whileRunning);
+            }
+
+            MCBConnectivityMonitor.ReportManagedUnityWebRequest(request, requestUrl, policy);
+            return request;
+        }
+        catch
+        {
+            request.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task RunAsync(UnityWebRequest request, string requestUrl, MCBRequestPolicy policy, Action<UnityWebRequest> whileRunning)
+    {
+        UnityWebRequestAsyncOperation operation;
+        try
+        {
+            operation = request.SendWebRequest();
+        }
+        catch (Exception ex)
+        {
+            MCBConnectivityMonitor.ReportManagedException(requestUrl, ex, policy);
+            throw;
+        }
+
+        while (!operation.isDone)
+        {
+            whileRunning?.Invoke(request);
+            await Task.Yield();
+        }
     }
 
     public static void ReportHttpResponse(HttpResponseMessage response, string requestUrl, MCBRequestPolicy policy)
@@ -587,7 +673,7 @@ public static partial class MCBConnectivityMonitor
 
     private static void ReportConnectivityFailure(string requestUrl, string details)
     {
-        string diagnosticsUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl(AuthenticationService.GetAuth()?.token);
+        string diagnosticsUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl();
         if (string.IsNullOrWhiteSpace(diagnosticsUrl))
         {
             diagnosticsUrl = requestUrl;
@@ -698,7 +784,7 @@ public static partial class MCBConnectivityMonitor
         failureDiagnosticsStartedAt = EditorApplication.timeSinceStartup;
         CanReachServer = false;
         FailureReport = null;
-        LastCheckedUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl(authToken);
+        LastCheckedUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl();
         SessionState.SetString(LastUrlKey, LastCheckedUrl ?? string.Empty);
         StatusChanged?.Invoke();
 
@@ -753,13 +839,9 @@ public static partial class MCBConnectivityMonitor
 
 public static class ConnectivityDiagnosticsService
 {
-    public static string BuildConnectivityCheckUrl(string authToken = null)
-    {
-        string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT;
-        return string.IsNullOrEmpty(authToken)
-            ? url
-            : url + "?t=" + Uri.EscapeDataString(authToken);
-    }
+    // Reachability probes: any HTTP answer, 401 included, reaches the server, so they carry no credential (these URLs are
+    // kept in session state, reports and a PowerShell script).
+    public static string BuildConnectivityCheckUrl() => MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT;
 
     public static async Task<ConnectivityProbeResult> RunHttpClientProbeAsync(string url, ConnectivityDiagnosticsOptions options)
     {

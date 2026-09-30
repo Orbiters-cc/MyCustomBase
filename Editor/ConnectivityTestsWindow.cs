@@ -42,7 +42,7 @@ public class ConnectivityTestsWindow : EditorWindow
             return;
         }
 
-        testUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl(AuthenticationService.GetAuth()?.token);
+        testUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl();
     }
 
     private ConnectivityDiagnosticsOptions BuildOptions()
@@ -72,7 +72,7 @@ public class ConnectivityTestsWindow : EditorWindow
 
         if (GUILayout.Button("Use current API target", GUILayout.Height(20f)))
         {
-            testUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl(AuthenticationService.GetAuth()?.token);
+            testUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl();
         }
 
         using (new EditorGUILayout.VerticalScope("box"))
