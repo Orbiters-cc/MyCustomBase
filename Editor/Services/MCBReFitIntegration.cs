@@ -162,6 +162,9 @@ public static partial class MCBReFitIntegration
             Shapes = CollectRefitBlendShapeNames(target, body.sharedMesh),
             Source = ToolName,
             ResolveOriginal = () => ResolveOriginal(target),
+            // Its gallery thumbnail when MCB saved one, else Unity's preview of the base model.
+            Thumbnail = () => (target != null ? AvatarAssetDiscoveryService.GetSavedThumbnail(target.appliedCustomBaseAssetId) : null)
+                              ?? (fbx != null ? AssetPreview.GetAssetPreview(fbx) : null),
         };
     }
 

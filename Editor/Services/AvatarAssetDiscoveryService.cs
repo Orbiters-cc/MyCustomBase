@@ -503,6 +503,22 @@ public static class AvatarAssetDiscoveryService
         }
     }
 
+    private static readonly Dictionary<int, Texture2D> SavedThumbnails = new Dictionary<int, Texture2D>();
+
+    /// <summary>The gallery thumbnail of an asset saved by an earlier download, without a request; null when none was saved.</summary>
+    public static Texture2D GetSavedThumbnail(int assetId)
+    {
+        if (assetId <= 0) return null;
+        if (SavedThumbnails.TryGetValue(assetId, out var saved) && saved != null) return saved;
+        if (!Directory.Exists(THUMBNAILS_FOLDER)) return null;
+        var file = new DirectoryInfo(THUMBNAILS_FOLDER).GetFiles($"thumb_{assetId}_*.png").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault();
+        if (file == null) return null;
+        var texture = new Texture2D(2, 2) { hideFlags = HideFlags.HideAndDontSave, name = "Custom base " + assetId };
+        if (!texture.LoadImage(File.ReadAllBytes(file.FullName))) { Object.DestroyImmediate(texture); return null; }
+        SavedThumbnails[assetId] = texture;
+        return texture;
+    }
+
     public static Texture2D GetThumbnail(AvatarDiscoveredAsset asset)
     {
         return GetImage(asset != null ? asset.thumbnailUrl : null, "thumb", asset != null ? asset.id : 0);
