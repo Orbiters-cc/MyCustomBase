@@ -116,13 +116,24 @@ public class AdvancedModeModule
         var avatar = root != null ? root.gameObject : editor.customBaseTarget.transform.root.gameObject;
         var follow = avatar.GetComponent<Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow>();
         bool on = follow != null && follow.scope == Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow.Scope.SmallAccessories;
+        var label = new GUIContent(
+            "Keep Small Accessories On The Body",
+            "Piercings, studs and other small rigid accessories on the skin move and tilt with the body's blendshapes (muscles, breasts, versions) when the avatar is built. Adds Orbiters Follow Body Blendshapes to the avatar root.");
+        // The label column grows to fit the label and its beta pill (the pill is drawn after it, as My Avatar's badges are).
+        const Orbiters.Toolkit.Editor.FeatureStage stage = Orbiters.Toolkit.Editor.FeatureStage.Beta;
+        float textWidth = EditorStyles.label.CalcSize(label).x;
+        float badgeWidth = Orbiters.Toolkit.Editor.StageBadge.GuiWidth(stage);
+        float labelWidth = EditorGUIUtility.labelWidth;
+        EditorGUIUtility.labelWidth = Mathf.Max(labelWidth, EditorGUI.indentLevel * 15f + textWidth + badgeWidth + 14f);
+        Rect row = EditorGUILayout.GetControlRect();
         EditorGUI.BeginChangeCheck();
-        bool wanted = EditorGUILayout.Toggle(
-            new GUIContent(
-                "Keep Small Accessories On The Body (beta)",
-                "Piercings, studs and other small rigid accessories on the skin move and tilt with the body's blendshapes (muscles, breasts, versions) when the avatar is built. Adds Orbiters Follow Body Blendshapes to the avatar root."),
-            on);
-        if (!EditorGUI.EndChangeCheck()) return;
+        bool wanted = EditorGUI.Toggle(row, label, on);
+        bool changed = EditorGUI.EndChangeCheck();
+        float x = row.x + EditorGUI.indentLevel * 15f + textWidth + 6f;
+        Orbiters.Toolkit.Editor.StageBadge.DrawGUI(
+            new Rect(x, row.y + (row.height - Orbiters.Toolkit.Editor.StageBadge.GuiHeight) * 0.5f, badgeWidth, Orbiters.Toolkit.Editor.StageBadge.GuiHeight), stage);
+        EditorGUIUtility.labelWidth = labelWidth;
+        if (!changed) return;
         if (wanted)
         {
             if (follow == null) follow = Undo.AddComponent<Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow>(avatar);

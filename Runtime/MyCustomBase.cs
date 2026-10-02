@@ -162,6 +162,8 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public bool includeSuggestRealisticForCreator = false;
     [HideInInspector] public List<string> suggestRealisticMeshPathsForCreator = new List<string>();
     [HideInInspector] public List<CreatorBlendshapeEntry> customBlendshapesForCreator = new List<CreatorBlendshapeEntry>();
+    // XMuscles correctives baked in Blender, as the exports reported them (see MuscleCorrectiveStore).
+    [HideInInspector] public MuscleCorrectiveSet muscleCorrectives = new MuscleCorrectiveSet();
 
     private void Reset()
     {

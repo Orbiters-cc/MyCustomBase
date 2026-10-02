@@ -1065,3 +1065,33 @@
     border-radius: 4px;
     margin-right: 6px;
 }
+
+.mcb-blender__live {
+    margin-top: 8px;
+    padding: 6px 8px 2px 8px;
+    border-radius: 6px;
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.mcb-blender__live > .mcb-blender__state {
+    margin-top: 0;
+}
+
+.mcb-blender__live-summary {
+    margin-left: 6px;
+    flex-shrink: 1;
+    white-space: normal;
+}
+
+.mcb-blender__live-meshes {
+    margin-left: 14px;
+    margin-top: 2px;
+}
+
+.mcb-blender__live-mesh {
+    white-space: normal;
+}
+
+.mcb-blender .mcb-button.is-pressed {
+    background-color: #546c60;
+}

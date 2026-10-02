@@ -292,6 +292,36 @@ public class VRCFuryService
         return GetAvatarParameterUsage(avatarRoot, 0);
     }
 
+    /// <summary>
+    /// A VRCFury Full Controller on <paramref name="host"/> that merges <paramref name="controller"/> into the FX layer. Its
+    /// unsynced parameters stay global (not renamed), so contacts elsewhere on the avatar can drive them by name.
+    /// </summary>
+    public bool AddFullController(GameObject host, RuntimeAnimatorController controller)
+    {
+        if (_vrcFuryType == null) _vrcFuryType = FindType("VF.Model.VRCFury");
+        var featureType = FindType("VF.Model.Feature.FullController");
+        var entryType = FindType("VF.Model.Feature.FullController+ControllerEntry");
+        var guidType = FindType("VF.Model.GuidController");
+        if (_vrcFuryType == null || featureType == null || entryType == null || guidType == null)
+        {
+            Debug.LogWarning("[MCB] VRCFury was not found: the XMuscles controller is generated but not merged into the avatar.");
+            return false;
+        }
+
+        var feature = System.Activator.CreateInstance(featureType, true);
+        var entry = System.Activator.CreateInstance(entryType, true);
+        var guid = System.Activator.CreateInstance(guidType, true);
+        guidType.GetField("objRef", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy)?.SetValue(guid, controller);
+        guidType.GetField("id", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy)?.SetValue(guid, string.Empty);
+        entryType.GetField("controller")?.SetValue(entry, guid);
+        if (featureType.GetField("controllers")?.GetValue(feature) is System.Collections.IList controllers) controllers.Add(entry);
+        featureType.GetField("allNonsyncedAreGlobal")?.SetValue(feature, true);
+        var component = Undo.AddComponent(host, _vrcFuryType);
+        _vrcFuryType.GetField("content").SetValue(component, feature);
+        EditorUtility.SetDirty(component);
+        return true;
+    }
+
     private System.Type FindType(string fullName)
     {
         // Check if already in cache

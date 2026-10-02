@@ -297,6 +297,16 @@ public static class MCBUtils
         return string.IsNullOrEmpty(match) ? null : ToUnityPath(match);
     }
 
+    /// <summary>Creates a project folder ("Assets/A/B") and its parents through the AssetDatabase, so assets can be saved in it.</summary>
+    public static void EnsureAssetFolder(string folderPath)
+    {
+        folderPath = ToUnityPath(folderPath)?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(folderPath) || AssetDatabase.IsValidFolder(folderPath)) return;
+        string parent = Path.GetDirectoryName(folderPath)?.Replace("\\", "/");
+        if (!string.IsNullOrWhiteSpace(parent)) EnsureAssetFolder(parent);
+        AssetDatabase.CreateFolder(string.IsNullOrWhiteSpace(parent) ? "Assets" : parent, Path.GetFileName(folderPath));
+    }
+
     public static string GetMCBDataFolder()
     {
         // Get the Unity Editor preferences folder and create MCB subfolder

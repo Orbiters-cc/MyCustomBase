@@ -1524,7 +1524,7 @@ public partial class AssetGalleryModule
                     }
                     if (createBanner != null && !string.IsNullOrWhiteSpace(discoveredAsset.bannerUrl))
                     {
-                        AvatarAssetDiscoveryService.CacheBanner(discoveredAsset.id, discoveredAsset.bannerUrl, createBanner);
+                        AvatarAssetDiscoveryService.CacheBannerUntilDownloaded(discoveredAsset.id, discoveredAsset.bannerUrl, createBanner);
                     }
 
                     compatibleAssets.RemoveAll(asset => asset != null && asset.id == discoveredAsset.id);

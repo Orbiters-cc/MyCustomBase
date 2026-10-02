@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using Orbiters.Toolkit.Editor.Processes;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -1207,45 +1208,32 @@ public static class ConnectivityDiagnosticsService
                 CreateNoWindow = true
             };
 
-            using (var process = new Process { StartInfo = startInfo })
+            var process = await Task.Run(() => EditorProcessRunner.Run(startInfo, timeoutSeconds * 1000 + 5000));
+            if (process.TimedOut || process.Cancelled)
+                return (false, 0, null, process.Cancelled ? "PowerShell interrupted by editor reload or shutdown" : "PowerShell timed out");
+            if (!process.Success)
+                return (false, 0, null, "PowerShell exit " + process.ExitCode + ": " + process.StandardError.Trim());
+
+            long statusCode = 0;
+            string reasonPhrase = null;
+            using (var reader = new StringReader(process.StandardOutput ?? string.Empty))
             {
-                process.Start();
-                var stdoutTask = process.StandardOutput.ReadToEndAsync();
-                var stderrTask = process.StandardError.ReadToEndAsync();
-                var finishedTask = Task.Run(() => process.WaitForExit(timeoutSeconds * 1000 + 5000));
-                await Task.WhenAll(stdoutTask, stderrTask, finishedTask);
-
-                if (!process.HasExited)
+                string line;
+                while ((line = reader.ReadLine()) != null)
                 {
-                    try { process.Kill(); } catch { }
-                    return (false, 0, null, "PowerShell timed out");
-                }
-
-                if (process.ExitCode != 0)
-                {
-                    return (false, 0, null, "PowerShell exit " + process.ExitCode + ": " + (stderrTask.Result ?? string.Empty).Trim());
-                }
-
-                long statusCode = 0;
-                string reasonPhrase = null;
-                using (var reader = new StringReader(stdoutTask.Result ?? string.Empty))
-                {
-                    string line;
-                    while ((line = reader.ReadLine()) != null)
+                    if (line.StartsWith("HTTP_STATUS=", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (line.StartsWith("HTTP_STATUS=", StringComparison.OrdinalIgnoreCase))
-                        {
-                            long.TryParse(line.Substring("HTTP_STATUS=".Length), out statusCode);
-                        }
-                        else if (line.StartsWith("HTTP_REASON=", StringComparison.OrdinalIgnoreCase))
-                        {
-                            reasonPhrase = line.Substring("HTTP_REASON=".Length);
-                        }
+                        long.TryParse(line.Substring("HTTP_STATUS=".Length), out statusCode);
+                    }
+                    else if (line.StartsWith("HTTP_REASON=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        reasonPhrase = line.Substring("HTTP_REASON=".Length);
                     }
                 }
-
-                return (true, statusCode, reasonPhrase, null);
             }
+
+            return (true, statusCode, reasonPhrase, null);
+
         }
         finally
         {

@@ -170,6 +170,7 @@ public partial class CreatorModeModule
             new MCBCreatorPrefabIconElement()));
         BuildCustomVeinsSectionUIToolkit(content);
         BuildDynamicNormalsSectionUIToolkit(content);
+        BuildXMusclesSectionUIToolkit(content);
         BuildSuggestRealisticSectionUIToolkit(content);
         BuildBlendshapeEditorUIToolkit(content);
         BuildAdvancedMeshReplacementToggleUIToolkit(content);
@@ -536,6 +537,79 @@ public partial class CreatorModeModule
             HelpBoxMessageType.Info));
         root.Add(card);
     }
+
+    // XMuscles: the correctives the Blender exports reported, what driving them costs in VRChat, and (while the driver is
+    // being validated) a rig on this avatar to try them in Gesture Manager or VRChat.
+    private void BuildXMusclesSectionUIToolkit(VisualElement root)
+    {
+        var customBase = editor.customBaseTarget;
+        if (customBase == null) return;
+        var set = customBase.muscleCorrectives;
+        int muscles = set?.muscles?.Count ?? 0;
+        var environment = BlenderSyncService.GetBlenderEnvironment(editor);
+
+        var card = CreateCreatorPanel();
+        card.AddToClassList("mcb-creator-option");
+        card.AddToClassList("mcb-creator-xmuscles");
+        var head = CreateCreatorRow();
+        head.Add(CreateSectionLabel("XMuscles"));
+        head.Add(new Orbiters.Toolkit.Editor.StageBadge(Orbiters.Toolkit.Editor.FeatureStage.Experimental));
+        card.Add(head);
+
+        if (muscles == 0)
+        {
+            bool installed = environment?.xmuscles != null && environment.xmuscles.installed;
+            card.Add(CreateMutedLabel(installed
+                ? "No correctives yet: bake muscles with XMuscles in Blender, then export (Magic Sync) to bring them here."
+                : environment == null
+                    ? "Correctives baked with XMuscles in Blender show up here after a Magic Sync export."
+                    : "XMuscles is not installed in the connected Blender. Unit Git's Blender link reports it once it is."));
+            root.Add(card);
+            return;
+        }
+
+        int contacts = MuscleCorrectiveStore.ContactCount(set);
+        int shapes = MuscleCorrectiveStore.ShapeCount(set);
+        card.Add(CreateStrongLabel("XMuscles ready: " + muscles + (muscles == 1 ? " muscle, " : " muscles, ") + shapes + (shapes == 1 ? " corrective" : " correctives")));
+        int rank = System.Array.FindIndex(MuscleCorrectiveStore.ContactRanks, limit => contacts <= limit);
+        string[] rankNames = { "Excellent", "Good", "Medium", "Poor" };
+        card.Add(CreateMutedLabel(contacts + " contacts (a sender and a receiver per muscle): " + (rank >= 0 ? rankNames[rank] : "Very Poor") +
+                                  " for contacts on PC, before the avatar's own. The correctives are blendshapes the body already has."));
+        var budget = new Orbiters.Toolkit.Editor.BudgetBar();
+        budget.SetSegments(new[]
+        {
+            new Orbiters.Toolkit.Editor.BudgetBar.Segment("XMuscles contacts", contacts, new Color(0f, 0.855f, 0.427f)),
+            new Orbiters.Toolkit.Editor.BudgetBar.Segment("Left before Good", Mathf.Max(0, 16 - contacts), new Color(0.3f, 0.3f, 0.3f)),
+        });
+        card.Add(budget);
+
+        var actions = CreateCreatorRow();
+        actions.Add(CreateTextButton("Build rig on this avatar", "Adds the contacts and a VRCFury controller to the avatar in the scene, to try the correctives in Gesture Manager or VRChat.", () =>
+        {
+            var avatar = customBase.transform.root.gameObject;
+            var renderers = avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+                .GroupBy(renderer => renderer.name).ToDictionary(group => group.Key, group => group.First());
+            var result = MuscleDriverGenerator.Generate(avatar, set, renderers,
+                MCBUtils.CombineUnityPath(MCBUtils.ASSETS_BASE_FOLDER, "generated", "xmuscles", avatar.name, "XMuscles.controller"));
+            xmusclesMessage = result.Muscles + (result.Muscles == 1 ? " muscle" : " muscles") + " driven by " + result.Contacts + " contacts on ‘" + avatar.name + "’." +
+                              (result.Warnings.Count > 0 ? Environment.NewLine + string.Join(Environment.NewLine, result.Warnings) : string.Empty);
+            xmusclesMessageIsWarning = result.Warnings.Count > 0;
+            RefreshEditorUi();
+        }));
+        actions.Add(CreateTextButton("Remove rig", "Removes the XMuscles contacts and controller from the avatar in the scene.", () =>
+        {
+            MuscleDriverGenerator.Remove(customBase.transform.root.gameObject);
+            xmusclesMessage = null;
+            RefreshEditorUi();
+        }));
+        card.Add(actions);
+        if (!string.IsNullOrEmpty(xmusclesMessage))
+            card.Add(CreateHelpBox(xmusclesMessage, xmusclesMessageIsWarning ? HelpBoxMessageType.Warning : HelpBoxMessageType.Info));
+        root.Add(card);
+    }
+
+    private string xmusclesMessage;
+    private bool xmusclesMessageIsWarning;
 
     private void BuildSuggestRealisticSectionUIToolkit(VisualElement root)
     {

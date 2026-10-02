@@ -46,3 +46,11 @@
     flex-shrink: 0;
     background-color: #3c3c3c;
 }
+
+/* MCB's stage (beta) in the header's top-right corner, where My Avatar puts its badges. */
+.mcb-header__stage {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    margin: 0;
+}

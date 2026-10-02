@@ -569,6 +569,32 @@ public static class AvatarAssetDiscoveryService
         return CacheImage(url, "banner", assetId, texture);
     }
 
+    /// <summary>
+    /// A banner just uploaded as <paramref name="plain"/>: shown at once with the banner effect applied locally, then
+    /// replaced by the server's own image (the server applies the effect to every upload) once it is downloaded.
+    /// </summary>
+    public static Texture2D CacheBannerUntilDownloaded(int assetId, string url, Texture2D plain)
+    {
+        var preview = Orbiters.Toolkit.Editor.Photoshoot.PhotoshootService.ApplyBannerEffect(plain);
+        Texture2D cached;
+        try
+        {
+            cached = CacheBanner(assetId, url, preview != null ? preview : plain);
+        }
+        finally
+        {
+            if (preview != null) Object.DestroyImmediate(preview);
+        }
+
+        string expanded = NormalizeImageUrl(ExpandImageUrl(url), "banner", assetId);
+        if (string.IsNullOrWhiteSpace(expanded) || IsDefaultPlaceholderImageUrl(expanded)) return cached;
+        string cacheKey = GetImageCacheKey("banner", assetId, expanded);
+        PendingThumbnailDownloads[cacheKey] = DateTime.UtcNow;
+        EditorCoroutineUtility.StartCoroutineOwnerless(
+            DownloadImageCoroutine(expanded, cacheKey, GetImageLocalPath("banner", assetId, expanded), "banner", assetId, imageGeneration));
+        return cached;
+    }
+
     public static string GetBannerLocalPath(AvatarDiscoveredAsset asset)
     {
         if (asset == null)

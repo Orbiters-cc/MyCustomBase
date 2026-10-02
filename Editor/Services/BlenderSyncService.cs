@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using Orbiters.Toolkit.Editor.Processes;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -18,7 +20,9 @@ public static class BlenderSyncService
     private const string BlenderLaunchKind = "orbiters.mcb.blenderLaunch";
     private const string ExportKind = "orbiters.mcb.blenderExport";
     private const string ReadyKind = "orbiters.mcb.blenderExportReady";
-    private const int ProtocolVersion = 1;
+    private const string HeartbeatKind = "orbiters.mcb.blenderHeartbeat";
+    // Every payload exchanged with the Blender extension uses this version, and only this one is accepted.
+    private const int ProtocolVersion = 2;
     private const double BlenderHeartbeatTimeoutSeconds = 4.0;
     private const double PollIntervalSeconds = 0.5;
     private const double PersistedSessionMaxAgeDays = 2.0;
@@ -62,6 +66,9 @@ public static class BlenderSyncService
         public string blenderExportsUnityPath;
         public string blenderExportsAbsolutePath;
         public bool useAdvancedMeshBlenderLink;
+        public BlenderEnvironment blenderEnvironment;
+        public DateTime heartbeatReadWriteUtc;
+        public BlenderLiveSession live;
     }
 
     private class TargetFbxInfo
@@ -90,6 +97,8 @@ public static class BlenderSyncService
         public string blenderExportsUnityPath;
         public string blenderExportsAbsolutePath;
         public bool useAdvancedMeshBlenderLink;
+        // The live link listens on this port again after a script reload (when it is still free).
+        public int livePort;
     }
 
     public class BlenderProjectInfo
@@ -109,6 +118,33 @@ public static class BlenderSyncService
         public BlenderProjectInfo project;
     }
 
+    /// <summary>What the connected Blender reports in its heartbeat.</summary>
+    public class BlenderEnvironment
+    {
+        public string blenderVersion;
+        /// <summary>Version of the MCB Blender extension (see <see cref="BlenderAddonService.BlenderAddonVersion"/>).</summary>
+        public string addonVersion;
+        /// <summary>The X-Muscle System extension (xmusclesystem).</summary>
+        public BlenderAddonStatus xmuscles;
+        /// <summary>XMuscle Orbit Helper (see <see cref="BlenderAddonService.XMuscleToolkitVersion"/>).</summary>
+        public BlenderAddonStatus xmuscleToolkit;
+    }
+
+    public class BlenderAddonStatus
+    {
+        public bool installed;
+        public bool enabled;
+        public string version;
+    }
+
+    private class HeartbeatPayload
+    {
+        public string kind;
+        public int protocolVersion;
+        public string sessionId;
+        public string token;
+    }
+
     private class ReadyPayload
     {
         public string kind;
@@ -118,7 +154,7 @@ public static class BlenderSyncService
         public string manifestPath;
     }
 
-    private class BlenderExportManifest
+    internal class BlenderExportManifest
     {
         public string kind;
         public int protocolVersion;
@@ -127,15 +163,17 @@ public static class BlenderSyncService
         public TargetInfo target;
         public List<ModelInfo> models;
         public bool advancedMeshBlenderLink;
+        /// <summary>XMuscle correctives of the exported meshes; null when Blender has no XMuscle Orbit Helper.</summary>
+        public MuscleCorrectiveSet xmuscle;
     }
 
-    private class TargetInfo
+    internal class TargetInfo
     {
         public string targetFbxPath;
         public string customBaseName;
     }
 
-    private class ModelInfo
+    internal class ModelInfo
     {
         public string role;
         public string path;
@@ -144,7 +182,8 @@ public static class BlenderSyncService
         public string unityImportMode;
         public string payloadSourceFormat;
         public List<string> meshNames;
-        public List<string> shapeKeys;
+        /// <summary>Shape key names by Blender object name (the FBX node name of each exported mesh).</summary>
+        public Dictionary<string, List<string>> shapeKeysByMesh;
     }
 
     private class RendererMaterialInfo
@@ -320,11 +359,129 @@ public static class BlenderSyncService
         panel.Add(buttonRow);
 
         BuildBlenderConnectionStateUIToolkit(panel, editor);
+        BuildBlenderLiveUIToolkit(panel, editor);
 
         if (!string.IsNullOrEmpty(lastStatus))
         {
             panel.Add(CreateHelpBox(lastStatus, ToHelpBoxMessageType(lastStatusType)));
         }
+    }
+
+    // Live preview: Blender's edits show on the avatar until Commit (Blender exports as when the file is saved) or Revert.
+    private static void BuildBlenderLiveUIToolkit(VisualElement root, MCBEditor editor)
+    {
+        var section = new VisualElement();
+        section.AddToClassList("mcb-blender__live");
+        var header = CreateRow();
+        header.AddToClassList("mcb-blender__state");
+        var dot = new VisualElement();
+        dot.AddToClassList("mcb-blender__state-dot");
+        header.Add(dot);
+        header.Add(CreateLabel("Live preview", 11, FontStyle.Bold, new Color(0.82f, 0.82f, 0.82f)));
+        var summary = CreateLabel("", 11, FontStyle.Normal, new Color(0.62f, 0.62f, 0.62f));
+        summary.AddToClassList("mcb-blender__live-summary");
+        header.Add(summary);
+        section.Add(header);
+
+        var meshList = new VisualElement();
+        meshList.AddToClassList("mcb-blender__live-meshes");
+        section.Add(meshList);
+
+        var actions = CreateRow();
+        actions.AddToClassList("mcb-blender__actions");
+        Button commit = null;
+        Button revert = null;
+        string shownMeshes = null;
+
+        void Refresh()
+        {
+            var live = GetSessionForEditor(editor)?.live;
+            section.style.display = live == null ? DisplayStyle.None : DisplayStyle.Flex;
+            if (live == null) return;
+
+            var states = live.MeshStates.ToList();
+            bool anyLive = states.Any(state => state.live);
+            dot.style.backgroundColor = anyLive ? new Color(0.2f, 0.8f, 0.2f) : live.Connected ? EditorUIUtils.OrangeColor : new Color(0.45f, 0.45f, 0.45f);
+            summary.text = live.Committing ? "Blender is exporting the edits..."
+                : !live.Connected ? "waiting for Blender"
+                : anyLive ? "showing Blender's edits, nothing saved yet"
+                : "edit a mesh in Blender to see it here";
+
+            string meshes = string.Join("\n", states.Select(state => (state.live ? "1" : "0") + state.meshId + ": " + state.message));
+            if (meshes != shownMeshes)
+            {
+                shownMeshes = meshes;
+                meshList.Clear();
+                foreach (var state in states)
+                {
+                    var line = CreateLabel(state.meshId + ": " + state.message, 11, FontStyle.Normal, state.live ? new Color(0.5f, 0.85f, 0.6f) : new Color(0.66f, 0.66f, 0.66f));
+                    line.AddToClassList("mcb-blender__live-mesh");
+                    meshList.Add(line);
+                }
+            }
+
+            commit.text = live.Committing ? "Committing..." : "Commit";
+            commit.SetEnabled(live.Connected && !live.Committing && (live.HasLiveMeshes || live.NeedsCommit));
+            revert.SetEnabled(live.HasLiveMeshes && !live.Committing);
+        }
+
+        commit = CreatePressButton("Commit", "Blender exports these edits as when the file is saved, and Unity applies the export", () =>
+        {
+            var live = GetSessionForEditor(editor)?.live;
+            if (live == null) return;
+            commit.text = "Committing...";
+            commit.SetEnabled(false);
+            if (!live.Commit()) SetStatus("Blender is not connected to the live preview: save or sync in Blender to export the edits.", MessageType.Warning);
+            Refresh();
+        });
+        revert = CreatePressButton("Revert", "Show the avatar's own meshes again (the live preview never changes assets)", () =>
+        {
+            GetSessionForEditor(editor)?.live?.Revert();
+            Refresh();
+        });
+        actions.Add(commit);
+        actions.Add(revert);
+        section.Add(actions);
+
+        Refresh();
+        section.schedule.Execute(Refresh).Every(300);
+        root.Add(section);
+    }
+
+    // Acts on pointer down so the press shows at once; a click (keyboard, or a press the pointer callback missed) still works.
+    private static Button CreatePressButton(string text, string tooltip, Action action)
+    {
+        var button = CreateButton(text, null);
+        button.tooltip = tooltip;
+        bool pressed = false;
+        void Activate()
+        {
+            if (pressed || !button.enabledInHierarchy) return;
+            pressed = true;
+            button.AddToClassList("is-pressed");
+            try
+            {
+                action();
+            }
+            finally
+            {
+                button.schedule.Execute(() =>
+                {
+                    pressed = false;
+                    button.RemoveFromClassList("is-pressed");
+                }).StartingIn(150);
+            }
+        }
+
+        button.clicked += Activate;
+        button.RegisterCallback<PointerDownEvent>(evt =>
+        {
+            if (evt.button != 0) return;
+            Activate();
+            evt.StopImmediatePropagation();
+            evt.PreventDefault();
+        }, TrickleDown.TrickleDown);
+        return button;
     }
 
     private static void BuildConnectorHeaderUIToolkit(VisualElement root)
@@ -772,6 +929,8 @@ public static class BlenderSyncService
             capabilities.Add(NativeMeshPayloadService.PayloadFormat);
         }
         bool useAdvancedMeshBlenderLink = FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_MESH_ON_BLENDER_LINK);
+        // Reconnecting keeps the session's token, and with it its live link.
+        var live = existing?.live ?? StartLiveSession(sessionId, token, inboxPath, 0);
 
         var payload = new
         {
@@ -799,7 +958,8 @@ public static class BlenderSyncService
             blenderProject = projectInfo,
             targetFbxFiles = targetFiles,
             advancedMeshBlenderLink = useAdvancedMeshBlenderLink,
-            capabilities = capabilities.ToArray()
+            capabilities = capabilities.ToArray(),
+            live = live != null ? new { port = live.Port, protocolVersion = (int)BlenderLiveProtocol.Version } : null
         };
 
         string payloadJson = JsonConvert.SerializeObject(payload, Formatting.Indented);
@@ -819,7 +979,8 @@ public static class BlenderSyncService
             blenderProjectAbsolutePath = projectInfo != null ? projectInfo.projectAbsolutePath : null,
             blenderExportsUnityPath = projectInfo != null ? projectInfo.exportsUnityPath : null,
             blenderExportsAbsolutePath = projectInfo != null ? projectInfo.exportsAbsolutePath : null,
-            useAdvancedMeshBlenderLink = useAdvancedMeshBlenderLink
+            useAdvancedMeshBlenderLink = useAdvancedMeshBlenderLink,
+            live = live
         };
 
         return new SyncSessionBuildResult
@@ -840,13 +1001,71 @@ public static class BlenderSyncService
 
         RestorePersistedSessionsIfNeeded();
 
-        ActiveSessions.RemoveAll(x =>
+        Predicate<ActiveSession> replaced = x =>
             x == null ||
             x.customBase == null ||
-            (activeSession.customBase != null && x.customBase == activeSession.customBase));
+            (activeSession.customBase != null && x.customBase == activeSession.customBase);
+        foreach (var previous in ActiveSessions.Where(x => replaced(x) && x?.live != null && x.live != activeSession.live))
+        {
+            previous.live.Dispose();
+        }
+        ActiveSessions.RemoveAll(replaced);
         ActiveSessions.Add(activeSession);
         WriteSessionFile(activeSession);
         EnsurePolling();
+    }
+
+    private static BlenderLiveSession StartLiveSession(string sessionId, string token, string inboxPath, int port)
+    {
+        try
+        {
+            return new BlenderLiveSession(token, sessionId, inboxPath, meshId => ResolveLiveRenderer(sessionId, meshId), port);
+        }
+        catch (Exception ex) when (ex is System.Net.Sockets.SocketException || ex is IOException || ex is UnauthorizedAccessException)
+        {
+            // Without the live link Blender still syncs through exports.
+            MCBLogger.LogWarning("[BlenderSync] Live preview is unavailable: " + ex.Message);
+            return null;
+        }
+    }
+
+    // A live mesh id (the renderer Blender knows the mesh as, else its object name: see BlenderLiveProtocol) to the
+    // renderer of the session's avatar, through the session's renderer mapping.
+    private static SkinnedMeshRenderer ResolveLiveRenderer(string sessionId, string meshId)
+    {
+        var session = ActiveSessions.LastOrDefault(x => x != null && x.sessionId == sessionId);
+        if (session == null || string.IsNullOrEmpty(meshId)) return null;
+        ResolveCustomBase(session);
+        if (session.customBase == null) return null;
+
+        var root = session.customBase.transform.root;
+        foreach (string name in new[] { meshId, StripBlenderSuffix(meshId) }.Distinct())
+        {
+            foreach (var entry in session.targetFbxFiles.Where(file => file != null).SelectMany(file => file.smrPaths ?? new List<ModelFileSmrPathData>()))
+            {
+                if (entry == null || !(string.Equals(entry.rendererName, name, StringComparison.Ordinal) ||
+                                       string.Equals(LastPathSegment(entry.fbxMeshPath), name, StringComparison.Ordinal) ||
+                                       string.Equals(entry.meshName, name, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                var renderer = FindAvatarTransformByRelativePath(root, entry.avatarPath)?.GetComponent<SkinnedMeshRenderer>();
+                if (renderer != null) return renderer;
+            }
+        }
+
+        return null;
+    }
+
+    // Blender names a duplicate "Body.001".
+    private static string StripBlenderSuffix(string name) => System.Text.RegularExpressions.Regex.Replace(name ?? "", @"\.\d{3}$", "");
+
+    private static string LastPathSegment(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        int slash = path.LastIndexOf('/');
+        return slash >= 0 ? path.Substring(slash + 1) : path;
     }
 
     private static void WriteBlenderLaunchConfig(SyncSessionBuildResult result, string launchConfigPath)
@@ -858,7 +1077,7 @@ public static class BlenderSyncService
             createdAtUtc = DateTime.UtcNow.ToString("o"),
             syncSession = result.payload,
             project = result.project,
-            addon = BlenderAddonService.CreateLaunchPayload()
+            extensions = BlenderAddonService.CreateLaunchPayload()
         };
 
         File.WriteAllText(launchConfigPath, JsonConvert.SerializeObject(launchPayload, Formatting.Indented));
@@ -879,7 +1098,8 @@ public static class BlenderSyncService
         var startInfo = new ProcessStartInfo
         {
             FileName = blenderPath,
-            Arguments = "--background --python " + QuoteArgument(bootstrapScriptPath),
+            // Without --python-exit-code Blender exits with 0 when the script fails (e.g. an extension download).
+            Arguments = "--background --python-exit-code 1 --python " + QuoteArgument(bootstrapScriptPath),
             WorkingDirectory = GetProjectRoot(),
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -887,49 +1107,35 @@ public static class BlenderSyncService
             RedirectStandardError = true
         };
 
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        object logLock = new object();
-        DataReceivedEventHandler appendLog = (_sender, args) =>
+        // Only the headless preparation job is owned by Unity; the user's interactive Blender is not.
+        Task.Run(() =>
         {
-            if (args == null || string.IsNullOrEmpty(args.Data)) return;
-            lock (logLock)
+            int exitCode = -1;
+            try
             {
-                File.AppendAllText(logPath, args.Data + Environment.NewLine);
+                Action<string> appendLog = line => File.AppendAllText(logPath, line + Environment.NewLine);
+                var result = EditorProcessRunner.Run(startInfo, 30 * 60 * 1000, stdoutLine: appendLog, stderrLine: appendLog);
+                exitCode = result.Success ? 0 : result.ExitCode == 0 ? -1 : result.ExitCode;
+                if (result.TimedOut) appendLog("Blender preparation or output capture timed out.");
+                if (result.Cancelled) appendLog("Blender preparation interrupted by editor reload or shutdown; retry preparation.");
             }
-        };
-
-        process.OutputDataReceived += appendLog;
-        process.ErrorDataReceived += appendLog;
-        process.Exited += (_sender, _args) =>
-        {
-            int exitCode;
-            try { exitCode = process.ExitCode; }
-            catch { exitCode = -1; }
-
-            lock (PendingPreparationCompletions)
+            catch (Exception ex) { File.AppendAllText(logPath, ex.Message + Environment.NewLine); }
+            finally
             {
-                PendingPreparationCompletions.Add(new PreparationCompletion
+                lock (PendingPreparationCompletions)
                 {
-                    blenderPath = blenderPath,
-                    projectPath = projectInfo.projectAbsolutePath,
-                    projectUnityPath = projectInfo.projectUnityPath,
-                    customBaseName = customBaseName,
-                    logPath = logPath,
-                    exitCode = exitCode
-                });
+                    PendingPreparationCompletions.Add(new PreparationCompletion
+                    {
+                        blenderPath = blenderPath,
+                        projectPath = projectInfo.projectAbsolutePath,
+                        projectUnityPath = projectInfo.projectUnityPath,
+                        customBaseName = customBaseName,
+                        logPath = logPath,
+                        exitCode = exitCode
+                    });
+                }
             }
-
-            process.Dispose();
-        };
-
-        if (!process.Start())
-        {
-            process.Dispose();
-            throw new InvalidOperationException("Blender process did not start.");
-        }
-
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        });
     }
 
     private static void ProcessPendingPreparationCompletions()
@@ -1001,7 +1207,7 @@ public static class BlenderSyncService
                 token = data.Value<string>("token"),
                 responsePath = data.Value<string>("responsePath")
             };
-            if (offer == null || offer.protocolVersion > ProtocolVersion) return false;
+            if (offer == null || offer.protocolVersion != ProtocolVersion) return false;
             return !string.IsNullOrWhiteSpace(offer.responsePath)
                    && !string.IsNullOrWhiteSpace(offer.sessionId)
                    && !string.IsNullOrWhiteSpace(offer.token);
@@ -1060,6 +1266,7 @@ public static class BlenderSyncService
             }
 
             UpdateConnectionState(session);
+            session?.live?.Tick();
 
             // Leave exports pending while their scene is closed.
             if (session?.customBase == null)
@@ -1099,6 +1306,10 @@ public static class BlenderSyncService
                     MCBLogger.LogError($"[BlenderSync] Import failed for {readyPath}: {ex}");
                     MarkReadyFileFailed(readyPath, ex);
                     continue;
+                }
+                finally
+                {
+                    session.live?.EndExportApply();
                 }
 
                 MarkReadyFileProcessed(readyPath);
@@ -1174,9 +1385,9 @@ public static class BlenderSyncService
         {
             throw new InvalidOperationException("ready.json is not a Blender MCB export marker.");
         }
-        if (ready.protocolVersion > ProtocolVersion)
+        if (ready.protocolVersion != ProtocolVersion)
         {
-            throw new InvalidOperationException("Blender export uses a newer sync protocol.");
+            throw new InvalidOperationException(DescribeProtocolMismatch(ready.protocolVersion));
         }
         if (!string.Equals(ready.sessionId, session.sessionId, StringComparison.Ordinal) ||
             !string.Equals(ready.token, session.token, StringComparison.Ordinal))
@@ -1191,11 +1402,7 @@ public static class BlenderSyncService
             throw new FileNotFoundException("Blender export manifest was not found.", manifestPath);
         }
 
-        var manifest = JsonConvert.DeserializeObject<BlenderExportManifest>(File.ReadAllText(manifestPath));
-        if (manifest == null || manifest.kind != ExportKind)
-        {
-            throw new InvalidOperationException("manifest.json is not a Blender MCB export.");
-        }
+        var manifest = ReadExportManifest(manifestPath);
         if (!string.Equals(manifest.sessionId, session.sessionId, StringComparison.Ordinal) ||
             !string.Equals(manifest.token, session.token, StringComparison.Ordinal))
         {
@@ -1224,6 +1431,8 @@ public static class BlenderSyncService
             throw new InvalidOperationException("Blender export manifest did not contain any usable CUSTOM_BASE model paths.");
         }
 
+        // Live meshes go before the avatar's meshes are replaced (Poll maps them again to the new ones afterwards).
+        session.live?.BeginExportApply();
         var updatedTargets = new List<string>();
         int generatedAvatarCount = 0;
         int advancedQueuedCount = 0;
@@ -1300,6 +1509,55 @@ public static class BlenderSyncService
             : (usedAdvancedMeshBlenderLink ? "\nOriginal FBX files are unchanged; exports are ready for submission." : "\nNo Avatar asset was generated.");
         string statusVerb = usedAdvancedMeshBlenderLink ? "processed" : "imported";
         SetStatus($"Blender export {statusVerb} for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}", MessageType.Info);
+        LogMuscleCorrectives(manifest.xmuscle);
+        // Without XMuscle Orbit Helper in Blender there is no xmuscle block: the stored correctives stay as they are.
+        if (manifest.xmuscle != null)
+        {
+            var exportedMeshes = models
+                .Where(model => model.shapeKeysByMesh != null)
+                .SelectMany(model => model.shapeKeysByMesh.Keys)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            MuscleCorrectiveStore.Apply(session.customBase, manifest.xmuscle, exportedMeshes);
+        }
+    }
+
+    /// <summary>Reads a Blender export manifest; throws unless it is an export of <see cref="ProtocolVersion"/>.</summary>
+    internal static BlenderExportManifest ReadExportManifest(string manifestPath)
+    {
+        var manifest = JsonConvert.DeserializeObject<BlenderExportManifest>(File.ReadAllText(manifestPath));
+        if (manifest == null || manifest.kind != ExportKind)
+        {
+            throw new InvalidOperationException("manifest.json is not a Blender MCB export.");
+        }
+        if (manifest.protocolVersion != ProtocolVersion)
+        {
+            throw new InvalidOperationException(DescribeProtocolMismatch(manifest.protocolVersion));
+        }
+
+        return manifest;
+    }
+
+    private static string DescribeProtocolMismatch(int blenderProtocolVersion)
+    {
+        string outdated = blenderProtocolVersion > ProtocolVersion
+            ? "the MCB Unity package"
+            : "the MCB Blender extension (Modify with Blender installs the matching one)";
+        return $"Blender uses MCB sync protocol {blenderProtocolVersion} and Unity protocol {ProtocolVersion}: update {outdated}.";
+    }
+
+    private static void LogMuscleCorrectives(MuscleCorrectiveSet set)
+    {
+        if (set == null)
+        {
+            return;
+        }
+
+        MCBLogger.Log($"[BlenderSync] Blender export carries {set.muscles?.Count ?? 0} XMuscle corrective(s) (XMuscle Orbit Helper API {set.apiVersion}).");
+        foreach (string warning in set.warnings ?? new List<string>())
+        {
+            MCBLogger.LogWarning("[BlenderSync] XMuscles: " + warning);
+        }
     }
 
     private sealed class ModelUpdatePlan
@@ -1518,6 +1776,17 @@ public static class BlenderSyncService
         return ActiveSessions.LastOrDefault(session => session != null && session.customBase == editor.customBaseTarget);
     }
 
+    /// <summary>
+    /// What the Blender of the editor's sync session last reported (versions, X-Muscle System and XMuscle Orbit Helper),
+    /// or null until a heartbeat of this session arrived. Combine with the connection state for whether it is current.
+    /// </summary>
+    public static BlenderEnvironment GetBlenderEnvironment(MCBEditor editor)
+    {
+        var session = GetSessionForEditor(editor);
+        UpdateConnectionState(session);
+        return session?.blenderEnvironment;
+    }
+
     private static void UpdateConnectionState(ActiveSession session)
     {
         if (session == null)
@@ -1539,11 +1808,49 @@ public static class BlenderSyncService
             DateTime lastWriteUtc = File.GetLastWriteTimeUtc(session.heartbeatPath);
             double ageSeconds = (DateTime.UtcNow - lastWriteUtc).TotalSeconds;
             session.connectionState = ageSeconds <= BlenderHeartbeatTimeoutSeconds ? "connected" : "disconnected";
+            ReadHeartbeat(session, lastWriteUtc);
         }
 
         if (!string.Equals(previous, session.connectionState, StringComparison.Ordinal))
         {
             try { InternalEditorUtility.RepaintAllViews(); } catch { }
+        }
+    }
+
+    // Reads the heartbeat each time Blender rewrites it; only a heartbeat of this session and protocol counts.
+    private static void ReadHeartbeat(ActiveSession session, DateTime lastWriteUtc)
+    {
+        if (lastWriteUtc == session.heartbeatReadWriteUtc)
+        {
+            return;
+        }
+
+        string json;
+        try
+        {
+            json = File.ReadAllText(session.heartbeatPath);
+        }
+        catch (IOException)
+        {
+            return; // Blender is replacing the file: read it on the next poll.
+        }
+
+        session.heartbeatReadWriteUtc = lastWriteUtc;
+        try
+        {
+            var heartbeat = JsonConvert.DeserializeObject<HeartbeatPayload>(json);
+            if (heartbeat != null &&
+                heartbeat.kind == HeartbeatKind &&
+                heartbeat.protocolVersion == ProtocolVersion &&
+                string.Equals(heartbeat.sessionId, session.sessionId, StringComparison.Ordinal) &&
+                string.Equals(heartbeat.token, session.token, StringComparison.Ordinal))
+            {
+                session.blenderEnvironment = JsonConvert.DeserializeObject<BlenderEnvironment>(json);
+            }
+        }
+        catch (JsonException ex)
+        {
+            MCBLogger.LogWarning("[BlenderSync] Could not read the Blender heartbeat: " + ex.Message);
         }
     }
 
@@ -2010,7 +2317,8 @@ public static class BlenderSyncService
                 blenderProjectAbsolutePath = session.blenderProjectAbsolutePath,
                 blenderExportsUnityPath = session.blenderExportsUnityPath,
                 blenderExportsAbsolutePath = session.blenderExportsAbsolutePath,
-                useAdvancedMeshBlenderLink = session.useAdvancedMeshBlenderLink
+                useAdvancedMeshBlenderLink = session.useAdvancedMeshBlenderLink,
+                livePort = session.live?.Port ?? 0
             };
             string path = Path.Combine(session.inboxPath, "session.json");
             File.WriteAllText(path, JsonConvert.SerializeObject(persisted, Formatting.Indented));
@@ -2038,6 +2346,7 @@ public static class BlenderSyncService
 
         // GetSessionForEditor selects the last session; directory enumeration order
         // must not resurrect an older connection after a domain reload.
+        var livePorts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (string sessionFile in Directory.GetFiles(root, "session.json", SearchOption.AllDirectories)
                      .OrderBy(File.GetLastWriteTimeUtc))
         {
@@ -2078,12 +2387,25 @@ public static class BlenderSyncService
                 };
                 ResolveCustomBase(active);
                 ActiveSessions.Add(active);
+                livePorts[active.sessionId] = persisted.livePort;
                 MCBLogger.Log($"[BlenderSync] Restored sync session {active.sessionId} from {sessionFile}");
             }
             catch (Exception ex)
             {
                 MCBLogger.LogWarning($"[BlenderSync] Failed to restore session file '{sessionFile}': {ex.Message}");
             }
+        }
+
+        // The live link of each avatar's current session listens again, on its port when it is still free; live.json
+        // tells a reconnecting Blender where it is.
+        var avatarsWithLive = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = ActiveSessions.Count - 1; i >= 0; i--)
+        {
+            var session = ActiveSessions[i];
+            if (session == null || session.live != null || !livePorts.TryGetValue(session.sessionId, out int port)) continue;
+            if (!avatarsWithLive.Add(session.customBaseGlobalId ?? session.sessionId)) continue;
+            session.live = StartLiveSession(session.sessionId, session.token, session.inboxPath, port);
+            if (session.live != null && session.live.Port != port) WriteSessionFile(session);
         }
     }
 

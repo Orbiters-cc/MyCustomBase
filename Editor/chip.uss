@@ -1,9 +1,0 @@
-﻿.chip {
-    background-color: orange;
-    color: white;
-    padding: 4px 8px;
-    border-radius: 12px;
-    unity-text-align: middle-center;
-    font-size: 12px;
-    font-weight: bold;
-}

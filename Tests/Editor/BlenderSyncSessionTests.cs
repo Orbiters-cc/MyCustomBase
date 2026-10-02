@@ -96,10 +96,10 @@ public class BlenderSyncSessionTests
         string exportDir = Directory.CreateDirectory(Path.Combine(folder, "export_1")).FullName;
         File.WriteAllText(Path.Combine(exportDir, "01.fbx"), "model 1");
         File.WriteAllText(Path.Combine(exportDir, "manifest.json"),
-            "{\"kind\":\"orbiters.mcb.blenderExport\",\"protocolVersion\":1,\"sessionId\":\"session\",\"token\":\"token\"," +
+            "{\"kind\":\"orbiters.mcb.blenderExport\",\"protocolVersion\":2,\"sessionId\":\"session\",\"token\":\"token\"," +
             "\"models\":[{\"role\":\"CUSTOM_BASE\",\"path\":\"01.fbx\"},{\"role\":\"CUSTOM_BASE\",\"path\":\"02.fbx\"}]}");
         string ready = Path.Combine(exportDir, "ready.json");
-        File.WriteAllText(ready, "{\"kind\":\"orbiters.mcb.blenderExportReady\",\"protocolVersion\":1,\"sessionId\":\"session\",\"token\":\"token\",\"manifestPath\":\"manifest.json\"}");
+        File.WriteAllText(ready, "{\"kind\":\"orbiters.mcb.blenderExportReady\",\"protocolVersion\":2,\"sessionId\":\"session\",\"token\":\"token\",\"manifestPath\":\"manifest.json\"}");
 
         var failure = Assert.Throws<FileNotFoundException>(() => Invoke("ProcessReadyFile", session, ready));
         StringAssert.EndsWith("02.fbx", failure.FileName);

@@ -321,7 +321,7 @@ public partial class AssetGalleryModule
         }
         if (editBanner != null && !string.IsNullOrWhiteSpace(updatedAsset.mcbBanner))
         {
-            AvatarAssetDiscoveryService.CacheBanner(updatedAsset.id, updatedAsset.mcbBanner, editBanner);
+            AvatarAssetDiscoveryService.CacheBannerUntilDownloaded(updatedAsset.id, updatedAsset.mcbBanner, editBanner);
         }
 
         ApplyAssetMediaFields(SelectedAsset, updatedAsset);

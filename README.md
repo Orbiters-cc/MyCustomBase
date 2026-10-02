@@ -32,9 +32,25 @@ the change with Toolkit's `MeshComparison`.
 
 ## Small accessories on the body (beta)
 
-Advanced Options › Blendshape processing › **Keep Small Accessories On The Body (beta)** adds Toolkit's Follow Body
+Advanced Options › Blendshape processing › **Keep Small Accessories On The Body** (beta) adds Toolkit's Follow Body
 Blendshapes to the avatar root: piercings, studs and other small rigid accessories on the skin move and tilt with the
 body's blendshapes (muscles, versions) at upload and in Play Mode.
+
+## Banners
+
+The Orbiters server applies the banner effect (blur and fade toward `#303030` over the lower third, the same for web and
+Unity uploads). The Photoshoot therefore uploads the banner as rendered and shows it with the effect applied locally
+(Toolkit's `PhotoshootService.ApplyBannerEffect`), then the server's image once the upload returns. This needs a server
+with the banner pipeline (asset field `mcbBannerEffectVersion`).
+
+## XMuscles (experimental)
+
+Correctives baked with XMuscles in Blender (XMuscle Orbit Helper) come with each Magic Sync export (`manifest.xmuscle`)
+and are kept on the custom base per exported mesh (`MuscleCorrectiveStore`). The Creator panel shows them with their
+contact cost; **Build rig on this avatar** (`MuscleDriverGenerator`) adds, per muscle, a contact sender down the moving
+bone and a proximity receiver up its parent (their reading follows the bend at any avatar scale), a 1D blend tree over
+the correctives inside one Direct blend tree, and a VRCFury Full Controller. Publishing the rig with a version waits for
+the prototype check in Gesture Manager and VRChat.
 
 ## Custom base FBX backup invariant
 

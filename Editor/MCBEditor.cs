@@ -263,6 +263,10 @@ public class MCBEditor : UnityEditor.Editor
         LoadUiToolkitStyleSheets(uiToolkitRoot);
         chromeSurfaceHost = shell.Glow;
         headerHost = shell.Header;
+        // MCB is in beta: the same pill as My Avatar's features, in the header's corner.
+        var stage = new Orbiters.Toolkit.Editor.StageBadge(Orbiters.Toolkit.Editor.FeatureStage.Beta);
+        stage.AddToClassList("mcb-header__stage");
+        shell.Header.Add(stage);
         bannerHost = shell.Banner;
         accountHost = shell.Account;
 

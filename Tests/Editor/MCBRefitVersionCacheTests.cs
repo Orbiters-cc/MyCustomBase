@@ -81,6 +81,89 @@ public class MCBRefitVersionCacheTests
     }
 
     [Test]
+    public void SameNamedAccessoriesComeBackOnTheirOwnBonesInPlace()
+    {
+        var scene = EditorSceneManager.NewPreviewScene();
+        var root = new GameObject("Avatar");
+        UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(root, scene);
+        string fixture = "Assets/MCB-RefitDuplicateBonesTest-" + Guid.NewGuid().ToString("N");
+        AssetDatabase.CreateFolder("Assets", fixture.Substring("Assets/".Length));
+        string cacheRoot = null;
+        try
+        {
+            var mcb = root.AddComponent<MyCustomBase>();
+            var version = new CustomBaseVersion { assetId = 999993, version = "0.5.2", defaultAviVersion = "1.0.0" };
+            mcb.appliedCustomBaseVersion = version;
+            var renderers = new List<SkinnedMeshRenderer>();
+            var bones = new List<Transform>();
+            var originals = new List<Mesh>();
+            // Two accessories called "Jacket", each skinned to its own "Bone", at their own places.
+            for (int i = 0; i < 2; i++)
+            {
+                var accessory = new GameObject("Jacket");
+                accessory.transform.SetParent(root.transform, false);
+                accessory.transform.localPosition = Vector3.right * (i + 1);
+                var bone = new GameObject("Bone").transform;
+                bone.SetParent(accessory.transform, false);
+                bone.localPosition = Vector3.up * (i + 1);
+                var renderer = accessory.AddComponent<SkinnedMeshRenderer>();
+                var original = new Mesh { name = "Original" + i, vertices = new[] { Vector3.zero, Vector3.right, Vector3.up }, triangles = new[] { 0, 1, 2 } };
+                original.bindposes = new[] { Matrix4x4.identity };
+                original.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, 3).ToArray();
+                AssetDatabase.CreateAsset(original, fixture + "/original" + i + ".asset");
+                renderer.sharedMesh = original;
+                renderer.bones = new[] { bone };
+                renderer.rootBone = bone;
+                var originalState = RefitRecords.Capture(root.transform, renderer);
+                var fitted = UnityEngine.Object.Instantiate(original);
+                fitted.vertices = new[] { Vector3.forward * (i + 1), Vector3.right, Vector3.up };
+                AssetDatabase.CreateAsset(fitted, fixture + "/fitted" + i + ".asset");
+                renderer.sharedMesh = fitted;
+                RefitRecords.Register(renderer, originalState, fitted, fixture + "/fitted" + i + ".asset", null, new List<RefitShape>(),
+                    OrbitersRefit.FitKind.Fitted, "b", "B", "MCB");
+                renderers.Add(renderer);
+                bones.Add(bone);
+                originals.Add(original);
+            }
+            var order = root.GetComponentsInChildren<Transform>(true);
+            void AssertInPlace(string when)
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    Assert.That(renderers[i].bones, Is.EqualTo(new[] { bones[i] }), when + ": each jacket keeps its own bone.");
+                    Assert.That(renderers[i].rootBone, Is.SameAs(bones[i]), when);
+                    Assert.That(renderers[i].transform.localPosition, Is.EqualTo(Vector3.right * (i + 1)), when + ": no jacket is moved.");
+                    Assert.That(bones[i].localPosition, Is.EqualTo(Vector3.up * (i + 1)), when);
+                }
+                Assert.That(root.GetComponentsInChildren<Transform>(true), Is.EqualTo(order), when + ": nothing changes places.");
+            }
+
+            MCBReFitIntegration.SaveVersionFits(mcb, version);
+            cacheRoot = "Assets/MCB/refits/" + mcb.mcbComponentId;
+            var saved = renderers.Select(renderer => renderer.sharedMesh).ToArray();
+            MCBReFitIntegration.RestoreOriginalAssetMeshes(mcb);
+            Assert.That(renderers.Select(renderer => renderer.sharedMesh), Is.EqualTo(originals));
+            AssertInPlace("Reset");
+
+            Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, version), Is.EqualTo(2));
+            Assert.That(renderers.Select(renderer => renderer.sharedMesh), Is.EqualTo(saved));
+            AssertInPlace("Version fits restored");
+
+            // The restored records keep their originals by path only: resetting again must still tell the jackets apart.
+            MCBReFitIntegration.RestoreOriginalAssetMeshes(mcb);
+            Assert.That(renderers.Select(renderer => renderer.sharedMesh), Is.EqualTo(originals));
+            AssertInPlace("Reset from saved originals");
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(root);
+            EditorSceneManager.ClosePreviewScene(scene);
+            if (cacheRoot != null) AssetDatabase.DeleteAsset(cacheRoot);
+            AssetDatabase.DeleteAsset(fixture);
+        }
+    }
+
+    [Test]
     public void SavedFitsRoundTripAcrossBaseAndTwoVersionsAndRespectManualRemoval()
     {
         var scene = EditorSceneManager.NewPreviewScene();

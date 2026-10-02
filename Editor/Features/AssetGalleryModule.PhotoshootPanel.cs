@@ -84,6 +84,8 @@ public partial class AssetGalleryModule
             IncludeBanner = true,
             ThumbnailSize = new Vector2Int(512, 512),
             BannerSize = new Vector2Int(1600, 900),
+            // The server blurs and fades MCB banners itself (the same effect for every upload, web or Unity).
+            ServerAppliesBannerEffect = true,
             CanGenerate = () => !isSubmittingCustomBase && !isSavingSelectedAssetMedia,
             InputBlocked = () => isSubmittingCustomBase || isSavingSelectedAssetMedia,
             GetShot = GetPhotoshootAssignedTexture,
