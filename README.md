@@ -1,5 +1,11 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.10.4 — 2026-10-03
+
+- Generate and reuse the native custom base humanoid definition for preview, Play Mode and avatar upload, preventing repeated armature corrections.
+- Preserve clothing placement in mesh comparison and reuse prepared original-body data for ReFit.
+- Fix player compilation of the embedded Blender addon and keep the MCB editor assembly out of player builds.
+
 ## UI Toolkit migration
 
 MCB editor UI is transitioning to Unity UI Toolkit with the shared styled surfaces used by the gallery and account modules. New UI elements and changes to existing UI should be built with UI Toolkit and the package USS style sheets instead of adding new IMGUI blocks.

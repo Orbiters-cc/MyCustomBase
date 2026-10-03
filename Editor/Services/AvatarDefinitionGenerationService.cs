@@ -8,7 +8,7 @@ using Orbiters.Toolkit.Armature;
 using UnityEditor;
 using UnityEngine;
 
-public static class AvatarDefinitionGenerationService
+public static partial class AvatarDefinitionGenerationService
 {
     public class GenerationResult
     {
@@ -526,6 +526,19 @@ public static class AvatarDefinitionGenerationService
             return false;
         }
 
+        var instance = UnityEngine.Object.Instantiate(source);
+        instance.name = Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(fbxPath));
+        instance.hideFlags = HideFlags.HideAndDontSave;
+        try { return TryBuildPoseCorrectedSkeleton(instance, humanBones, out correctedSkeleton, out message); }
+        finally { UnityEngine.Object.DestroyImmediate(instance); }
+    }
+
+    // The caller owns this temporary hierarchy. Never pass the user's scene skeleton here.
+    private static bool TryBuildPoseCorrectedSkeleton(GameObject instance, HumanBone[] humanBones, out SkeletonBone[] correctedSkeleton, out string message)
+    {
+        correctedSkeleton = null;
+        message = null;
+
         Type setupToolType = Type.GetType("UnityEditor.AvatarSetupTool, UnityEditor.CoreModule");
         Type boneWrapperType = Type.GetType("UnityEditor.AvatarSetupTool+BoneWrapper, UnityEditor.CoreModule");
         if (setupToolType == null || boneWrapperType == null)
@@ -545,10 +558,6 @@ public static class AvatarDefinitionGenerationService
         {
             return false;
         }
-
-        var instance = UnityEngine.Object.Instantiate(source);
-        instance.name = Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(fbxPath));
-        instance.hideFlags = HideFlags.HideAndDontSave;
 
         try
         {
@@ -594,10 +603,6 @@ public static class AvatarDefinitionGenerationService
         {
             MCBLogger.LogWarning($"[AvatarGeneration] Unity T-Pose correction failed, using imported skeleton pose: {ex.Message}");
             return false;
-        }
-        finally
-        {
-            UnityEngine.Object.DestroyImmediate(instance);
         }
     }
 

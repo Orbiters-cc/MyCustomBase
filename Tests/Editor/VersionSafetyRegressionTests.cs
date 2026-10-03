@@ -12,6 +12,49 @@ using UnityEngine;
 
 public sealed class VersionSafetyRegressionTests
 {
+    [TestCase(.7f)]
+    [TestCase(6.4f)]
+    public void ComparisonClothingPreservesFittedScaleAndPose(float scale)
+    {
+        var avatar = new GameObject("Comparison context test");
+        var mesh = new Mesh();
+        VersionMeshComparison comparison = null;
+        try
+        {
+            avatar.transform.SetPositionAndRotation(new Vector3(2, 1, -3), Quaternion.Euler(0, 35, 0));
+            avatar.transform.localScale = Vector3.one * 1.2f;
+            var target = avatar.AddComponent<MyCustomBase>();
+            var clothing = new GameObject("Clothing");
+            clothing.transform.SetParent(avatar.transform, false);
+            clothing.transform.localScale = Vector3.one * scale;
+            var bone = new GameObject("Fitted bone").transform;
+            bone.SetParent(clothing.transform, false);
+            var renderer = clothing.AddComponent<SkinnedMeshRenderer>();
+            mesh.vertices = new[] { Vector3.zero, Vector3.right, Vector3.up };
+            mesh.triangles = new[] { 0, 1, 2 };
+            mesh.bindposes = new[] { bone.worldToLocalMatrix * renderer.transform.localToWorldMatrix };
+            mesh.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, 3).ToArray();
+            mesh.RecalculateNormals();
+            renderer.sharedMesh = mesh; renderer.bones = new[] { bone }; renderer.rootBone = bone;
+            bone.localPosition = new Vector3(.2f, .3f, .1f);
+            bone.localRotation = Quaternion.Euler(20, 0, 40);
+            comparison = new VersionMeshComparison(null, target, null);
+            comparison.BuildContext();
+            var part = comparison.Context.Single();
+            var expectedFrame = avatar.transform.worldToLocalMatrix * bone.localToWorldMatrix * mesh.bindposes[0];
+            var vertices = mesh.vertices;
+            var baked = part.Mesh.vertices;
+            for (int i = 0; i < vertices.Length; i++)
+                Assert.Less(Vector3.Distance(expectedFrame.MultiplyPoint3x4(vertices[i]), part.Matrix.MultiplyPoint3x4(baked[i])), .00001f);
+        }
+        finally
+        {
+            comparison?.Dispose();
+            UnityEngine.Object.DestroyImmediate(avatar);
+            UnityEngine.Object.DestroyImmediate(mesh);
+        }
+    }
+
     private string folder;
     [SetUp] public void SetUp() { folder = Path.Combine(Path.GetTempPath(), "mcb-safety-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder); }
     [TearDown] public void TearDown() { if (Directory.Exists(folder)) Directory.Delete(folder, true); }

@@ -23,6 +23,8 @@ public static class BlenderAddonService
     // Runs in Blender (background) before the launch config: installs or updates each extension with
     // `blender --command extension install-file --repo <repository> --enable <zip>` when the installed
     // version differs, enables it, then lets the MCB extension prepare the project.
+    // Keep Python hash comments out of this literal: when UNITY_EDITOR is undefined, C# still
+    // parses line-leading '#' as directives inside the excluded region (including string contents).
     private const string BootstrapScript = @"import addon_utils
 import importlib
 import json
@@ -41,7 +43,6 @@ def _log(message):
 
 
 def _installed_module(extension_id):
-    # Extensions load as bl_ext.<repository>.<id>.
     for module in addon_utils.modules(refresh=False):
         if module.__name__.startswith('bl_ext.') and module.__name__.rsplit('.', 1)[-1] == extension_id:
             return module
@@ -85,7 +86,6 @@ def _install(extension, repository):
 
 
 def _ensure(extension, repository):
-    # Returns the module name and whether the user preferences must be saved to keep it enabled.
     extension_id = extension['id']
     expected = extension.get('version') or ''
     module = _installed_module(extension_id)
@@ -103,7 +103,6 @@ def _ensure(extension, repository):
     if not enabled or not addon_utils.check(module_name)[1]:
         if addon_utils.enable(module_name, default_set=True) is None:
             raise RuntimeError('Could not enable ' + module_name)
-    # install-file --enable already saved the preferences.
     return module_name, not enabled and not installed
 
 

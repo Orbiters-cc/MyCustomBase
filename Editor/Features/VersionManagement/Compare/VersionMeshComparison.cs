@@ -816,8 +816,8 @@ internal sealed class VersionMeshComparison : IDisposable
             if (renderer is SkinnedMeshRenderer skinned && skinned.sharedMesh != null)
             {
                 var baked = new Mesh { hideFlags = HideFlags.HideAndDontSave };
-                skinned.BakeMesh(baked, true);
-                Context.Add(new ContextPart { Mesh = baked, Owned = true, Materials = skinned.sharedMaterials, Matrix = root.worldToLocalMatrix * Matrix4x4.TRS(skinned.transform.position, skinned.transform.rotation, Vector3.one) });
+                skinned.BakeMesh(baked);
+                Context.Add(new ContextPart { Mesh = baked, Owned = true, Materials = skinned.sharedMaterials, Matrix = root.worldToLocalMatrix * Orbiters.Toolkit.Editor.SkinnedMeshBounds.BakedToWorld(skinned) });
             }
             else if (renderer is MeshRenderer && renderer.TryGetComponent(out MeshFilter filter) && filter.sharedMesh != null)
             {

@@ -60,7 +60,8 @@ public static partial class MCBReFitIntegration
                 File.WriteAllText(Path.GetFullPath(copy) + ".meta",
                     Regex.Replace(meta, @"(?m)^guid: [0-9a-f]{32}", "guid: " + GUID.Generate()));
         }
-        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+        // Import only this model. Refresh scans the whole project and can import unrelated pending
+        // assets (or reload scripts) while the caller is waiting for the original body.
         AssetDatabase.ImportAsset(copy, ImportAssetOptions.ForceSynchronousImport);
         var avatar = AssetDatabase.LoadAssetAtPath<GameObject>(copy);
         var body = avatar != null ? avatar.transform.Find(bodyPath)?.GetComponent<SkinnedMeshRenderer>() : null;

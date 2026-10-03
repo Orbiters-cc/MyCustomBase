@@ -12,7 +12,7 @@
     "Orbiters.Toolkit.Editor.VRChat",
     "Orbiters.Toolkit.Editor.Vpm"
   ],
-  "includePlatforms": [],
+  "includePlatforms": ["Editor"],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
   "autoReferenced": true,

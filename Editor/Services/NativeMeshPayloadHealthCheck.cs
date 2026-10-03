@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
@@ -28,6 +29,7 @@ public static class NativeMeshPayloadHealthCheck
 
     public static void RunOrThrow()
     {
+        CheckHumanoidProportions();
         string sourceKeyPath = Path.Combine(Path.GetTempPath(), "mcb_native_mesh_health_source.fbx");
         string binPath = Path.Combine(Path.GetTempPath(), "mcb_native_mesh_health_payload.bin");
         GameObject sourceRoot = null;
@@ -201,6 +203,72 @@ public static class NativeMeshPayloadHealthCheck
             if (File.Exists(sourceKeyPath)) File.Delete(sourceKeyPath);
             if (File.Exists(binPath)) File.Delete(binPath);
             CleanupGeneratedAssets();
+        }
+    }
+
+    private static void CheckHumanoidProportions()
+    {
+        var root = new GameObject("MCB humanoid health");
+        var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
+        Avatar source = null, result = null, repeated = null;
+        try
+        {
+            var human = new System.Collections.Generic.List<HumanBone>();
+            Transform Add(string name, Transform parent, Vector3 position, HumanBodyBones role)
+            {
+                var bone = new GameObject(name).transform;
+                bone.SetParent(parent, false);
+                bone.localPosition = position;
+                human.Add(new HumanBone { boneName = name, humanName = HumanTrait.BoneName[(int)role], limit = new HumanLimit { useDefaultValues = true } });
+                return bone;
+            }
+            var hips = Add("Hips", root.transform, Vector3.up, HumanBodyBones.Hips);
+            var spine = Add("Spine", hips, Vector3.up * .15f, HumanBodyBones.Spine);
+            var chest = Add("Chest", spine, Vector3.up * .15f, HumanBodyBones.Chest);
+            var neck = Add("Neck", chest, Vector3.up * .25f, HumanBodyBones.Neck);
+            Add("Head", neck, Vector3.up * .1f, HumanBodyBones.Head);
+            for (int side = 0; side < 2; side++)
+            {
+                bool left = side == 0; string suffix = left ? "L" : "R"; float sign = left ? -1 : 1;
+                var arm = Add("Arm" + suffix, chest, new Vector3(sign * .2f, .15f, 0), left ? HumanBodyBones.LeftUpperArm : HumanBodyBones.RightUpperArm);
+                var forearm = Add("Forearm" + suffix, arm, Vector3.right * (sign * .25f), left ? HumanBodyBones.LeftLowerArm : HumanBodyBones.RightLowerArm);
+                Add("Hand" + suffix, forearm, Vector3.right * (sign * .25f), left ? HumanBodyBones.LeftHand : HumanBodyBones.RightHand);
+                var leg = Add("Leg" + suffix, hips, Vector3.right * (sign * .1f), left ? HumanBodyBones.LeftUpperLeg : HumanBodyBones.RightUpperLeg);
+                var shin = Add("Shin" + suffix, leg, Vector3.down * .4f, left ? HumanBodyBones.LeftLowerLeg : HumanBodyBones.RightLowerLeg);
+                Add("Foot" + suffix, shin, Vector3.down * .4f, left ? HumanBodyBones.LeftFoot : HumanBodyBones.RightFoot);
+            }
+            var transforms = root.GetComponentsInChildren<Transform>();
+            var description = new HumanDescription { human = human.ToArray(), skeleton = transforms.Select(t => new SkeletonBone
+                { name = t.name, position = t.localPosition, rotation = t.localRotation, scale = t.localScale }).ToArray(),
+                upperArmTwist = .5f, lowerArmTwist = .5f, upperLegTwist = .5f, lowerLegTwist = .5f, armStretch = .05f, legStretch = .05f };
+            source = AvatarBuilder.BuildHumanAvatar(root, description);
+            ThrowIf(source == null || !source.isValid || !source.isHuman, "Humanoid fixture is invalid.");
+            payload.bones = transforms.Where(t => t != root.transform).Select(t => new NativeMeshPayloadBone
+                { path = AnimationUtility.CalculateTransformPath(t, root.transform), localPosition = t.localPosition * 1.2f,
+                    localRotation = t.localRotation, localScale = t.localScale }).ToList();
+            // These deltas must never be added to the already-complete absolute skeleton a second time.
+            payload.authoringPoseBones = payload.bones.Select(b => new NativeMeshPayloadAuthoringPoseBone
+                { path = b.path, localPositionOffset = Vector3.one * .1f }).ToList();
+            result = AvatarDefinitionGenerationService.BuildNativeMeshAvatar(payload, source);
+            repeated = AvatarDefinitionGenerationService.BuildNativeMeshAvatar(payload, result);
+            foreach (var bone in payload.bones)
+            {
+                string name = Path.GetFileName(bone.path);
+                var actual = result.humanDescription.skeleton.Single(b => b.name == name);
+                var again = repeated.humanDescription.skeleton.Single(b => b.name == name);
+                ThrowIf(Vector3.Distance(actual.position, bone.localPosition) > .0001f, "Humanoid changed payload proportions: " + name);
+                ThrowIf(Vector3.Distance(actual.position, again.position) > .0001f, "Repeated humanoid build applied a delta twice: " + name);
+            }
+            ThrowIf(Mathf.Abs(source.humanDescription.skeleton.Single(b => b.name == "Hips").position.y - 1f) > .0001f, "Source humanoid was modified.");
+            ThrowIf(Mathf.Abs(hips.localPosition.y - 1f) > .0001f, "Source hierarchy was modified.");
+        }
+        finally
+        {
+            if (source != null) Object.DestroyImmediate(source);
+            if (result != null) Object.DestroyImmediate(result);
+            if (repeated != null) Object.DestroyImmediate(repeated);
+            Object.DestroyImmediate(payload);
+            Object.DestroyImmediate(root);
         }
     }
 

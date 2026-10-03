@@ -2772,6 +2772,7 @@ public static partial class NativeMeshPayloadService
             applied++;
         }
 
+        AvatarDefinitionGenerationService.ApplyNativeMeshAvatar(avatarRoot, payload);
         RefreshAvatarSkinnedRenderers(avatarRoot, payload.payloadHash != null && payload.payloadHash.StartsWith("raw:", StringComparison.Ordinal));
         MCBLogger.Log($"[NativeMeshPayload] Applied authoring pose deltas to {applied}/{payload.authoringPoseBones.Count} transforms.");
     }
