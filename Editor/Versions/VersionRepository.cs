@@ -169,12 +169,12 @@ public static class VersionRepository
                         if (manifest != null && manifest.unsubmitted)
                         {
                             version.isUnsubmitted = true;
-                            result.unsubmitted.Add(version);
+                            result.unsubmitted.AddRange(LocalSourceViews(version));
                         }
                         else
                         {
                             version.isImported = true;
-                            result.imported.Add(version);
+                            result.imported.AddRange(LocalSourceViews(version));
                         }
                     }
                     catch (Exception ex)
@@ -202,6 +202,28 @@ public static class VersionRepository
         cachedUnsubmitted = null;
     }
 
+    internal static IEnumerable<CustomBaseVersion> LocalSourceViews(CustomBaseVersion artifact)
+    {
+        yield return artifact;
+        foreach (var original in artifact.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>())
+        {
+            if (original == null || original.key == artifact.sourceVersionKey ||
+                original.sourceFiles == null || original.sourceFiles.Length == 0 ||
+                original.versionFiles == null || original.versionFiles.Length == 0) continue;
+            var view = JsonConvert.DeserializeObject<CustomBaseVersion>(JsonConvert.SerializeObject(artifact));
+            view.sourceVersionKey = original.key;
+            view.sourceFiles = original.sourceFiles;
+            view.versionFiles = original.versionFiles;
+            view.deliveryVariants = original.deliveryVariants;
+            view.meshDelivery = original.meshDelivery;
+            view.baseFbxHash = original.sourceFiles[0].hash;
+            view.localArtifactSourceVersionKey = artifact.sourceVersionKey ?? "";
+            view.isUnsubmitted = artifact.isUnsubmitted;
+            view.isImported = artifact.isImported;
+            yield return view;
+        }
+    }
+
     /// <summary>Remote availability and metadata win over a downloaded copy. A
     /// deliberately unsubmitted local build remains a draft until publication.</summary>
     public static List<CustomBaseVersion> MergeAvailableVersions(int assetId,
@@ -214,6 +236,9 @@ public static class VersionRepository
             foreach (var version in source ?? Enumerable.Empty<CustomBaseVersion>())
             {
                 if (version == null || assetId <= 0 || version.assetId != assetId) continue;
+                // A nonmatching gallery entry has no chosen original. Show the artifact once,
+                // rather than one identical row for every bundled original-source view.
+                if (string.IsNullOrEmpty(sourceVersionKey) && version.localArtifactSourceVersionKey != null) continue;
                 if (!string.IsNullOrEmpty(sourceVersionKey) && !string.IsNullOrEmpty(version.sourceVersionKey) && version.sourceVersionKey != sourceVersionKey) continue;
                 merged[version] = version;
             }
@@ -249,7 +274,7 @@ public static class VersionRepository
     }
 
     /// <summary>Validates outputs (hard publish gate) then inputs (drift warning).</summary>
-    public static ArtifactValidationResult Validate(VersionArtifact artifact)
+    public static ArtifactValidationResult Validate(VersionArtifact artifact, System.Threading.CancellationToken cancellation = default)
     {
         var result = new ArtifactValidationResult();
         if (artifact == null || !artifact.FolderExists)
@@ -272,6 +297,7 @@ public static class VersionRepository
         string folderFullPath = Path.GetFullPath(artifact.FolderUnityPath);
         foreach (var output in artifact.Manifest.outputs ?? new List<VersionManifestFile>())
         {
+            cancellation.ThrowIfCancellationRequested();
             if (output == null || string.IsNullOrWhiteSpace(output.path))
             {
                 result.state = ArtifactState.Corrupt;

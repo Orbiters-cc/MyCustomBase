@@ -46,7 +46,50 @@ public static class OriginalBaseLibrary
         }
         throw new FileNotFoundException("Import the original FBX for " + file.path + " (" + file.hash.Substring(0, 12) + ") in Support new version.");
     }
-    public static string ActiveKey(AvatarDiscoveredAsset asset) => asset?.sourceFiles?.Length > 0 ? Key(asset.sourceFiles) : null;
+    private static readonly Dictionary<string, string> ProjectModels = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>An imported project model with exactly the original's bytes, or null. Plain versions read its skeleton.</summary>
+    public static string FindProjectModel(ModelFileData file)
+    {
+        if (file?.hash == null) return null;
+        if (ProjectModels.TryGetValue(file.hash, out string known) && File.Exists(known) && MCBUtils.CalculateFileHash(known) == file.hash) return known;
+        var candidates = new[] { file.path }.Concat(AssetDatabase.FindAssets("t:Model").Select(AssetDatabase.GUIDToAssetPath))
+            .Where(p => !string.IsNullOrEmpty(p) && p.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase) && File.Exists(p)).Distinct();
+        foreach (string path in candidates)
+            if (MCBUtils.CalculateFileHash(path) == file.hash) { ProjectModels[file.hash] = path; return path; }
+        return null;
+    }
+
+    /// <summary>
+    /// Which of <paramref name="bones"/> every given original has; null when none of them is imported in this project.
+    /// An original holding fewer than half of them is an accessory model (e.g. head feathers only) and is ignored.
+    /// </summary>
+    public static HashSet<string> SharedSkeleton(IEnumerable<OriginalBaseVersionData> versions, ICollection<string> bones)
+    {
+        HashSet<string> shared = null;
+        foreach (var source in (versions ?? Enumerable.Empty<OriginalBaseVersionData>()).SelectMany(v => v.sourceFiles ?? Array.Empty<ModelFileData>()))
+        {
+            string path = FindProjectModel(source);
+            var model = path != null ? AssetDatabase.LoadAssetAtPath<UnityEngine.GameObject>(path) : null;
+            if (model == null) continue;
+            var names = new HashSet<string>(model.GetComponentsInChildren<UnityEngine.Transform>(true).Select(t => t.name), StringComparer.Ordinal);
+            if (bones.Count(names.Contains) * 2 < bones.Count) continue;
+            if (shared == null) shared = new HashSet<string>(bones.Where(names.Contains), StringComparer.Ordinal); else shared.IntersectWith(names);
+        }
+        return shared;
+    }
+
+    public static string ActiveKey(AvatarDiscoveredAsset asset)
+    {
+        if (asset?.sourceFiles?.Length > 0)
+        {
+            string key = Key(asset.sourceFiles);
+            // Nonmatching discovery returns every supported original, not one active set.
+            if (asset.sourceVersions?.Length > 0 && !asset.sourceVersions.Any(v => v.key == key)) return null;
+            return key;
+        }
+        return null;
+    }
     public static OriginalBaseVersionData[] Versions(AvatarDiscoveredAsset asset)
     {
         if (asset?.sourceVersions?.Length > 0) return asset.sourceVersions;

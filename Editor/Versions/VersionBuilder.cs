@@ -36,7 +36,32 @@ public static class VersionBuilder
         Func<CustomBaseVersion> metadataFactory,
         string formSignature,
         OriginalBaseVersionData[] originalVersions = null,
-        string sourceVersionKey = null)
+        string sourceVersionKey = null,
+        VersionCustomization customization = null)
+    {
+        VersionArtifact result = null;
+        MCBWork.Drain(BuildCoroutine(value => result = value, fileManagerService, assetId, versionString, defaultAviVersion, packageEntries, logicPrefab, includeCustomVeins, customVeinsTexture, includeDynamicNormalsBody, includeDynamicNormalsFlexing, additionalAnimationAssetPaths, metadataFactory, formSignature, originalVersions, sourceVersionKey, customization));
+        return result;
+    }
+
+    public static System.Collections.IEnumerator BuildCoroutine(
+        Action<VersionArtifact> completed,
+        FileManagerService fileManagerService,
+        int assetId,
+        string versionString,
+        string defaultAviVersion,
+        IList<FileManagerService.ModelFilePackageEntry> packageEntries,
+        GameObject logicPrefab,
+        bool includeCustomVeins,
+        Texture2D customVeinsTexture,
+        bool includeDynamicNormalsBody,
+        bool includeDynamicNormalsFlexing,
+        IEnumerable<string> additionalAnimationAssetPaths,
+        Func<CustomBaseVersion> metadataFactory,
+        string formSignature,
+        OriginalBaseVersionData[] originalVersions = null,
+        string sourceVersionKey = null,
+        VersionCustomization customization = null)
     {
         if (fileManagerService == null) throw new ArgumentNullException(nameof(fileManagerService));
         if (metadataFactory == null) throw new ArgumentNullException(nameof(metadataFactory));
@@ -53,13 +78,15 @@ public static class VersionBuilder
 
         // Inputs are hashed before packaging so the drift baseline reflects exactly
         // what this build consumed.
+        yield return null;
         var inputs = CollectInputs(packageEntries, logicPrefab, includeCustomVeins ? customVeinsTexture : null, animationPaths);
         Mark("Hash inputs");
 
         string staging = VersionRepository.CreateStagingFolder(assetId, versionString, defaultAviVersion, sourceVersionKey);
+        bool committed = false;
         try
         {
-            fileManagerService.PopulateVersionFolder(
+            yield return fileManagerService.PopulateVersionFolderCoroutine(
                 staging,
                 packageEntries,
                 logicPrefab,
@@ -67,7 +94,8 @@ public static class VersionBuilder
                 customVeinsTexture,
                 includeDynamicNormalsBody,
                 includeDynamicNormalsFlexing,
-                animationPaths);
+                animationPaths,
+                customization?.dynamicNormalBlendshapes);
             Mark("Package model and logic");
 
             var metadata = metadataFactory();
@@ -77,22 +105,19 @@ public static class VersionBuilder
             }
 
             metadata.sourceVersionKey = sourceVersionKey;
-            if (originalVersions != null) OriginalBaseVariantBuilder.AddToBuild(staging, metadata, originalVersions);
+            if (originalVersions != null) yield return OriginalBaseVariantBuilder.AddToBuildCoroutine(staging, metadata, originalVersions);
             metadata.isUnsubmitted = true;
             Mark("Create metadata");
             var manifest = VersionRepository.CreateManifestFromFolder(staging, metadata, unsubmitted: true, formSignature: formSignature, inputs: inputs);
             Mark("Hash outputs and manifest");
             var result = VersionRepository.CommitStaging(staging, metadata, manifest);
             Mark("Commit local artifact");
-            return result;
-        }
-        catch (Exception)
-        {
-            VersionRepository.DeleteStaging(staging);
-            throw;
+            committed = true;
+            completed(result);
         }
         finally
         {
+            if (!committed) VersionRepository.DeleteStaging(staging);
             VersionRepository.ReleaseFolderGuard(assetId, versionString, defaultAviVersion, sourceVersionKey);
         }
     }

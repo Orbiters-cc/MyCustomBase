@@ -28,123 +28,57 @@ public class DynamicNormalsService
         Debug.Log($"[DynamicNormals] Flushed {count} original mesh reference(s) from cache.");
     }
 
+    public void Apply(IReadOnlyList<MeshBlendshapeSelection> selections)
+    {
+        if (editor.customBaseTarget == null) return;
+        var root = AvatarPaths.Root(editor.customBaseTarget);
+        var resolved = selections.Select(s => (selection: s, renderer: AvatarPaths.Resolve(root, s.mesh).GetComponent<SkinnedMeshRenderer>())).ToArray();
+        foreach (var item in resolved)
+        {
+            if (item.renderer?.sharedMesh == null) throw new System.InvalidOperationException("Missing normal renderer: " + item.selection.mesh);
+            foreach (string name in item.selection.names)
+                if (item.renderer.sharedMesh.GetBlendShapeIndex(name) < 0) throw new System.InvalidOperationException("Missing normal blendshape: " + name);
+        }
+        activeBlendshapes.Clear();
+        foreach (var item in resolved)
+        {
+            var renderer = item.renderer;
+            if (item.selection.names.Count == 0) continue;
+            if (!originalMeshes.ContainsKey(renderer)) originalMeshes[renderer] = renderer.sharedMesh;
+            Undo.RecordObject(renderer, "Apply dynamic normals");
+            // Rebuild from the retained source when the explicit selection changes.
+            renderer.sharedMesh = originalMeshes[renderer];
+            DynamicNormals.ForRoot(root).limitToMeshes(new[] { renderer }).applyToBlendshapes(item.selection.names)
+                .withBoneTranslations(LegSeparation(renderer)).enable(true).Apply();
+            activeBlendshapes.AddRange(item.selection.names);
+            EditorUtility.SetDirty(renderer);
+        }
+    }
+
     public void Apply(bool includeBody = true, bool includeFlexing = true)
     {
         if (editor.customBaseTarget == null) return;
+        var root = AvatarPaths.Root(editor.customBaseTarget);
+        var body = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
+        if (body?.sharedMesh == null) return;
+        var names = Enumerable.Range(0, body.sharedMesh.blendShapeCount).Select(body.sharedMesh.GetBlendShapeName)
+            .Where(n => (includeBody && n.IndexOf("muscle", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                || (includeFlexing && n.IndexOf("flex", System.StringComparison.OrdinalIgnoreCase) >= 0)).ToList();
+        Apply(new[] { new MeshBlendshapeSelection { mesh = AnimationUtility.CalculateTransformPath(body.transform, root), names = names } });
+    }
 
-        var root = editor.customBaseTarget.transform.root;
-        
-        // Find the Body mesh
-        var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-
-        if (bodyMesh?.sharedMesh == null)
+    private Dictionary<string, Vector3> LegSeparation(SkinnedMeshRenderer renderer)
+    {
+        var result = new Dictionary<string, Vector3>(System.StringComparer.OrdinalIgnoreCase);
+        if (!editor.customBaseTarget.useAPoseForDynamicNormals) return result;
+        foreach (var bone in renderer.bones.Where(b => b != null))
         {
-            Debug.LogWarning("[DynamicNormals] Body mesh not found.");
-            activeBlendshapes.Clear();
-            return;
+            if (!Orbiters.Toolkit.Armature.BoneNames.TryInferHumanoid(bone.name, out var humanoid)) continue;
+            if (humanoid != HumanBodyBones.LeftUpperLeg && humanoid != HumanBodyBones.RightUpperLeg) continue;
+            var offset = new Vector3(humanoid == HumanBodyBones.LeftUpperLeg ? -.15f : .15f, 0, 0);
+            foreach (var child in bone.GetComponentsInChildren<Transform>(true)) result[child.name] = offset;
         }
-
-        // Get blendshapes based on includeBody and includeFlexing parameters
-        var targetBlendshapes = new List<string>();
-        for (int i = 0; i < bodyMesh.sharedMesh.blendShapeCount; i++)
-        {
-            string name = bodyMesh.sharedMesh.GetBlendShapeName(i);
-            string nameLower = name.ToLowerInvariant();
-            
-            bool shouldInclude = false;
-            if (includeBody && nameLower.Contains("muscle"))
-            {
-                shouldInclude = true;
-            }
-            if (includeFlexing && nameLower.Contains("flex"))
-            {
-                shouldInclude = true;
-            }
-            
-            if (shouldInclude)
-            {
-                targetBlendshapes.Add(name);
-            }
-        }
-
-        // Check if dynamic normals are already applied
-        if (bodyMesh.sharedMesh.name.Contains("(DynamicNormals)"))
-        {
-            Debug.Log("[DynamicNormals] Dynamic normals are already applied to this mesh. Skipping re-application.");
-            activeBlendshapes = targetBlendshapes;
-            return;
-        }
-
-        if (targetBlendshapes.Count == 0)
-        {
-            Debug.LogWarning("[DynamicNormals] No blendshapes containing 'muscle' or 'flex' found on Body mesh.");
-            activeBlendshapes.Clear();
-            return;
-        }
-
-        try
-        {
-            // Store the original mesh reference BEFORE applying dynamic normals
-            if (!originalMeshes.ContainsKey(bodyMesh))
-            {
-                originalMeshes[bodyMesh] = bodyMesh.sharedMesh;
-                Debug.Log($"[DynamicNormals] Stored original mesh reference: {bodyMesh.sharedMesh.name}");
-            }
-            
-            var dn = DynamicNormals.ForRoot(root)
-                .limitToMeshes(new[] { bodyMesh })
-                .applyToBlendshapes(targetBlendshapes)
-                .enable(true);
-
-            if (editor.customBaseTarget.useAPoseForDynamicNormals)
-            {
-                var translations = new Dictionary<string, Vector3>(System.StringComparer.OrdinalIgnoreCase);
-                
-                // Identify the root thigh bones
-                string[] leftThighNames = { "L_Thigh", "LeftUpperLeg", "thigh.L", "Leg_L", "L_UpperLeg", "Left leg" };
-                string[] rightThighNames = { "R_Thigh", "RightUpperLeg", "thigh.R", "Leg_R", "R_UpperLeg", "Right leg" };
-
-                // We want to find the thigh bones and all their children in the SMR's bone array
-                var leftLegBones = new HashSet<Transform>();
-                var rightLegBones = new HashSet<Transform>();
-
-                foreach (var bone in bodyMesh.bones)
-                {
-                    if (bone == null) continue;
-
-                    bool isLeftThigh = leftThighNames.Any(n => bone.name.Equals(n, System.StringComparison.OrdinalIgnoreCase));
-                    bool isRightThigh = rightThighNames.Any(n => bone.name.Equals(n, System.StringComparison.OrdinalIgnoreCase));
-
-                    if (isLeftThigh) AddHierarchyToSet(bone, leftLegBones);
-                    if (isRightThigh) AddHierarchyToSet(bone, rightLegBones);
-                }
-
-                // Apply massive translation to ensure no overlap
-                // This doesn't affect normals because it's pure translation
-                foreach (var bone in leftLegBones) translations[bone.name] = new Vector3(-0.15f, 0, 0);
-                foreach (var bone in rightLegBones) translations[bone.name] = new Vector3(0.15f, 0, 0);
-
-                if (translations.Count > 0)
-                {
-                    dn.withBoneTranslations(translations);
-                    Debug.Log($"[DynamicNormals] Applied leg separation translation to {translations.Count} bones.");
-                }
-                else
-                {
-                    Debug.LogWarning("[DynamicNormals] Leg separation enabled but no leg bones were identified by name.");
-                }
-            }
-
-            dn.Apply();
-
-            activeBlendshapes = targetBlendshapes;
-            Debug.Log($"[DynamicNormals] Applied to {targetBlendshapes.Count} blendshapes on Body mesh: {string.Join(", ", targetBlendshapes)}");
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError($"[DynamicNormals] Failed to apply: {ex.Message}\n{ex.StackTrace}");
-            activeBlendshapes.Clear();
-        }
+        return result;
     }
 
     public void Remove()
@@ -155,73 +89,26 @@ public class DynamicNormalsService
     public void Remove(IEnumerable<string> preferredFbxPaths)
     {
         if (editor.customBaseTarget == null) return;
-
-        var root = editor.customBaseTarget.transform.root;
-        
-        // Find the Body mesh
-        var bodyMesh = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-
-        if (bodyMesh?.sharedMesh == null)
+        var root = AvatarPaths.Root(editor.customBaseTarget);
+        var paths = editor.customBaseTarget.appliedCustomization.dynamicNormalBlendshapes.Select(s => s.mesh).ToHashSet();
+        var renderers = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.name == "Body"
+            || paths.Contains(AnimationUtility.CalculateTransformPath(r.transform, root)) || originalMeshes.ContainsKey(r)).ToArray();
+        var remove = new HashSet<string>();
+        foreach (var renderer in renderers)
         {
-            activeBlendshapes.Clear();
-            return;
-        }
-
-        Mesh originalMesh = null;
-
-        // Try 1: Restore from our stored reference (for immediate toggling within same session)
-        if (originalMeshes.TryGetValue(bodyMesh, out originalMesh))
-        {
-            string currentDynamicNormalsAssetPath = AssetDatabase.GetAssetPath(bodyMesh.sharedMesh);
-            Undo.RecordObject(bodyMesh, "Remove Dynamic Normals");
-            bodyMesh.sharedMesh = originalMesh;
-            Debug.Log($"[DynamicNormals] Restored original mesh from cached reference: {originalMesh.name}");
-            
-            DeleteMeshAssetIfDynamicNormals(currentDynamicNormalsAssetPath);
-            DeleteDynamicNormalsAsset(originalMesh);
-            
-            // Remove from tracking dictionary since we've restored it
-            originalMeshes.Remove(bodyMesh);
-            activeBlendshapes.Clear();
-            return;
-        }
-
-        // Try 2: Detect if current mesh is a DynamicNormals-modified mesh and find original in assets
-        var currentMesh = bodyMesh.sharedMesh;
-        if (currentMesh.name.Contains("(DynamicNormals)"))
-        {
-            Debug.Log($"[DynamicNormals] Detected modified mesh: {currentMesh.name}. Searching for original in assets...");
-            string currentDynamicNormalsAssetPath = AssetDatabase.GetAssetPath(currentMesh);
-            
-            // Extract the original mesh name
-            string originalName = NormalizeDynamicNormalsMeshName(currentMesh.name);
-            
-            // Search for the original mesh in assets
-            originalMesh = FindOriginalMeshInAssets(originalName, GetPreferredFbxPaths(preferredFbxPaths));
-            
-            if (originalMesh != null)
+            var current = renderer.sharedMesh;
+            if (current == null) continue;
+            if (!originalMeshes.TryGetValue(renderer, out var original))
             {
-                Undo.RecordObject(bodyMesh, "Remove Dynamic Normals");
-                bodyMesh.sharedMesh = originalMesh;
-                Debug.Log($"[DynamicNormals] Successfully restored original mesh from assets: {originalMesh.name}");
-                
-                DeleteMeshAssetIfDynamicNormals(currentDynamicNormalsAssetPath);
-                DeleteDynamicNormalsAsset(originalMesh);
-                
-                EditorUtility.SetDirty(bodyMesh);
-                activeBlendshapes.Clear();
-                return;
+                if (!current.name.Contains("(DynamicNormals)")) continue;
+                original = FindOriginalMeshInAssets(NormalizeDynamicNormalsMeshName(current.name), GetPreferredFbxPaths(preferredFbxPaths));
             }
-            else
-            {
-                Debug.LogError($"[DynamicNormals] Could not find original mesh '{originalName}' in assets. The mesh may need to be manually reassigned.");
-            }
+            if (original == null) throw new System.InvalidOperationException("Cannot restore the original mesh for " + renderer.name);
+            remove.Add(AssetDatabase.GetAssetPath(current));
+            Undo.RecordObject(renderer, "Remove dynamic normals"); renderer.sharedMesh = original;
+            EditorUtility.SetDirty(renderer); originalMeshes.Remove(renderer);
         }
-        else
-        {
-            Debug.Log("[DynamicNormals] Current mesh does not appear to have DynamicNormals applied (no suffix found). Nothing to remove.");
-        }
-
+        foreach (string path in remove) DeleteMeshAssetIfDynamicNormals(path);
         activeBlendshapes.Clear();
     }
 

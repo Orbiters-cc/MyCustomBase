@@ -30,6 +30,8 @@ public class AvatarDiscoveredAsset
     [JsonProperty] public int? ownerId;
     [JsonProperty] public string ownerUsername;
     [JsonProperty] public bool creatorTrusted;
+    // The asset's protection: its versions inherit it. Without XOR, one unencrypted package serves every original.
+    [JsonProperty] public VersionProtection protection;
     [JsonProperty] public string ownerAvatarUrl;
     [JsonProperty] public string thumbnailUrl;
     [JsonProperty] public string bannerUrl;
@@ -54,11 +56,15 @@ internal class AvatarAssetDiscoveryRequest
     [JsonProperty] public List<ModelFileData> files;
     [JsonProperty] public List<ModelFileData> originalBaseFiles;
     [JsonProperty] public List<AvatarPathOverrideService.DiscoveryPathOverridePayload> pathOverrides;
+    // Transform names of the avatar: an unprotected version matches any avatar containing its skeleton.
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<string> skeletonBones;
     [JsonProperty] public bool filterOnlyCompatible;
 }
 
 public static class AvatarAssetDiscoveryService
 {
+    public static void InvalidateDiscoveryCache() => DiscoveryCache.Clear();
+
     private static readonly string THUMBNAILS_FOLDER = Path.Combine(MCBUtils.GetMCBDataFolder(), "asset-images");
     private static readonly TimeSpan PendingDownloadTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DiscoveryCacheMaxAge = TimeSpan.FromMinutes(15);
@@ -99,6 +105,16 @@ public static class AvatarAssetDiscoveryService
     private sealed class PendingDiscoveryRequest
     {
         public readonly List<Action<AvatarAssetDiscoveryResponse, string>> Callbacks = new List<Action<AvatarAssetDiscoveryResponse, string>>();
+    }
+
+    /// <summary>Distinct transform names of the avatar (bounded), for matching unprotected versions by skeleton.</summary>
+    internal static List<string> CollectSkeletonBones(MyCustomBase target)
+    {
+        if (target == null) return null;
+        var root = AvatarPaths.Root(target);
+        return root.GetComponentsInChildren<Transform>(true).Where(t => t != root).Select(t => t.name)
+            .Where(name => !string.IsNullOrWhiteSpace(name) && name.Length <= 200)
+            .Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).Take(8192).ToList();
     }
 
     public static string BuildAvatarSignature(IEnumerable<string> paths)
@@ -189,6 +205,7 @@ public static class AvatarAssetDiscoveryService
         var projectFiles = inventoryTask.Result;
         var originalBaseFiles = originalBaseInventoryTask.Result;
         var pathOverrides = AvatarPathOverrideService.BuildDiscoveryPayload(customBaseTarget);
+        var skeletonBones = CollectSkeletonBones(customBaseTarget);
         string cacheKey = BuildDiscoveryCacheKey(
             authToken,
             normalizedPaths,
@@ -196,6 +213,7 @@ public static class AvatarAssetDiscoveryService
             originalBaseFiles,
             pathOverrides,
             filterOnlyCompatible);
+        if (cacheKey != null && skeletonBones != null) cacheKey += "|skeleton:" + skeletonBones.Count + ":" + string.Join(",", skeletonBones).GetHashCode();
         AvatarAssetDiscoveryResponse cachedResponse;
         if (TryGetCachedDiscoveryResponse(cacheKey, filterOnlyCompatible, out cachedResponse))
         {
@@ -214,6 +232,7 @@ public static class AvatarAssetDiscoveryService
             files = projectFiles,
             originalBaseFiles = originalBaseFiles,
             pathOverrides = pathOverrides,
+            skeletonBones = skeletonBones,
             filterOnlyCompatible = filterOnlyCompatible
         };
 

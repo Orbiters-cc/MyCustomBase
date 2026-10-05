@@ -15,11 +15,17 @@ public class UserInfo
 {
     [JsonProperty] public string username;
     [JsonProperty] public string avatarUrl;
+    // Only reported for the signed-in member: may they publish versions without XOR protection.
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public bool? creatorTrusted;
 }
 
 public class UserService
 {
     private static Dictionary<int, UserInfo> userCache = new Dictionary<int, UserInfo>();
+    private static readonly Dictionary<int, bool> trustedCreators = new Dictionary<int, bool>();
+
+    /// <summary>Whether the member is a trusted creator, once their own user info has loaded.</summary>
+    public static bool IsTrustedCreator(int userId) => trustedCreators.TryGetValue(userId, out bool trusted) && trusted;
     private static Dictionary<int, Texture2D> avatarCache = new Dictionary<int, Texture2D>();
     private static HashSet<int> pendingRequests = new HashSet<int>();
     private static HashSet<int> pendingAvatarDownloads = new HashSet<int>();
@@ -127,6 +133,7 @@ public class UserService
                     var userInfo = JsonConvert.DeserializeObject<UserInfo>(request.downloadHandler.text);
                     if (userInfo != null)
                     {
+                        if (userInfo.creatorTrusted.HasValue) trustedCreators[userId] = userInfo.creatorTrusted.Value;
                         UpdateUserInfo(userId, userInfo.username, userInfo.avatarUrl);
                     }
                 }

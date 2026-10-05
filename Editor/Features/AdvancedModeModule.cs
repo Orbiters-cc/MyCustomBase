@@ -47,7 +47,7 @@ public class AdvancedModeModule
         new HealthCheckDefinition(
             "Adaptive Delivery",
             "Adaptive delivery rig health check",
-            "Validate both codecs, binary cache reuse, skin weights, bone association, blendshapes and reset.",
+            "Validate both codecs, binary cache reuse, unencrypted payloads, skin weights, bone association, blendshapes and reset.",
             150f,
             MCBDeliveryHealthCheck.RunOrThrow),
         new HealthCheckDefinition(

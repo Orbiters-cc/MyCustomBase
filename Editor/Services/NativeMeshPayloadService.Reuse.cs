@@ -55,7 +55,7 @@ public static partial class NativeMeshPayloadService
         if (string.IsNullOrEmpty(path) || !path.StartsWith(GeneratedFolder + "/", StringComparison.Ordinal)
             || !path.Contains("/shared-")) return false;
         return version == null || (version.versionFiles ?? Array.Empty<ModelFileData>()).Any(p =>
-            p?.transform == TransformName && GetGeneratedPayloadPath(version, p, GetPayloadIdentity(p)) == path);
+            IsAdvancedMeshPatchTransform(p?.transform) && GetGeneratedPayloadPath(version, p, GetPayloadIdentity(p)) == path);
     }
 
     internal static CustomBaseVersion ResolveAppliedMeshVersion(Transform root,

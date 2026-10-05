@@ -63,6 +63,11 @@ public class FileManagerService
         public List<MCBPayloadVariant> payloadVariants;
         public List<NativeMeshPayloadService.NativeMeshPayloadBuildResult> payloadParts;
         public int advancedRendererCount;
+        // False writes a plain payload shared by every original (unprotected versions).
+        public bool encryptPayload = true;
+        // Original bone names the payload binds to, and each payload renderer's material slot names.
+        public List<string> skeletonBones;
+        public List<RendererSlotNames> rendererSlots;
         public HdiffService.BuildInfo hdiffBuildInfo;
         public string hdiffFallbackReason;
     }
@@ -1043,7 +1048,20 @@ public class FileManagerService
         Texture2D customVeinsTexture,
         bool includeDynamicNormalsBody,
         bool includeDynamicNormalsFlexing,
-        IEnumerable<string> additionalAnimationAssetPaths = null)
+        IEnumerable<string> additionalAnimationAssetPaths = null,
+        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null)
+    { MCBWork.Drain(PopulateVersionFolderCoroutine(versionFolderUnityPath, modelEntries, logicPrefab, includeCustomVeins, customVeinsTexture, includeDynamicNormalsBody, includeDynamicNormalsFlexing, additionalAnimationAssetPaths, dynamicNormalSelections)); }
+
+    public System.Collections.IEnumerator PopulateVersionFolderCoroutine(
+        string versionFolderUnityPath,
+        IList<ModelFilePackageEntry> modelEntries,
+        GameObject logicPrefab,
+        bool includeCustomVeins,
+        Texture2D customVeinsTexture,
+        bool includeDynamicNormalsBody,
+        bool includeDynamicNormalsFlexing,
+        IEnumerable<string> additionalAnimationAssetPaths = null,
+        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null)
     {
         string newVersionDataPath = versionFolderUnityPath;
         if (string.IsNullOrEmpty(newVersionDataPath))
@@ -1054,14 +1072,18 @@ public class FileManagerService
         {
             MCBUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
 
-            string defaultAvatarSourcePath = "Packages/orbiters.mcb/creator assets/default avatar.asset";
-            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(defaultAvatarSourcePath) == null)
-                throw new FileNotFoundException("Could not find the required 'default avatar.asset' in 'Packages/orbiters.mcb/creator assets'.");
-            AssetDatabase.CopyAsset(defaultAvatarSourcePath, MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.DEFAULT_AVATAR_NAME));
-
             var entries = modelEntries ?? Array.Empty<ModelFilePackageEntry>();
+            // A reset definition belongs to the original model, never to a package-wide avatar.
+            var defaultAvatar = entries.Where(entry => !string.IsNullOrWhiteSpace(entry?.sourceFbxPath))
+                .Select(entry => AssetDatabase.LoadAssetAtPath<GameObject>(entry.sourceFbxPath)?.GetComponent<Animator>()?.avatar)
+                .FirstOrDefault(avatar => avatar != null && avatar.isHuman);
+            if (defaultAvatar != null)
+                AvatarDefinitionGenerationService.SaveAvatarCopy(defaultAvatar,
+                    MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.DEFAULT_AVATAR_NAME));
+
             for (int i = 0; i < entries.Count; i++)
             {
+                yield return null;
                 var entry = entries[i];
                 if (entry == null || (entry.customFbx == null && string.IsNullOrWhiteSpace(entry.externalCustomFbxPath) && entry.customBaseAvatar == null))
                     continue; // No supplied changes: retain the original model.
@@ -1101,16 +1123,19 @@ public class FileManagerService
                                 importedExternalFbx = payloadSource;
                             }
 
-                            var payloadResult = NativeMeshPayloadService.WriteEncryptedPayload(
+                            NativeMeshPayloadService.NativeMeshPayloadBuildResult payloadResult = null;
+                            yield return NativeMeshPayloadService.WriteEncryptedPayloadCoroutine(value => payloadResult = value,
                                 entry.sourceFbxPath,
                                 payloadSource,
                                 entry.smrPaths,
                                 this,
                                 Path.GetFullPath(binUnityPath),
-                                includeDynamicNormalsBody || includeDynamicNormalsFlexing,
+                                includeDynamicNormalsBody || includeDynamicNormalsFlexing || dynamicNormalSelections?.Count > 0,
                                 includeDynamicNormalsBody,
                                 includeDynamicNormalsFlexing,
-                                createDeliveryVariants: true);
+                                createDeliveryVariants: true, dynamicNormalSelections: dynamicNormalSelections, encrypt: entry.encryptPayload);
+                            entry.skeletonBones = NativeMeshPayloadService.CollectSkeletonBones(payloadSource, entry.localTargetPath ?? entry.sourceFbxPath, entry.smrPaths);
+                            entry.rendererSlots = NativeMeshPayloadService.CollectRendererSlots(payloadSource, entry.smrPaths);
                             entry.outputHash = payloadResult.payloadHash;
                             entry.payloadCompression = payloadResult.payloadCompression;
                             entry.payloadVariants = payloadResult.variants;
@@ -1192,9 +1217,11 @@ public class FileManagerService
                 }
             }
 
+            yield return null;
             CopyLogicAndExtras(newVersionDataPath, logicPrefab, includeCustomVeins, customVeinsTexture, additionalAnimationAssetPaths);
 
-            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            AssetDatabase.Refresh();
+            while (EditorApplication.isUpdating || EditorApplication.isCompiling) yield return null;
         }
     }
 
@@ -1204,7 +1231,7 @@ public class FileManagerService
     /// folder content; version.json / manifest.json are local-only and excluded by the
     /// manifest itself. Returns the temp zip path (caller deletes it).
     /// </summary>
-    public string CreateZipFromManifestOutputs(VersionArtifact artifact)
+    public string CreateZipFromManifestOutputs(VersionArtifact artifact, System.Threading.CancellationToken cancellation = default, Action<float> progress = null)
     {
         if (artifact?.Manifest == null) throw new ArgumentNullException(nameof(artifact));
 
@@ -1217,11 +1244,24 @@ public class FileManagerService
             {
                 foreach (var output in artifact.Manifest.outputs)
                 {
+                    cancellation.ThrowIfCancellationRequested();
                     if (output == null || string.IsNullOrWhiteSpace(output.path)) continue;
                     string sourcePath = Path.Combine(folderFullPath, output.path.Replace('/', Path.DirectorySeparatorChar));
-                    zip.CreateEntryFromFile(sourcePath, output.path,
+                    var entry = zip.CreateEntry(output.path,
                         output.path.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)
                             ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
+                    using (var input = File.OpenRead(sourcePath))
+                    using (var destination = entry.Open())
+                    {
+                        var buffer = new byte[1024 * 1024];
+                        int count;
+                        while ((count = input.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            cancellation.ThrowIfCancellationRequested();
+                            destination.Write(buffer, 0, count);
+                        }
+                    }
+                    progress?.Invoke((artifact.Manifest.outputs.IndexOf(output) + 1f) / artifact.Manifest.outputs.Count);
                 }
             }
 

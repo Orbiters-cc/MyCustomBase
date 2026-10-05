@@ -28,7 +28,7 @@ public static class MCBVersionDelivery
         if (manifest == null || (manifest.schema != 1 && manifest.schema != 2) || manifest.files == null
             || (manifest.codec != MCBCompression.Lz4 && manifest.codec != MCBCompression.Zstd)) throw new InvalidDataException("Invalid delivery manifest.");
         var patches = (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(p => p != null
-            && p.transform == NativeMeshPayloadService.TransformName).ToArray();
+            && NativeMeshPayloadService.IsAdvancedMeshPatchTransform(p.transform)).ToArray();
         if (patches.Length != manifest.files.Length) throw new InvalidDataException("Delivery manifest does not match this version.");
         var changes = new List<(ModelFileData patch, MCBPayloadVariant variant)>();
         foreach (var patch in patches) {

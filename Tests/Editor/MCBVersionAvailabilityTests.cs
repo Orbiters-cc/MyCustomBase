@@ -5,6 +5,37 @@ using NUnit.Framework;
 public class MCBVersionAvailabilityTests
 {
     [Test]
+    public void BundledOriginalIsVisibleForItsOwnSourceAndResolvesSharedArtifactFolder()
+    {
+        var artifact = new CustomBaseVersion { assetId = 7, version = "5.0.0", defaultAviVersion = "1.0.0",
+            sourceVersionKey = new string('a', 64), isUnsubmitted = true,
+            originalBaseVersions = new[] { new OriginalBaseVersionData { key = new string('b', 64),
+                sourceFiles = new[] { new ModelFileData { path = "Body.fbx", hash = new string('c', 64) } },
+                versionFiles = new[] { new ModelFileData { path = "mapped.bin" } } } } };
+        var views = System.Linq.Enumerable.ToArray(VersionRepository.LocalSourceViews(artifact));
+        var matching = VersionRepository.MergeAvailableVersions(7, null, null, views, new string('b', 64));
+        Assert.That(matching, Has.Count.EqualTo(1));
+        Assert.That(matching[0].versionFiles[0].path, Is.EqualTo("mapped.bin"));
+        Assert.That(MCBUtils.GetVersionDataPath(matching[0]), Is.EqualTo(MCBUtils.GetVersionDataPath(artifact)));
+        Assert.That(artifact.sourceVersionKey, Is.EqualTo(new string('a', 64)));
+        Assert.That(matching[0].isUnsubmitted, Is.True);
+        Assert.That(VersionRepository.MergeAvailableVersions(7, null, null, views), Is.EqualTo(new[] { artifact }));
+    }
+
+    [Test]
+    public void NonmatchingDiscoveryDoesNotInventASourceKeyFromAllSupportedOriginals()
+    {
+        var a = new ModelFileData { path = "Body.fbx", hash = new string('a', 64) };
+        var b = new ModelFileData { path = "Body.fbx", hash = new string('b', 64) };
+        var asset = new AvatarDiscoveredAsset { sourceFiles = new[] { a, b }, sourceVersions = new[] {
+            new OriginalBaseVersionData { key = OriginalBaseLibrary.Key(new[] { a }) },
+            new OriginalBaseVersionData { key = OriginalBaseLibrary.Key(new[] { b }) } } };
+        Assert.That(OriginalBaseLibrary.ActiveKey(asset), Is.Null);
+        asset.sourceFiles = new[] { b };
+        Assert.That(OriginalBaseLibrary.ActiveKey(asset), Is.EqualTo(OriginalBaseLibrary.Key(new[] { b })));
+    }
+
+    [Test]
     public void SharedMeshRecoveryRejectsStaleMarkerAndPartialMatches()
     {
         var current = SharedVersion("0.5.3", 'a', 'b');

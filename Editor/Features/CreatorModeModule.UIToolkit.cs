@@ -160,7 +160,6 @@ public partial class CreatorModeModule
         BuildCreatorFormHeaderUIToolkit(content);
         BlenderSyncService.BuildCreatorModeSectionUIToolkit(content, editor, RefreshEditorUi);
         BuildParentVersionDropdownUIToolkit(content);
-        BuildSupportedOriginalVersions(content);
         BuildModelFileBuildEntriesUIToolkit(content);
         content.Add(CreateIconObjectField(
             "Avatar Logic Prefab",
@@ -168,8 +167,12 @@ public partial class CreatorModeModule
             typeof(GameObject),
             false,
             new MCBCreatorPrefabIconElement()));
+        BuildSupportedOriginalsSection(content);
+        BuildMaterialSlotsSection(content);
         BuildCustomVeinsSectionUIToolkit(content);
-        BuildDynamicNormalsSectionUIToolkit(content);
+        BuildNormalsSection(content);
+        BuildModesSection(content);
+        BuildTwistSection(content);
         BuildXMusclesSectionUIToolkit(content);
         BuildSuggestRealisticSectionUIToolkit(content);
         BuildBlendshapeEditorUIToolkit(content);
@@ -180,25 +183,6 @@ public partial class CreatorModeModule
         {
             content.Add(CreateHelpBox("Submission Error: " + editor.submitError, HelpBoxMessageType.Error));
         }
-    }
-
-    private void BuildSupportedOriginalVersions(VisualElement root)
-    {
-        var asset = editor.GetSelectedAsset();
-        if (asset == null) return;
-        var card = new VisualElement(); card.AddToClassList("mcb-form-card"); root.Add(card);
-        card.Add(new Label("Supported original base versions"));
-        var selected = new System.Collections.Generic.HashSet<string>(OriginalBaseLibrary.Selection(asset));
-        card.Add(OriginalBaseVersionsEditor.ActionButton("Select all", () => { OriginalBaseLibrary.SaveSelection(asset.id, OriginalBaseLibrary.Versions(asset).Select(v => v.key)); RefreshEditorUi(); }));
-        foreach (var version in OriginalBaseLibrary.Versions(asset))
-        {
-            var toggle = new Toggle(version.label) { value = selected.Contains(version.key) };
-            toggle.RegisterValueChangedCallback(evt => { if (evt.newValue) selected.Add(version.key); else selected.Remove(version.key); OriginalBaseLibrary.SaveSelection(asset.id, selected); });
-            card.Add(toggle);
-        }
-        var hint = new Label("Your selection is reused for the next version. Each selected original receives its own encrypted custom base.");
-        hint.style.whiteSpace = WhiteSpace.Normal;
-        card.Add(hint);
     }
 
     private void BuildCreatorFormHeaderUIToolkit(VisualElement root)
@@ -511,31 +495,6 @@ public partial class CreatorModeModule
         row.Add(fixButton);
         warning.Add(row);
         root.Add(warning);
-    }
-
-    private void BuildDynamicNormalsSectionUIToolkit(VisualElement root)
-    {
-        var includeBodyProp = editor.includeDynamicNormalsBodyForCreatorProp;
-        var includeFlexingProp = editor.includeDynamicNormalsFlexingForCreatorProp;
-
-        var card = CreateCreatorPanel();
-        card.AddToClassList("mcb-creator-option");
-        card.Add(CreateToggle("Enable dynamic normals for body", includeBodyProp.boolValue, evt =>
-        {
-            ApplyCreatorChange(() => includeBodyProp.boolValue = evt.newValue);
-        }));
-        card.Add(CreateHelpBox(
-            "Don't use if muscles normal is already baked in the mesh.\nWill apply to all blendshapes containing \"muscle\" in the name.",
-            HelpBoxMessageType.Info));
-
-        card.Add(CreateToggle("Enable dynamic normals for flexings", includeFlexingProp.boolValue, evt =>
-        {
-            ApplyCreatorChange(() => includeFlexingProp.boolValue = evt.newValue);
-        }));
-        card.Add(CreateHelpBox(
-            "Allows for the flexed muscles to be more visible.\nWill apply to all blendshapes containing \"flex\" in the name.",
-            HelpBoxMessageType.Info));
-        root.Add(card);
     }
 
     // XMuscles: the correctives the Blender exports reported, what driving them costs in VRChat, and (while the driver is
@@ -1404,7 +1363,7 @@ public partial class CreatorModeModule
         bool hasCustomVeinsPayload = editor.includeCustomVeinsForCreatorProp.boolValue &&
                                      editor.customVeinsNormalMapProp.objectReferenceValue != null;
         bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue ||
-                                        editor.includeDynamicNormalsFlexingForCreatorProp.boolValue;
+                                        editor.includeDynamicNormalsFlexingForCreatorProp.boolValue || HasTypedCustomization();
         bool hasSuggestRealisticPayload = HasSuggestRealisticPayload();
         bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
                                  editor.avatarLogicPrefabProp.objectReferenceValue != null ||

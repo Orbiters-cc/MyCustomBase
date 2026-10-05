@@ -72,6 +72,19 @@ public class ModelFileSmrPathData
 }
 
 [JsonObject(MemberSerialization.OptIn)]
+public class VersionProtection
+{
+    [JsonProperty] public bool xor = true;
+    [JsonProperty] public bool discordRole;
+    // Server-provided for the signed-in member when the version verifies a Discord role.
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public bool? discordRoleGranted;
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string[] discordRoles;
+
+    public static bool IsPlain(CustomBaseVersion version) => version?.protection != null && !version.protection.xor;
+    public static bool IsDiscordRoleDenied(CustomBaseVersion version) => version?.protection?.discordRoleGranted == false;
+}
+
+[JsonObject(MemberSerialization.OptIn)]
 public class OriginalBaseVersionData
 {
     [JsonProperty] public string key;
@@ -109,6 +122,10 @@ public class CustomBaseVersion
     [JsonProperty] public int meshDelivery;
     [JsonProperty] public OriginalBaseVersionData[] originalBaseVersions;
     [JsonProperty] public string sourceVersionKey;
+    // Unprotected versions ship one plain package for every original; Discord-role verification gates its download.
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public VersionProtection protection;
+    // Bone names an unprotected version binds to on the user's avatar (skeleton compatibility).
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string[] skeleton;
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int uploaderId;
     // Server-provided display metadata. Code installation verifies current creator trust separately.
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public bool? creatorTrusted;
@@ -128,6 +145,9 @@ public class CustomBaseVersion
 
     [JsonIgnore] public bool isUnsubmitted; // Runtime flag, not saved to JSON
     [JsonIgnore] public bool isImported; // Runtime flag for offline imported versions, not saved to JSON
+    // A local artifact can contain payloads for several originals. Its on-disk identity
+    // stays fixed while the selected view uses another source version's files.
+    [JsonIgnore] public string localArtifactSourceVersionKey;
 
     public bool Equals(CustomBaseVersion other)
     {

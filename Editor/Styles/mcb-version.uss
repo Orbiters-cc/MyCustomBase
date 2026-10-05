@@ -825,3 +825,7 @@
     min-width: 120px;
     margin-bottom: 8px;
 }
+
+.mcb-root.mcb-has-status .mcb-version--asset-view {
+    margin-top: 0;
+}

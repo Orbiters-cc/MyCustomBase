@@ -86,6 +86,7 @@ public class MCBAdaptiveDeliveryTests
         }
     }
     [Test] public void BothDeliveryCodecsPreserveMeshRigCacheAndReset() => MCBDeliveryHealthCheck.RunOrThrow();
+    [Test] public void PlainPayloadsApplyWithoutTheOriginalModel() => MCBDeliveryHealthCheck.RunPlainOrThrow();
 
     [TestCase(1999, 2)]
     [TestCase(2000, 2)]
@@ -120,8 +121,11 @@ public class MCBAdaptiveDeliveryTests
         for (int i = 0; i < input.Length; i++) expected[i] = (byte)(input[i] ^ key[i % key.Length]);
         float lastProgress = 0;
         var output = MCBXor.Transform(key, input, p => { Assert.That(p, Is.GreaterThanOrEqualTo(lastProgress)); lastProgress = p; });
-        Assert.That(output, Is.EqualTo(expected)); Assert.That(lastProgress, Is.EqualTo(1));
-        Assert.That(MCBXor.Transform(key, output), Is.EqualTo(input));
+        // Compare bytes directly to avoid the general collection comparer's
+        // per-element object comparison overhead for multi-megabyte buffers.
+        Assert.That(output.SequenceEqual(expected), Is.True, "Word XOR must match the byte-wise reference.");
+        Assert.That(lastProgress, Is.EqualTo(1));
+        Assert.That(MCBXor.Transform(key, output).SequenceEqual(input), Is.True, "XOR must restore every original byte.");
     }
 }
 #endif

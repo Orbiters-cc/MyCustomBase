@@ -276,6 +276,11 @@ internal sealed class VersionCompareWindow : EditorWindow
 
     private void RequestDownload()
     {
+        if (version.isUnsubmitted || version.localArtifactSourceVersionKey != null)
+        {
+            Fail("This local build is incomplete. Rebuild it in the creator form, then open the differences again.");
+            return;
+        }
         var live = LiveEditor();
         if (live == null) { Fail("Select your avatar in the scene, then open the differences again."); return; }
         SetOverlay("Downloading the version…", 0f, "It is needed to show its meshes, and to apply it later.");

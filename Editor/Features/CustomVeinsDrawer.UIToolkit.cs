@@ -53,27 +53,32 @@ public partial class CustomVeinsDrawer
         toggle.AddToClassList("mcb-avatar-toggle");
         toggle.RegisterValueChangedCallback(evt =>
         {
-            bool success;
-            if (evt.newValue)
+            // The switch already shows the new state; the materials follow on the next frame, and a failure reverts it.
+            bool enable = evt.newValue;
+            toggle.schedule.Execute(() =>
             {
-                success = ApplyCustomVeins();
-            }
-            else
-            {
-                RemoveCustomVeins();
-                success = true;
-            }
+                bool success;
+                if (enable)
+                {
+                    success = ApplyCustomVeins();
+                }
+                else
+                {
+                    RemoveCustomVeins();
+                    success = true;
+                }
 
-            if (success)
-            {
-                EditorPrefs.SetBool(CUSTOM_VEINS_PREF_KEY, evt.newValue);
-            }
-            else
-            {
-                toggle.SetValueWithoutNotify(currentEnabled);
-            }
+                if (success)
+                {
+                    EditorPrefs.SetBool(CUSTOM_VEINS_PREF_KEY, enable);
+                }
+                else
+                {
+                    toggle.SetValueWithoutNotify(currentEnabled);
+                }
 
-            AvatarOptionsModule.RefreshEditorUi(editor);
+                AvatarOptionsModule.RefreshEditorUi(editor);
+            });
         });
         controls.Add(toggle);
 

@@ -178,6 +178,7 @@ public partial class VersionManagementModule
         {
             buttonDisabled = !selectionIsValid ||
                              (!isResetSelected && actions.IsVersionCurrentlyApplied(selectedVersion)) ||
+                             IsDiscordRoleBlocked(selectedVersion) ||
                              (isResetSelected && !canReset);
         }
 
@@ -237,6 +238,7 @@ public partial class VersionManagementModule
         if (editor.selectedVersionForAction == null) return ActionType.UNAVAILABLE;
         
         if (editor.selectedVersionForAction == VersionListDrawer.RESET_VERSION) return ActionType.RESET;
+        if (IsDiscordRoleBlocked(editor.selectedVersionForAction)) return ActionType.UNAVAILABLE;
 
         var appliedVersion = editor.customBaseTarget.appliedCustomBaseVersion;
 
@@ -261,6 +263,10 @@ public partial class VersionManagementModule
         if (compare < 0) return ActionType.DOWNGRADE;
         return ActionType.UNAVAILABLE;
     }
+
+    // The server only lists the role requirement; a version already on disk can still be applied.
+    private static bool IsDiscordRoleBlocked(CustomBaseVersion version) =>
+        VersionProtection.IsDiscordRoleDenied(version) && !version.isUnsubmitted && !MCBUtils.IsVersionDownloaded(version);
 
     private static bool ShouldSkipApplyConfirmation(CustomBaseVersion version)
     {
@@ -394,9 +400,14 @@ public partial class VersionManagementModule
         if (selectedVersion == null) return "Select a Version";
         
         if (action == ActionType.RESET) return "Reset to Original Avatar";
+        if (IsDiscordRoleBlocked(selectedVersion))
+        {
+            var roles = selectedVersion.protection.discordRoles;
+            return roles != null && roles.Length > 0 ? "Requires the " + string.Join(" or ", roles) + " Discord role" : "Requires a Discord role";
+        }
         
         bool isDownloaded = MCBUtils.IsVersionDownloaded(selectedVersion);
-        string downloadPrefix = isDownloaded ? "" : "Download and ";
+        string downloadPrefix = isDownloaded || selectedVersion.isUnsubmitted ? "" : "Download and ";
         
         return action switch
         {

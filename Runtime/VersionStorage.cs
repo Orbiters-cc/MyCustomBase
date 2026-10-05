@@ -57,7 +57,18 @@ public static class VersionStorage
             if (expected == null || string.IsNullOrEmpty(folder)) return false;
             var metadata = ReadJson<CustomBaseVersion>(ContainedPath(folder, "version.json"));
             var manifest = ReadJson<VersionManifest>(ContainedPath(folder, VersionManifest.FileName));
-            if (metadata == null || !metadata.Equals(expected) || manifest == null ||
+            bool matches = metadata != null && metadata.Equals(expected);
+            if (!matches && metadata != null && expected.localArtifactSourceVersionKey != null &&
+                metadata.assetId == expected.assetId && metadata.version == expected.version &&
+                metadata.defaultAviVersion == expected.defaultAviVersion &&
+                (metadata.sourceVersionKey ?? "") == expected.localArtifactSourceVersionKey)
+            {
+                var source = metadata.originalBaseVersions?.SingleOrDefault(v => v.key == expected.sourceVersionKey);
+                matches = source != null && source.versionFiles != null && expected.versionFiles != null &&
+                    source.versionFiles.Select(f => f.path + ":" + f.hash).OrderBy(p => p)
+                        .SequenceEqual(expected.versionFiles.Select(f => f.path + ":" + f.hash).OrderBy(p => p));
+            }
+            if (!matches || manifest == null ||
                 manifest.schema != VersionManifest.CurrentSchema || manifest.assetId != expected.assetId ||
                 manifest.version != expected.version || manifest.defaultAviVersion != expected.defaultAviVersion ||
                 manifest.outputs == null || manifest.outputs.Count == 0) return false;

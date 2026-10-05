@@ -13,6 +13,7 @@ public static partial class MCBDeliveryHealthCheck
     public static void RunOrThrow()
     {
         RunReuseCheck();
+        RunPlainOrThrow();
         string id = Guid.NewGuid().ToString("N");
         string folder = Path.Combine(Path.GetTempPath(), "mcb-delivery-health-" + id);
         Directory.CreateDirectory(folder);

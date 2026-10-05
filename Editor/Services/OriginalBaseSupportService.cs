@@ -12,6 +12,22 @@ using UnityEngine.Networking;
 /// <summary>Creator-only registration and historical version support, using immutable downloaded payloads.</summary>
 public static class OriginalBaseSupportService
 {
+    public static async Task<AvatarAssetBaseInfo> AssignAvatarBase(int assetId, int avatarBaseId, string token)
+    {
+        string url = MCBUtils.getApiUrl("creator") + "/assets/" + assetId + "/avatar-base";
+        using (var request = new UnityWebRequest(url, "PUT"))
+        {
+            MCBRequestHeaders.SetAuthorization(request, token);
+            request.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { avatarBaseId })));
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+            await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Backend("Link custom base to avatar base"));
+            if (request.result != UnityWebRequest.Result.Success) throw new IOException(request.downloadHandler.text);
+            AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
+            return JObject.Parse(request.downloadHandler.text)["avatarBase"].ToObject<AvatarAssetBaseInfo>();
+        }
+    }
+
     /// <summary>An asset's backend URL; requests carry the token in the Authorization header.</summary>
     public static string Url(int assetId, string suffix) => MCBUtils.getApiUrl() + "/" + assetId + suffix;
     public static async Task<OriginalBaseVersionData[]> Load(int assetId, string token)
@@ -30,6 +46,7 @@ public static class OriginalBaseSupportService
             request.downloadHandler = new DownloadHandlerBuffer(); request.SetRequestHeader("Content-Type", "application/json");
             await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Backend("Register original base versions"));
             if (request.result != UnityWebRequest.Result.Success) throw new IOException(request.downloadHandler.text);
+            AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
             return JObject.Parse(request.downloadHandler.text)["sourceVersions"].ToObject<OriginalBaseVersionData[]>();
         }
     }

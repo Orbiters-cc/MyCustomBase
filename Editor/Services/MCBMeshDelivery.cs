@@ -35,7 +35,7 @@ public static class MCBMeshDelivery
 
     internal static void Validate(Manifest manifest, CustomBaseVersion version)
     {
-        var patches = (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(p => p?.transform == NativeMeshPayloadService.TransformName).ToArray();
+        var patches = (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(p => NativeMeshPayloadService.IsAdvancedMeshPatchTransform(p?.transform)).ToArray();
         if (manifest?.schema != 1 || manifest.files == null || manifest.files.Length != patches.Length || !Hash(manifest.commonHash)
             || manifest.commonBytes <= 0 || manifest.commonBytes > 1024L * 1024 * 1024) throw new InvalidDataException("Invalid mesh delivery manifest.");
         foreach (var patch in patches)

@@ -1,0 +1,73 @@
+/* Twisting bones window: the version comparison window's stage and side cards (mcb-version-compare.uss). */
+
+.mcb-twist .mcb-cmp__header { margin-bottom: 12px; }
+.mcb-twist__model { width: 220px; margin: 0 12px 0 0; }
+.mcb-twist__switch { flex-direction: row; align-items: center; height: 32px; padding: 0 6px 0 10px; border-radius: 16px; background-color: #212125; border-width: 1px; border-color: rgba(255, 255, 255, 0.05); }
+.mcb-twist__switch-icon { width: 16px; height: 16px; margin-right: 6px; --icon-color: #b9b9c0; }
+.mcb-twist__switch-label { margin-right: 8px; color: #e6e6ea; font-size: 12px; }
+.mcb-twist__grow { flex-grow: 1; flex-shrink: 1; min-width: 0; }
+
+.mcb-twist__stage { min-width: 420px; }
+.mcb-twist .mcb-twist__hint { bottom: 14px; opacity: 0.85; }
+.mcb-twist__hover {
+    position: absolute; display: none; height: 22px; padding: 0 9px 0 9px; border-radius: 11px;
+    background-color: rgba(10, 10, 12, 0.82); color: #f2f2f2; font-size: 11px; -unity-text-align: middle-center; -unity-font-style: bold;
+}
+
+.mcb-twist__side { width: 340px; }
+.mcb-twist__card-header { flex-direction: row; align-items: center; margin-bottom: 6px; }
+.mcb-twist__card-header .mcb-cmp__card-title { margin-bottom: 0; }
+.mcb-twist__mini-switch { flex-direction: row; align-items: center; }
+.mcb-twist__mini-switch .mcb-cmp__caption { margin-right: 6px; }
+.mcb-twist__mini-switch .orb-switch { width: 30px; height: 18px; border-radius: 9px; }
+.mcb-twist__mini-switch .orb-switch__knob { width: 12px; height: 12px; border-radius: 6px; }
+.mcb-twist__mini-switch .orb-switch--on .orb-switch__knob { translate: 12px 0; }
+
+.mcb-twist__bones-card { flex-grow: 1; flex-shrink: 1; flex-basis: 0; min-height: 160px; }
+.mcb-twist__selected-card { flex-grow: 1; flex-shrink: 1; flex-basis: 0; min-height: 180px; margin-bottom: 0; }
+.mcb-twist__search { width: auto; height: 28px; margin: 0 0 8px 0; border-radius: 8px; background-color: #2a2b30; border-width: 1px; border-color: rgba(255, 255, 255, 0.06); }
+.mcb-twist__search .unity-text-field__input { background-color: rgba(0, 0, 0, 0); border-width: 0; color: #ececf0; }
+.mcb-twist__bones { flex-grow: 1; flex-shrink: 1; min-height: 0; margin-left: -6px; margin-right: -6px; }
+
+.mcb-twist__bone {
+    flex-direction: row; align-items: center; height: 26px; padding-right: 8px; border-radius: 7px; cursor: link;
+    transition-property: background-color; transition-duration: 0.1s;
+}
+.mcb-twist__bone:hover { background-color: rgba(255, 255, 255, 0.05); }
+.mcb-twist__bone-dot { width: 7px; height: 7px; margin-right: 8px; border-radius: 4px; background-color: rgba(178, 194, 209, 0.45); flex-shrink: 0; }
+.mcb-twist__bone-name { flex-grow: 1; flex-shrink: 1; min-width: 0; color: #d6d6dc; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcb-twist__bone-tag { color: #6f6f76; font-size: 10px; }
+.mcb-twist__bone--selected { background-color: rgba(0, 218, 109, 0.1); }
+.mcb-twist__bone--selected:hover { background-color: rgba(0, 218, 109, 0.16); }
+.mcb-twist__bone--selected .mcb-twist__bone-dot { background-color: #00DA6D; }
+.mcb-twist__bone--selected .mcb-twist__bone-name { color: #6ff0b8; -unity-font-style: bold; }
+
+.mcb-twist__entries { flex-grow: 1; flex-shrink: 1; min-height: 0; margin-left: -6px; margin-right: -6px; }
+.mcb-twist__entry { margin-bottom: 4px; border-radius: 10px; border-width: 1px; border-color: rgba(0, 0, 0, 0); }
+.mcb-twist__entry--open { background-color: #2a2b30; border-color: rgba(0, 218, 109, 0.35); }
+.mcb-twist__entry-head { flex-direction: row; align-items: center; padding: 7px 6px 7px 10px; border-radius: 10px; cursor: link; }
+.mcb-twist__entry-head:hover { background-color: rgba(255, 255, 255, 0.05); }
+.mcb-twist__chevron { width: 12px; height: 12px; margin-left: 6px; --icon-color: #8f8f96; }
+.mcb-twist__entry--open .mcb-twist__chevron { rotate: 90deg; }
+.mcb-twist__remove { width: 22px; height: 22px; margin-left: 4px; border-radius: 11px; align-items: center; justify-content: center; }
+.mcb-twist__remove:hover { background-color: rgba(255, 92, 97, 0.14); }
+.mcb-twist__remove .orb-icon { width: 11px; height: 11px; --icon-color: #9a9aa0; }
+.mcb-twist__remove:hover .orb-icon { --icon-color: #ff8f93; }
+.mcb-twist__details { padding: 2px 10px 10px 10px; }
+.mcb-twist__details .orb-search-dropdown__label { min-width: 88px; }
+.mcb-twist__field-label { margin-top: 8px; margin-bottom: 4px; color: #a9a9b0; font-size: 11px; }
+.mcb-twist__presets { height: 26px; }
+.mcb-twist__curve { margin: 6px 0 0 0; height: 64px; }
+.mcb-twist__curve .unity-curve-field__input { border-radius: 8px; background-color: #1b1c1f; border-width: 1px; border-color: rgba(255, 255, 255, 0.06); }
+.mcb-twist__advanced { margin-top: 6px; }
+.mcb-twist__advanced .unity-foldout__text { color: #a9a9b0; font-size: 11px; }
+.mcb-twist__advanced .unity-base-text-field__input { background-color: #1b1c1f; border-color: rgba(255, 255, 255, 0.06); border-radius: 6px; }
+.mcb-twist__warning { color: #ffb066; }
+
+.mcb-twist__footer { flex-direction: row; align-items: center; padding-top: 12px; flex-shrink: 0; }
+.mcb-twist .mcb-cmp__header { flex-shrink: 0; }
+.mcb-twist__status { flex-grow: 1; flex-shrink: 1; min-width: 0; margin-right: 12px; color: #8f8f96; font-size: 11px; white-space: normal; }
+.mcb-twist__status--warning { color: #ffb066; }
+.mcb-twist__status--error { color: #ff8f93; }
+.mcb-twist .mcb-twist__cancel { margin-top: 0; height: 36px; border-radius: 18px; padding: 0 20px 0 20px; }
+.mcb-twist .mcb-twist__confirm { height: 36px; border-radius: 18px; margin-left: 8px; padding: 0 28px 0 28px; }

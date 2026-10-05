@@ -10,6 +10,8 @@ public sealed class NativeMeshAvatarBuildHook : IVRCSDKPreprocessAvatarCallback
     public int callbackOrder => -10200;
     public bool OnPreprocessAvatar(GameObject avatarRoot)
     {
+        // Material edits saved lazily (custom veins) are on disk before anything reads the project.
+        MaterialService.FlushPendingSaves(true);
         if (avatarRoot.GetComponent<MyCustomBase>() == null) return true;
         // Read the payload that owns the assigned mesh, including after reload. A version's
         // download metadata is not required to build the already-applied avatar.

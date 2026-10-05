@@ -309,13 +309,15 @@ internal sealed class VersionMeshComparison : IDisposable
         foreach (var group in patches.GroupBy(p => MCBUtils.ToUnityPath(p.TargetFbxPath), StringComparer.OrdinalIgnoreCase))
         {
             var first = group.First();
+            // A plain payload is not bound to an original: the avatar's own model is its reference.
+            bool plain = first.OriginalFbxPath == null;
             var fbx = new FbxTarget
             {
                 Path = group.Key,
-                OriginalPath = first.OriginalFbxPath,
-                SourceHash = first.Source?.hash,
+                OriginalPath = plain ? first.TargetFbxPath : first.OriginalFbxPath,
+                SourceHash = plain ? null : first.Source?.hash,
                 Replacement = group.FirstOrDefault(p => !p.AdvancedMesh),
-                SmrPaths = first.Source?.smrPaths ?? new List<ModelFileSmrPathData>()
+                SmrPaths = plain ? new List<ModelFileSmrPathData>() : first.Source?.smrPaths ?? new List<ModelFileSmrPathData>()
             };
             fbx.Advanced.AddRange(group.Where(p => p.AdvancedMesh));
             fbx.ToRoot = FbxToRoot(root, fbx, renderers);
@@ -367,7 +369,7 @@ internal sealed class VersionMeshComparison : IDisposable
                 foreach (var patch in fbx.Advanced.Where(p => !cachedPayloads.ContainsKey(p)))
                 {
                     Report(0.4f + 0.2f * done / total, "Unpacking the advanced meshes…");
-                    prepared[patch] = NativeMeshPayloadService.ReadPayloadForPreview(patch.Patch, patch.BinPath, fbx.OriginalPath);
+                    prepared[patch] = NativeMeshPayloadService.ReadPayloadForPreview(patch.Patch, patch.BinPath, patch.OriginalFbxPath);
                 }
                 done++;
             }
@@ -527,12 +529,11 @@ internal sealed class VersionMeshComparison : IDisposable
                     foreach (var record in cached.renderers.Where(r => r?.mesh != null))
                     {
                         var renderer = NativeMeshPayloadService.ResolveAvatarRenderer(root, record);
-                        if (renderer == null) continue;
-                        string key = KeyOf(root, renderer.transform);
+                        string key = renderer != null ? KeyOf(root, renderer.transform) : record.avatarPath;
                         payloadKeys.Add(key);
-                        var part = Part(key, renderer.name);
+                        var part = Part(key, renderer != null ? renderer.name : System.IO.Path.GetFileName(record.avatarPath));
                         ReadRenderer(key, renderer);
-                        var toRoot = root.worldToLocalMatrix * ParentMatrix(renderer.transform) * Matrix4x4.TRS(record.localPosition, record.localRotation, record.localScale);
+                        var toRoot = PreviewParentMatrix(root, renderer, record.avatarPath) * Matrix4x4.TRS(record.localPosition, record.localRotation, record.localScale);
                         part.After = MeshSource.FromMesh(record.mesh, toRoot, Shapes(key));
                     }
                 }
@@ -541,12 +542,11 @@ internal sealed class VersionMeshComparison : IDisposable
                     foreach (var record in data.renderers.Where(r => r?.mesh != null))
                     {
                         var renderer = NativeMeshPayloadService.ResolveAvatarRenderer(root, new NativeMeshPayloadRenderer { avatarPath = record.avatarPath });
-                        if (renderer == null) continue;
-                        string key = KeyOf(root, renderer.transform);
+                        string key = renderer != null ? KeyOf(root, renderer.transform) : record.avatarPath;
                         payloadKeys.Add(key);
-                        var part = Part(key, renderer.name);
+                        var part = Part(key, renderer != null ? renderer.name : System.IO.Path.GetFileName(record.avatarPath));
                         ReadRenderer(key, renderer);
-                        var toRoot = root.worldToLocalMatrix * ParentMatrix(renderer.transform) * Matrix4x4.TRS(record.localPosition, record.localRotation, record.localScale);
+                        var toRoot = PreviewParentMatrix(root, renderer, record.avatarPath) * Matrix4x4.TRS(record.localPosition, record.localRotation, record.localScale);
                         part.After = MeshSource.FromPrepared(record.mesh, toRoot);
                     }
                 }
@@ -604,7 +604,28 @@ internal sealed class VersionMeshComparison : IDisposable
                 part.AfterMaterials = MatchMaterials(part.Now.Materials, materials, part.After?.Materials);
                 part.OriginalMaterials = MatchMaterials(part.Now.Materials, materials, part.Original?.Materials);
             }
+            // A version's renderer layout recorded the original renderer's own materials in its slot order.
+            var original = target.nativeRendererOriginalStates.FirstOrDefault(state => state.renderer == renderer);
+            if (original?.materials != null && original.materials.Length > 0) part.OriginalMaterials = original.materials;
+            // Custom veins are the applied version's, painted on the avatar's materials: not the original's,
+            // and not a version's that has none.
+            part.OriginalMaterials = WithoutVeins(part.OriginalMaterials);
+            if (!ExtraCustomizationUtils.HasFlag(Version.extraCustomization, "customVeins")) part.AfterMaterials = WithoutVeins(part.AfterMaterials);
         }
+    }
+
+    private readonly List<Material> previewMaterials = new List<Material>();
+
+    private Material[] WithoutVeins(Material[] materials)
+    {
+        if (materials == null) return null;
+        var result = new Material[materials.Length];
+        for (int i = 0; i < materials.Length; i++)
+        {
+            result[i] = MaterialService.WithoutVersionVeins(materials[i]);
+            if (result[i] != materials[i]) previewMaterials.Add(result[i]);
+        }
+        return result;
     }
 
     private static Material[] MatchMaterials(string[] slots, Material[] materials, string[] wanted)
@@ -627,6 +648,15 @@ internal sealed class VersionMeshComparison : IDisposable
         for (var current = transform; current != null && current != root; current = current.parent) names.Add(current.name);
         names.Reverse();
         return string.Join("/", names);
+    }
+
+    private static Matrix4x4 PreviewParentMatrix(Transform root, SkinnedMeshRenderer renderer, string path)
+    {
+        if (renderer != null) return root.worldToLocalMatrix * ParentMatrix(renderer.transform);
+        int slash = path.LastIndexOf('/');
+        var parent = slash < 0 ? root : root.Find(path.Substring(0, slash));
+        if (parent == null) throw new InvalidDataException("Missing preview parent: " + path);
+        return root.worldToLocalMatrix * parent.localToWorldMatrix;
     }
 
     private static SkinnedMeshRenderer FindRenderer(Transform root, FbxTarget fbx, string fbxMeshPath)
@@ -679,6 +709,12 @@ internal sealed class VersionMeshComparison : IDisposable
         float size = Mathf.Max(bounds.size.magnitude, 1e-4f);
         float threshold = Mathf.Max(size * 2e-5f, 1e-6f);
 
+        // When the version splits or merges pieces (a one-mesh body whose tail becomes its own mesh), a surface is
+        // measured against every piece of the other side: the tail did not move 1.8 m, it changed renderer.
+        bool layoutChanged = parts.Any(p => weighted[p].before == null || weighted[p].after == null);
+        var beforeUnion = layoutChanged ? Union(parts.Where(p => weighted[p].before != null).Select(p => (weighted[p].before, p.Before.Triangles))) : default;
+        var afterUnion = layoutChanged ? Union(parts.Where(p => weighted[p].after != null).Select(p => (weighted[p].after, p.After.Triangles))) : default;
+
         // Parts one by one: each search already uses half the cores, the other half keeps the editor smooth.
         foreach (var part in parts)
         {
@@ -699,8 +735,12 @@ internal sealed class VersionMeshComparison : IDisposable
             }
 
             bool sameTopology = part.Before.FromFile == part.After.FromFile && b.Length == a.Length;
-            part.AfterDistances = sameTopology ? MeshComparison.Distances(b, a, size) : MeshComparison.SurfaceDistances(b, part.Before.Triangles, a, size);
-            part.BeforeDistances = sameTopology ? part.AfterDistances : MeshComparison.SurfaceDistances(a, part.After.Triangles, b, size);
+            part.AfterDistances = sameTopology ? MeshComparison.Distances(b, a, size)
+                : layoutChanged ? MeshComparison.SurfaceDistances(beforeUnion.points, beforeUnion.triangles, a, size)
+                : MeshComparison.SurfaceDistances(b, part.Before.Triangles, a, size);
+            part.BeforeDistances = sameTopology ? part.AfterDistances
+                : layoutChanged ? MeshComparison.SurfaceDistances(afterUnion.points, afterUnion.triangles, b, size)
+                : MeshComparison.SurfaceDistances(a, part.After.Triangles, b, size);
             // Measured to the other surface, a re-exported mesh is never exactly on it: allow for that.
             float moved = sameTopology ? threshold : Mathf.Max(threshold, size * 5e-4f);
             part.PointCount = a.Length;
@@ -760,6 +800,19 @@ internal sealed class VersionMeshComparison : IDisposable
     }
 
     // GeometryUtility.CalculateBounds only runs on the main thread.
+    private static (Vector3[] points, int[] triangles) Union(IEnumerable<(Vector3[] points, int[] triangles)> pieces)
+    {
+        var points = new List<Vector3>();
+        var triangles = new List<int>();
+        foreach (var piece in pieces)
+        {
+            int offset = points.Count;
+            points.AddRange(piece.points);
+            foreach (int index in piece.triangles ?? new int[0]) triangles.Add(index + offset);
+        }
+        return (points.ToArray(), triangles.ToArray());
+    }
+
     private static Bounds BoundsOf(IList<Vector3> points)
     {
         if (points == null || points.Count == 0) return new Bounds();
@@ -839,6 +892,8 @@ internal sealed class VersionMeshComparison : IDisposable
     public void Dispose()
     {
         DestroyMeshes();
+        foreach (var material in previewMaterials) if (material != null) UnityEngine.Object.DestroyImmediate(material);
+        previewMaterials.Clear();
         foreach (var part in Context) if (part.Owned && part.Mesh != null) UnityEngine.Object.DestroyImmediate(part.Mesh);
         Context.Clear();
     }

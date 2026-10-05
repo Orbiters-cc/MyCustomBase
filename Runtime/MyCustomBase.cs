@@ -159,6 +159,22 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public Texture2D customVeinsNormalMap;
     [HideInInspector] public bool includeDynamicNormalsBodyForCreator = false;
     [HideInInspector] public bool includeDynamicNormalsFlexingForCreator = false;
+    [HideInInspector] public VersionCustomization creatorCustomization = new VersionCustomization();
+    // Trusted creators can publish one plain package verified by a Discord role instead of per-original XOR payloads.
+    [HideInInspector] public string creatorAuthoringDraftJson;
+    [HideInInspector] public VersionCustomization appliedCustomization = new VersionCustomization();
+    [HideInInspector] public List<GameObject> nativeMeshGeneratedBones = new List<GameObject>();
+    [HideInInspector] public List<NativeMeshOriginalParent> nativeMeshOriginalParents = new List<NativeMeshOriginalParent>();
+    [HideInInspector] public List<GameObject> nativeGeneratedRenderers = new List<GameObject>();
+    [HideInInspector] public List<NativeRendererOriginalState> nativeRendererOriginalStates = new List<NativeRendererOriginalState>();
+    // The avatar's own original models while a version is applied. An unencrypted version names only the model it was
+    // built from, so neither its source files nor the asset's may stand in for this avatar's originals.
+    [HideInInspector] public List<GameObject> versionOriginalModels = new List<GameObject>();
+    [HideInInspector] public List<ModeChoice> modeChoices = new List<ModeChoice>();
+    [HideInInspector] public List<BlendshapeMemory> blendshapeMemory = new List<BlendshapeMemory>();
+    [HideInInspector] public List<ModeOriginalObject> modeOriginalObjects = new List<ModeOriginalObject>();
+    [HideInInspector] public List<ModeOriginalShape> modeOriginalShapes = new List<ModeOriginalShape>();
+    [HideInInspector] public List<ModeOriginalProperty> modeOriginalProperties = new List<ModeOriginalProperty>();
     [HideInInspector] public bool includeSuggestRealisticForCreator = false;
     [HideInInspector] public List<string> suggestRealisticMeshPathsForCreator = new List<string>();
     [HideInInspector] public List<CreatorBlendshapeEntry> customBlendshapesForCreator = new List<CreatorBlendshapeEntry>();

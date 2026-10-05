@@ -18,6 +18,10 @@ public partial class AssetGalleryModule
 {
     private string originalBaseVersionLabel = "Original base";
     private readonly List<OriginalBaseVersionsEditor.Draft> additionalOriginalVersions = new List<OriginalBaseVersionsEditor.Draft>();
+    // Discord role rules chosen before the asset exists; created right after it.
+    private readonly List<DiscordAccessRule> pendingDiscordRules = new List<DiscordAccessRule>();
+    // Trusted creators: Discord role verification and XOR protection of every version of the new asset.
+    private VersionProtection createProtection = new VersionProtection();
 
     private void BuildCreateCustomBaseFormUIToolkit(VisualElement root)
     {
@@ -130,6 +134,17 @@ public partial class AssetGalleryModule
         });
         form.Add(originalLabel);
         form.Add(new OriginalBaseVersionsEditor(additionalOriginalVersions, () => GetValidTargetFbxPaths().ToArray(), onFormChanged));
+
+        bool trusted = int.TryParse(AuthenticationService.GetAuth()?.user, out int creatorId) && UserService.IsTrustedCreator(creatorId);
+        var access = McbSectionUi.Section(trusted ? "Protection and access" : "Discord role access", trusted
+            ? "How this custom base's versions reach users. Every version follows these settings."
+            : "Optional. Members holding an ownership role get access to this custom base and receive the destination role in your server.", out var accessBody);
+        accessBody.Add(new AssetProtectionEditor(() => editor.authToken, 0, trusted, createProtection, pendingDiscordRules, protection =>
+        {
+            createProtection = protection;
+            onFormChanged();
+        }));
+        form.Add(access);
 
         createErrorMessage = CreateMessageLabel(
             string.IsNullOrWhiteSpace(createError) ? string.Empty : $"Last attempt: {createError}",
@@ -1435,6 +1450,8 @@ public partial class AssetGalleryModule
         }
         catch (Exception ex) { createError = ex.Message; isSubmittingCustomBase = false; editor.RefreshUiToolkitSections(); yield break; }
         metadata["sourceFiles"] = JArray.FromObject(sourceFilePayload);
+        if (int.TryParse(AuthenticationService.GetAuth()?.user, out int creatorId) && UserService.IsTrustedCreator(creatorId))
+            metadata["protection"] = new JObject { ["xor"] = createProtection.xor, ["discordRole"] = createProtection.discordRole };
         if (IsOtherAvatarBaseSelected())
         {
             metadata["otherAvatarBaseName"] = otherAvatarBaseName.Trim();
@@ -1465,12 +1482,11 @@ public partial class AssetGalleryModule
             AddImageToForm(form, "banner", createBanner);
         }
 
-        string url = $"{MCBUtils.getApiUrl()}/assets/custom-base";
-        using (var request = UnityWebRequest.Post(url, form))
+        string url = CustomBaseRegistration.Url;
+        var discordRules = pendingDiscordRules.ToArray();
+        int createdAssetId = 0;
+        using (var request = CustomBaseRegistration.Request(form, editor.authToken, customBaseCreationRequestId))
         {
-            MCBRequestHeaders.SetAuthorization(request, editor.authToken);
-            MCBRequestHeaders.SetIdempotencyKey(request, customBaseCreationRequestId);
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload);
             yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Create custom base"));
 
             if (request.result != UnityWebRequest.Result.Success)
@@ -1527,6 +1543,7 @@ public partial class AssetGalleryModule
                         AvatarAssetDiscoveryService.CacheBannerUntilDownloaded(discoveredAsset.id, discoveredAsset.bannerUrl, createBanner);
                     }
 
+                    createdAssetId = discoveredAsset.id;
                     compatibleAssets.RemoveAll(asset => asset != null && asset.id == discoveredAsset.id);
                     compatibleAssets.Add(discoveredAsset);
                     hasFetchedCompatibleAssets = true;
@@ -1547,6 +1564,15 @@ public partial class AssetGalleryModule
                     createError = $"The server asset exists, but setup did not finish: {ex.Message} Retry to resume the same creation request.";
                 }
             }
+        }
+
+        if (createdAssetId > 0 && discordRules.Length > 0)
+        {
+            var saveRules = DiscordAccessEditor.SavePendingAsync(editor.authToken, createdAssetId, discordRules);
+            while (!saveRules.IsCompleted) yield return null;
+            if (saveRules.IsFaulted)
+                editor.warningsModule?.AddWarning("The custom base was created, but its Discord role rules were not saved: " +
+                    saveRules.Exception.GetBaseException().Message + " Add them again from Edit.", MessageType.Warning, "Discord role rules");
         }
 
         isSubmittingCustomBase = false;
@@ -1792,7 +1818,7 @@ public partial class AssetGalleryModule
     private static List<IMultipartFormSection> BuildCustomBaseUploadForm(string metadata)
     {
         // The backend uses multipart parsing even when the default-base flow has no images.
-        return new List<IMultipartFormSection> { new MultipartFormDataSection("metadata", metadata) };
+        return CustomBaseRegistration.Form(metadata);
     }
 
     private static void AddImageToForm(List<IMultipartFormSection> form, string fieldName, Texture2D texture)
@@ -1889,6 +1915,8 @@ public partial class AssetGalleryModule
         customBaseCreationRequestSignature = null;
         otherAvatarBaseName = "";
         additionalOriginalVersions.Clear();
+        pendingDiscordRules.Clear();
+        createProtection = new VersionProtection();
         originalBaseVersionLabel = "Original base";
         targetFbxFiles.Clear();
         originalSourceKeyCandidates.Clear();

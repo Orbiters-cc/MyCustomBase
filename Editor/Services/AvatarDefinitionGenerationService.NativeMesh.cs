@@ -72,9 +72,10 @@ public static partial class AvatarDefinitionGenerationService
             if (path != null) AssetDatabase.CreateAsset(avatar, path);
         }
         if (recordUndo) return SetRootAnimatorAvatar(root, avatar);
-        if (animator.avatar == avatar) return false;
-        animator.avatar = avatar;
-        return true;
+        bool changed = animator.avatar != avatar;
+        // Also when unchanged: the payload may just have reparented bones the Animator had cached.
+        AssignAvatarKeepingPose(animator, avatar);
+        return changed;
     }
 }
 #endif

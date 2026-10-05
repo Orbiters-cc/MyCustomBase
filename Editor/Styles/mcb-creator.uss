@@ -12,6 +12,16 @@
 
 .mcb-creator-window__scroll { flex-grow: 1; }
 
+.mcb-customization .mcb-label--muted { white-space: normal; margin-top: 6px; margin-bottom: 8px; }
+.mcb-customization .mcb-button { align-self: flex-start; min-height: 28px; margin-top: 4px; margin-bottom: 4px; }
+.mcb-customization__row { align-items: center; flex-wrap: wrap; }
+.mcb-customization__row > .mcb-button { margin-left: 8px; }
+.mcb-customization__rule { padding: 10px; margin-top: 8px; margin-bottom: 8px; background-color: #333333; border-radius: 8px; }
+.mcb-customization .unity-base-field { margin-top: 4px; margin-bottom: 4px; }
+.mcb-customization .unity-base-field__label { min-width: 110px; }
+.mcb-customization .unity-toggle > .unity-base-field__input { background-color: rgba(0,0,0,0); border-width: 0; }
+.mcb-customization > .unity-foldout > .unity-toggle > .unity-base-field__label { min-width: 0; }
+
 .mcb-creator.mcb-creator--window {
     padding: 12px;
     margin: 0;

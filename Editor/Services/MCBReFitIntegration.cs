@@ -44,12 +44,27 @@ public static partial class MCBReFitIntegration
         var result = new List<SkinnedMeshRenderer>();
         if (target == null) return result;
         var baseMeshes = BuildBaseMeshMap(target);
-        foreach (var smr in Root(target).GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        var root = Root(target);
+        foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
-            if (smr == null || smr.sharedMesh == null || RefitCandidates.IsEditorHelper(smr) || IsBodyRenderer(smr, baseMeshes)) continue;
+            if (smr == null || smr.sharedMesh == null || RefitCandidates.IsEditorHelper(smr) || IsBodyRenderer(smr, baseMeshes)
+                || IsVersionRenderer(target, root, smr)) continue;
             result.Add(smr);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Renderers the applied version brings or maps (e.g. Ultirex's feather meshes on a one-mesh Rexouium) are part of
+    /// the custom base, not clothing, even when the avatar's original model has no mesh of that name.
+    /// </summary>
+    private static bool IsVersionRenderer(MyCustomBase target, Transform root, SkinnedMeshRenderer smr)
+    {
+        if (target.nativeGeneratedRenderers.Contains(smr.gameObject)) return true;
+        var layout = target.appliedCustomization?.rendererLayout;
+        if (layout == null || layout.IsEmpty) return false;
+        string path = GetRendererPath(root, smr.transform);
+        return layout.renderers.Any(r => r.path == path);
     }
 
     /// <summary>Hierarchy path of a renderer relative to the avatar root (Transform.Find compatible).</summary>

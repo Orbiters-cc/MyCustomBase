@@ -403,9 +403,9 @@ public partial class VersionListDrawer
         bool canReset = fileManagerService.BackupExists(actions.GetCurrentFBXPath()) || actions.HasAppliedCustomBaseEvidence();
         bool isApplied = actions.IsDefaultBaseCurrentlyApplied();
 
-        string resetTitle = string.IsNullOrWhiteSpace(editor.GetSelectedAssetDisplayName())
-            ? "Base Default"
-            : $"Default {editor.GetSelectedAssetDisplayName()}";
+        // The reset returns to the original base (e.g. Rexouium), not to the custom base asset (e.g. Ultirex).
+        string baseName = editor.GetSelectedAsset()?.avatarBase?.name;
+        string resetTitle = string.IsNullOrWhiteSpace(baseName) ? "Original base" : $"Default {baseName}";
 
         return CreateVersionItemUIToolkit(
             RESET_VERSION,

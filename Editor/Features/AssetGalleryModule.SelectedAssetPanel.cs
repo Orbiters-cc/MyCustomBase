@@ -60,9 +60,13 @@ public partial class AssetGalleryModule
             var creatorActions = new VisualElement();
             creatorActions.AddToClassList("mcb-selected-banner__creator-actions");
             creatorActions.Add(editButton);
-            var supportButton = CreateTextButton("Support new version", () => OriginalBaseSupportWindow.Open(editor, selectedAsset));
-            supportButton.AddToClassList("mcb-selected-banner__edit-button");
-            creatorActions.Add(supportButton);
+            // One unencrypted package serves every original: there is no per-original version to support.
+            if (!selectedAsset.UsesPlainPackages())
+            {
+                var supportButton = CreateTextButton("Support new version", () => OriginalBaseSupportWindow.Open(editor, selectedAsset));
+                supportButton.AddToClassList("mcb-selected-banner__edit-button");
+                creatorActions.Add(supportButton);
+            }
             frame.Add(creatorActions);
         }
 

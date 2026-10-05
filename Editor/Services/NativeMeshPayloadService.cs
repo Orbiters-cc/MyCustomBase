@@ -19,6 +19,8 @@ public static partial class NativeMeshPayloadService
 {
     public const string ExtraCustomizationKey = "advancedMeshReplacement";
     public const string TransformName = "XOR_BIN_TO_UNITY_ASSET";
+    // Unprotected versions ship the same plain payload for every original model.
+    public const string PlainTransformName = "PLAIN_BIN_TO_UNITY_ASSET";
     public const string PayloadFormat = "MCB_NATIVE_MESH_PAYLOAD";
     public const string PayloadCompressionMetadataKey = "payloadCompression";
     public const string PayloadCompressionGZip = "GZIP";
@@ -190,8 +192,37 @@ public static partial class NativeMeshPayloadService
         bool includeDynamicNormalsFlexing = true,
         bool compressPayload = false,
         Transform sourcePoseRoot = null,
-        bool createDeliveryVariants = false)
+        bool createDeliveryVariants = false,
+        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null,
+        bool encrypt = true)
     {
+        NativeMeshPayloadBuildResult result = null;
+        MCBWork.Drain(WriteEncryptedPayloadCoroutine(value => result = value, sourceFbxPath, customFbx, smrPaths, fileManagerService, outputBinPath, bakeDynamicNormals, includeDynamicNormalsBody, includeDynamicNormalsFlexing, compressPayload, sourcePoseRoot, createDeliveryVariants, dynamicNormalSelections, encrypt));
+        return result;
+    }
+
+    public static System.Collections.IEnumerator WriteEncryptedPayloadCoroutine(
+        Action<NativeMeshPayloadBuildResult> completed,
+        string sourceFbxPath,
+        GameObject customFbx,
+        IEnumerable<ModelFileSmrPathData> smrPaths,
+        FileManagerService fileManagerService,
+        string outputBinPath,
+        bool bakeDynamicNormals = false,
+        bool includeDynamicNormalsBody = true,
+        bool includeDynamicNormalsFlexing = true,
+        bool compressPayload = false,
+        Transform sourcePoseRoot = null,
+        bool createDeliveryVariants = false,
+        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null,
+        bool encrypt = true)
+    {
+        // A plain payload is one shared renderer-based delivery; it must not depend on the authoring original.
+        if (!encrypt && !createDeliveryVariants)
+        {
+            throw new ArgumentException("Plain advanced mesh payloads are written as renderer delivery variants.", nameof(createDeliveryVariants));
+        }
+
         if (string.IsNullOrWhiteSpace(sourceFbxPath))
         {
             throw new ArgumentNullException(nameof(sourceFbxPath));
@@ -225,6 +256,27 @@ public static partial class NativeMeshPayloadService
         {
             throw new InvalidOperationException("The custom FBX did not provide any matching skinned mesh data for the native mesh payload.");
         }
+        if (dynamicNormalSelections?.Count > 0)
+        {
+            foreach (var selection in dynamicNormalSelections)
+            {
+                var mapping = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>()).FirstOrDefault(m => m.avatarPath == selection.mesh);
+                if (mapping == null && smrPaths != null && smrPaths.Any()) continue;
+                string meshPath = mapping?.fbxMeshPath ?? selection.mesh;
+                var renderer = AvatarPaths.Resolve(customFbx.transform, meshPath).GetComponent<SkinnedMeshRenderer>();
+                var source = rendererSources.FirstOrDefault(r => r.renderer == renderer);
+                if (source == null) throw new InvalidOperationException("Missing normal renderer: " + selection.mesh);
+                foreach (var name in selection.names)
+                    if (renderer.sharedMesh.GetBlendShapeIndex(name) < 0) throw new InvalidOperationException("Missing normal blendshape: " + selection.mesh + "/" + name);
+                source.normalFrames = new Dictionary<(string shape, int frame), DynamicNormals.NormalFrame>();
+                foreach (var name in selection.names)
+                {
+                    foreach (var frame in DynamicNormals.CaptureNormalFrames(renderer, new[] { name })) source.normalFrames[frame.Key] = frame.Value;
+                    yield return null;
+                }
+            }
+        }
+        else
         if (bakeDynamicNormals)
         {
             var body = MeshFinder.FindMeshPrioritizingRoot(customFbx.transform, "Body");
@@ -249,7 +301,10 @@ public static partial class NativeMeshPayloadService
 
         var metrics = new NativeMeshPayloadBuildMetrics();
         if (createDeliveryVariants)
-            return WriteDeliveryVariants(sourceFbxPath, payloadSource, rendererSources, baseData, outputFullPath, metrics, sourcePoseRoot);
+        {
+            yield return WriteDeliveryVariantsCoroutine(sourceFbxPath, payloadSource, rendererSources, encrypt ? baseData : null, outputFullPath, metrics, sourcePoseRoot, completed);
+            yield break;
+        }
 
         using (var payloadSha = MCBHashing.CreateSha256())
         using (var binSha = MCBHashing.CreateSha256())
@@ -260,7 +315,12 @@ public static partial class NativeMeshPayloadService
         {
             using (var buffered = new BufferedStream(payloadHashStream, 256 * 1024))
             {
-                CreateBinaryPayload(sourceFbxPath, payloadSource, rendererSources, buffered, metrics, compressPayload, sourcePoseRoot);
+                if (compressPayload)
+                {
+                    using (var gzip = new GZipStream(buffered, System.IO.Compression.CompressionLevel.Optimal, true))
+                        yield return WriteBinaryPayloadContentsCoroutine(sourceFbxPath, payloadSource, rendererSources, gzip, metrics, sourcePoseRoot);
+                }
+                else yield return WriteBinaryPayloadContentsCoroutine(sourceFbxPath, payloadSource, rendererSources, buffered, metrics, sourcePoseRoot);
                 buffered.Flush();
                 payloadHashStream.CompleteHash();
                 xorStream.Flush();
@@ -285,8 +345,20 @@ public static partial class NativeMeshPayloadService
                 $"[NativeMeshPayload] Built native mesh payload: renderers={result.rendererCount}, compression={result.payloadCompression}, payloadBytes={FormatBytes(result.payloadBytes)}, " +
                 $"blendshapeVertices={FormatBytes(result.blendShapeVertexBytes)}, blendshapeNormals={FormatBytes(result.blendShapeNormalBytes)}, blendshapeTangents={FormatBytes(result.blendShapeTangentBytes)}, " +
                 $"skippedNormals={FormatBytes(result.skippedBlendShapeNormalBytes)}, skippedTangents={FormatBytes(result.skippedBlendShapeTangentBytes)}");
-            return result;
+            completed(result);
         }
+    }
+
+    // XOR payloads need the user's original model as their key; plain payloads must not receive one.
+    private static void RequireOriginalKey(ModelFileData patchFile, string originalFbxPath)
+    {
+        if (IsPlainPayloadTransform(patchFile?.transform))
+        {
+            if (!string.IsNullOrEmpty(originalFbxPath)) throw new InvalidOperationException("A plain advanced mesh payload has no original FBX key.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath))
+            throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
     }
 
     public static NativeMeshPayloadAsset ApplyModelPreview(
@@ -405,10 +477,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Apply failed: native mesh .bin file not found.", binPath);
         }
 
-        if (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath))
-        {
-            throw new FileNotFoundException("Apply failed: original FBX key file not found.", originalFbxPath);
-        }
+        RequireOriginalKey(patchFile, originalFbxPath);
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
@@ -460,10 +529,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Apply failed: native mesh .bin file not found.", binPath);
         }
 
-        if (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath))
-        {
-            throw new FileNotFoundException("Apply failed: original FBX key file not found.", originalFbxPath);
-        }
+        RequireOriginalKey(patchFile, originalFbxPath);
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
@@ -519,7 +585,7 @@ public static partial class NativeMeshPayloadService
             throw new ArgumentNullException(nameof(fileManagerService));
         }
 
-        if (!string.Equals(patchFile.transform, TransformName, StringComparison.OrdinalIgnoreCase))
+        if (!IsAdvancedMeshPatchTransform(patchFile.transform))
         {
             throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
         }
@@ -534,10 +600,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
         }
 
-        if (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath))
-        {
-            throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
-        }
+        RequireOriginalKey(patchFile, originalFbxPath);
 
         string payloadHash = GetPayloadIdentity(patchFile);
         string payloadCompression = ResolvePayloadCompression(patchFile);
@@ -551,17 +614,19 @@ public static partial class NativeMeshPayloadService
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
-        long originalBytes = new FileInfo(originalFbxPath).Length;
         long binBytes = new FileInfo(binPath).Length;
         UnityEngine.Debug.Log(
-            $"[NativeMeshPayloadProfile] Materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} originalFbxKey={FormatByteSize(originalBytes)}");
+            $"[NativeMeshPayloadProfile] Materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} plain={IsPlainPayloadTransform(patchFile.transform)}");
 
-        byte[] baseData = File.ReadAllBytes(originalFbxPath);
-        LogApplyProfile("Read original FBX XOR key", step, total, $"bytes={FormatByteSize(baseData.LongLength)}");
         byte[] binData = File.ReadAllBytes(binPath);
-        LogApplyProfile("Read encrypted advanced mesh .bin", step, total, $"bytes={FormatByteSize(binData.LongLength)}");
-        byte[] payloadBytes = fileManagerService.XorTransform(baseData, binData);
-        LogApplyProfile("XOR decrypted native mesh payload", step, total, $"bytes={FormatByteSize(payloadBytes.LongLength)}");
+        LogApplyProfile("Read advanced mesh .bin", step, total, $"bytes={FormatByteSize(binData.LongLength)}");
+        byte[] payloadBytes = binData;
+        if (!IsPlainPayloadTransform(patchFile.transform))
+        {
+            byte[] baseData = File.ReadAllBytes(originalFbxPath);
+            payloadBytes = fileManagerService.XorTransform(baseData, binData);
+            LogApplyProfile("XOR decrypted native mesh payload", step, total, $"bytes={FormatByteSize(payloadBytes.LongLength)}");
+        }
 
         NativeMeshPayloadAsset payload = WriteBinaryPayloadAsset(payloadAssetPath, payloadBytes, payloadHash, payloadCompression);
         LogApplyProfile("Wrote native mesh payload asset cache", step, total, $"path={payloadAssetPath} renderers={payload.renderers.Count} bones={payload.bones.Count}");
@@ -604,7 +669,7 @@ public static partial class NativeMeshPayloadService
             throw new ArgumentNullException(nameof(patchFile));
         }
 
-        if (!string.Equals(patchFile.transform, TransformName, StringComparison.OrdinalIgnoreCase))
+        if (!IsAdvancedMeshPatchTransform(patchFile.transform))
         {
             throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
         }
@@ -619,10 +684,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
         }
 
-        if (originalFbxDataTask == null && (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath)))
-        {
-            throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
-        }
+        if (originalFbxDataTask == null) RequireOriginalKey(patchFile, originalFbxPath);
 
         string payloadHash = GetPayloadIdentity(patchFile);
         string payloadCompression = ResolvePayloadCompression(patchFile);
@@ -679,7 +741,7 @@ public static partial class NativeMeshPayloadService
             throw new ArgumentNullException(nameof(fileManagerService));
         }
 
-        if (!string.Equals(patchFile.transform, TransformName, StringComparison.OrdinalIgnoreCase))
+        if (!IsAdvancedMeshPatchTransform(patchFile.transform))
         {
             throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
         }
@@ -694,10 +756,7 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
         }
 
-        if (string.IsNullOrWhiteSpace(originalFbxPath) || !File.Exists(originalFbxPath))
-        {
-            throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
-        }
+        RequireOriginalKey(patchFile, originalFbxPath);
 
         string payloadHash = GetPayloadIdentity(patchFile);
         string payloadCompression = ResolvePayloadCompression(patchFile);
@@ -711,10 +770,9 @@ public static partial class NativeMeshPayloadService
             yield break;
         }
 
-        long originalBytes = new FileInfo(originalFbxPath).Length;
         long binBytes = new FileInfo(binPath).Length;
         UnityEngine.Debug.Log(
-            $"[NativeMeshPayloadProfile] Async materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} originalFbxKey={FormatByteSize(originalBytes)}");
+            $"[NativeMeshPayloadProfile] Async materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} plain={IsPlainPayloadTransform(patchFile.transform)}");
 
         string assetName = Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(payloadAssetPath));
         NativeMeshPayloadPreparationStatus status;
@@ -789,9 +847,13 @@ public static partial class NativeMeshPayloadService
             }
 
             string sourcePath = MCBUtils.ToUnityPath(rawPath);
-            var smrPaths = SmrPathService.ResolveSmrPathsForSource(version, sourcePath, target);
+            // A plain version was authored on another original: restore by the avatar's own model, keeping
+            // renderers the user deleted from their avatar out of the restoration.
+            bool plain = VersionProtection.IsPlain(version);
+            var smrPaths = plain ? new List<ModelFileSmrPathData>() : SmrPathService.ResolveSmrPathsForSource(version, sourcePath, target);
             int restored = SmrPathService.RestoreTargetStateFromFbx(avatarRoot, sourcePath, smrPaths,
-                renderer => preserveVersion != null && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), preserveVersion));
+                renderer => preserveVersion != null && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), preserveVersion),
+                skipMissingRenderers: plain);
             restoredTotal += restored;
             if (restored == 0)
             {
@@ -1062,7 +1124,12 @@ public static partial class NativeMeshPayloadService
 
     public static bool IsAdvancedMeshPatchTransform(string transform)
     {
-        return string.Equals(transform, TransformName, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(transform, TransformName, StringComparison.OrdinalIgnoreCase) || IsPlainPayloadTransform(transform);
+    }
+
+    public static bool IsPlainPayloadTransform(string transform)
+    {
+        return string.Equals(transform, PlainTransformName, StringComparison.OrdinalIgnoreCase);
     }
 
     public static GeneratedPayloadStorageInfo GetGeneratedPayloadStorageInfo()
@@ -1087,6 +1154,26 @@ public static partial class NativeMeshPayloadService
     public static GeneratedPayloadStorageInfo DeleteAllGeneratedPayloads()
     {
         return DeleteUnreferencedGeneratedPayloads();
+    }
+
+    /// <summary>Names of the original bones a payload's renderers bind to: an avatar needs them all to use a plain payload.
+    /// Bones only the custom model has are created on apply and are not required.</summary>
+    public static List<string> CollectSkeletonBones(GameObject customFbx, string sourceFbxPath, IEnumerable<ModelFileSmrPathData> smrPaths)
+    {
+        var source = ResolveSourcePoseRoot(sourceFbxPath);
+        if (source == null) throw new InvalidDataException("The original model is needed to list the skeleton of a plain payload: " + sourceFbxPath);
+        var originalNames = new HashSet<string>(source.GetComponentsInChildren<Transform>(true).Where(t => t != source).Select(t => t.name), StringComparer.Ordinal);
+        return ResolvePayloadRendererSources(customFbx, smrPaths)
+            .SelectMany(s => (s.renderer.bones ?? Array.Empty<Transform>()).Append(s.renderer.rootBone))
+            .Where(bone => bone != null && originalNames.Contains(bone.name))
+            .Select(bone => bone.name).Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>Each payload renderer's material slot names as its model declares them.</summary>
+    public static List<RendererSlotNames> CollectRendererSlots(GameObject customFbx, IEnumerable<ModelFileSmrPathData> smrPaths)
+    {
+        return ResolvePayloadRendererSources(customFbx, smrPaths).Select(s => new RendererSlotNames {
+            path = s.entry.avatarPath, slots = MaterialSlotNames.Of(s.renderer).ToList() }).ToList();
     }
 
     private static List<PayloadRendererSource> ResolvePayloadRendererSources(
@@ -1171,6 +1258,17 @@ public static partial class NativeMeshPayloadService
         Stream payloadOutput,
         NativeMeshPayloadBuildMetrics metrics,
         Transform sourcePoseRoot)
+    { MCBWork.Drain(WriteBinaryPayloadContentsCoroutine(sourceFbxPath, customFbx, rendererSources, payloadOutput, metrics, sourcePoseRoot)); }
+
+    // An unbound payload names no source model, so applying it uses the custom skeleton pose it carries.
+    private static System.Collections.IEnumerator WriteBinaryPayloadContentsCoroutine(
+        string sourceFbxPath,
+        GameObject customFbx,
+        List<PayloadRendererSource> rendererSources,
+        Stream payloadOutput,
+        NativeMeshPayloadBuildMetrics metrics,
+        Transform sourcePoseRoot,
+        bool bindSource = true)
     {
         Transform customRoot = customFbx.transform;
         string sourceFbxHash = MCBUtils.CalculateFileHash(Path.GetFullPath(sourceFbxPath));
@@ -1181,8 +1279,8 @@ public static partial class NativeMeshPayloadService
         {
             writer.Write(BinaryPayloadMagic);
             writer.Write(PayloadVersion);
-            writer.Write(StripOriginalSuffix(MCBUtils.ToUnityPath(sourceFbxPath)) ?? "");
-            writer.Write(sourceFbxHash ?? "");
+            writer.Write(bindSource ? StripOriginalSuffix(MCBUtils.ToUnityPath(sourceFbxPath)) ?? "" : "");
+            writer.Write(bindSource ? sourceFbxHash ?? "" : "");
             writer.Write(rendererSources.Count);
 
             foreach (var source in rendererSources)
@@ -1214,7 +1312,7 @@ public static partial class NativeMeshPayloadService
                 WriteVector3(writer, renderer.transform.localScale);
                 writer.Write(rootBonePath ?? "");
                 WriteStringList(writer, bonePaths);
-                WriteMesh(writer, mesh, uniqueMeshName, metrics, source.normalFrames);
+                yield return WriteMeshCoroutine(writer, mesh, uniqueMeshName, metrics, source.normalFrames);
 
                 rendererRecordsForBones.Add(new NativeMeshPayloadRenderer
                 {
@@ -1224,6 +1322,9 @@ public static partial class NativeMeshPayloadService
             }
 
             var payloadBonePaths = CollectPayloadBonePaths(rendererRecordsForBones);
+            var authoringPoseBones = BuildAuthoringPoseDeltas(sourceFbxPath, customRoot, sourcePoseRoot);
+            // Without a source model, unweighted original bones (contacts, physbone roots) need absolute poses too.
+            if (!bindSource) foreach (var poseBone in authoringPoseBones) payloadBonePaths.Add(poseBone.path);
             var bones = customFbx.GetComponentsInChildren<Transform>(true)
                 .Where(transform => transform != null && transform != customRoot)
                 .Where(transform =>
@@ -1250,7 +1351,6 @@ public static partial class NativeMeshPayloadService
                 WriteVector3(writer, bone.localScale);
             }
 
-            var authoringPoseBones = BuildAuthoringPoseDeltas(sourceFbxPath, customRoot, sourcePoseRoot);
             writer.Write(authoringPoseBones.Count);
             foreach (var bone in authoringPoseBones)
             {
@@ -1506,13 +1606,17 @@ public static partial class NativeMeshPayloadService
 
     private static void WriteMesh(BinaryWriter writer, Mesh mesh, string meshName, NativeMeshPayloadBuildMetrics metrics,
         Dictionary<(string shape, int frame), DynamicNormals.NormalFrame> normalFrames = null)
+    { MCBWork.Drain(WriteMeshCoroutine(writer, mesh, meshName, metrics, normalFrames)); }
+
+    private static System.Collections.IEnumerator WriteMeshCoroutine(BinaryWriter writer, Mesh mesh, string meshName, NativeMeshPayloadBuildMetrics metrics,
+        Dictionary<(string shape, int frame), DynamicNormals.NormalFrame> normalFrames = null)
     {
         if (mesh == null)
         {
             throw new InvalidOperationException("Native mesh payload cannot serialize a null mesh.");
         }
 
-        try
+        if (!mesh.isReadable) throw new InvalidOperationException("Enable Read/Write on the custom model: " + mesh.name);
         {
             var vertices = mesh.vertices;
             writer.Write(string.IsNullOrWhiteSpace(meshName) ? mesh.name : meshName);
@@ -1546,6 +1650,7 @@ public static partial class NativeMeshPayloadService
             var deltaVertices = new Vector3[vertexCount];
             var deltaNormals = new Vector3[vertexCount];
             var deltaTangents = new Vector3[vertexCount];
+            yield return null;
             for (int shape = 0; shape < mesh.blendShapeCount; shape++)
             {
                 string shapeName = mesh.GetBlendShapeName(shape) ?? "";
@@ -1575,6 +1680,7 @@ public static partial class NativeMeshPayloadService
                     long normalBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.normals ?? deltaNormals) : 0L;
                     writer.Write(writeNormalTangents);
                     long tangentBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.tangents ?? deltaTangents) : 0L;
+                    yield return null;
                     if (metrics != null)
                     {
                         metrics.blendShapeVertexBytes += vertexBytes;
@@ -1585,12 +1691,6 @@ public static partial class NativeMeshPayloadService
                     }
                 }
             }
-        }
-        catch (UnityException ex)
-        {
-            throw new InvalidOperationException(
-                $"Native mesh payload cannot read mesh '{mesh.name}'. Enable Read/Write on the custom model import settings or resend the edit through Blender Link.",
-                ex);
         }
     }
 
@@ -1681,13 +1781,14 @@ public static partial class NativeMeshPayloadService
         string payloadCompression,
         NativeMeshPayloadPreparationStatus status)
     {
-        byte[] baseData;
+        // A plain payload has no original-model key.
+        byte[] baseData = null;
         if (preloadedOriginalFbxData != null && preloadedOriginalFbxData.Length > 0)
         {
             status.Report(0.12f, "Using preloaded original FBX key...");
             baseData = preloadedOriginalFbxData;
         }
-        else
+        else if (!string.IsNullOrEmpty(originalFbxPath))
         {
             status.Report(0.02f, "Reading original FBX key...");
             baseData = File.ReadAllBytes(originalFbxPath);
@@ -1705,8 +1806,12 @@ public static partial class NativeMeshPayloadService
             binData = File.ReadAllBytes(binPath);
         }
 
-        status.Report(0.24f, "Decrypting advanced mesh payload...");
-        byte[] payloadBytes = XorTransformWithProgress(baseData, binData, status, 0.24f, 0.48f);
+        byte[] payloadBytes = binData;
+        if (baseData != null)
+        {
+            status.Report(0.24f, "Decrypting advanced mesh payload...");
+            payloadBytes = XorTransformWithProgress(baseData, binData, status, 0.24f, 0.48f);
+        }
         status.Report(0.50f, PayloadUsesGZip(payloadCompression) ? "Decompressing advanced mesh payload..." : "Parsing advanced mesh payload...");
         var payload = ReadPreparedPayloadAsset(payloadBytes, assetName, payloadHash, payloadCompression, status, 0.50f, 1f);
         status.Report(1f, "Advanced mesh payload prepared...");
@@ -2627,6 +2732,7 @@ public static partial class NativeMeshPayloadService
         // Reject incomplete associations before assigning any mesh. Positional bone
         // fallback can silently bind a skin weight to the wrong joint after rig edits.
         var records = payload.renderers ?? new List<NativeMeshPayloadRenderer>();
+        EnsurePayloadBones(avatarRoot, payload);
         var targets = new SkinnedMeshRenderer[records.Count];
         for (int i = 0; i < records.Count; i++)
         {
@@ -2721,8 +2827,9 @@ public static partial class NativeMeshPayloadService
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
 
         ApplyPayloadStructuralBoneTransforms(avatarRoot, payload);
+        // Plain payloads name no source model: their absolute custom skeleton is the authoring pose.
         Transform sourceRoot = ResolveSourcePoseRoot(payload.sourceFbxPath);
-        if (sourceRoot == null)
+        if (sourceRoot == null && !string.IsNullOrEmpty(payload.sourceFbxPath))
         {
             MCBLogger.LogWarning($"[NativeMeshPayload] Could not resolve source pose root '{payload.sourceFbxPath}'. Falling back to structural native mesh pose as the authoring base.");
         }
@@ -3086,6 +3193,12 @@ public static partial class NativeMeshPayloadService
         {
             return null;
         }
+
+        // Logic proxies can have the same name. Prefer the uniquely weighted skeleton bone.
+        var weighted = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .SelectMany(renderer => renderer.bones).Where(bone => bone != null && bone.name == name && bone.IsChildOf(avatarRoot))
+            .Distinct().Take(2).ToArray();
+        if (weighted.Length == 1) return weighted[0];
 
         var matches = avatarRoot
             .GetComponentsInChildren<Transform>(true)

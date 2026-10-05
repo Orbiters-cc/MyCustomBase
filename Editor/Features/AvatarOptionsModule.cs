@@ -24,11 +24,9 @@ public partial class AvatarOptionsModule
         customVeinsDrawer.Draw();
 
         EditorGUILayout.Space(15);
-        slidersDrawer.Draw();
-        EditorGUILayout.Space(15);
-        
-        // Then draw BlendshapeDrawer
         blendshapeDrawer.Draw();
+        EditorGUILayout.Space(15);
+        slidersDrawer.Draw();
     }
 
     public void OnPlayModeStateChanged(PlayModeStateChange state)

@@ -93,8 +93,22 @@ public static class OriginalBaseVariantBuilder
     }
     public static void AddToBuild(string folder, CustomBaseVersion metadata, OriginalBaseVersionData[] targets)
     {
+        MCBWork.Drain(AddToBuildCoroutine(folder, metadata, targets));
+    }
+    public static System.Collections.IEnumerator AddToBuildCoroutine(string folder, CustomBaseVersion metadata, OriginalBaseVersionData[] targets)
+    {
         if (targets == null || targets.Length == 0) throw new InvalidOperationException("Select at least one supported original base version.");
-        metadata.originalBaseVersions = targets.Select(target => Build(folder, metadata, target)).ToArray();
+        // Resolve Unity-backed local source mappings on the editor thread, then re-key the bytes on a worker.
+        var paths = metadata.sourceFiles.Concat(targets.SelectMany(t => t.sourceFiles)).GroupBy(f => f.hash)
+            .ToDictionary(g => g.Key, g => OriginalBaseLibrary.Resolve(g.First()));
+        var results = new List<OriginalBaseVersionData>();
+        foreach (var target in targets)
+        {
+            var task = System.Threading.Tasks.Task.Run(() => Build(folder, metadata, target, f => paths[f.hash]));
+            while (!task.IsCompleted) yield return null;
+            results.Add(task.GetAwaiter().GetResult());
+        }
+        metadata.originalBaseVersions = results.ToArray();
     }
     static string PayloadName(string path) => System.Text.RegularExpressions.Regex.Replace(Path.GetFileName(path), "^(original-[a-f0-9]{64}-)+", "");
     static void Write(string folder, string relative, byte[] data)

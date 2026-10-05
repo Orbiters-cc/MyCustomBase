@@ -18,6 +18,7 @@ public class MCBEditor : UnityEditor.Editor
         "Packages/orbiters.mcb/Editor/Styles/mcb-account.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-gallery.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-creator.uss",
+        "Packages/orbiters.mcb/Editor/Styles/mcb-sections.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-version.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-avatar-options.uss"
     };
@@ -417,6 +418,7 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         statusHost.Clear();
+        uiToolkitRoot?.RemoveFromClassList("mcb-has-status");
         statusHost.AddToClassList("mcb-status-host");
 
         if (dependencyInstallerModule != null && dependencyInstallerModule.HasBlockingRequiredDependencies)
@@ -470,6 +472,7 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         statusHost.style.display = hasContent ? DisplayStyle.Flex : DisplayStyle.None;
+        uiToolkitRoot?.EnableInClassList("mcb-has-status", hasContent);
     }
 
     private void RefreshAdjustMaterialUIToolkit()
@@ -591,7 +594,7 @@ public class MCBEditor : UnityEditor.Editor
         foreach (var styleSheetPath in UiToolkitStyleSheets)
         {
             var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(styleSheetPath);
-            if (styleSheet != null)
+            if (styleSheet != null && !root.styleSheets.Contains(styleSheet))
             {
                 root.styleSheets.Add(styleSheet);
             }
@@ -1477,6 +1480,12 @@ public class MCBEditor : UnityEditor.Editor
         {
             return false;
         }
+        // One unencrypted package serves every original: the asset's registered source is not this avatar's model.
+        // Neither is it while a version is applied: the models recorded at that time are.
+        if (selectedAsset.UsesPlainPackages() || (customBaseTarget.appliedCustomBaseAssetId > 0 && customBaseTarget.versionOriginalModels.Count > 0))
+        {
+            return false;
+        }
 
         AvatarPathOverrideService.SyncOverridesForSelectedAsset(
             customBaseTarget,
@@ -1606,16 +1615,9 @@ public class MCBEditor : UnityEditor.Editor
             }
         }
 
-        if (baseFbxFilesProp != null)
+        foreach (string path in AvatarSceneMeshProvenanceService.GetAdditionalDiscoverySources(customBaseTarget, uniquePaths.Count > 0))
         {
-            for (int i = 0; i < baseFbxFilesProp.arraySize; i++)
-            {
-                var fbx = baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-                if (fbx != null)
-                {
-                    TryAddPath(AssetDatabase.GetAssetPath(fbx));
-                }
-            }
+            TryAddPath(path);
         }
 
         cachedDetectedAvatarRootInstanceId = rootInstanceId;

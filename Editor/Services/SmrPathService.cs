@@ -208,21 +208,23 @@ public static class SmrPathService
         Transform avatarRoot,
         string fbxPath,
         IEnumerable<ModelFileSmrPathData> smrPaths,
-        Func<SkinnedMeshRenderer, bool> preserveMesh = null)
+        Func<SkinnedMeshRenderer, bool> preserveMesh = null,
+        bool skipMissingRenderers = false)
     {
         if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
 
         var fbxRoot = GetFbxRoot(MCBUtils.ToUnityPath(fbxPath));
         return fbxRoot == null
             ? 0
-            : RestoreTargetStateFromFbxRoot(avatarRoot, fbxRoot.transform, smrPaths, preserveMesh);
+            : RestoreTargetStateFromFbxRoot(avatarRoot, fbxRoot.transform, smrPaths, preserveMesh, skipMissingRenderers);
     }
 
     internal static int RestoreTargetStateFromFbxRoot(
         Transform avatarRoot,
         Transform fbxRoot,
         IEnumerable<ModelFileSmrPathData> smrPaths,
-        Func<SkinnedMeshRenderer, bool> preserveMesh = null)
+        Func<SkinnedMeshRenderer, bool> preserveMesh = null,
+        bool skipMissingRenderers = false)
     {
         if (avatarRoot == null || fbxRoot == null) return 0;
 
@@ -277,6 +279,7 @@ public static class SmrPathService
 
                 if (targetRenderer == null)
                 {
+                    if (skipMissingRenderers) continue;
                     MCBLogger.LogWarning(
                         $"[SmrPathService] Could not find avatar renderer for source path '{rendererPath}'. No renderer state was changed for this FBX.");
                     return 0;
@@ -312,38 +315,60 @@ public static class SmrPathService
             : RestoreTargetTransformHierarchyFromFbxRoot(avatarRoot, fbxRoot.transform);
     }
 
+    /// <summary>
+    /// Puts the avatar's FBX transforms back in the FBX's hierarchy and pose. Each transform is found under its already
+    /// restored FBX parent, so same-named logic objects (e.g. "mcb logic/Target Bones/Left arm") never stand in for a bone,
+    /// and a bone a custom version moved under another parent (a shoulder under ChestUp) returns to its FBX parent.
+    /// </summary>
     internal static int RestoreTargetTransformHierarchyFromFbxRoot(Transform avatarRoot, Transform fbxRoot)
     {
         if (avatarRoot == null || fbxRoot == null) return 0;
 
+        var resolved = new Dictionary<Transform, Transform> { [fbxRoot] = avatarRoot };
         var plans = new List<TransformRestorePlan>();
         var plannedTargetIds = new HashSet<int>();
+        // Parents come before their children in this order, so every parent is resolved first.
         foreach (var sourceTransform in fbxRoot.GetComponentsInChildren<Transform>(true))
         {
             if (sourceTransform == null || sourceTransform == fbxRoot) continue;
 
             string path = GetRelativeTransformPath(fbxRoot, sourceTransform);
-            var target = FindTransformByRelativePath(avatarRoot, path);
+            var parent = resolved[sourceTransform.parent];
+            var target = UniqueChild(parent, sourceTransform.name) ?? FindTransformByRelativePath(avatarRoot, path);
             if (target == null)
             {
-                target = FindUniqueTransformByName(avatarRoot, sourceTransform.name);
+                // Moved elsewhere: the one transform of that name inside the same top-level FBX branch (the armature).
+                var branch = sourceTransform;
+                while (branch.parent != fbxRoot) branch = branch.parent;
+                var scope = branch == sourceTransform ? avatarRoot : resolved[branch];
+                var matches = scope.GetComponentsInChildren<Transform>(true).Where(t => t.name == sourceTransform.name && t != scope).Take(2).ToArray();
+                target = matches.Length == 1 ? matches[0] : null;
             }
-            if (target == null || !plannedTargetIds.Add(target.GetInstanceID()))
+            if (target == null || !plannedTargetIds.Add(target.GetInstanceID()) || (parent != target.parent && parent.IsChildOf(target)))
             {
                 MCBLogger.LogWarning(
                     $"[SmrPathService] Could not safely restore canonical FBX transform '{path}'. No transform pose was changed.");
                 return 0;
             }
 
+            resolved[sourceTransform] = target;
             plans.Add(new TransformRestorePlan
             {
                 target = target,
-                source = sourceTransform
+                source = sourceTransform,
+                parent = parent
             });
         }
 
         foreach (var plan in plans)
         {
+            if (plan.target.parent != plan.parent)
+            {
+                // A version moved this bone; the original model's hierarchy is the reset state.
+                var instance = PrefabUtility.GetOutermostPrefabInstanceRoot(plan.target.gameObject);
+                if (instance != null) PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.UserAction);
+                Undo.SetTransformParent(plan.target, plan.parent, "Restore FBX Transform Hierarchy");
+            }
             Undo.RecordObject(plan.target, "Restore FBX Transform State");
             plan.target.localPosition = plan.source.localPosition;
             plan.target.localRotation = plan.source.localRotation;
@@ -352,6 +377,19 @@ public static class SmrPathService
         }
 
         return plans.Count;
+    }
+
+    private static Transform UniqueChild(Transform parent, string name)
+    {
+        Transform found = null;
+        for (int i = 0; i < parent.childCount; i++)
+        {
+            var child = parent.GetChild(i);
+            if (child.name != name) continue;
+            if (found != null) return null;
+            found = child;
+        }
+        return found;
     }
 
     public static List<ModelFileSmrPathData> ResolveSmrPathsForSource(
@@ -759,6 +797,7 @@ public static class SmrPathService
     {
         public Transform target;
         public Transform source;
+        public Transform parent;
     }
 
     private static Transform FindUniqueTransformByName(Transform avatarRoot, string transformName)

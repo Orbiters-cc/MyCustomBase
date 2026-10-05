@@ -205,6 +205,7 @@ public partial class VersionManagementModule
         {
             buttonDisabled = !selectionIsValid ||
                              (!isResetSelected && actions.IsVersionCurrentlyApplied(selectedVersion)) ||
+                             IsDiscordRoleBlocked(selectedVersion) ||
                              (isResetSelected && !canReset);
         }
 

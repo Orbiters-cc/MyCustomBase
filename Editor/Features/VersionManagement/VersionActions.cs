@@ -275,6 +275,16 @@ public class VersionActions
     
     private IEnumerator DownloadVersionCoroutine(CustomBaseVersion version, bool applyAfter)
     {
+        if (version.isUnsubmitted || version.localArtifactSourceVersionKey != null)
+        {
+            if (MCBUtils.IsVersionDownloaded(version))
+            {
+                if (applyAfter) yield return ApplyOrResetCoroutine(version, false);
+            }
+            else editor.warningsModule.AddWarning("This local build is incomplete. Rebuild it in the creator form before previewing or applying it.", MessageType.Error, "Local version unavailable");
+            editor.RefreshUiToolkitSections();
+            yield break;
+        }
         MCBPerformance.PauseForeground();
         if (editor.isDownloading) yield break;
         editor.isDownloading = true;
@@ -664,6 +674,7 @@ public class VersionActions
         string fallbackFbxPath = GetCurrentFBXPath();
         foreach (var patchFile in GetAdvancedMeshPatchFiles(version))
         {
+            if (NativeMeshPayloadService.IsPlainPayloadTransform(patchFile.transform)) continue;
             try
             {
                 string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
@@ -709,7 +720,7 @@ public class VersionActions
                 }
 
                 string binPath = ResolveVersionPatchPath(version, patchFile);
-                string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "advanced mesh preparation");
+                string originalFbxPath = ResolvePayloadKeyPath(version, patchFile, targetFbxPath, "advanced mesh preparation");
                 string patchFileName = Path.GetFileName(patchFile.path);
                 Task<byte[]> binDataTask = null;
                 if (!string.IsNullOrWhiteSpace(patchFileName) &&
@@ -722,10 +733,9 @@ public class VersionActions
                 }
 
                 Task<byte[]> originalFbxDataTask = null;
-                string originalAbsolutePath = Path.GetFullPath(originalFbxPath);
-                if (originalFbxPreloadTasks != null)
+                if (originalFbxPath != null && originalFbxPreloadTasks != null)
                 {
-                    originalFbxPreloadTasks.TryGetValue(originalAbsolutePath, out originalFbxDataTask);
+                    originalFbxPreloadTasks.TryGetValue(Path.GetFullPath(originalFbxPath), out originalFbxDataTask);
                 }
 
                 var preload = NativeMeshPayloadService.StartEncryptedPayloadPreparation(
@@ -764,7 +774,7 @@ public class VersionActions
         return version?.versionFiles?
                    .Where(file => file != null &&
                                   string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
-                                  string.Equals(file.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase)) ??
+                                  NativeMeshPayloadService.IsAdvancedMeshPatchTransform(file.transform)) ??
                Enumerable.Empty<ModelFileData>();
     }
 
@@ -1105,9 +1115,9 @@ public class VersionActions
             foreach (var patch in version.versionFiles ?? Array.Empty<ModelFileData>())
             {
                 if (patch == null || !string.Equals(patch.role, "PATCH", StringComparison.OrdinalIgnoreCase) ||
-                    !string.Equals(patch.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase)) continue;
+                    !NativeMeshPayloadService.IsAdvancedMeshPatchTransform(patch.transform)) continue;
                 string targetPath = ResolveTargetFbxPath(version, patch, GetCurrentFBXPath());
-                string originalPath = EnsureOriginalFbxKeyPath(version, patch, targetPath, "native mesh preparation");
+                string originalPath = ResolvePayloadKeyPath(version, patch, targetPath, "native mesh preparation");
                 var prepare = NativeMeshPayloadService.MaterializeEncryptedPayloadAssetCoroutine(
                     version, patch, ResolveVersionPatchPath(version, patch), originalPath, fileManagerService,
                     (progress, label) => ReportApplyProgress(Mathf.Lerp(0.05f, 0.30f, progress), label),
@@ -1148,6 +1158,8 @@ public class VersionActions
         bool preserveBlendshapeValues = editor.customBaseTarget != null && editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch;
         var blendshapeSnapshot = preserveBlendshapeValues ? CaptureBlendshapeState(root) : null;
         var previousVersion = ResolvePersistedAppliedVersion();
+        // The original base has none of the custom base's blendshapes: remember their values for its next install.
+        if (isReset) RememberVersionBlendshapes(root, previousVersion);
         var versionForAssets = isReset ? (previousVersion ?? editor.selectedVersionForAction) : version;
         bool previousUsesAdvancedMesh = NativeMeshPayloadService.VersionUsesAdvancedMesh(previousVersion);
         bool versionUsesAdvancedMesh = NativeMeshPayloadService.VersionUsesAdvancedMesh(versionForAssets);
@@ -1158,6 +1170,24 @@ public class VersionActions
         profile.Mark("Setup target, version state, and blendshape snapshot");
 
         MCBLogger.Log($"[VersionActions] ApplyOrReset start (reset={isReset}, version={(version != null ? version.version : "null")})");
+
+        // Leaving the original state records the avatar's own models; while a version is applied they are what
+        // transitions and the reset restore, whatever the version or the selected asset name as sources.
+        var target = editor.customBaseTarget;
+        if (previousVersion == null && target.appliedCustomBaseAssetId == 0)
+        {
+            if (!isReset)
+            {
+                Undo.RecordObject(target, "Record original models");
+                target.versionOriginalModels = target.baseFbxFiles.Where(model => model != null).ToList();
+            }
+        }
+        else if (target.versionOriginalModels.Count > 0 && !target.baseFbxFiles.SequenceEqual(target.versionOriginalModels))
+        {
+            editor.serializedObject.ApplyModifiedProperties();
+            FileManagerService.SetCreatorSourceFiles(target, target.versionOriginalModels);
+            editor.serializedObject.Update();
+        }
 
         string fbxPath = GetCurrentFBXPath();
         profile.Mark("Resolved current FBX path");
@@ -1173,6 +1203,9 @@ public class VersionActions
         activeTransitionRollback = VersionTransitionRollbackSnapshot.Capture(
             GetTransitionAffectedFbxPaths(transitionVersions, fbxPath), editor.customBaseTarget, editor);
 
+        ModeService.Restore(editor.customBaseTarget);
+        NativeRendererLayoutService.Restore(editor.customBaseTarget);
+        NativeMeshPayloadService.RestoreOriginalBoneParents(editor.customBaseTarget);
         MCBReFitIntegration.SaveVersionFits(editor.customBaseTarget, previousVersion);
         MCBReFitIntegration.RestoreOriginalAssetMeshes(editor.customBaseTarget);
         editor.serializedObject.Update();
@@ -1203,7 +1236,6 @@ public class VersionActions
                 RestoreBackupsForVersion(versionForAssets, fbxPath, !versionUsesAdvancedMesh);
                 if (versionUsesAdvancedMesh)
                 {
-                    ApplyDefaultAvatarToRootForReset(root, versionForAssets);
                     int restoredTransforms = NativeMeshPayloadService.RestoreOriginalAuthoringPoseFromFbx(root, new[] { fbxPath });
                     if (restoredTransforms == 0)
                     {
@@ -1218,6 +1250,9 @@ public class VersionActions
                     {
                         throw new InvalidOperationException("Advanced mesh reset could not safely restore any renderer from the original FBX.");
                     }
+                    NativeMeshPayloadService.RemoveGeneratedBones(editor.customBaseTarget);
+                    // After the skeleton is final: the Animator caches the bones it binds.
+                    ApplyDefaultAvatarToRootForReset(root, versionForAssets);
                 }
 
             }
@@ -1234,10 +1269,15 @@ public class VersionActions
                 if (isAdvancedTransition)
                 {
                     ReportApplyProgress(0.10f, "Restoring original FBX state...");
+                    // Shared meshes the next version reuses may stay, unless it maps renderers by material slot names:
+                    // its layout must start from the original renderers.
+                    bool keepShared = VersionCustomization.Read(version.extraCustomization).rendererLayout.IsEmpty;
                     RestoreOriginalFbxStateForTransition(root, transitionVersions, fbxPath,
-                        previousVersion != null && !previousUsesAdvancedMesh, version);
+                        previousVersion != null && !previousUsesAdvancedMesh, keepShared ? version : null);
+                    NativeMeshPayloadService.RemoveGeneratedBones(editor.customBaseTarget);
                     profile.Mark("Restored original FBX renderer and armature state for advanced mesh transition");
                 }
+                NativeRendererLayoutService.Apply(editor.customBaseTarget, version, GetCurrentFBXPaths());
                 ApplyVersionModelFilePatches(version, fbxPath);
             }
             catch (Exception e)
@@ -1308,6 +1348,8 @@ public class VersionActions
                 if (versionUsesAdvancedMesh)
                 {
                     ReportApplyProgress(0.78f, "Applying default avatar...");
+                    if (NativeMeshPayloadService.RestoreOriginalAuthoringPoseFromFbx(root, new[] { fbxPath }) == 0)
+                        throw new InvalidOperationException("Advanced mesh reset could not safely finalize the canonical FBX armature pose.");
                     ApplyDefaultAvatarToRootForReset(root, versionForAssets);
                 }
                 else
@@ -1319,11 +1361,6 @@ public class VersionActions
                 profile.Mark("Default avatar import/reset wait");
                 if (versionUsesAdvancedMesh)
                 {
-                    int restoredTransforms = NativeMeshPayloadService.RestoreOriginalAuthoringPoseFromFbx(root, new[] { fbxPath });
-                    if (restoredTransforms == 0)
-                    {
-                        throw new InvalidOperationException("Advanced mesh reset could not safely finalize the canonical FBX armature pose.");
-                    }
                     profile.Mark("Restored native mesh reset authoring pose");
                     MCBLogger.Log("[VersionActions] Restored source authoring pose after advanced mesh reset.");
                 }
@@ -1354,7 +1391,8 @@ public class VersionActions
             bool hasCustomVeins = !isReset && ExtraCustomizationUtils.HasFlag(version?.extraCustomization, "customVeins");
             bool hasDynamicNormalBody = !isReset && ExtraCustomizationUtils.HasFlag(version?.extraCustomization, "dynamicNormalBody");
             bool hasDynamicNormalFlexing = !isReset && ExtraCustomizationUtils.HasFlag(version?.extraCustomization, "dynamicNormalFlexing");
-            bool shouldApplyDynamicNormals = (hasDynamicNormalBody || hasDynamicNormalFlexing) && editor.customBaseTarget.useDynamicNormals;
+            var normalSelection = VersionCustomization.Read(version?.extraCustomization).dynamicNormalBlendshapes;
+            bool shouldApplyDynamicNormals = (!isReset && normalSelection.Count > 0 || hasDynamicNormalBody || hasDynamicNormalFlexing) && editor.customBaseTarget.useDynamicNormals;
             
             // Apply or remove dynamic normals based on version feature flags
             // Complete these synchronous mutations inside the version transaction.
@@ -1384,7 +1422,8 @@ public class VersionActions
                     bool applyBody = hasDynamicNormalBody;
                     bool applyFlex = hasDynamicNormalFlexing;
                     MCBLogger.Log("[VersionActions] Applying dynamic normals.");
-                    dynamicNormalsService.Apply(applyBody, applyFlex);
+                    if (normalSelection.Count > 0) dynamicNormalsService.Apply(normalSelection);
+                    else dynamicNormalsService.Apply(applyBody, applyFlex);
                     MCBLogger.Log("[VersionActions] Dynamic normals application completed.");
                     profile.Mark("Applied DynamicNormals and waited for editor update");
                 }
@@ -1395,6 +1434,10 @@ public class VersionActions
             var targetMaterialRenderers = versionUsesAdvancedMesh
                 ? NativeMeshPayloadService.ResolveRenderersForSourcePaths(root, versionForAssets, affectedFbxPaths, editor.customBaseTarget)
                 : materialService.GetSkinnedMeshRenderersForFbxPaths(affectedFbxPaths);
+            // An unencrypted version names no source renderers: its targets are the renderers carrying its meshes.
+            if (targetMaterialRenderers.Count == 0 && versionUsesAdvancedMesh && !isReset)
+                targetMaterialRenderers = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(renderer => renderer.sharedMesh != null
+                    && NativeMeshPayloadService.IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), versionForAssets)).ToList();
             ReportApplyProgress(0.90f, "Resolving materials...");
             profile.Mark($"Resolved material target renderers ({targetMaterialRenderers.Count})");
             
@@ -1409,7 +1452,7 @@ public class VersionActions
                 if (File.Exists(veinsNormalAbsolutePath))
                 {
                     bool veinsApplied = false;
-                    foreach (var renderer in targetMaterialRenderers)
+                    foreach (var renderer in MaterialService.DistinctMaterialRenderers(targetMaterialRenderers))
                     {
                         if (materialService.SetDetailNormalMap(renderer, veinsNormalPath, false))
                         {
@@ -1434,20 +1477,21 @@ public class VersionActions
             else
             {
                 // Remove custom veins when switching to a version without the feature or resetting
-                foreach (var renderer in targetMaterialRenderers)
+                foreach (var renderer in MaterialService.DistinctMaterialRenderers(targetMaterialRenderers))
                 {
                     if (materialService.RemoveDetailNormalMap(renderer, false))
                     {
                         materialStateChanged = true;
                     }
                 }
+                if (materialService.RemoveVersionVeins()) materialStateChanged = true;
                 // Sync the toggle state - set to false when removing veins
                 EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, false);
                 MCBLogger.Log("[VersionActions] Custom veins removed");
             }
             if (materialStateChanged)
             {
-                AssetDatabase.SaveAssets();
+                materialService.SaveTouchedMaterials();
             }
             ReportApplyProgress(0.93f, hasCustomVeins ? "Applied custom veins..." : "Updated material state...");
             profile.Mark(hasCustomVeins ? "Applied custom veins materials" : "Removed custom veins materials");
@@ -1465,7 +1509,12 @@ public class VersionActions
                 ReportApplyProgress(0.95f, "Applying blendshapes and sliders...");
                 if (preserveBlendshapeValues)
                 {
-                    RestoreBlendshapeState(root, blendshapeSnapshot, BuildBlendshapeDefaultLookup(version));
+                    var remembered = RememberedBlendshapes(version);
+                    // Coming from the original base, a same-named original shape must not replace the custom base's value.
+                    if (previousVersion == null)
+                        foreach (var weights in blendshapeSnapshot.Values)
+                            foreach (string name in remembered.Keys) weights.Remove(name);
+                    RestoreBlendshapeState(root, blendshapeSnapshot, BuildBlendshapeDefaultLookup(version, remembered));
                     SyncReFitTransferredBlendshapeWeights(root, version);
                     SyncBlendshapeOverridesFromCurrentWeights(root, version);
                     MCBLogger.Log($"[VersionActions] Restored blendshape values by name (saved renderers: {blendshapeSnapshot.Count}, overrides: {editor.customBaseTarget.customBlendshapeOverrideNames.Count})");
@@ -1546,11 +1595,23 @@ public class VersionActions
 
             if (isReset)
             {
+                // Back on the original base: a later install starts from the version's default modes.
+                int resetAssetId = editor.customBaseTarget.appliedCustomBaseAssetId;
+                editor.customBaseTarget.modeChoices.RemoveAll(choice => choice.assetId == resetAssetId);
                 ClearAppliedVersionState();
             }
             else
             {
-                PersistAppliedVersionState(version);
+                try
+                {
+                    PersistAppliedVersionState(version);
+                    ModeService.Install(editor.customBaseTarget, version);
+                }
+                catch (Exception ex)
+                {
+                    success = false;
+                    MCBLogger.LogError("[VersionActions] Mode setup failed; restoring the previous version. " + ex.Message);
+                }
             }
             ReportApplyProgress(0.98f, "Saving applied version state...");
             profile.Mark("Updated persisted applied-version state");
@@ -1617,7 +1678,7 @@ public class VersionActions
             }
 
             string transform = patchFile.transform;
-            if (string.Equals(transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase))
+            if (NativeMeshPayloadService.IsAdvancedMeshPatchTransform(transform))
             {
                 ReportApplyProgress(0.12f, $"Preparing advanced mesh {i + 1}/{patchFiles.Length}...");
                 ApplyXorBinToUnityAsset(version, patchFile);
@@ -1783,6 +1844,14 @@ public class VersionActions
         return originalFbxPath;
     }
 
+    /// <summary>The original-model key of an XOR payload; null for a plain payload, which has none.</summary>
+    private string ResolvePayloadKeyPath(CustomBaseVersion version, ModelFileData patchFile, string fbxPath, string operation)
+    {
+        return NativeMeshPayloadService.IsPlainPayloadTransform(patchFile?.transform)
+            ? null
+            : EnsureOriginalFbxKeyPath(version, patchFile, fbxPath, operation);
+    }
+
     private void VerifyPatchSourceHash(CustomBaseVersion version, ModelFileData patchFile, string originalFbxPath)
     {
         ModelFileData sourceFile = ResolveSourceFileForPatch(version, patchFile);
@@ -1812,7 +1881,7 @@ public class VersionActions
             throw new FileNotFoundException("Apply failed: target FBX path for native mesh payload could not be resolved.");
         }
 
-        string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "native mesh payload");
+        string originalFbxPath = ResolvePayloadKeyPath(version, patchFile, targetFbxPath, "native mesh payload");
         string binPath = ResolveVersionPatchPath(version, patchFile);
         // Preparation has already materialized the payload cache; assign meshes/pose synchronously.
         NativeMeshPayloadService.ApplyEncryptedPayload(editor.customBaseTarget.transform.root, version, patchFile,
@@ -1866,6 +1935,12 @@ public class VersionActions
 
     private string ResolveTargetFbxPath(CustomBaseVersion version, ModelFileData patchFile, string fallbackFbxPath)
     {
+        // A plain payload is not bound to an original model: it targets the avatar's current model.
+        if (NativeMeshPayloadService.IsPlainPayloadTransform(patchFile?.transform))
+        {
+            return GetCurrentFBXPath();
+        }
+
         var source = version.sourceFiles?.FirstOrDefault(file =>
             file != null &&
             patchFile.sourceModelFileId.HasValue &&
@@ -1934,7 +2009,7 @@ public class VersionActions
         var advancedPatchFiles = version.versionFiles?
             .Where(file => file != null &&
                            string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase) &&
-                           string.Equals(file.transform, ModelFileTransforms.XorBinToUnityAsset, StringComparison.OrdinalIgnoreCase))
+                           NativeMeshPayloadService.IsAdvancedMeshPatchTransform(file.transform))
             .ToArray();
         if (advancedPatchFiles == null || advancedPatchFiles.Length == 0)
         {
@@ -1954,7 +2029,7 @@ public class VersionActions
                 version,
                 patchFile,
                 ResolveVersionPatchPath(version, patchFile),
-                EnsureOriginalFbxKeyPath(version, patchFile, targetFbxPath, "advanced mesh authoring pose"),
+                ResolvePayloadKeyPath(version, patchFile, targetFbxPath, "advanced mesh authoring pose"),
                 fileManagerService);
             NativeMeshPayloadService.ApplyPayloadAuthoringPose(root, payload);
         }
@@ -2035,7 +2110,7 @@ public class VersionActions
                 Hdiff = ModelFileTransforms.IsHdiffFbxReplacementTransform(patchFile.transform),
                 TargetFbxPath = targetFbxPath,
                 BinPath = ResolveVersionPatchPath(version, patchFile),
-                OriginalFbxPath = ResolveOriginalFbxKeyPath(targetFbxPath)
+                OriginalFbxPath = NativeMeshPayloadService.IsPlainPayloadTransform(patchFile.transform) ? null : ResolveOriginalFbxKeyPath(targetFbxPath)
             });
         }
 
@@ -2178,6 +2253,18 @@ public class VersionActions
 
     private void ApplyDefaultAvatarToRootForReset(Transform root, CustomBaseVersion resetFromVersion)
     {
+        // A bundled custom version can support originals with different humanoid rigs.
+        // Restore the actual local source definition, rather than the build's primary original.
+        foreach (string source in GetResetAffectedFbxPaths(resetFromVersion, null))
+        {
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>(source);
+            var originalAnimator = model != null ? model.GetComponent<Animator>() : null;
+            if (originalAnimator != null && originalAnimator.avatar != null)
+            {
+                AvatarDefinitionGenerationService.SetRootAnimatorAvatar(root, originalAnimator.avatar);
+                return;
+            }
+        }
         string defaultAvatarPath = ResolveDefaultAvatarPathForReset(resetFromVersion);
         if (string.IsNullOrWhiteSpace(defaultAvatarPath))
         {
@@ -2225,8 +2312,7 @@ public class VersionActions
             }
         }
 
-        const string packageDefaultAvatarPath = "Packages/orbiters.mcb/creator assets/default avatar.asset";
-        return AssetExists(packageDefaultAvatarPath) ? packageDefaultAvatarPath : null;
+        return null;
     }
 
     private IEnumerable<CustomBaseVersion> GetDefaultAvatarCandidateVersions(CustomBaseVersion resetFromVersion)
@@ -2336,7 +2422,7 @@ public class VersionActions
         }
     }
 
-    private Dictionary<string, float> BuildBlendshapeDefaultLookup(CustomBaseVersion version)
+    private Dictionary<string, float> BuildBlendshapeDefaultLookup(CustomBaseVersion version, Dictionary<string, float> remembered = null)
     {
         var defaults = new Dictionary<string, float>(StringComparer.Ordinal);
         if (version?.customBlendshapes == null) return defaults;
@@ -2344,10 +2430,40 @@ public class VersionActions
         foreach (var entry in version.customBlendshapes)
         {
             if (entry == null || string.IsNullOrEmpty(entry.name)) continue;
-            defaults[entry.name] = ParseBlendshapeDefaultValue(entry.defaultValue);
+            defaults[entry.name] = remembered != null && remembered.TryGetValue(entry.name, out float value)
+                ? value : ParseBlendshapeDefaultValue(entry.defaultValue);
         }
 
         return defaults;
+    }
+
+    /// <summary>Saves the applied version's exposed blendshape values for this asset before the avatar returns to its original base.</summary>
+    private void RememberVersionBlendshapes(Transform root, CustomBaseVersion version)
+    {
+        var owner = editor.customBaseTarget;
+        if (root == null || owner == null || version?.customBlendshapes == null || version.assetId <= 0) return;
+        var renderers = GetTargetBlendshapeRenderers(root).ToList();
+        var memory = new BlendshapeMemory { assetId = version.assetId };
+        foreach (var entry in version.customBlendshapes.Where(e => e != null && !string.IsNullOrEmpty(e.name)))
+        {
+            var renderer = renderers.OrderByDescending(r => r.name == "Body").FirstOrDefault(r => r.sharedMesh.GetBlendShapeIndex(entry.name) >= 0);
+            if (renderer == null) continue;
+            memory.names.Add(entry.name);
+            memory.values.Add(renderer.GetBlendShapeWeight(renderer.sharedMesh.GetBlendShapeIndex(entry.name)));
+        }
+        if (memory.names.Count == 0) return;
+        Undo.RecordObject(owner, "Remember custom base blendshapes");
+        owner.blendshapeMemory.RemoveAll(m => m.assetId == version.assetId);
+        owner.blendshapeMemory.Add(memory);
+        EditorUtility.SetDirty(owner);
+    }
+
+    private Dictionary<string, float> RememberedBlendshapes(CustomBaseVersion version)
+    {
+        var memory = editor.customBaseTarget?.blendshapeMemory.FirstOrDefault(m => version != null && m.assetId == version.assetId);
+        var result = new Dictionary<string, float>(StringComparer.Ordinal);
+        for (int i = 0; memory != null && i < memory.names.Count && i < memory.values.Count; i++) result[memory.names[i]] = memory.values[i];
+        return result;
     }
 
     private void SyncBlendshapeOverridesFromCurrentWeights(Transform root, CustomBaseVersion version)
@@ -2409,7 +2525,7 @@ public class VersionActions
             }
 
             float defaultValue = ParseBlendshapeDefaultValue(entry.defaultValue);
-            float valueToApply = defaultValue;
+            float valueToApply = RememberedBlendshapes(version).TryGetValue(entry.name, out float remembered) ? remembered : defaultValue;
             int overrideIdx = editor.customBaseTarget.customBlendshapeOverrideNames.IndexOf(entry.name);
             if (overrideIdx >= 0 && overrideIdx < editor.customBaseTarget.customBlendshapeOverrideValues.Count)
             {
@@ -2484,8 +2600,6 @@ public class VersionActions
         {
             throw new InvalidOperationException("Advanced mesh transition could not restore the default FBX avatar importer settings.");
         }
-        if (!restoreImporter) ApplyDefaultAvatarToRootForReset(root, versions.LastOrDefault());
-
         string canonicalFbxPath = !string.IsNullOrWhiteSpace(fallbackFbxPath)
             ? MCBUtils.ToUnityPath(fallbackFbxPath)
             : affectedPaths.FirstOrDefault();
@@ -2498,6 +2612,8 @@ public class VersionActions
                     $"Advanced mesh transition could not safely restore the canonical FBX armature pose from '{canonicalFbxPath}'.");
             }
         }
+        // After the skeleton is final: the Animator caches the bones it binds.
+        if (!restoreImporter) ApplyDefaultAvatarToRootForReset(root, versions.LastOrDefault());
 
         int restoredRenderers = 0;
         foreach (var transitionVersion in versions)
@@ -2973,6 +3089,7 @@ public class VersionActions
         editor.currentIsCustom = false;
         SyncAppliedVersionBlendshapeLinkCache(version);
         SyncAppliedVersionAnimationPositionOffsetCache(version);
+        editor.customBaseTarget.appliedCustomization = VersionCustomization.Read(version.extraCustomization);
         EditorUtility.SetDirty(editor.customBaseTarget);
         editor.serializedObject.Update();
     }
@@ -2981,8 +3098,11 @@ public class VersionActions
     {
         if (editor?.customBaseTarget == null) return;
 
+        ModeService.Restore(editor.customBaseTarget);
+        editor.customBaseTarget.appliedCustomization = new VersionCustomization();
         editor.customBaseTarget.appliedCustomBaseVersion = null;
         editor.customBaseTarget.appliedCustomBaseAssetId = 0;
+        editor.customBaseTarget.versionOriginalModels.Clear();
         editor.customBaseTarget.appliedCustomBaseName = "";
         editor.customBaseTarget.appliedCustomBaseVersionString = "";
         editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = "";

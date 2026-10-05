@@ -98,6 +98,8 @@ public sealed class MCBCreatorWindow : EditorWindow
     private void BuildUI()
     {
         rootVisualElement.Clear();
+        var theme = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/orbiters.toolkit/Runtime/EditorServices/theme.uss");
+        if (theme != null && !rootVisualElement.styleSheets.Contains(theme)) rootVisualElement.styleSheets.Add(theme);
         MCBEditor.LoadUiToolkitStyleSheets(rootVisualElement);
         rootVisualElement.AddToClassList("mcb-creator-window");
         var scroll = new ScrollView(ScrollViewMode.Vertical);

@@ -6,6 +6,28 @@ using Newtonsoft.Json.Linq;
 
 public static class ExtraCustomizationUtils
 {
+    public static T GetObject<T>(IEnumerable<object> entries, string key) where T : class
+    {
+        foreach (object entry in entries ?? Enumerable.Empty<object>())
+            if (TryGetObjectValue(entry, key, out object value) && value != null)
+                return (value is JToken token ? token : JToken.FromObject(value)).ToObject<T>();
+        return null;
+    }
+
+    public static void SetObject<T>(List<object> entries, string key, T value) where T : class
+    {
+        if (entries == null) throw new System.ArgumentNullException(nameof(entries));
+        if (string.IsNullOrWhiteSpace(key)) throw new System.ArgumentException("A configuration key is required.", nameof(key));
+        // Retain sibling keys in an entry rather than deleting unrelated configuration.
+        for (int i = entries.Count - 1; i >= 0; i--)
+        {
+            if (!HasObjectKey(entries[i], key)) continue;
+            var obj = entries[i] is JObject existing ? (JObject)existing.DeepClone() : JObject.FromObject(entries[i]);
+            foreach (var property in obj.Properties().Where(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase)).ToArray()) property.Remove();
+            if (obj.Count == 0) entries.RemoveAt(i); else entries[i] = obj;
+        }
+        if (value != null) entries.Add(new JObject { [key] = JToken.FromObject(value) });
+    }
     public const string SuggestRealisticKey = "suggestRealistic";
 
     public static bool HasFlag(IEnumerable<object> entries, string flag)
@@ -168,7 +190,7 @@ public static class ExtraCustomizationUtils
 
         if (entry is IDictionary<string, object> dict)
         {
-            return new Dictionary<string, object>(dict, StringComparer.Ordinal);
+            return JObject.FromObject(dict);
         }
 
         return entry;

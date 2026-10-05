@@ -78,6 +78,7 @@ public class WarningsModule
 
         var icon = AvatarOptionsModule.CreateOptionLabel(GetIconText(warning?.type ?? MessageType.Warning), 14, FontStyle.Bold, Color.white);
         icon.AddToClassList("mcb-avatar-helpbox__icon");
+        icon.style.unityTextAlign = TextAnchor.MiddleCenter;
         box.Add(icon);
 
         var content = new VisualElement();

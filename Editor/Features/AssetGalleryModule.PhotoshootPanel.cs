@@ -74,6 +74,22 @@ public partial class AssetGalleryModule
                               CanEditSelectedAssetMedia(SelectedAsset) &&
                               HasPendingSelectedAssetMediaEdit());
         root.Add(saveButton);
+
+        if (SelectedAsset != null && CanEditSelectedAssetMedia(SelectedAsset))
+        {
+            var asset = SelectedAsset;
+            var access = McbSectionUi.Section(asset.creatorTrusted ? "Protection and access" : "Discord role access", asset.creatorTrusted
+                ? "How this custom base's versions reach users; new versions follow these settings. Changes are saved at once."
+                : "Members holding an ownership role get access to this custom base and receive the destination role. Changes are saved at once.", out var body);
+            body.Add(new AssetProtectionEditor(() => editor.authToken, asset.id, asset.creatorTrusted, asset.protection, null, protection =>
+            {
+                bool layoutChanged = asset.UsesPlainPackages() != !protection.xor;
+                asset.protection = protection;
+                // Supporting new originals only applies to encrypted versions.
+                if (layoutChanged) editor.RefreshUiToolkitSections();
+            }));
+            root.Add(access);
+        }
     }
 
     private void BuildPhotoshootSectionUIToolkit(VisualElement root, bool includeBackButton = false)

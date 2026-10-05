@@ -222,7 +222,8 @@ public static class MCBUtils
     public static string GetVersionDataPath(CustomBaseVersion version)
     {
         if (version == null) return null;
-        return GetVersionDataPath(version.assetId, version.version, version.defaultAviVersion, version.sourceVersionKey);
+        return GetVersionDataPath(version.assetId, version.version, version.defaultAviVersion,
+            version.localArtifactSourceVersionKey ?? version.sourceVersionKey);
     }
 
     public static string GetVersionBinPath(CustomBaseVersion version)

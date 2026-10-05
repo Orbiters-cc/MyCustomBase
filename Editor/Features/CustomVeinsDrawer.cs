@@ -284,12 +284,12 @@ public partial class CustomVeinsDrawer
 
         bool success = false;
         bool anyFailures = false;
-        foreach (var renderer in targetRenderers)
+        foreach (var renderer in MaterialService.DistinctMaterialRenderers(targetRenderers))
         {
-            bool rendererSuccess = materialService.SetDetailNormalMap(renderer, veinsNormalPath);
+            bool rendererSuccess = materialService.SetDetailNormalMap(renderer, veinsNormalPath, false);
             if (rendererSuccess)
             {
-                materialService.SetDetailNormalOpacity(renderer, 1.0f);
+                materialService.SetDetailNormalOpacity(renderer, 1.0f, false);
                 success = true;
             }
             else
@@ -297,6 +297,7 @@ public partial class CustomVeinsDrawer
                 anyFailures = true;
             }
         }
+        materialService.SaveTouchedMaterialsSoon();
 
         if (success)
         {
@@ -321,10 +322,13 @@ public partial class CustomVeinsDrawer
         }
 
         bool success = false;
-        foreach (var renderer in targetRenderers)
+        foreach (var renderer in MaterialService.DistinctMaterialRenderers(targetRenderers))
         {
-            success |= materialService.RemoveDetailNormalMap(renderer);
+            success |= materialService.RemoveDetailNormalMap(renderer, false);
         }
+        // The original base may order its materials differently: any material still carrying version veins.
+        success |= materialService.RemoveVersionVeins();
+        materialService.SaveTouchedMaterialsSoon();
 
         if (success)
         {

@@ -230,7 +230,7 @@ public partial class CreatorModeModule
 
             EditorGUILayout.Space();
             bool hasCustomVeinsPayload = editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null;
-            bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue || editor.includeDynamicNormalsFlexingForCreatorProp.boolValue;
+            bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue || editor.includeDynamicNormalsFlexingForCreatorProp.boolValue || HasTypedCustomization();
             bool hasSuggestRealisticPayload = HasSuggestRealisticPayload();
             bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
                                      editor.avatarLogicPrefabProp.objectReferenceValue != null ||
@@ -732,7 +732,7 @@ public partial class CreatorModeModule
                                  (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null) ||
                                  editor.includeDynamicNormalsBodyForCreatorProp.boolValue ||
                                  editor.includeDynamicNormalsFlexingForCreatorProp.boolValue ||
-                                 HasSuggestRealisticPayload() ||
+                                 HasTypedCustomization() || HasSuggestRealisticPayload() ||
                                  editor.customBlendshapesForCreatorProp.arraySize > 0;
         if (!hasVersionPayload)
         {
@@ -1725,6 +1725,12 @@ public partial class CreatorModeModule
         }
 
         lastParentVersionForVeins = newParent;
+        if (!isRestoringFromVersionState && newParent != null)
+        {
+            editor.serializedObject.ApplyModifiedProperties();
+            editor.customBaseTarget.creatorCustomization = VersionCustomization.Read(newParent.extraCustomization);
+            editor.serializedObject.Update();
+        }
 
         var includeProp = editor.includeCustomVeinsForCreatorProp;
         var textureProp = editor.customVeinsNormalMapProp;
@@ -1924,6 +1930,13 @@ public partial class CreatorModeModule
     /// </summary>
     private VersionArtifact BuildNewVersion()
     {
+        VersionArtifact result = null;
+        MCBWork.Drain(BuildNewVersionCoroutine(value => result = value));
+        return result;
+    }
+
+    public IEnumerator BuildNewVersionCoroutine(Action<VersionArtifact> completed)
+    {
         var logicPrefab = editor.avatarLogicPrefabProp.objectReferenceValue as GameObject;
         bool shouldIncludeCustomVeins = editor.includeCustomVeinsForCreatorProp.boolValue;
         var customVeinsTexture = editor.customVeinsNormalMapProp.objectReferenceValue as Texture2D;
@@ -1976,7 +1989,8 @@ public partial class CreatorModeModule
             })
             .ToArray();
 
-        var fixedByAnimationAssetPaths = CollectAnimationAssetPathsFromFixedBy(customBlendshapeEntries);
+        // Corrective and mode animations ship in the logic package so their GUIDs resolve for users.
+        var fixedByAnimationAssetPaths = CollectAnimationAssetPathsFromFixedBy(customBlendshapeEntries).Concat(ModeAnimationAssetPaths()).Distinct().ToList();
         var selectedAsset = editor.GetSelectedAsset();
         if (selectedAsset == null || selectedAsset.id <= 0)
         {
@@ -2071,6 +2085,14 @@ public partial class CreatorModeModule
                 packageEntry.customFbx);
         }
 
+        var protection = ResolveVersionProtection();
+        if (!protection.xor)
+        {
+            if (packageEntries.Count == 0 || packageEntries.Any(entry => !entry.useAdvancedMeshReplacement))
+                throw new InvalidOperationException("Turn on advanced mesh replacement to publish without XOR protection: only advanced meshes ship as one package for every original.");
+            foreach (var packageEntry in packageEntries) packageEntry.encryptPayload = false;
+        }
+
         // Metadata is constructed after packaging because the entry hashes are filled
         // in while the version folder is populated.
         Func<CustomBaseVersion> metadataFactory = () =>
@@ -2151,7 +2173,7 @@ public partial class CreatorModeModule
                         ? packageEntry.payloadCompression
                         : null,
                     transform = packageEntry.useAdvancedMeshReplacement
-                        ? ModelFileTransforms.XorBinToUnityAsset
+                        ? (packageEntry.encryptPayload ? ModelFileTransforms.XorBinToUnityAsset : NativeMeshPayloadService.PlainTransformName)
                         : (!string.IsNullOrWhiteSpace(packageEntry.patchTransform)
                             ? packageEntry.patchTransform
                             : ModelFileTransforms.XorBinToFbx),
@@ -2175,6 +2197,10 @@ public partial class CreatorModeModule
         }
 
         var extraCustomization = ExtraCustomizationUtils.CloneEntries(selectedParentVersionObject?.extraCustomization);
+        var customization = editor.customBaseTarget.creatorCustomization.Clone();
+        customization.rendererLayout = CompleteRendererLayout(customization.rendererLayout, packageEntries.Where(e => e.rendererSlots != null).SelectMany(e => e.rendererSlots));
+        customization.Validate();
+        customization.Write(extraCustomization);
 
         bool hasAdvancedMeshPayload = packageEntries.Any(entry =>
             entry != null && entry.useAdvancedMeshReplacement && (entry.customFbx != null || !string.IsNullOrWhiteSpace(entry.externalCustomFbxPath)));
@@ -2225,13 +2251,15 @@ public partial class CreatorModeModule
             customAviHash = versionFileEntries.FirstOrDefault()?.hash,
             appliedCustomAviHash = versionFileEntries.FirstOrDefault()?.outputHash,
             sourceFiles = sourceFileEntries.ToArray(),
-            versionFiles = NativeMeshPayloadService.ExpandRendererParts(versionFileEntries, packageEntries)
+            versionFiles = NativeMeshPayloadService.ExpandRendererParts(versionFileEntries, packageEntries),
+            protection = protection,
+            skeleton = protection.xor ? null : RequiredSkeleton(packageEntries.Where(e => e.skeletonBones != null).SelectMany(e => e.skeletonBones), selectedAsset)
         };
 
         return metadata;
         };
 
-        return VersionBuilder.Build(
+        yield return VersionBuilder.BuildCoroutine(completed,
             fileManagerService,
             assetId,
             newVersionString,
@@ -2245,8 +2273,9 @@ public partial class CreatorModeModule
             fixedByAnimationAssetPaths,
             metadataFactory,
             ComputeFormSignature(),
-            OriginalBaseLibrary.Versions(selectedAsset).Where(v => OriginalBaseLibrary.Selection(selectedAsset).Contains(v.key)).ToArray(),
-            OriginalBaseLibrary.ActiveKey(selectedAsset));
+            // One plain package serves every original; XOR versions are re-encrypted for each selected original.
+            protection.xor ? OriginalBaseLibrary.Versions(selectedAsset).Where(v => OriginalBaseLibrary.Selection(selectedAsset).Contains(v.key)).ToArray() : null,
+            protection.xor ? OriginalBaseLibrary.ActiveKey(selectedAsset) : null, editor.customBaseTarget.creatorCustomization);
     }
 
     /// <summary>
@@ -2267,6 +2296,9 @@ public partial class CreatorModeModule
         canonical.Append('|').Append(selectedParentVersionObject?.version);
         canonical.Append('|').Append(GetAssetPathOf(editor.avatarLogicPrefabProp));
         canonical.Append('|').Append(editor.includeCustomVeinsForCreatorProp.boolValue ? GetAssetPathOf(editor.customVeinsNormalMapProp) ?? "veins" : null);
+        canonical.Append('|').Append(editor.customBaseTarget.creatorCustomization.Signature());
+        var protectionSignature = ResolveVersionProtection();
+        canonical.Append('|').Append(protectionSignature.xor).Append(',').Append(protectionSignature.discordRole);
         canonical.Append('|').Append(editor.includeDynamicNormalsBodyForCreatorProp.boolValue);
         canonical.Append('|').Append(editor.includeDynamicNormalsFlexingForCreatorProp.boolValue);
         canonical.Append('|').Append(editor.useAdvancedMeshReplacementForCreatorProp != null && editor.useAdvancedMeshReplacementForCreatorProp.boolValue);
@@ -2456,6 +2488,9 @@ public partial class CreatorModeModule
             }
 
             editor.serializedObject.ApplyModifiedProperties();
+            editor.customBaseTarget.creatorCustomization = VersionCustomization.Read(ver.extraCustomization);
+            EditorUtility.SetDirty(editor.customBaseTarget);
+            editor.serializedObject.Update();
             editor.Repaint();
         }
         finally
@@ -2620,8 +2655,7 @@ public partial class CreatorModeModule
 
         try
         {
-            try { builtArtifact = BuildNewVersion(); }
-            catch (Exception ex) { buildError = ex; }
+            yield return MCBWork.Guard(BuildNewVersionCoroutine(value => builtArtifact = value), ex => buildError = ex);
 
             if (buildError != null)
             {

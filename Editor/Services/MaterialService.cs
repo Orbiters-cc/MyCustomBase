@@ -108,6 +108,100 @@ public class MaterialService
         "_LIGHTINGMODE_SDF"
     };
 
+
+    /// <summary>
+    /// The material as it looks without a version's custom veins, for previews: a temporary copy (destroy it) when
+    /// the material carries veins from an MCB version folder, else the material itself.
+    /// </summary>
+    public static Material WithoutVersionVeins(Material material)
+    {
+        if (material == null) return null;
+        if (!HasVersionVeins(material)) return material;
+        var copy = new Material(material) { name = material.name, hideFlags = HideFlags.HideAndDontSave };
+        var service = new MaterialService(null);
+        service.TrySetDetailNormalTexture(copy, null);
+        service.ApplyDetailNormalOpacity(copy, 0f);
+        service.DisableDetailNormalFeatures(copy);
+        return copy;
+    }
+
+    /// <summary>Whether the material carries custom veins from an MCB version folder.</summary>
+    public static bool HasVersionVeins(Material material) => material != null && DetailNormalTextureProperties.Any(property =>
+        material.HasProperty(property) && material.GetTexture(property) != null
+        && MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(material.GetTexture(property))).StartsWith(MCBUtils.ASSETS_BASE_FOLDER + "/", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Removes a version's custom veins from every material of the avatar's renderers, whichever slot holds it: the
+    /// original base may order its materials differently from the version that added them.
+    /// </summary>
+    public bool RemoveVersionVeins()
+    {
+        bool removed = false;
+        if (avatarRoot == null) return false;
+        var done = new HashSet<Material>();
+        foreach (var smr in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            foreach (var material in smr.sharedMaterials)
+            {
+                if (material == null || !done.Add(material) || !HasVersionVeins(material)) continue;
+                PrepareMaterialEdit(smr, material, "MCB Remove Custom Veins");
+                TrySetDetailNormalTexture(material, null);
+                ApplyDetailNormalOpacity(material, 0f);
+                DisableDetailNormalFeatures(material);
+                FinalizeMaterialEdit(smr, material);
+                removed = true;
+            }
+        return removed;
+    }
+
+    private readonly HashSet<Material> touchedMaterials = new HashSet<Material>();
+
+    /// <summary>
+    /// Writes the materials this service edited, and only those. A material edit needs no reimport, so neither a
+    /// project-wide SaveAssets nor a Refresh: each of those rewrote and reimported every dirty asset and took seconds.
+    /// </summary>
+    public void SaveTouchedMaterials()
+    {
+        foreach (var material in touchedMaterials)
+            if (material != null && EditorUtility.IsPersistent(material)) AssetDatabase.SaveAssetIfDirty(material);
+        touchedMaterials.Clear();
+    }
+
+    private static readonly HashSet<Material> pendingSaves = new HashSet<Material>();
+    private static double pendingSaveTime;
+
+    /// <summary>
+    /// Like <see cref="SaveTouchedMaterials"/>, a moment later: the edit shows at once and large shader materials
+    /// (Poiyomi writes thousands of properties) are written once even when the user toggles several times.
+    /// </summary>
+    public void SaveTouchedMaterialsSoon()
+    {
+        if (touchedMaterials.Count == 0) return;
+        if (pendingSaves.Count == 0) EditorApplication.update += FlushPendingSaves;
+        pendingSaves.UnionWith(touchedMaterials);
+        touchedMaterials.Clear();
+        pendingSaveTime = EditorApplication.timeSinceStartup + 1.5;
+    }
+
+    /// <summary>Writes pending material saves now (also before a build or when the editor quits).</summary>
+    public static void FlushPendingSaves(bool force)
+    {
+        if (pendingSaves.Count == 0 || (!force && EditorApplication.timeSinceStartup < pendingSaveTime)) return;
+        EditorApplication.update -= FlushPendingSaves;
+        foreach (var material in pendingSaves)
+            if (material != null && EditorUtility.IsPersistent(material)) AssetDatabase.SaveAssetIfDirty(material);
+        pendingSaves.Clear();
+    }
+
+    private static void FlushPendingSaves() => FlushPendingSaves(false);
+
+    [InitializeOnLoadMethod]
+    private static void FlushPendingSavesOnQuit() => EditorApplication.quitting += () => FlushPendingSaves(true);
+
+    /// <summary>One renderer per distinct first material: renderers sharing a material are edited once.</summary>
+    public static List<SkinnedMeshRenderer> DistinctMaterialRenderers(IEnumerable<SkinnedMeshRenderer> renderers) =>
+        (renderers ?? Enumerable.Empty<SkinnedMeshRenderer>()).Where(r => r != null && r.sharedMaterial != null)
+            .GroupBy(r => r.sharedMaterial).Select(g => g.First()).ToList();
+
     public MaterialService(Transform avatarRoot)
     {
         this.avatarRoot = avatarRoot; 
@@ -251,8 +345,7 @@ public class MaterialService
         FinalizeMaterialEdit(smr, material);
         if (saveImmediately)
         {
-            AssetDatabase.SaveAssets(); // Force save to disk
-            AssetDatabase.Refresh(); // Force asset refresh
+            SaveTouchedMaterials();
         }
         
         MCBLogger.Log($"[MaterialService] Set detail normal map on {GetRendererLabel(smr)} material to: {filePath}");
@@ -292,8 +385,7 @@ public class MaterialService
         FinalizeMaterialEdit(smr, material);
         if (saveImmediately)
         {
-            AssetDatabase.SaveAssets(); // Force save to disk
-            AssetDatabase.Refresh(); // Force asset refresh
+            SaveTouchedMaterials();
         }
         
         MCBLogger.Log($"[MaterialService] Set detail normal map opacity on {GetRendererLabel(smr)} material to: {opacity}");
@@ -338,8 +430,7 @@ public class MaterialService
         FinalizeMaterialEdit(smr, material);
         if (saveImmediately)
         {
-            AssetDatabase.SaveAssets(); // Force save to disk
-            AssetDatabase.Refresh(); // Force asset refresh
+            SaveTouchedMaterials();
         }
         
         MCBLogger.Log($"[MaterialService] Removed detail normal map from {GetRendererLabel(smr)} material");
@@ -740,6 +831,7 @@ public class MaterialService
             return;
         }
 
+        touchedMaterials.Add(material);
         EditorUtility.SetDirty(material);
         EditorUtility.SetDirty(smr);
 

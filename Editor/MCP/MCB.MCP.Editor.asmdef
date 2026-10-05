@@ -1,0 +1,10 @@
+{
+  "name": "MCB.MCP.Editor",
+  "references": ["mcb", "mcb.Editor", "MCPForUnity.Editor"],
+  "includePlatforms": ["Editor"],
+  "overrideReferences": true,
+  "precompiledReferences": ["Newtonsoft.Json.dll"],
+  "autoReferenced": true,
+  "defineConstraints": ["MCB_MCP"],
+  "versionDefines": [{ "name": "com.coplaydev.unity-mcp", "expression": "9.7.1", "define": "MCB_MCP" }]
+}

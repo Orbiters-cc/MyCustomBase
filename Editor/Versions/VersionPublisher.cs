@@ -25,223 +25,145 @@ public static class VersionPublisher
 {
     public const long MaxVersionPackageUploadBytes = 600L * 1024L * 1024L;
 
-    public static IEnumerator PublishCoroutine(
-        MCBEditor editor,
-        NetworkService networkService,
-        FileManagerService fileManagerService,
-        CustomBaseVersion version,
-        Action onPublished = null)
+    private sealed class Progress
     {
-        if (editor.isSubmitting)
-        {
-            EditorUtility.DisplayDialog("Publish", "Another build or publish operation is already running. Wait for it to finish and try again.", "OK");
-            yield break;
-        }
+        public string message = "Checking built version files…";
+        public float value;
+    }
 
+    public static IEnumerator PublishCoroutine(MCBEditor editor, NetworkService networkService,
+        FileManagerService fileManagerService, CustomBaseVersion version, Action onPublished = null, bool interactive = true)
+    {
+        if (editor.isSubmitting) yield break;
         editor.isSubmitting = true;
         editor.submitError = "";
         editor.warningsModule.Clear();
-        editor.Repaint();
-
-        string zipPath = null;
-        Exception setupError = null;
-        Task<(bool success, string serverResponse, string error, bool cancelled)> uploadTask = null;
+        editor.RefreshUiToolkitSections();
         var cancellation = new CancellationTokenSource();
-        IDisposable operationGuard = null;
-        VersionArtifact artifact = null;
-        string uploadUrl = null;
-        float uploadProgress = 0f;
-        ulong uploadedBytes = 0;
-        long packageBytes = 0;
-        bool userCancelledBeforeUpload = false;
-
+        var progress = new Progress();
+        Task task = null;
+        bool success = false;
         try
         {
-            artifact = VersionRepository.GetArtifact(version);
-            var validation = VersionRepository.Validate(artifact);
-
-            if (!validation.IsPublishable)
+            task = PublishBuiltAsync(editor, networkService, fileManagerService, version, interactive, progress, cancellation.Token);
+            while (!task.IsCompleted)
             {
-                string reason = validation.Describe();
-                string message = $"Version {version.version} cannot be published as built: {reason}\n\n" +
-                                 "Select the version in the creator form and click 'Build Version' to rebuild it, then publish again. " +
-                                 "Publishing never silently repackages from your current project files.";
-                editor.submitError = OperationErrorReporter.Report(editor, new OperationError
-                {
-                    Category = OperationErrorCategory.Integrity,
-                    UserMessage = message,
-                    Detail = reason
-                }, "Publish blocked");
-                EditorUtility.DisplayDialog("Publish blocked", message, "OK");
-                yield break;
+                if (EditorUtility.DisplayCancelableProgressBar("Publishing " + version.version, progress.message, progress.value)) cancellation.Cancel();
+                yield return null;
             }
-
-            if (validation.state == ArtifactState.SourceDrift)
+            try { task.GetAwaiter().GetResult(); success = true; }
+            catch (OperationCanceledException)
             {
-                bool publishAsBuilt = EditorUtility.DisplayDialog(
-                    "Source files changed since build",
-                    $"{validation.Describe()}\n\nThe stored build is still intact and will be uploaded exactly as built. " +
-                    "If you want the latest source changes included, cancel and click 'Build Version' again first.",
-                    "Publish as built",
-                    "Cancel");
-                if (!publishAsBuilt)
-                {
-                    userCancelledBeforeUpload = true;
-                    yield break;
-                }
+                editor.submitError = "Publishing was cancelled. Confirmed source uploads are retained; Upload resumes the remaining sources.";
+                editor.warningsModule.AddWarning(editor.submitError, MessageType.Info, "Publishing cancelled");
             }
-
-            var metadata = artifact.Metadata;
-            var selectedAsset = editor.GetSelectedAsset();
-            if (metadata.assetId <= 0 && selectedAsset != null)
+            catch (Exception ex)
             {
-                metadata.assetId = selectedAsset.id;
+                editor.submitError = OperationErrorReporter.Report(editor,
+                    OperationErrorClassifier.Classify(ex, "Publishing the version"), "Upload failed");
             }
-
-            ValidateVersionMetadataForUpload(metadata);
-
-            operationGuard = VersionRepository.BeginOperation(metadata);
-
-            EditorUtility.DisplayProgressBar("Preparing Upload", "Packaging built version files...", 0.05f);
-            zipPath = fileManagerService.CreateZipFromManifestOutputs(artifact);
-
-            packageBytes = new FileInfo(zipPath).Length;
-            if (packageBytes > MaxVersionPackageUploadBytes)
-            {
-                throw new InvalidOperationException(
-                    $"Version package is too large to upload ({DiskUtils.FormatBytes(packageBytes)}). Maximum allowed size is {DiskUtils.FormatBytes(MaxVersionPackageUploadBytes)}.");
-            }
-
-            MCBLogger.Log($"[VersionPublisher] Version package created: {DiskUtils.FormatBytes(packageBytes)} at {zipPath} ({artifact.Manifest.outputs.Count} manifest outputs).");
-
-            string metadataJson = JsonConvert.SerializeObject(metadata, new StringEnumConverter());
-            MCBLogger.Log($"[VersionPublisher] Uploading version metadata assetId={metadata.assetId}, version={metadata.version}, scope={metadata.scope}, defaultAviVersion={metadata.defaultAviVersion}, changelogLength={(metadata.changelog ?? string.Empty).Length}");
-            uploadUrl = $"{MCBUtils.getApiUrl()}{MCBUtils.NEW_VERSION_ENDPOINT}";
-            uploadTask = networkService.SubmitNewVersionStreamingAsync(
-                uploadUrl,
-                editor.authToken,
-                zipPath,
-                metadataJson,
-                (progress, bytes) => { uploadProgress = progress; uploadedBytes = bytes; },
-                cancellation.Token);
-        }
-        catch (Exception ex)
-        {
-            setupError = ex;
         }
         finally
         {
-            if (uploadTask == null)
-            {
-                // Setup failed or was blocked before the upload started: clean up here,
-                // because the shared cleanup below only runs after the upload loop.
-                if (!string.IsNullOrEmpty(zipPath) && File.Exists(zipPath)) File.Delete(zipPath);
-                operationGuard?.Dispose();
-                cancellation.Dispose();
-                EditorUtility.ClearProgressBar();
-                editor.isSubmitting = false;
-                editor.Repaint();
-            }
-        }
-
-        if (uploadTask == null)
-        {
-            if (setupError != null)
-            {
-                editor.submitError = OperationErrorReporter.Report(
-                    editor,
-                    OperationErrorClassifier.Classify(setupError, "Publishing the version"),
-                    "Upload Failed");
-                editor.RefreshUiToolkitSections();
-            }
-            else if (!userCancelledBeforeUpload)
-            {
-                editor.RefreshUiToolkitSections();
-            }
-
-            yield break;
-        }
-
-        // Upload loop with progress + cancel (outside try/catch: coroutine constraint).
-        while (!uploadTask.IsCompleted)
-        {
-            string stepText = uploadProgress > 0.001f
-                ? $"Sending package... {UnityEngine.Mathf.RoundToInt(uploadProgress * 100f)}% of {DiskUtils.FormatBytes(packageBytes)}"
-                : $"Sending package to server ({DiskUtils.FormatBytes(packageBytes)})...";
-            if (EditorUtility.DisplayCancelableProgressBar("Uploading", stepText, 0.1f + 0.85f * uploadProgress))
-            {
-                cancellation.Cancel();
-            }
-
-            yield return null;
-        }
-
-        bool uploadSucceeded = false;
-        try
-        {
-            var (success, response, uploadError, cancelled) = uploadTask.Result;
-            if (cancelled)
-            {
-                editor.submitError = "The upload was cancelled. The version is still available as an unsubmitted build.";
-                MCBLogger.Log($"[VersionPublisher] Upload cancelled by user ({uploadedBytes} bytes sent), url: {NetworkService.SanitizeUrlForLogs(uploadUrl)}");
-            }
-            else if (!success)
-            {
-                throw new Exception(uploadError);
-            }
-            else
-            {
-                uploadSucceeded = true;
-                VersionRepository.MarkPublished(artifact);
-                // A confirmed upload is authoritative remote availability. Update the
-                // gallery and its shared cache before disk scans and checkpoint work.
-                version.isUnsubmitted = false;
-                editor.serverVersions = editor.serverVersions
-                    .Where(item => !item.Equals(version)).Append(version).ToList();
-                PersistentCache.Instance.CacheVersions(editor.currentBaseFbxHash,
-                    editor.serverVersions, editor.recommendedVersion, editor.authToken, version.assetId, version.sourceVersionKey);
-                editor.LoadUnsubmittedVersions(true);
-                editor.LoadImportedVersions(true);
-                editor.RefreshUiToolkitSections();
-                onPublished?.Invoke();
-                new VersionActions(editor, networkService, fileManagerService).StartVersionFetch();
-            }
-        }
-        catch (Exception ex)
-        {
-            editor.submitError = OperationErrorReporter.Report(
-                editor,
-                OperationErrorClassifier.Classify(ex, "Publishing the version"),
-                "Upload Failed");
-            MCBLogger.LogError($"[VersionPublisher] Upload failed: {ex}, url: {NetworkService.SanitizeUrlForLogs(uploadUrl)}");
-        }
-        finally
-        {
+            cancellation.Cancel();
             cancellation.Dispose();
             EditorUtility.ClearProgressBar();
-            if (!string.IsNullOrEmpty(zipPath) && File.Exists(zipPath)) File.Delete(zipPath);
-            operationGuard?.Dispose();
             editor.isSubmitting = false;
+            editor.RefreshUiToolkitSections();
             editor.Repaint();
         }
+        if (!success) yield break;
+        onPublished?.Invoke();
+        new VersionActions(editor, networkService, fileManagerService).StartVersionFetch();
+        bool checkpoint = UnitGitReleasePublisher.TryPublishReleaseCheckpoint(version, editor.GetSelectedAsset()?.name, out string checkpointMessage);
+        if (interactive) EditorUtility.DisplayDialog("Publish successful", "Version " + version.version + " and all its source variants have been uploaded." +
+            (checkpoint ? "\n\nA local release checkpoint was created." : ""), "OK");
+    }
 
-        if (uploadSucceeded)
+    private static async Task PublishBuiltAsync(MCBEditor editor, NetworkService network,
+        FileManagerService files, CustomBaseVersion shown, bool interactive, Progress progress, CancellationToken cancellation)
+    {
+        var artifact = VersionRepository.GetArtifact(shown);
+        var parts = VersionPublishPlan.Create(artifact);
+        ValidateVersionMetadataForUpload(artifact.Metadata);
+        using (VersionRepository.BeginOperationOnFolder(artifact.FolderUnityPath))
         {
-            // Post-publish steps. Failures here are reported but never fail the publish.
-            bool checkpointCreated = UnitGitReleasePublisher.TryPublishReleaseCheckpoint(
-                version,
-                editor.GetSelectedAsset()?.name,
-                out string checkpointMessage);
+            var validation = await Task.Run(() => VersionRepository.Validate(artifact, cancellation), cancellation);
+            if (!validation.IsPublishable) throw new InvalidDataException(validation.Describe() + " Rebuild this version in the creator form.");
+            cancellation.ThrowIfCancellationRequested();
+            if (interactive && validation.state == ArtifactState.SourceDrift && !EditorUtility.DisplayDialog("Source files changed since build",
+                validation.Describe() + "\n\nThe stored build is intact. Publish it as built, or cancel to rebuild with your current source files.", "Publish as built", "Cancel"))
+                throw new OperationCanceledException();
 
-            string checkpointInfo = checkpointCreated
-                ? "\n\nA Unit Git release checkpoint commit was created."
-                : (string.IsNullOrWhiteSpace(checkpointMessage)
-                    ? string.Empty
-                    : "\n\nThe upload succeeded, but Unit Git could not create its local release checkpoint. See the Console for details.");
-            EditorUtility.DisplayDialog("Publish Successful", $"Custom base version {version.version} has been uploaded.{checkpointInfo}", "OK");
+            progress.message = "Checking completed source uploads…";
+            var remote = await network.FetchVersionsAsync(OriginalBaseSupportService.Url(shown.assetId, "/versions") + "?allSourceVersions=1", editor.authToken);
+            if (!remote.success) throw new IOException(remote.error);
+            var existing = remote.response.versions.FirstOrDefault(v => v.version == shown.version);
+            var completed = new System.Collections.Generic.HashSet<string>();
+            if (existing != null)
+            {
+                if (parts.Length == 1 && artifact.Metadata.originalBaseVersions == null)
+                    throw new InvalidOperationException("This version already exists. Choose a new version number.");
+                ValidateResume(artifact.Metadata, existing);
+                foreach (var source in existing.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>()) completed.Add(source.key);
+            }
+            bool created = existing != null;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var part = parts[i];
+                if (completed.Contains(part.Metadata.sourceVersionKey)) continue;
+                string label = part.Metadata.originalBaseVersions?.FirstOrDefault()?.label ?? shown.version;
+                string prefix = (i + 1) + "/" + parts.Length + " · " + label;
+                progress.message = "Preparing " + prefix;
+                string zip = null;
+                try
+                {
+                    zip = await Task.Run(() => files.CreateZipFromManifestOutputs(part, cancellation,
+                        p => progress.value = (i + p * .35f) / parts.Length), cancellation);
+                    long bytes = new FileInfo(zip).Length;
+                    if (bytes > MaxVersionPackageUploadBytes) throw new InvalidOperationException("Version package is too large to upload (" + DiskUtils.FormatBytes(bytes) + "). Maximum allowed size is 600 MB.");
+                    cancellation.ThrowIfCancellationRequested();
+                    string url = created
+                        ? OriginalBaseSupportService.Url(shown.assetId, "/versions/" + Uri.EscapeDataString(shown.version) + "/source-support")
+                        : MCBUtils.getApiUrl() + MCBUtils.NEW_VERSION_ENDPOINT;
+                    object metadata = created ? (object)new { originalBaseVersions = part.Metadata.originalBaseVersions } : part.Metadata;
+                    progress.message = "Uploading " + prefix + " (" + DiskUtils.FormatBytes(bytes) + ")";
+                    var response = await network.SubmitNewVersionStreamingAsync(url, editor.authToken, zip,
+                        JsonConvert.SerializeObject(metadata, new StringEnumConverter()),
+                        (p, sent) => progress.value = (i + .35f + .65f * p) / parts.Length, cancellation);
+                    if (response.cancelled) throw new OperationCanceledException();
+                    if (!response.success) throw new IOException(response.error + " Confirmed source uploads are retained; retry to resume.");
+                    created = true;
+                }
+                finally { if (zip != null && File.Exists(zip)) File.Delete(zip); }
+            }
+            VersionRepository.MarkPublished(artifact);
+            shown.isUnsubmitted = false;
+            editor.LoadUnsubmittedVersions(true);
+            editor.LoadImportedVersions(true);
+            AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
         }
+    }
 
-        editor.RefreshUiToolkitSections();
+    internal static void ValidateResume(CustomBaseVersion local, CustomBaseVersion remote)
+    {
+        bool Same(object a, object b) => Newtonsoft.Json.Linq.JToken.DeepEquals(
+            Newtonsoft.Json.Linq.JToken.FromObject(a ?? new object()), Newtonsoft.Json.Linq.JToken.FromObject(b ?? new object()));
+        if (remote.defaultAviVersion != local.defaultAviVersion || remote.title != local.title || remote.scope != local.scope ||
+            remote.changelog != local.changelog || !Same(remote.extraCustomization, local.extraCustomization) ||
+            !Same(remote.customBlendshapes, local.customBlendshapes) || !Same(remote.dependencies, local.dependencies))
+            throw new InvalidOperationException("This version number already contains different settings. Choose a new version number.");
+        var originals = local.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>();
+        foreach (var source in remote.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>())
+        {
+            var match = originals.FirstOrDefault(v => v.key == source.key);
+            if (match == null || !(match.versionFiles ?? Array.Empty<ModelFileData>()).Select(f => f.path + ":" + f.hash).OrderBy(f => f)
+                .SequenceEqual((source.versionFiles ?? Array.Empty<ModelFileData>()).Select(f => f.path + ":" + f.hash).OrderBy(f => f)))
+                throw new InvalidOperationException("This version number already contains different built files. Choose a new version number.");
+        }
+        if (remote.originalBaseVersions == null || remote.originalBaseVersions.Length == 0)
+            throw new InvalidOperationException("The existing version cannot be verified against this local build. Choose a new version number.");
     }
 
     public static void ValidateVersionMetadataForUpload(CustomBaseVersion metadata)

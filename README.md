@@ -1,5 +1,16 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.11.0 — 2026-10-05
+
+- Protection belongs to the custom base asset: trusted creators can verify a Discord role and publish one unencrypted package for every original base, with Discord role access managed from Create custom base and the asset's Edit panel. Requires the matching Orbiters backend.
+- Modes replace genres: pick-one and combinable categories with blendshape, object and animation rules, a new Modes card for users, and choices remembered per asset (cleared when returning to the original base).
+- Material slots follow their names across original layouts, with hidden original pieces, fallback materials and a folded summary in the creator form.
+- Fix stretched necks and heads after a version moved bones: Avatar assignment and rebinds keep the version's skeleton pose.
+- Reset and version switches restore the original FBX hierarchy and pose, ignore same-named logic objects, and keep the avatar's own original model.
+- Custom veins apply to and are removed from every material instantly; custom base blendshape values are remembered across a reset.
+- Differences viewer: realistic distances when a version splits meshes, original materials in their slot order without version veins.
+- ReFit no longer lists meshes the applied version adds; Blendshapes appear above Sliders; the base row names the original base.
+
 ## 1.10.4 — 2026-10-03
 
 - Generate and reuse the native custom base humanoid definition for preview, Play Mode and avatar upload, preventing repeated armature corrections.

@@ -84,7 +84,8 @@ public class AsyncVersionService
             if (!string.IsNullOrEmpty(cachedBaseHash))
             {
                 var cachedEntryFast = cache.GetCachedVersions(cachedBaseHash, authToken, assetId, sourceVersionKey);
-                if (cachedEntryFast != null && HasRequiredAssetIds(cachedEntryFast.serverVersions) && MatchesOriginal(cachedEntryFast.serverVersions, sourceVersionKey))
+                // An empty list is never final: a version just published, or access just granted, must appear.
+                if (cachedEntryFast != null && cachedEntryFast.serverVersions?.Count > 0 && HasRequiredAssetIds(cachedEntryFast.serverVersions) && MatchesOriginal(cachedEntryFast.serverVersions, sourceVersionKey))
                 {
                     MCBLogger.Log($"[AsyncVersionService] Fast cache hit, returning versions without UI task for hash: {cachedBaseHash}");
                     taskManager.ExecuteOnMainThread(() =>
@@ -119,7 +120,7 @@ public class AsyncVersionService
                 taskManager.UpdateTaskProgress(taskId, 0.3f, "Checking version cache...");
                 
                 var cachedEntry = cache.GetCachedVersions(baseFbxHash, authToken, assetId, sourceVersionKey);
-                if (cachedEntry != null && HasRequiredAssetIds(cachedEntry.serverVersions) && MatchesOriginal(cachedEntry.serverVersions, sourceVersionKey))
+                if (cachedEntry != null && cachedEntry.serverVersions?.Count > 0 && HasRequiredAssetIds(cachedEntry.serverVersions) && MatchesOriginal(cachedEntry.serverVersions, sourceVersionKey))
                 {
                     MCBLogger.Log($"[AsyncVersionService] Using cached versions for hash: {baseFbxHash}");
                     taskManager.CompleteTask(taskId);

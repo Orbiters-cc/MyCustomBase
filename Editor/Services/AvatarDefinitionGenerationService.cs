@@ -290,13 +290,41 @@ public static partial class AvatarDefinitionGenerationService
 
         if (animator.avatar == avatar)
         {
+            // Same definition, but the skeleton may have changed since the Animator bound it.
+            AssignAvatarKeepingPose(animator, avatar);
             return false;
         }
 
         Undo.RecordObject(animator, "Set Root Animator Avatar");
-        animator.avatar = avatar;
+        AssignAvatarKeepingPose(animator, avatar);
         EditorUtility.SetDirty(animator);
         return true;
+    }
+
+    /// <summary>
+    /// An Animator caches each bone's default pose and parent when it first binds. Assigning an Avatar (or any later
+    /// rebind) writes that cache back: a version's reparented or moved bones (e.g. a Neck moved under ChestUp) return to
+    /// the original FBX pose and stretch the mesh. Clearing the Avatar drops the cache; the caller's pose is kept exactly.
+    /// </summary>
+    public static void AssignAvatarKeepingPose(Animator animator, Avatar avatar)
+    {
+        var transforms = animator.GetComponentsInChildren<Transform>(true);
+        var pose = transforms.Select(t => (t.localPosition, t.localRotation, t.localScale)).ToArray();
+        void Restore()
+        {
+            for (int i = 0; i < transforms.Length; i++)
+            {
+                var t = transforms[i];
+                if (t == null || (t.localPosition == pose[i].localPosition && t.localRotation == pose[i].localRotation && t.localScale == pose[i].localScale)) continue;
+                t.localPosition = pose[i].localPosition;
+                t.localRotation = pose[i].localRotation;
+                t.localScale = pose[i].localScale;
+            }
+        }
+        animator.avatar = null;
+        Restore();
+        animator.avatar = avatar;
+        Restore();
     }
 
     public static void RefreshSkinnedMeshRenderers(Transform avatarRoot)
@@ -818,7 +846,7 @@ public static partial class AvatarDefinitionGenerationService
         }
     }
 
-    private static Avatar SaveAvatarCopy(Avatar embeddedAvatar, string outputPath)
+    internal static Avatar SaveAvatarCopy(Avatar embeddedAvatar, string outputPath)
     {
         if (embeddedAvatar == null)
         {

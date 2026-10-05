@@ -7,6 +7,38 @@ using UnityEngine;
 
 public static class AvatarSceneMeshProvenanceService
 {
+    public static IEnumerable<string> GetAdditionalDiscoverySources(MyCustomBase owner, bool hasMeshSources)
+    {
+        if (owner == null) yield break;
+        if (owner.specifyCustomBaseFbx)
+        {
+            foreach (var model in owner.baseFbxFiles)
+                if (model != null) yield return AssetDatabase.GetAssetPath(model);
+            yield break;
+        }
+        // Applied native meshes no longer reference their FBX. Use the models recorded when the version was applied,
+        // else the applied version's source bindings, never the accumulated auto-detection list from another avatar.
+        if (owner.appliedCustomBaseAssetId > 0 && owner.versionOriginalModels.Count > 0)
+        {
+            foreach (var model in owner.versionOriginalModels)
+                if (model != null) yield return AssetDatabase.GetAssetPath(model);
+            yield break;
+        }
+        var sources = owner.appliedCustomBaseVersion?.sourceFiles;
+        if (owner.appliedCustomBaseAssetId > 0 && sources != null && sources.Length > 0)
+        {
+            foreach (var source in sources)
+                yield return AvatarPathOverrideService.ResolveLocalTargetPath(owner, source, false);
+            yield break;
+        }
+        if (!hasMeshSources)
+        {
+            var animator = AvatarPaths.Root(owner).GetComponent<Animator>();
+            string path = animator != null ? AssetDatabase.GetAssetPath(animator.avatar) : null;
+            if (!string.IsNullOrEmpty(path) && path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)) yield return path;
+        }
+    }
+
     public sealed class ReplacedRenderer
     {
         public string rendererPath;
