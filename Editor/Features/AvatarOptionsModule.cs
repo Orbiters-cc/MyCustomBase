@@ -18,17 +18,6 @@ public partial class AvatarOptionsModule
         refitDrawer = new ReFitDrawer(editor);
     }
 
-    public void Draw()
-    {
-        // Draw CustomVeinsDrawer first
-        customVeinsDrawer.Draw();
-
-        EditorGUILayout.Space(15);
-        blendshapeDrawer.Draw();
-        EditorGUILayout.Space(15);
-        slidersDrawer.Draw();
-    }
-
     public void OnPlayModeStateChanged(PlayModeStateChange state)
     {
         slidersDrawer.OnPlayModeStateChanged(state);

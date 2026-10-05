@@ -15,7 +15,7 @@ relations: orbiters.mcb.original-base-versions, orbiters.tools.mcb-operating-con
 # Configure MCB Version Customization
 
 **Create MCB Version** groups version settings in cards: supported original bases,
-material slots, dynamic normals, modes and twisting bones. Each card summarizes its
+material slots, dynamic normals, modes, twisting bones and physic. Each card summarizes its
 state and expands only when you edit it. Settings are saved with the built version.
 Protection and Discord role access belong to the custom base asset.
 
@@ -174,6 +174,31 @@ bone adds a skinned bone, an up helper and a VRC aim constraint.
 Bone paths are matched first. Originals that reparent a named joint resolve it
 through one unique skinned bone of that name; ambiguous matches fail.
 
+A version may move bones to another parent, as Ultirex puts each ankle under a
+`TopFut` bone. The avatar's own animations of those bones keep working: the upload
+and play copy's controllers follow the moved bones.
+
+## Physic
+
+Bones whose name contains `physic` (any case) are secondary-motion chains: muscles or
+soft parts that react to the avatar's movement, such as `Left triceps physic` or
+`Left ass physic base` with its `Left ass physic tip`. Every bone of a chain needs the
+word, its tip included. Select **Support physic** to let users of the version turn
+them on; the card lists the chains found in the custom models.
+
+Users switch **Physic** in the version options; it is off by default. When on, the
+build adds PhysBones to the chains. Chains that share a parent bone share one
+PhysBone rooted at that parent, which stays still. These PhysBones are always enabled
+and depend on no synced parameter, so every player in the world simulates them. When
+off, the build removes the chains' bones and moves their weights to the nearest
+remaining parent, so the avatar carries no extra bones. A bone that another component
+uses, such as a contact, a constraint or a PhysBone of the logic, is kept.
+
+The **Avatar budget** card in the version options shows the cost of each choice
+against VRChat's PC limits, with the custom base's share apart from the avatar's.
+Players who hide Very Poor avatars see none of an avatar's PhysBones, colliders and
+contacts: keep PhysBones and contacts within 32 each for the motion to reach them.
+
 ## Reuse an existing store asset
 
 A custom base version belongs to an Orbiters asset. If a listing already exists
@@ -203,7 +228,7 @@ requests and responses never contain a token.
 | `inspect` | Scene target IDs, local version identities and draft/registration schemas. |
 | `create_base` | Register a new custom base, or set `data.existingAssetId` to link original support to an owned listing. |
 | `import_fbx` | Import an FBX into a new `Assets/` path; differing existing content is rejected. |
-| `configure` | Save a typed draft: asset, source/custom models, logic prefab, version metadata, exposed shapes, customization and `customVeins` (a texture path). |
+| `configure` | Save a typed draft: asset, source/custom models, logic prefab, version metadata, exposed shapes, customization (`physic` included), `customVeins` (a texture path) and `suggestRealistic` (renderer paths). |
 | `build` | Build the saved draft into a local artifact; returns its identity, protection and required skeleton size. |
 | `apply` / `reset` | Apply the exact local version identity to the target avatar, or reset it. |
 | `set_mode` | Turn an installed mode on (`enabled`, default true) or off by stable ID; a **Pick one** category switches by turning another mode on. |
@@ -227,8 +252,8 @@ before `confirm_publish`.
 Typed `extraCustomization` entries are `modes` (`categories` with `exclusive`;
 `options` with `category`, `default`, `blendshapes`, `gameObjects` and `animations`
 as clip GUIDs), `twistBones`,
-`dynamicNormalBlendshapes` and `rendererLayout` (`renderers` with slot names per
-submesh, `hide`, `fallbacks` with material GUIDs). Unknown sibling entries survive
+`dynamicNormalBlendshapes`, `rendererLayout` (`renderers` with slot names per
+submesh, `hide`, `fallbacks` with material GUIDs) and the `physic` flag. Unknown sibling entries survive
 serialization. Assets carry `protection`; version metadata records the `protection` it was built with and, for unencrypted versions,
 `skeleton` (required bone names); the server lists `discordRoleGranted` and
 `discordRoles` for the signed-in member, skips the original-model hash check for

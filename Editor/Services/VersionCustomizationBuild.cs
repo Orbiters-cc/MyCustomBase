@@ -23,6 +23,8 @@ public static class VersionCustomizationBuild
     {
         public readonly List<Property> Properties = new List<Property>();
         public readonly List<TwistBoneService.Target> Twists = new List<TwistBoneService.Target>();
+        // Versions with physic: true adds PhysBones to the chains, false strips them. Null without physic.
+        public bool? Physic;
         public bool Applied;
     }
     private static readonly ConditionalWeakTable<GameObject, Plan> Plans = new ConditionalWeakTable<GameObject, Plan>();
@@ -57,9 +59,32 @@ public static class VersionCustomizationBuild
             }
         }
         foreach (var twist in config.twistBones) plan.Twists.Add(TwistBoneService.Resolve(avatar.transform, twist));
+        if (config.physic) plan.Physic = owner.physicEnabled;
         Plans.Remove(avatar); Plans.Add(avatar, plan);
-        // Own every authored controller graph too, including avatars that do not use VRCFury.
-        if (plan.Properties.Count > 0) AttachmentAnimationBuild.Prepare(avatar);
+        var moved = MovedBones(owner, avatar.transform);
+        // Own every authored controller graph too, including avatars that do not use VRCFury. Stripping physic keeps
+        // its meshes in that build data.
+        if (plan.Properties.Count > 0 || plan.Physic == false || moved.Count > 0)
+        {
+            var build = AttachmentAnimationBuild.Prepare(avatar);
+            // The version reparented these bones; the avatar's own animations still use their former paths.
+            build.Moved(moved);
+        }
+    }
+
+    /// <summary>Bones the applied version moved to another parent, with the path they had on the original avatar.</summary>
+    internal static List<(Transform target, string formerPath)> MovedBones(MyCustomBase owner, Transform root)
+    {
+        var original = new Dictionary<Transform, Transform>();
+        foreach (var record in owner.nativeMeshOriginalParents)
+            if (record?.target != null && record.parent != null && record.target.IsChildOf(root)) original[record.target] = record.parent;
+        string Former(Transform t, int depth)
+        {
+            if (depth > 256) throw new InvalidOperationException("The recorded original skeleton has a parent cycle at " + t.name + ".");
+            var parent = original.TryGetValue(t, out var recorded) ? recorded : t.parent;
+            return parent == null || parent == root ? t.name : Former(parent, depth + 1) + "/" + t.name;
+        }
+        return original.Keys.Select(t => (t, Former(t, 0))).Where(m => m.Item2 != AnimationUtility.CalculateTransformPath(m.t, root)).ToList();
     }
 
     public static void Apply(GameObject avatar)
@@ -99,6 +124,9 @@ public static class VersionCustomizationBuild
             controller.AddLayer(new AnimatorControllerLayer { name = "MCB Modes", stateMachine = machine, defaultWeight = 1, blendingMode = AnimatorLayerBlendingMode.Override });
         }
         foreach (var twist in plan.Twists) TwistBoneService.Generate(avatar, twist);
+        // After armature links: clothing merged onto the chains is rebound with the body.
+        if (plan.Physic == true) PhysicService.AddPhysBones(avatar);
+        else if (plan.Physic == false) PhysicService.Strip(avatar, AttachmentAnimationBuild.Prepare(avatar).Keep);
         plan.Applied = true;
     }
 }

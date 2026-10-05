@@ -15,7 +15,7 @@ public partial class CreatorModeModule
     private bool materialSlotsExpanded;
     private VersionCustomization Customization => editor.customBaseTarget.creatorCustomization;
     private bool HasTypedCustomization() => Customization.modes.options.Count > 0 || Customization.twistBones.Count > 0
-        || Customization.dynamicNormalBlendshapes.Count > 0 || !Customization.rendererLayout.IsEmpty;
+        || Customization.dynamicNormalBlendshapes.Count > 0 || !Customization.rendererLayout.IsEmpty || Customization.physic;
 
     public void ConfigureVersionMetadata(string version, string title, string changelog, Scope scope, CustomBaseVersion parent = null)
     {

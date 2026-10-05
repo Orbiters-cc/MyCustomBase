@@ -14,7 +14,7 @@
   "excludePlatforms": [],
   "allowUnsafeCode": false,
   "overrideReferences": true,
-  "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll"],
+  "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll", "VRC.Dynamics.dll", "VRC.SDK3.Dynamics.PhysBone.dll"],
   "autoReferenced": true,
   "defineConstraints": [],
   "versionDefines": [],

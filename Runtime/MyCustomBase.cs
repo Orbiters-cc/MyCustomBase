@@ -172,6 +172,8 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public List<GameObject> versionOriginalModels = new List<GameObject>();
     [HideInInspector] public List<ModeChoice> modeChoices = new List<ModeChoice>();
     [HideInInspector] public List<BlendshapeMemory> blendshapeMemory = new List<BlendshapeMemory>();
+    // Physic of versions that support it (secondary-motion PhysBones). Off: the build strips those bones instead.
+    [HideInInspector] public bool physicEnabled;
     [HideInInspector] public List<ModeOriginalObject> modeOriginalObjects = new List<ModeOriginalObject>();
     [HideInInspector] public List<ModeOriginalShape> modeOriginalShapes = new List<ModeOriginalShape>();
     [HideInInspector] public List<ModeOriginalProperty> modeOriginalProperties = new List<ModeOriginalProperty>();

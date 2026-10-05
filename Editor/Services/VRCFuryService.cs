@@ -22,15 +22,6 @@ public class VRCFuryService
     private System.Type _stateType;
     private System.Type _blendShapeActionType;
 
-    public struct ParameterUsage
-    {
-        public int currentSyncedBits;
-        public int totalBeforeCompression;
-        public int usedByAvatar;
-        public int usedBySliders;
-        public string compressionStatus;
-    }
-
     public static string GetSliderGlobalParamName(string sliderName)
     {
         if (string.IsNullOrWhiteSpace(sliderName))
@@ -269,28 +260,13 @@ public class VRCFuryService
         _vrcFuryType.GetField("content").SetValue(vrcf, feature);
     }
 
-    public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot, int selectedCustomBaseSlidersCount)
-    {
-        var usage = Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Estimate(avatarRoot,
-            new Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Options
-            {
-                IsReservedSliderHost = gameObject => gameObject.name == SLIDERS_GAMEOBJECT_NAME,
-                PlannedSliders = selectedCustomBaseSlidersCount
-            });
-        return new ParameterUsage
+    /// <summary>Estimates with the given number of sliders in place of the current sliders object's.</summary>
+    public static Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Options SliderParameterOptions(int plannedSliders) =>
+        new Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Options
         {
-            currentSyncedBits = usage.DescriptorBits,
-            totalBeforeCompression = usage.TotalBeforeCompression,
-            usedByAvatar = usage.WithoutAdded,
-            usedBySliders = usage.Added,
-            compressionStatus = usage.CompressionStatus
+            IsReservedSliderHost = gameObject => gameObject.name == SLIDERS_GAMEOBJECT_NAME,
+            PlannedSliders = plannedSliders
         };
-    }
-
-    public ParameterUsage GetAvatarParameterUsage(GameObject avatarRoot)
-    {
-        return GetAvatarParameterUsage(avatarRoot, 0);
-    }
 
     /// <summary>
     /// A VRCFury Full Controller on <paramref name="host"/> that merges <paramref name="controller"/> into the FX layer. Its

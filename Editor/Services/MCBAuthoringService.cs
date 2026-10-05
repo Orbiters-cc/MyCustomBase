@@ -26,6 +26,8 @@ public static class MCBAuthoringService
         public bool advancedMesh = true;
         // Normal map for the veins detail layer (an asset path), or null.
         public string customVeins;
+        // Renderer paths whose materials MCB suggests switching to Realistic lighting.
+        public List<string> suggestRealistic = new List<string>();
     }
     public sealed class Registration
     {
@@ -91,6 +93,7 @@ public static class MCBAuthoringService
         owner.customBlendshapesForCreator = draft.blendshapes;
         owner.useAdvancedMeshReplacementForCreator = draft.advancedMesh;
         owner.includeCustomVeinsForCreator = veins != null; owner.customVeinsNormalMap = veins;
+        owner.includeSuggestRealisticForCreator = draft.suggestRealistic.Count > 0; owner.suggestRealisticMeshPathsForCreator = draft.suggestRealistic.ToList();
         owner.includeDynamicNormalsBodyForCreator = owner.includeDynamicNormalsFlexingForCreator = false;
         owner.creatorAuthoringDraftJson = JsonConvert.SerializeObject(draft);
         EditorUtility.SetDirty(owner); session.Editor.serializedObject.Update();
@@ -118,6 +121,7 @@ public static class MCBAuthoringService
         owner.customBlendshapesForCreator = draft.blendshapes;
         var veins = string.IsNullOrWhiteSpace(draft.customVeins) ? null : AssetDatabase.LoadAssetAtPath<Texture2D>(draft.customVeins);
         owner.includeCustomVeinsForCreator = veins != null; owner.customVeinsNormalMap = veins;
+        owner.includeSuggestRealisticForCreator = draft.suggestRealistic.Count > 0; owner.suggestRealisticMeshPathsForCreator = draft.suggestRealistic.ToList();
         editor.serializedObject.Update();
         editor.creatorModule.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
         editor.isSubmitting = true;

@@ -41,6 +41,23 @@
 .mcb-modes__tiles { flex-direction: row; flex-wrap: wrap; margin-right: -8px; }
 .mcb-modes__error { color: #ff8f93; font-size: 11px; white-space: normal; margin-top: 4px; }
 
+/* Physic: the modes header with a switch, and what the build does in each state. */
+.mcb-physic__switch { align-self: center; margin-left: 10px; }
+.mcb-physic__stats { flex-direction: row; flex-wrap: wrap; margin-right: -8px; }
+.mcb-physic__stat {
+    flex-direction: row; align-items: center; height: 28px; margin: 0 8px 0 0; padding: 0 12px 0 10px; border-radius: 14px;
+    background-color: #2a2b30; border-width: 1px; border-color: rgba(255, 255, 255, 0.05);
+    transition-property: background-color, border-color; transition-duration: 0.16s;
+}
+.mcb-physic__stat .orb-icon { width: 14px; height: 14px; margin-right: 7px; --icon-color: #6f6f76; }
+.mcb-physic__stat-label { color: #8f8f96; font-size: 11px; -unity-font-style: bold; margin: 0; padding: 0; }
+.mcb-physic__stat--active { background-color: rgba(0, 218, 109, 0.12); border-color: rgba(0, 218, 109, 0.45); }
+.mcb-physic__stat--active .orb-icon { --icon-color: #3cf29a; }
+.mcb-physic__stat--active .mcb-physic__stat-label { color: #f2fff8; }
+.mcb-physic .mcb-modes__badge { transition-property: background-color, border-color; transition-duration: 0.16s; }
+.mcb-physic--on .mcb-modes__badge { background-color: #00DA6D; border-color: #00DA6D; }
+.mcb-physic--on .mcb-modes__badge .orb-icon { --icon-color: #0b0b0b; }
+
 .mcb-mode-tile {
     flex-direction: row; align-items: center; flex-grow: 1; flex-basis: 150px; min-width: 130px; max-width: 260px; height: 48px;
     margin: 0 8px 8px 0; padding: 0 12px 0 8px; border-radius: 14px;
@@ -346,11 +363,6 @@
     width: 32px;
     min-width: 32px;
     align-self: center;
-}
-
-.mcb-avatar-graph {
-    margin-top: 8px;
-    margin-bottom: 12px;
 }
 
 

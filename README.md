@@ -1,5 +1,15 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.0 — 2026-10-05
+
+- Physic: creators name a version's secondary-motion bones with "physic" and turn on Support physic in the version form. Users switch Physic on in the version options (off by default). On, the build gives the chains always-on PhysBones, one per parent bone, that every player simulates; off, the build removes those bones and moves their weights to the parent.
+- Avatar budget card, shared with My Avatar: parameters, bones, PhysBones and contacts against VRChat's PC limits, with the custom base's share including what its build adds or removes. It replaces the parameter graph of the Sliders card.
+- The avatar's own animations keep working on bones a version moves to another parent: the build copy's controllers follow the moved bones.
+- Authoring drafts can set the realistic material suggestion.
+- Fix hidden MCB editors left by interrupted operations raising errors after every script reload.
+- About credits Prefabulous Universal (MIT), which the twisting bones are adapted from.
+- Requires Orbiters Toolkit 0.3.13.
+
 ## 1.11.1 — 2026-10-05
 
 - The version timeline, gallery cards, safe archive extraction, package hashing, content trust prompts and uploads now come from Orbiters Toolkit 0.3.12, shared with My Avatar's asset gallery. No change in behaviour intended.
@@ -28,8 +38,8 @@ MCB editor UI is transitioning to Unity UI Toolkit with the shared styled surfac
 ## About and third-party notices
 
 **About** in the bottom toolbar (next to Advanced Options and Blendshape Links) shows MCB's version and license and the
-third-party software it ships with (HDiffPatch with libdivsufsort, CocoTools, YUCP Dev Tools, Zstandard, zlib, bzip2,
-the LZMA SDK and LZ4), each with its license. The texts live in `Editor/Plugins/Hdiff/THIRD_PARTY_NOTICES.md`.
+third-party software it ships with (HDiffPatch with libdivsufsort, CocoTools, YUCP Dev Tools, Prefabulous Universal,
+Zstandard, zlib, bzip2, the LZMA SDK and LZ4), each with its license. The texts live in `Editor/Plugins/Hdiff/THIRD_PARTY_NOTICES.md`.
 
 ## See a version's differences
 

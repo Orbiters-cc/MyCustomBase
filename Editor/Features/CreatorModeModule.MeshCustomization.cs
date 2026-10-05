@@ -7,17 +7,21 @@ using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
 
-// Version settings edited on the custom meshes: dynamic normals and twisting bones.
+// Version settings edited on the custom meshes: dynamic normals, twisting bones and physic.
 public partial class CreatorModeModule
 {
     private bool normalsExpanded;
 
-    private IEnumerable<(string path, SkinnedMeshRenderer renderer)> CustomizationRenderers()
+    private GameObject[] CustomizationModels()
     {
         var sources = editor.customBaseTarget.modelFileBuildEntries.Where(e => e.customFbx != null).Select(e => e.customFbx)
             .Concat(new[] { editor.customBaseTarget.customFbxForCreator }).Where(g => g != null).Distinct().ToArray();
-        if (sources.Length == 0) sources = new[] { AvatarPaths.Root(editor.customBaseTarget).gameObject };
-        return sources.SelectMany(g => g.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+        return sources.Length > 0 ? sources : new[] { AvatarPaths.Root(editor.customBaseTarget).gameObject };
+    }
+
+    private IEnumerable<(string path, SkinnedMeshRenderer renderer)> CustomizationRenderers()
+    {
+        return CustomizationModels().SelectMany(g => g.GetComponentsInChildren<SkinnedMeshRenderer>(true)
             .Where(r => r.sharedMesh != null).Select(r => (AnimationUtility.CalculateTransformPath(r.transform, g.transform), r)))
             .GroupBy(r => r.Item1).Select(g => g.First());
     }
@@ -84,6 +88,40 @@ public partial class CreatorModeModule
         chips.style.flexWrap = Wrap.Wrap;
         foreach (var twist in twists)
             chips.Add(McbSectionUi.Chip(twist.bone.Split('/').Last() + "  →  " + twist.aim.Split('/').Last(), accent: true, tooltip: twist.bone));
+        body.Add(chips);
+        root.Add(section);
+    }
+
+    // ---- Physic -----------------------------------------------------------------------------------------------
+
+    // Chains are named, not configured: any bone of the custom models whose name contains "physic".
+    private void BuildPhysicSection(VisualElement root)
+    {
+        bool on = Customization.physic;
+        var chains = CustomizationModels().SelectMany(m => PhysicService.Chains(m.transform)).ToList();
+        var groups = CustomizationModels().Sum(m => PhysicService.Groups(m.transform).Count);
+        int bones = CustomizationModels().Sum(m => PhysicService.Bones(m.transform).Count);
+        string caption = !on
+            ? "Let users add secondary motion. Bones with \"physic\" in their name get PhysBones when users turn physic on, and are removed from the build when they leave it off."
+            : chains.Count == 0 ? "No bone of the custom models has \"physic\" in its name yet."
+            : $"{chains.Count} chain(s) · {bones} bone(s) · {groups} PhysBone(s) when users turn it on. Off by default: the build removes these bones.";
+        var pill = McbSectionUi.Pill(on ? "Supported" : "Support physic", () => ChangeCustomization(() => Customization.physic = !Customization.physic, true), on ? "accent" : null);
+        pill.tooltip = on ? "Stop supporting physic in this version" : "Users of this version can turn on PhysBones for the physic bones";
+        var section = McbSectionUi.Section("Physic", caption, out var body, pill);
+        if (!on) { section.Remove(body); root.Add(section); return; }
+        if (chains.Count == 0)
+        {
+            body.Add(McbSectionUi.Note("Rename the secondary-motion bones of the custom model, e.g. \"Left triceps physic\". Every bone of a chain needs the word, its tip included.", "warning"));
+            root.Add(section);
+            return;
+        }
+        var chips = McbSectionUi.Row("mcb-chips");
+        chips.style.flexWrap = Wrap.Wrap;
+        foreach (var chain in chains)
+        {
+            int count = chain.GetComponentsInChildren<Transform>(true).Count(PhysicService.IsPhysic);
+            chips.Add(McbSectionUi.Chip(chain.name + (count > 1 ? " · " + count : ""), accent: true, tooltip: chain.parent.name + " / " + chain.name));
+        }
         body.Add(chips);
         root.Add(section);
     }

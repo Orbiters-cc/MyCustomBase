@@ -173,6 +173,7 @@ public partial class CreatorModeModule
         BuildNormalsSection(content);
         BuildModesSection(content);
         BuildTwistSection(content);
+        BuildPhysicSection(content);
         BuildXMusclesSectionUIToolkit(content);
         BuildSuggestRealisticSectionUIToolkit(content);
         BuildBlendshapeEditorUIToolkit(content);

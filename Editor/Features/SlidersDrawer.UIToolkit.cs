@@ -29,9 +29,6 @@ public partial class SlidersDrawer
             ? editor.customBaseTarget.customSlidersState
             : true;
 
-        UpdateGraph(selectedIndices.Count);
-        var usage = VRCFuryService.Instance.GetAvatarParameterUsage(avatarRoot, selectedIndices.Count);
-
         var card = AvatarOptionsModule.CreateOptionCard("mcb-avatar-sliders");
         var layout = new VisualElement();
         layout.AddToClassList("mcb-avatar-sliders__layout");
@@ -69,14 +66,8 @@ public partial class SlidersDrawer
         titleRow.Add(activeToggle);
         content.Add(titleRow);
 
-        content.Add(BuildGraphUIToolkit());
+        // Their parameter cost shows in the avatar budget card.
         content.Add(BuildSliderChipGroupUIToolkit());
-
-        var compressionStatus = AvatarOptionsModule.CreateOptionLabel(
-            "Estimate before compression. " + usage.compressionStatus, 11, FontStyle.Normal, new Color(0.6f, 0.6f, 0.6f));
-        compressionStatus.style.whiteSpace = WhiteSpace.Normal;
-        compressionStatus.tooltip = "Change compression behavior from VRCFury's global settings. Final usage is determined during build.";
-        content.Add(compressionStatus);
 
         toolkitPendingApplyLabel = AvatarOptionsModule.CreateOptionLabel(string.Empty, 11, FontStyle.Normal, new Color(0.55f, 0.55f, 0.55f));
         toolkitPendingApplyLabel.AddToClassList("mcb-avatar-sliders__pending");
@@ -166,7 +157,6 @@ public partial class SlidersDrawer
 
             HashSet<int> initialSelection = GetInitialSelection(entries);
             selectedIndices = initialSelection;
-            UpdateGraph(initialSelection.Count);
 
             suppressSelectionCallback = true;
             selectableChipGroup.SetSelection(initialSelection);
@@ -230,13 +220,9 @@ public partial class SlidersDrawer
         return toolkitSliderIcon;
     }
 
-    private VisualElement BuildGraphUIToolkit()
-    {
-        var graph = new Orbiters.Toolkit.Editor.BudgetBar();
-        graph.AddToClassList("mcb-avatar-graph");
-        graph.SetSegments(graphData.Select(element => new Orbiters.Toolkit.Editor.BudgetBar.Segment(element.label, element.number, element.color)));
-        return graph;
-    }
+    /// <summary>Parameter options for budgets: the sliders the user selected replace those the sliders object has now.</summary>
+    internal Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Options ParameterOptions() =>
+        GetSliderEntries().Count == 0 ? null : VRCFuryService.SliderParameterOptions(selectedIndices.Count);
 
     private VisualElement BuildSliderChipGroupUIToolkit()
     {

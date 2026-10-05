@@ -135,7 +135,13 @@ public class MCBEditor : UnityEditor.Editor
     
     private void OnEnable()
     {
-        customBaseTarget = (MyCustomBase)target;
+        customBaseTarget = target as MyCustomBase;
+        if (customBaseTarget == null)
+        {
+            // A hidden editor whose component is gone (an operation cut short by a script reload) has nothing to show.
+            EditorApplication.delayCall += () => { if (this != null) DestroyImmediate(this); };
+            return;
+        }
         EnsureSerializedDefaults();
         serializedObject = new SerializedObject(customBaseTarget);
         fetchAttempted = false;

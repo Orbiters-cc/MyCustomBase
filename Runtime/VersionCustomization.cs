@@ -12,17 +12,21 @@ public sealed class VersionCustomization
     public const string TwistBonesKey = "twistBones";
     public const string NormalsKey = "dynamicNormalBlendshapes";
     public const string LayoutKey = "rendererLayout";
+    public const string PhysicKey = "physic";
     public ModeConfiguration modes = new ModeConfiguration();
     public List<TwistBoneConfiguration> twistBones = new List<TwistBoneConfiguration>();
     public List<MeshBlendshapeSelection> dynamicNormalBlendshapes = new List<MeshBlendshapeSelection>();
     public RendererLayoutConfiguration rendererLayout = new RendererLayoutConfiguration();
+    // Bones named with "physic" are secondary-motion chains: users choose between PhysBones on them and stripping them.
+    public bool physic;
 
     public static VersionCustomization Read(IEnumerable<object> entries) => new VersionCustomization
     {
         modes = ExtraCustomizationUtils.GetObject<ModeConfiguration>(entries, ModesKey) ?? new ModeConfiguration(),
         twistBones = ExtraCustomizationUtils.GetObject<List<TwistBoneConfiguration>>(entries, TwistBonesKey) ?? new List<TwistBoneConfiguration>(),
         dynamicNormalBlendshapes = ExtraCustomizationUtils.GetObject<List<MeshBlendshapeSelection>>(entries, NormalsKey) ?? new List<MeshBlendshapeSelection>(),
-        rendererLayout = ExtraCustomizationUtils.GetObject<RendererLayoutConfiguration>(entries, LayoutKey) ?? new RendererLayoutConfiguration()
+        rendererLayout = ExtraCustomizationUtils.GetObject<RendererLayoutConfiguration>(entries, LayoutKey) ?? new RendererLayoutConfiguration(),
+        physic = ExtraCustomizationUtils.HasFlag(entries, PhysicKey)
     };
 
     public void Write(List<object> entries)
@@ -31,6 +35,7 @@ public sealed class VersionCustomization
         ExtraCustomizationUtils.SetObject(entries, TwistBonesKey, twistBones?.Count > 0 ? twistBones : null);
         ExtraCustomizationUtils.SetObject(entries, NormalsKey, dynamicNormalBlendshapes?.Count > 0 ? dynamicNormalBlendshapes : null);
         ExtraCustomizationUtils.SetObject(entries, LayoutKey, rendererLayout != null && !rendererLayout.IsEmpty ? rendererLayout : null);
+        ExtraCustomizationUtils.SetFlag(entries, PhysicKey, physic);
     }
 
     public VersionCustomization Clone() => JsonConvert.DeserializeObject<VersionCustomization>(JsonConvert.SerializeObject(this));

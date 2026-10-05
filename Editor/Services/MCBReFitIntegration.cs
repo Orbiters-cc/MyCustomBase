@@ -180,7 +180,25 @@ public static partial class MCBReFitIntegration
             // Its gallery thumbnail when MCB saved one, else Unity's preview of the base model.
             Thumbnail = () => (target != null ? AvatarAssetDiscoveryService.GetSavedThumbnail(target.appliedCustomBaseAssetId) : null)
                               ?? (fbx != null ? AssetPreview.GetAssetPreview(fbx) : null),
+            Footprint = () => target != null ? Footprint(target) : null,
         };
+    }
+
+    /// <summary>What the applied version adds to the avatar: its logic and sliders, the bones it created and what its build changes.</summary>
+    public static CustomBaseFootprint Footprint(MyCustomBase target)
+    {
+        var root = Root(target);
+        var footprint = new CustomBaseFootprint();
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+            if (string.Equals(t.name, "mcb logic", StringComparison.OrdinalIgnoreCase) || (t.parent == root && t.name == VRCFuryService.SLIDERS_GAMEOBJECT_NAME))
+                footprint.Objects.Add(t.gameObject);
+        foreach (var bone in target.nativeMeshGeneratedBones)
+            if (bone != null) footprint.Bones.Add(bone.transform);
+        var physic = PhysicService.Plan(target);
+        footprint.BuildPhysBones = physic.physBones;
+        footprint.BuildPhysBoneTransforms = physic.transforms;
+        footprint.BuildRemovedBones = physic.removedBones;
+        return footprint;
     }
 
     /// <summary>A version was applied or reset: the other tools check the avatar's clothing again.</summary>
