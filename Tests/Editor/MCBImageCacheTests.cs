@@ -62,9 +62,9 @@ public class MCBImageCacheTests
         {
             MCBUtils.isDevEnvironment = true;
             Assert.That(MCBUtils.ResolveImageUrl("https://dev.api.orbiters.cc/files/serve/9?format=webp&v=2"),
-                Is.EqualTo("http://localhost:4100/files/serve/9?format=png&v=2"));
+                Is.EqualTo("http://127.0.0.1:4100/files/serve/9?format=png&v=2"));
             Assert.That(MCBUtils.ResolveImageUrl("/files/serve/9?v=2"),
-                Is.EqualTo("http://localhost:4100/files/serve/9?v=2&format=png"));
+                Is.EqualTo("http://127.0.0.1:4100/files/serve/9?v=2&format=png"));
             const string cdn = "https://dev.files.orbiters.cc/public/files/60/png";
             Assert.That(MCBUtils.ResolveImageUrl(cdn), Is.EqualTo(cdn));
             const string discord = "https://cdn.discordapp.com/avatars/example/image.png?size=128";

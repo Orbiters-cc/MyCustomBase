@@ -440,7 +440,7 @@ public partial class AssetGalleryModule
     private static VisualElement CreateCardShell()
     {
         var card = new VisualElement();
-        card.AddToClassList("mcb-card");
+        card.AddToClassList("orb-card");
         card.pickingMode = PickingMode.Position;
         return card;
     }

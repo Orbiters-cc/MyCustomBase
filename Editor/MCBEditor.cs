@@ -17,6 +17,7 @@ public class MCBEditor : UnityEditor.Editor
     {
         "Packages/orbiters.mcb/Editor/Styles/mcb-account.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-gallery.uss",
+        "Packages/orbiters.toolkit/Editor/UI/gallery-card.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-creator.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-sections.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-version.uss",

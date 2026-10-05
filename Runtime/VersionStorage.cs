@@ -3,52 +3,17 @@ using System;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
+using Orbiters.Toolkit.Storage;
 
-/// <summary>Shared containment, complete-cache validation and transactional directory replacement.</summary>
+/// <summary>Containment, complete-cache validation and transactional directory replacement of version folders.</summary>
 public static class VersionStorage
 {
-    private static readonly StringComparison PathComparison = Path.DirectorySeparatorChar == '\\'
-        ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-    public static void ValidateLabel(string value, string parameter)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value != value.Trim() || value.EndsWith(".", StringComparison.Ordinal) ||
-            value.Any(c => char.IsControl(c) || "<>:\"/\\|?*".IndexOf(c) >= 0))
-            throw new ArgumentException("Version labels must be plain names without path separators or reserved filename characters.", parameter);
-    }
+    // Containment rules are Orbiters Toolkit's (SafePaths), shared with My Avatar's gallery downloads.
+    public static void ValidateLabel(string value, string parameter) => SafePaths.ValidateLabel(value, parameter);
 
-    public static string ContainedPath(string root, string relative)
-    {
-        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative) || relative.Contains(":"))
-            throw new InvalidDataException("A relative path inside the version folder is required.");
-        foreach (string segment in relative.Replace('\\', '/').Split('/'))
-        {
-            try { ValidateLabel(segment, nameof(relative)); }
-            catch (ArgumentException ex) { throw new InvalidDataException("The version path contains an invalid segment.", ex); }
-            string device = segment.Split('.')[0].ToUpperInvariant();
-            if (device == "CON" || device == "PRN" || device == "AUX" || device == "NUL" ||
-                (device.Length == 4 && (device.StartsWith("COM", StringComparison.Ordinal) || device.StartsWith("LPT", StringComparison.Ordinal)) && device[3] >= '1' && device[3] <= '9'))
-                throw new InvalidDataException("Version paths cannot use reserved device names.");
-        }
-        string fullRoot = Path.GetFullPath(root).TrimEnd('/', '\\');
-        string full = Path.GetFullPath(Path.Combine(fullRoot, relative.Replace('\\', '/')));
-        if (!full.StartsWith(fullRoot + Path.DirectorySeparatorChar, PathComparison))
-            throw new InvalidDataException("The version path resolves outside its storage folder.");
-        RejectLinks(fullRoot, full);
-        return full;
-    }
+    public static string ContainedPath(string root, string relative) => SafePaths.ContainedPath(root, relative);
 
-    public static void RejectLinks(string root, string path)
-    {
-        string fullRoot = Path.GetFullPath(root).TrimEnd('/', '\\');
-        for (string current = Path.GetFullPath(path); current != null; current = Path.GetDirectoryName(current))
-        {
-            if ((Directory.Exists(current) || File.Exists(current)) &&
-                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("Version storage cannot traverse symbolic links or junctions.");
-            if (string.Equals(current.TrimEnd('/', '\\'), fullRoot, PathComparison)) return;
-        }
-        throw new InvalidDataException("The version path resolves outside its storage folder.");
-    }
+    public static void RejectLinks(string root, string path) => SafePaths.RejectLinks(root, path);
 
     public static bool IsComplete(string folder, CustomBaseVersion expected)
     {
@@ -96,34 +61,6 @@ public static class VersionStorage
     }
 
     /// <summary>Stage must be a sibling on the same volume. Keep the previous directory until the rename succeeds.</summary>
-    public static void ReplaceDirectory(string staging, string destination)
-    {
-        string staged = Path.GetFullPath(staging), final = Path.GetFullPath(destination);
-        string parent = Path.GetDirectoryName(final);
-        if (!string.Equals(parent, Path.GetDirectoryName(staged), PathComparison) ||
-            string.Equals(staged, final, PathComparison))
-            throw new InvalidDataException("Replacement requires a distinct sibling staging folder.");
-        RejectLinks(parent, staged);
-        RejectLinks(parent, final);
-        string previous = final + ".trash-" + Guid.NewGuid().ToString("N");
-        bool moved = false;
-        try
-        {
-            if (Directory.Exists(final)) { Directory.Move(final, previous); moved = true; }
-            Directory.Move(staged, final);
-        }
-        catch
-        {
-            if (moved && !Directory.Exists(final)) Directory.Move(previous, final);
-            throw;
-        }
-        // Cleanup failure must not turn a successfully committed replacement into a failed download.
-        if (moved)
-        {
-            try { Directory.Delete(previous, true); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-    }
+    public static void ReplaceDirectory(string staging, string destination) => SafePaths.ReplaceDirectory(staging, destination);
 }
 #endif

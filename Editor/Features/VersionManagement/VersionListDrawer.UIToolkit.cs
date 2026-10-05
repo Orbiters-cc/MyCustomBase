@@ -1021,65 +1021,11 @@ public partial class VersionListDrawer
         return row;
     }
 
-    private static VisualElement CreateTimeline(bool isFirst, bool isLast, bool isSelected, bool isDisabled)
-    {
-        var timeline = new VisualElement();
-        timeline.AddToClassList("mcb-version-timeline");
-        timeline.EnableInClassList("mcb-version-timeline--disabled", isDisabled);
+    // The version timeline and its chips are Orbiters Toolkit's (VersionTimeline), shared with My Avatar's gallery.
+    private static VisualElement CreateTimeline(bool isFirst, bool isLast, bool isSelected, bool isDisabled) =>
+        Orbiters.Toolkit.Editor.VersionTimeline.Marker(isFirst, isLast, isSelected, isDisabled);
 
-        var topLine = CreateTimelineLine(isFirst);
-        timeline.Add(topLine);
-
-        var markerShell = new VisualElement();
-        markerShell.AddToClassList("mcb-version-timeline__marker-shell");
-        markerShell.EnableInClassList("mcb-version-timeline__marker-shell--selected", isSelected);
-
-        var marker = new VisualElement();
-        marker.AddToClassList("mcb-version-timeline__marker");
-        markerShell.Add(marker);
-        timeline.Add(markerShell);
-
-        var bottomLine = CreateTimelineLine(isLast);
-        timeline.Add(bottomLine);
-        return timeline;
-    }
-
-    private static VisualElement CreateConnectorTimeline(bool isCollapsed)
-    {
-        var timeline = new VisualElement();
-        timeline.AddToClassList("mcb-version-timeline");
-        timeline.AddToClassList("mcb-version-timeline--connector");
-        timeline.EnableInClassList("mcb-version-timeline--collapsed", isCollapsed);
-
-        if (isCollapsed)
-        {
-            var dots = new VisualElement();
-            dots.AddToClassList("mcb-version-timeline__connector-dots");
-            for (int i = 0; i < 3; i++)
-            {
-                var dot = new VisualElement();
-                dot.AddToClassList("mcb-version-timeline__connector-dot");
-                dots.Add(dot);
-            }
-
-            timeline.Add(dots);
-        }
-        else
-        {
-            var line = new VisualElement();
-            line.AddToClassList("mcb-version-timeline__connector-line");
-            timeline.Add(line);
-        }
-        return timeline;
-    }
-
-    private static VisualElement CreateTimelineLine(bool hidden)
-    {
-        var line = new VisualElement();
-        line.AddToClassList("mcb-version-timeline__line");
-        line.EnableInClassList("mcb-version-timeline__line--hidden", hidden);
-        return line;
-    }
+    private static VisualElement CreateConnectorTimeline(bool isCollapsed) => Orbiters.Toolkit.Editor.VersionTimeline.Connector(isCollapsed);
 
     private static VisualElement CreateChipRow()
     {
@@ -1090,14 +1036,10 @@ public partial class VersionListDrawer
 
     private static Label CreateChip(string text, Color textColor, bool lowercase = true)
     {
-        string labelText = text ?? string.Empty;
-        var label = CreateLabel(lowercase ? labelText.ToLowerInvariant() : labelText, 11, FontStyle.Bold, textColor);
-        label.AddToClassList("mcb-version-chip");
-        label.style.borderTopColor = textColor;
-        label.style.borderRightColor = textColor;
-        label.style.borderBottomColor = textColor;
-        label.style.borderLeftColor = textColor;
-        return label;
+        var chip = Orbiters.Toolkit.Editor.VersionTimeline.Chip(text, textColor, lowercase);
+        chip.AddToClassList("mcb-label");
+        chip.style.unityTextAlign = TextAnchor.MiddleLeft;
+        return chip;
     }
 
     private static VisualElement CreateActionRow()

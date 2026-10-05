@@ -266,23 +266,10 @@
     margin-top: 8px;
 }
 
-.mcb-version-chip-row--details .mcb-version-chip {
+.mcb-version-chip-row--details .orb-version-chip {
     margin-bottom: 5px;
 }
 
-.mcb-version-chip {
-    height: 18px;
-    min-height: 18px;
-    border-radius: 9px;
-    border-width: 1px;
-    background-color: rgba(0,0,0,0);
-    padding-left: 8px;
-    padding-right: 8px;
-    margin-left: 5px;
-    margin-top: 0;
-    margin-bottom: 0;
-    -unity-text-align: middle-center;
-}
 
 .mcb-version-actions {
     flex-direction: row;
@@ -498,56 +485,13 @@
     color: #999999;
 }
 
-.mcb-version-timeline {
-    width: 26px;
-    min-width: 26px;
-    margin-right: 6px;
-    flex-shrink: 0;
-    align-items: center;
-    align-self: stretch;
-}
 
-.mcb-version-timeline__line {
-    width: 2px;
-    flex-grow: 1;
-    background-color: #00DA6D;
-}
 
-.mcb-version-timeline__line--hidden {
-    background-color: rgba(0,0,0,0);
-}
 
-.mcb-version-timeline__marker-shell {
-    width: 20px;
-    height: 20px;
-    min-width: 20px;
-    min-height: 20px;
-    border-radius: 10px;
-    border-width: 0;
-    border-color: #00DA6D;
-    justify-content: center;
-    align-items: center;
-}
 
-.mcb-version-timeline__marker-shell--selected {
-    border-width: 1px;
-}
 
-.mcb-version-timeline__marker {
-    width: 8px;
-    height: 8px;
-    border-radius: 4px;
-    background-color: #00DA6D;
-}
 
-.mcb-version-timeline--disabled .mcb-version-timeline__line,
-.mcb-version-timeline--disabled .mcb-version-timeline__marker {
-    background-color: #777777;
-}
 
-.mcb-version-timeline--disabled .mcb-version-timeline__marker-shell {
-    border-color: #777777;
-}
 
 .mcb-version-collapse {
     flex-direction: row;
@@ -593,30 +537,9 @@
     margin-right: 42px;
 }
 
-.mcb-version-timeline--connector {
-    justify-content: center;
-}
 
-.mcb-version-timeline__connector-line {
-    width: 2px;
-    flex-grow: 1;
-    background-color: #00DA6D;
-}
 
-.mcb-version-timeline__connector-dots {
-    flex-grow: 1;
-    align-items: center;
-    justify-content: center;
-}
 
-.mcb-version-timeline__connector-dot {
-    width: 2px;
-    height: 6px;
-    min-height: 6px;
-    margin-top: 2px;
-    margin-bottom: 2px;
-    background-color: #00DA6D;
-}
 
 .mcb-version-user {
     flex-direction: row;

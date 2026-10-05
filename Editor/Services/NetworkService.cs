@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using Orbiters.Toolkit.Editor.Net;
 using System;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -367,7 +368,12 @@ public class NetworkService
 
         try
         {
-            WriteMultipartBodyFile(bodyPath, boundary, metadataJson, zipFilePath);
+            // Same wire format as before ("metadata" JSON + "packageFile" zip), written by Orbiters Toolkit's transfer service.
+            OrbitersTransfer.WriteMultipart(bodyPath, boundary, new[]
+            {
+                OrbitersTransfer.Part.Field("metadata", metadataJson),
+                OrbitersTransfer.Part.File("packageFile", zipFilePath, Path.GetFileName(zipFilePath), "application/zip"),
+            });
 
             using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
             {
@@ -388,48 +394,18 @@ public class NetworkService
                     return (false, null, $"Upload failed to start: {ex.Message}", false);
                 }
 
-                ulong lastUploadedBytes = 0;
-                double lastMovementAt = EditorApplication.timeSinceStartup;
-                bool aborted = false;
-                bool cancelled = false;
-                bool stalled = false;
-
-                while (!operation.isDone)
-                {
-                    ulong uploadedBytes = req.uploadedBytes;
-                    if (uploadedBytes != lastUploadedBytes)
-                    {
-                        lastUploadedBytes = uploadedBytes;
-                        lastMovementAt = EditorApplication.timeSinceStartup;
-                    }
-
-                    onProgress?.Invoke(Mathf.Clamp01(req.uploadProgress), uploadedBytes);
-
-                    if (!aborted && cancellationToken.IsCancellationRequested)
-                    {
-                        cancelled = true;
-                        aborted = true;
-                        req.Abort();
-                    }
-                    else if (!aborted && EditorApplication.timeSinceStartup - lastMovementAt > UploadStallTimeoutSeconds)
-                    {
-                        stalled = true;
-                        aborted = true;
-                        req.Abort();
-                    }
-
-                    await Task.Yield();
-                }
+                var end = await OrbitersTransfer.WaitAsync(req, operation, running => onProgress?.Invoke(Mathf.Clamp01(running.uploadProgress), running.uploadedBytes),
+                    cancellationToken, UploadStallTimeoutSeconds, upload: true);
 
                 onProgress?.Invoke(1f, req.uploadedBytes);
                 MCBConnectivityMonitor.ReportManagedUnityWebRequest(req, url, MCBRequestPolicy.Backend("Upload version"));
 
-                if (cancelled)
+                if (end == OrbitersTransfer.End.Cancelled)
                 {
                     return (false, null, "The upload was cancelled.", true);
                 }
 
-                if (stalled)
+                if (end == OrbitersTransfer.End.Stalled)
                 {
                     return (false, null, $"The upload timed out: no data was sent for {UploadStallTimeoutSeconds:0} seconds.", false);
                 }
@@ -453,38 +429,6 @@ public class NetworkService
         finally
         {
             try { if (File.Exists(bodyPath)) File.Delete(bodyPath); } catch { }
-        }
-    }
-
-    /// <summary>Writes the full multipart/form-data body to a temp file, streaming the
-    /// zip with a bounded buffer so memory usage stays flat regardless of package size.</summary>
-    private static void WriteMultipartBodyFile(string bodyPath, string boundary, string metadataJson, string zipFilePath)
-    {
-        string zipFileName = Path.GetFileName(zipFilePath);
-        var utf8 = new System.Text.UTF8Encoding(false);
-
-        using (var body = new FileStream(bodyPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024))
-        {
-            void WriteText(string text)
-            {
-                byte[] bytes = utf8.GetBytes(text);
-                body.Write(bytes, 0, bytes.Length);
-            }
-
-            WriteText($"--{boundary}\r\n");
-            WriteText("Content-Disposition: form-data; name=\"metadata\"\r\n\r\n");
-            WriteText(metadataJson ?? string.Empty);
-            WriteText("\r\n");
-
-            WriteText($"--{boundary}\r\n");
-            WriteText($"Content-Disposition: form-data; name=\"packageFile\"; filename=\"{zipFileName}\"\r\n");
-            WriteText("Content-Type: application/zip\r\n\r\n");
-            using (var zip = File.OpenRead(zipFilePath))
-            {
-                zip.CopyTo(body, 1024 * 1024);
-            }
-
-            WriteText($"\r\n--{boundary}--\r\n");
         }
     }
 

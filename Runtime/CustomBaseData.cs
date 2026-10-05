@@ -98,7 +98,7 @@ public class OriginalBaseVersionData
 // Represents a single available version of an custom base modification.
 [JsonObject(MemberSerialization.OptIn)]
 #if UNITY_EDITOR
-public class CustomBaseVersion : IEquatable<CustomBaseVersion>
+public class CustomBaseVersion : IEquatable<CustomBaseVersion>, Orbiters.Toolkit.Versions.IVersionRecord
 #else
 public class CustomBaseVersion
 #endif
@@ -148,6 +148,19 @@ public class CustomBaseVersion
     // A local artifact can contain payloads for several originals. Its on-disk identity
     // stays fixed while the selected view uses another source version's files.
     [JsonIgnore] public string localArtifactSourceVersionKey;
+
+#if UNITY_EDITOR
+    // What the shared version timeline shows (Orbiters Toolkit), whatever else an MCB version carries.
+    int Orbiters.Toolkit.Versions.IVersionRecord.Id => id;
+    string Orbiters.Toolkit.Versions.IVersionRecord.Version => version;
+    string Orbiters.Toolkit.Versions.IVersionRecord.Title => title;
+    string Orbiters.Toolkit.Versions.IVersionRecord.Scope => scope.ToString().ToLowerInvariant();
+    string Orbiters.Toolkit.Versions.IVersionRecord.Date => date;
+    string Orbiters.Toolkit.Versions.IVersionRecord.Changelog => changelog;
+    int Orbiters.Toolkit.Versions.IVersionRecord.UploaderId => uploaderId;
+    string Orbiters.Toolkit.Versions.IVersionRecord.CreatorName => creatorName;
+    bool? Orbiters.Toolkit.Versions.IVersionRecord.CreatorTrusted => creatorTrusted;
+#endif
 
     public bool Equals(CustomBaseVersion other)
     {

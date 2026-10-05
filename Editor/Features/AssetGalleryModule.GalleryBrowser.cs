@@ -152,12 +152,12 @@ public partial class AssetGalleryModule
     private void BuildCardsGridUIToolkit(VisualElement root, List<AvatarDiscoveredAsset> assets, bool includeCreateCard)
     {
         var grid = new VisualElement();
-        grid.AddToClassList("mcb-gallery-grid");
+        grid.AddToClassList("orb-gallery-grid");
         // Two 8px card margins between cards, also used at the outer edges; the picture is square.
         Orbiters.Toolkit.Editor.CardGrid.Attach(grid, 174f, 16f, (card, width) =>
         {
             card.style.height = width + 93f;
-            var media = card.Q<VisualElement>(className: "mcb-card__media");
+            var media = card.Q<VisualElement>(className: "orb-card__media");
             if (media != null) media.style.height = width - 2f;
         });
         root.Add(grid);
@@ -191,27 +191,27 @@ public partial class AssetGalleryModule
         });
 
         var imageFrame = new VisualElement();
-        imageFrame.AddToClassList("mcb-card__media");
+        imageFrame.AddToClassList("orb-card__media");
 
         var thumbnail = new Image { scaleMode = ScaleMode.ScaleAndCrop };
-        thumbnail.AddToClassList("mcb-card__thumbnail");
+        thumbnail.AddToClassList("orb-card__thumbnail");
         thumbnail.image = AvatarAssetDiscoveryService.GetThumbnail(asset);
         imageFrame.Add(thumbnail);
         thumbnailImages[asset.id] = thumbnail;
         card.Add(imageFrame);
 
         var body = new VisualElement();
-        body.AddToClassList("mcb-card__body");
+        body.AddToClassList("orb-card__body");
         card.Add(body);
 
         var titleMetrics = CreateRow();
-        titleMetrics.AddToClassList("mcb-card__title-row");
+        titleMetrics.AddToClassList("orb-card__title-row");
         var title = CreateLabel(asset.name ?? "Unnamed asset", 13, FontStyle.Bold, Color.white);
-        title.AddToClassList("mcb-card__title");
+        title.AddToClassList("orb-card__title");
         titleMetrics.Add(title);
 
         var metrics = new VisualElement();
-        metrics.AddToClassList("mcb-card__metrics");
+        metrics.AddToClassList("orb-card__metrics");
         var state = GetInteractionState(asset.id, false);
         metrics.Add(CreateMetricRow(asset.id, MCBInteractionIconKind.Like, state != null ? state.likeCount : 0, true));
         metrics.Add(CreateMetricRow(asset.id, MCBInteractionIconKind.Comment, state != null ? state.commentCount : 0, false));
@@ -219,7 +219,7 @@ public partial class AssetGalleryModule
         body.Add(titleMetrics);
 
         var spacer = new VisualElement();
-        spacer.AddToClassList("mcb-card__spacer");
+        spacer.AddToClassList("orb-card__spacer");
         body.Add(spacer);
 
         var footer = CreateOwnerFooterUIToolkit(asset);
@@ -238,17 +238,17 @@ public partial class AssetGalleryModule
         });
 
         var imageFrame = new VisualElement();
-        imageFrame.AddToClassList("mcb-card__media");
-        imageFrame.AddToClassList("mcb-card__media--create");
+        imageFrame.AddToClassList("orb-card__media");
+        imageFrame.AddToClassList("orb-card__media--create");
         var plus = CreateLabel("+", 52, FontStyle.Bold, Color.white);
-        plus.AddToClassList("mcb-create-card__plus");
+        plus.AddToClassList("orb-create-card__plus");
         imageFrame.Add(plus);
         card.Add(imageFrame);
 
         var body = new VisualElement();
-        body.AddToClassList("mcb-create-card__body");
+        body.AddToClassList("orb-create-card__body");
         var label = CreateLabel("Create Custom base", 13, FontStyle.Bold, Color.white);
-        label.AddToClassList("mcb-create-card__label");
+        label.AddToClassList("orb-create-card__label");
         body.Add(label);
         card.Add(body);
         return card;
@@ -257,13 +257,13 @@ public partial class AssetGalleryModule
     private VisualElement CreateOwnerFooterUIToolkit(AvatarDiscoveredAsset asset)
     {
         var footer = CreateRow();
-        footer.AddToClassList("mcb-card__owner");
+        footer.AddToClassList("orb-card__owner");
 
         var avatarFrame = new VisualElement();
-        avatarFrame.AddToClassList("mcb-card__avatar");
+        avatarFrame.AddToClassList("orb-card__avatar");
 
         var avatarImage = new Image { scaleMode = ScaleMode.ScaleAndCrop };
-        avatarImage.AddToClassList("mcb-card__avatar-image");
+        avatarImage.AddToClassList("orb-card__avatar-image");
         if (asset.ownerId.HasValue)
         {
             UserAvatarImage.Bind(avatarImage, asset.ownerId.Value);
@@ -283,7 +283,7 @@ public partial class AssetGalleryModule
         }
 
         var name = CreateLabel(string.IsNullOrWhiteSpace(ownerName) ? "Unknown author" : ownerName, 12, FontStyle.Bold, Color.white);
-        name.AddToClassList("mcb-card__owner-name");
+        name.AddToClassList("orb-card__owner-name");
         footer.Add(name);
         return footer;
     }
@@ -291,10 +291,10 @@ public partial class AssetGalleryModule
     private VisualElement CreateMetricRow(int assetId, MCBInteractionIconKind iconKind, int count, bool isLike)
     {
         var row = CreateRow();
-        row.AddToClassList("mcb-card__metric-row");
+        row.AddToClassList("orb-card__metric-row");
 
         var label = CreateLabel(count.ToString(), 11, FontStyle.Normal, Color.white);
-        label.AddToClassList("mcb-card__metric-label");
+        label.AddToClassList("orb-card__metric-label");
         row.Add(label);
         if (isLike)
         {
@@ -306,7 +306,7 @@ public partial class AssetGalleryModule
         }
 
         var image = new MCBInteractionIconElement(iconKind);
-        image.AddToClassList("mcb-card__metric-icon");
+        image.AddToClassList("orb-card__metric-icon");
         row.Add(image);
 
         return row;

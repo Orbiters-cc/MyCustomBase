@@ -1,5 +1,9 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.11.1 — 2026-10-05
+
+- The version timeline, gallery cards, safe archive extraction, package hashing, content trust prompts and uploads now come from Orbiters Toolkit 0.3.12, shared with My Avatar's asset gallery. No change in behaviour intended.
+
 ## 1.11.0 — 2026-10-05
 
 - Protection belongs to the custom base asset: trusted creators can verify a Discord role and publish one unencrypted package for every original base, with Discord role access managed from Create custom base and the asset's Edit panel. Requires the matching Orbiters backend.

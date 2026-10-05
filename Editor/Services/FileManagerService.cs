@@ -412,104 +412,11 @@ public class FileManagerService
             return ExtractVersionArchive(stream, finalDestinationPath, captureRelativePaths, validateExtracted, budget);
     }
 
+    // Validated, transactional extraction is Orbiters Toolkit's (SafeArchive), shared with My Avatar's gallery.
     private Dictionary<string, byte[]> ExtractVersionArchive(Stream zipStream, string finalDestinationPath,
-        ISet<string> captureRelativePaths, Action<string> validateExtracted, VersionArchiveBudget budget)
-    {
-        if (string.IsNullOrWhiteSpace(finalDestinationPath))
-        {
-            throw new ArgumentNullException(nameof(finalDestinationPath));
-        }
-
-        budget = budget ?? new VersionArchiveBudget();
-
-        var captured = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-        var normalizedCapturePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string path in captureRelativePaths ?? new HashSet<string>())
-        {
-            string normalized = NormalizeZipRelativePath(path);
-            if (!string.IsNullOrWhiteSpace(normalized))
-            {
-                normalizedCapturePaths.Add(normalized);
-            }
-        }
-
-        string finalPath = Path.GetFullPath(finalDestinationPath);
-        string staging = finalPath + ".building-" + Guid.NewGuid().ToString("N");
-        string destinationRoot = staging;
-        try
-        {
-            // Open the archive before making a staging directory; the previous cache stays intact.
-            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, true))
-            {
-                VersionStorage.RejectLinks(Path.GetDirectoryName(finalPath), finalPath);
-                budget.AddEntries(archive.Entries.Count);
-                Directory.CreateDirectory(staging);
-                var fileEntries = archive.Entries
-                    .Where(entry => entry != null && !IsZipDirectory(entry))
-                    .ToList();
-                if (fileEntries.Count == 0) throw new InvalidDataException("The version archive is empty.");
-                foreach (var entry in fileEntries)
-                {
-                    string raw = entry.FullName.Replace('\\', '/');
-                    VersionStorage.ContainedPath(staging, raw);
-                    if (raw.StartsWith("/", StringComparison.Ordinal) || raw.Contains(":") || raw.Split('/').Any(segment => segment == ".." || segment == "."))
-                        throw new InvalidDataException("The version archive contains an unsafe path.");
-                }
-                string rootPrefix = ResolveSingleZipRootPrefix(fileEntries);
-
-                foreach (var entry in fileEntries)
-                {
-                    string relativePath = NormalizeZipRelativePath(entry.FullName);
-                    if (string.IsNullOrWhiteSpace(relativePath))
-                    {
-                        continue;
-                    }
-
-                    if (!string.IsNullOrEmpty(rootPrefix) &&
-                        relativePath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
-                    {
-                        relativePath = relativePath.Substring(rootPrefix.Length);
-                    }
-
-                    relativePath = NormalizeZipRelativePath(relativePath);
-                    if (string.IsNullOrWhiteSpace(relativePath))
-                    {
-                        continue;
-                    }
-
-                    string outputPath = Path.GetFullPath(Path.Combine(
-                        staging,
-                        relativePath.Replace('/', Path.DirectorySeparatorChar)));
-                    if (!IsSameOrChildPath(outputPath, destinationRoot))
-                    {
-                        throw new InvalidDataException($"ZIP entry resolves outside the version folder: {entry.FullName}");
-                    }
-
-                    string outputDirectory = Path.GetDirectoryName(outputPath);
-                    if (!string.IsNullOrWhiteSpace(outputDirectory))
-                    {
-                        Directory.CreateDirectory(outputDirectory);
-                    }
-
-                    // Sizes are counted as the entry decompresses: the sizes an archive declares are never trusted.
-                    using (var entryStream = entry.Open())
-                    using (var fileStream = File.Create(outputPath))
-                    {
-                        byte[] bytes = budget.Copy(entryStream, fileStream, relativePath, normalizedCapturePaths.Contains(relativePath));
-                        if (bytes != null) captured[relativePath] = bytes;
-                    }
-                }
-            }
-
-            validateExtracted?.Invoke(staging);
-            VersionStorage.ReplaceDirectory(staging, finalPath);
-            return captured;
-        }
-        finally
-        {
-            if (Directory.Exists(staging)) Directory.Delete(staging, true);
-        }
-    }
+        ISet<string> captureRelativePaths, Action<string> validateExtracted, VersionArchiveBudget budget) =>
+        Orbiters.Toolkit.Editor.Storage.SafeArchive.Extract(zipStream, finalDestinationPath, captureRelativePaths, validateExtracted,
+            budget ?? new VersionArchiveBudget());
 
     private void CopyDirectory(string sourceDir, string destDir)
     {
@@ -524,65 +431,6 @@ public class FileManagerService
         }
     }
 
-    private static bool IsZipDirectory(ZipArchiveEntry entry)
-    {
-        return entry == null ||
-               string.IsNullOrEmpty(entry.Name) ||
-               entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
-               entry.FullName.EndsWith("\\", StringComparison.Ordinal);
-    }
-
-    private static string ResolveSingleZipRootPrefix(IEnumerable<ZipArchiveEntry> entries)
-    {
-        string root = null;
-        foreach (var entry in entries ?? Enumerable.Empty<ZipArchiveEntry>())
-        {
-            string path = NormalizeZipRelativePath(entry.FullName);
-            int slashIndex = path.IndexOf('/');
-            if (slashIndex <= 0)
-            {
-                return null;
-            }
-
-            string candidate = path.Substring(0, slashIndex);
-            if (string.IsNullOrWhiteSpace(root))
-            {
-                root = candidate;
-            }
-            else if (!string.Equals(root, candidate, StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-        }
-
-        return string.IsNullOrWhiteSpace(root) ? null : root + "/";
-    }
-
-    private static string NormalizeZipRelativePath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return null;
-        }
-
-        string normalized = path.Replace('\\', '/').TrimStart('/');
-        while (normalized.StartsWith("./", StringComparison.Ordinal))
-        {
-            normalized = normalized.Substring(2);
-        }
-
-        return normalized;
-    }
-
-    private static bool IsSameOrChildPath(string candidatePath, string rootPath)
-    {
-        string candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase) ||
-               candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
-               candidate.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    }
-    
     public void RemoveExistingLogic(Transform root)
     {
         if (root == null) return;
@@ -797,146 +645,12 @@ public class FileManagerService
         }
     }
 
-    private static readonly Dictionary<string, (CachedFileStamp stamp, Dictionary<string, string> hashes)> PackageHashCache =
-        new Dictionary<string, (CachedFileStamp, Dictionary<string, string>)>(StringComparer.OrdinalIgnoreCase);
-
     /// <summary>SHA-256 of each asset a Unity package carries, by GUID; cached while the package file is unchanged.</summary>
-    internal static Dictionary<string, string> UnityPackageAssetHashes(string packagePath)
-    {
-        string fullPath = Path.GetFullPath(packagePath);
-        if (!CachedFileStamp.TryRead(fullPath, out var stamp)) throw new FileNotFoundException("Unity package not found.", fullPath);
-        lock (PackageHashCache)
-        {
-            if (PackageHashCache.TryGetValue(fullPath, out var cached) && cached.stamp.Equals(stamp)) return cached.hashes;
-        }
+    internal static Dictionary<string, string> UnityPackageAssetHashes(string packagePath) =>
+        Orbiters.Toolkit.Editor.UnityPackageFiles.AssetHashes(packagePath, VersionArchiveBudget.DefaultMaxTotalBytes);
 
-        var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var header = new byte[512];
-        var buffer = new byte[81920];
-        string longName = null;
-        long expanded = 0;
-        using (var input = new GZipStream(File.OpenRead(fullPath), CompressionMode.Decompress))
-        {
-            while (ReadTarBytes(input, header, 0, 512) && header.Any(b => b != 0))
-            {
-                long size = TarSize(header);
-                long padded = (size + 511) / 512 * 512;
-                expanded += 512 + padded;
-                if (expanded > VersionArchiveBudget.DefaultMaxTotalBytes) throw new InvalidDataException("The Unity package expands beyond the size limit for a version.");
-                if (header[156] == (byte)'L')
-                {
-                    if (size > Orbiters.Toolkit.Editor.UnityPackageIndex.MaxPathnameBytes) throw new InvalidDataException("The Unity package has an invalid entry name.");
-                    var name = new byte[padded];
-                    if (!ReadTarBytes(input, name, 0, (int)padded)) throw new EndOfStreamException("The Unity package is truncated.");
-                    longName = Encoding.UTF8.GetString(name, 0, (int)size).TrimEnd('\0');
-                    continue;
-                }
-
-                string prefix = TarText(header, 345, 155);
-                string[] parts = (longName ?? (prefix.Length > 0 ? prefix + "/" : "") + TarText(header, 0, 100)).TrimStart('.', '/').Split('/');
-                longName = null;
-                using (var sha = parts.Length == 2 && parts[1] == "asset" ? MCBHashing.CreateSha256() : null)
-                {
-                    for (long remaining = padded, content = size; remaining > 0;)
-                    {
-                        int read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-                        if (read <= 0) throw new EndOfStreamException("The Unity package is truncated.");
-                        int data = (int)Math.Min(read, content);
-                        if (sha != null && data > 0) sha.TransformBlock(buffer, 0, data, null, 0);
-                        content -= data;
-                        remaining -= read;
-                    }
-                    if (sha == null) continue;
-                    sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                    hashes[parts[0]] = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
-                }
-            }
-        }
-
-        lock (PackageHashCache)
-        {
-            if (PackageHashCache.Count > 64) PackageHashCache.Clear();
-            PackageHashCache[fullPath] = (stamp, hashes);
-        }
-        return hashes;
-    }
-
-    // A .unitypackage is a gzipped tar of <guid>/pathname, <guid>/asset and <guid>/asset.meta entries.
-    private static void CopyUnityPackageEntries(string source, string destination, ISet<string> guids)
-    {
-        var header = new byte[512];
-        var buffer = new byte[81920];
-        byte[] longNameRecord = null;
-        string longName = null;
-        using (var input = new GZipStream(File.OpenRead(source), CompressionMode.Decompress))
-        using (var output = new GZipStream(File.Create(destination), CompressionLevel.Fastest))
-        {
-            while (ReadTarBytes(input, header, 0, 512) && header.Any(b => b != 0))
-            {
-                long size = TarSize(header);
-                long padded = (size + 511) / 512 * 512;
-                if (header[156] == (byte)'L')
-                {
-                    longNameRecord = new byte[512 + padded];
-                    Buffer.BlockCopy(header, 0, longNameRecord, 0, 512);
-                    if (!ReadTarBytes(input, longNameRecord, 512, (int)padded)) throw new EndOfStreamException("The logic package is truncated.");
-                    longName = Encoding.UTF8.GetString(longNameRecord, 512, (int)size).TrimEnd('\0');
-                    continue;
-                }
-
-                string prefix = TarText(header, 345, 155);
-                string name = longName ?? (prefix.Length > 0 ? prefix + "/" : "") + TarText(header, 0, 100);
-                bool keep = guids.Contains(name.TrimStart('.', '/').Split('/')[0]);
-                if (keep)
-                {
-                    if (longNameRecord != null) output.Write(longNameRecord, 0, longNameRecord.Length);
-                    output.Write(header, 0, 512);
-                }
-                longNameRecord = null;
-                longName = null;
-
-                for (long remaining = padded; remaining > 0;)
-                {
-                    int read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-                    if (read <= 0) throw new EndOfStreamException("The logic package is truncated.");
-                    if (keep) output.Write(buffer, 0, read);
-                    remaining -= read;
-                }
-            }
-
-            output.Write(new byte[1024], 0, 1024);
-        }
-    }
-
-    private static long TarSize(byte[] header)
-    {
-        long size = 0;
-        for (int i = 124; i < 136; i++)
-        {
-            byte b = header[i];
-            if (b == 0 || b == (byte)' ') { if (size > 0) break; continue; }
-            if (b < (byte)'0' || b > (byte)'7') throw new InvalidDataException("The Unity package has an invalid entry size.");
-            size = size * 8 + (b - '0');
-        }
-        return size;
-    }
-
-    private static bool ReadTarBytes(Stream stream, byte[] buffer, int offset, int count)
-    {
-        for (int read = 0; read < count;)
-        {
-            int n = stream.Read(buffer, offset + read, count - read);
-            if (n <= 0) return false;
-            read += n;
-        }
-        return true;
-    }
-
-    private static string TarText(byte[] header, int offset, int length)
-    {
-        int end = Array.IndexOf(header, (byte)0, offset, length);
-        return Encoding.UTF8.GetString(header, offset, (end < 0 ? offset + length : end) - offset);
-    }
+    private static void CopyUnityPackageEntries(string source, string destination, ISet<string> guids) =>
+        Orbiters.Toolkit.Editor.UnityPackageFiles.CopyEntries(source, destination, guids);
 
     public Dictionary<string, string> FindPrefabDependencies(GameObject prefab)
     {
@@ -1350,91 +1064,13 @@ public class FileManagerService
 
 /// <summary>
 /// How far a downloaded version archive may expand, shared by its extraction and by the scans of the Unity packages it
-/// carries. Entries and bytes are counted as they are actually decompressed; the sizes an archive declares are never trusted.
+/// carries. Orbiters Toolkit's <see cref="Orbiters.Toolkit.Editor.Storage.ArchiveBudget"/> with version limits and wording.
 /// </summary>
-public sealed class VersionArchiveBudget
+public sealed class VersionArchiveBudget : Orbiters.Toolkit.Editor.Storage.ArchiveBudget
 {
-    public const int DefaultMaxEntries = 100000;
-    public const long DefaultMaxTotalBytes = 8L * 1024 * 1024 * 1024;
-    public const long DefaultMaxEntryBytes = 4L * 1024 * 1024 * 1024;
-    public const long DefaultMaxCapturedBytes = 2L * 1024 * 1024 * 1024;
-
-    public readonly int MaxEntries;
-    public readonly long MaxTotalBytes;
-    public readonly long MaxEntryBytes;
-    /// <summary>Bytes kept in memory for callers; an entry that does not fit is only written to disk.</summary>
-    public readonly long MaxCapturedBytes;
-
-    public int Entries { get; private set; }
-    public long TotalBytes { get; private set; }
-    public long CapturedBytes { get; private set; }
-    public int RemainingEntries => Math.Max(0, MaxEntries - Entries);
-    public long RemainingBytes => Math.Max(0L, MaxTotalBytes - TotalBytes);
-
     public VersionArchiveBudget(int maxEntries = DefaultMaxEntries, long maxTotalBytes = DefaultMaxTotalBytes,
         long maxEntryBytes = DefaultMaxEntryBytes, long maxCapturedBytes = DefaultMaxCapturedBytes)
-    {
-        if (maxEntries < 1 || maxTotalBytes < 1 || maxEntryBytes < 1 || maxCapturedBytes < 0) throw new ArgumentOutOfRangeException(nameof(maxEntries));
-        MaxEntries = maxEntries;
-        MaxTotalBytes = maxTotalBytes;
-        MaxEntryBytes = maxEntryBytes;
-        MaxCapturedBytes = maxCapturedBytes;
-    }
-
-    public void AddEntries(int count)
-    {
-        if (count < 0 || count > RemainingEntries)
-            throw new InvalidDataException($"The version archive has more than {MaxEntries} files, the limit for a version.");
-        Entries += count;
-    }
-
-    public void AddBytes(long bytes, string name)
-    {
-        if (bytes < 0 || bytes > RemainingBytes)
-            throw new InvalidDataException($"The version archive expands beyond {Format(MaxTotalBytes)}, the size limit for a version (at '{name}').");
-        TotalBytes += bytes;
-    }
-
-    /// <summary>Copies one entry as it decompresses, within the entry and archive limits.</summary>
-    /// <param name="capture">Also keep the bytes in memory, while they fit <see cref="MaxCapturedBytes"/>.</param>
-    /// <returns>The entry's bytes when captured, otherwise null.</returns>
-    public byte[] Copy(Stream source, Stream destination, string name, bool capture = false)
-    {
-        var memory = capture ? new MemoryStream() : null;
-        try
-        {
-            var buffer = new byte[81920];
-            long entryBytes = 0;
-            for (int read; (read = source.Read(buffer, 0, buffer.Length)) > 0;)
-            {
-                entryBytes += read;
-                if (entryBytes > MaxEntryBytes)
-                    throw new InvalidDataException($"'{name}' expands beyond {Format(MaxEntryBytes)}, the size limit for one file of a version.");
-                AddBytes(read, name);
-                destination.Write(buffer, 0, read);
-                if (memory == null) continue;
-                if (CapturedBytes + memory.Length + read > MaxCapturedBytes || memory.Length + read > int.MaxValue - 64)
-                {
-                    MCBLogger.Log($"[FileManager] '{name}' is too large to keep in memory; it is read from disk.");
-                    memory.Dispose();
-                    memory = null;
-                }
-                else memory.Write(buffer, 0, read);
-            }
-
-            if (memory == null) return null;
-            CapturedBytes += memory.Length;
-            return memory.ToArray();
-        }
-        finally
-        {
-            memory?.Dispose();
-        }
-    }
-
-    private static string Format(long bytes) =>
-        bytes >= 1024L * 1024 * 1024 ? $"{bytes / (1024d * 1024 * 1024):0.#} GB" :
-        bytes >= 1024L * 1024 ? $"{bytes / (1024d * 1024):0.#} MB" : $"{bytes} bytes";
+        : base(maxEntries, maxTotalBytes, maxEntryBytes, maxCapturedBytes, "version") { }
 }
 #endif
 
