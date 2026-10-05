@@ -76,9 +76,7 @@ public static class MCBAuthoringService
     {
         if (draft?.asset == null || draft.asset.id <= 0) throw new ArgumentException("Choose a registered custom base asset.");
         draft.customization.Validate();
-        if (draft.sourceModels.Count != draft.customModels.Count) throw new ArgumentException("Map one custom model (or null to keep original) per source model.");
-        var sources = draft.sourceModels.Select(p => Model(p)).ToArray();
-        var customs = draft.customModels.Select(p => string.IsNullOrWhiteSpace(p) ? null : Model(p, false)).ToArray();
+        var (sources, customs) = Models(draft);
         var logic = string.IsNullOrWhiteSpace(draft.logicPrefab) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(draft.logicPrefab);
         var veins = string.IsNullOrWhiteSpace(draft.customVeins) ? null : AssetDatabase.LoadAssetAtPath<Texture2D>(draft.customVeins)
             ?? throw new ArgumentException("Custom veins must be a texture asset: " + draft.customVeins);
@@ -87,8 +85,7 @@ public static class MCBAuthoringService
         using var session = new Session(owner);
         session.Editor.creatorModule.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
         Undo.RecordObject(owner, "Configure MCB authoring");
-        FileManagerService.SetCreatorSourceFiles(owner, sources.ToList());
-        owner.modelFileBuildEntries = customs.Select(model => new CreatorModelFileBuildEntry { customFbx = model }).ToList();
+        UseModels(owner, sources, customs);
         owner.avatarLogicPrefab = logic; owner.creatorCustomization = draft.customization.Clone();
         owner.customBlendshapesForCreator = draft.blendshapes;
         owner.useAdvancedMeshReplacementForCreator = draft.advancedMesh;
@@ -98,6 +95,19 @@ public static class MCBAuthoringService
         owner.creatorAuthoringDraftJson = JsonConvert.SerializeObject(draft);
         EditorUtility.SetDirty(owner); session.Editor.serializedObject.Update();
     }
+    private static (GameObject[] sources, GameObject[] customs) Models(Draft draft)
+    {
+        if (draft.sourceModels.Count != draft.customModels.Count) throw new ArgumentException("Map one custom model (or null to keep original) per source model.");
+        return (draft.sourceModels.Select(p => Model(p)).ToArray(),
+            draft.customModels.Select(p => string.IsNullOrWhiteSpace(p) ? null : Model(p, false)).ToArray());
+    }
+
+    private static void UseModels(MyCustomBase owner, GameObject[] sources, GameObject[] customs)
+    {
+        FileManagerService.SetCreatorSourceFiles(owner, sources.ToList());
+        owner.modelFileBuildEntries = customs.Select(model => new CreatorModelFileBuildEntry { customFbx = model }).ToList();
+    }
+
     private static GameObject Model(string path, bool requireFbx = true)
     {
         var model = AssetDatabase.LoadAssetAtPath<GameObject>(path);
@@ -114,8 +124,11 @@ public static class MCBAuthoringService
         if (editor.isSubmitting) throw new InvalidOperationException("This avatar already has an active operation.");
         var previousAsset = editor.GetSelectedAsset();
         editor.SetCreatorWindowAsset(draft.asset); editor.serializedObject.Update();
-        // Build exactly the saved draft: an open creator form may have loaded another version's settings meanwhile.
+        // Build exactly the saved draft: an open creator form may have loaded another version's settings meanwhile, and
+        // opening the editor detects the scene avatar's own models, which differ from the draft's when a version is applied.
+        var (sources, customs) = Models(draft);
         Undo.RecordObject(owner, "Build MCB authoring draft");
+        UseModels(owner, sources, customs);
         owner.creatorCustomization = draft.customization.Clone();
         owner.useAdvancedMeshReplacementForCreator = draft.advancedMesh;
         owner.customBlendshapesForCreator = draft.blendshapes;
