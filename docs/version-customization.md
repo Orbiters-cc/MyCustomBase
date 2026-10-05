@@ -8,14 +8,14 @@ id: orbiters.mcb.version-customization
 domain: mcb
 type: how-to
 owner: orbiters-mcb
-lastVerified: 2026-10-05
+lastVerified: 2026-10-06
 relations: orbiters.mcb.original-base-versions, orbiters.tools.mcb-operating-contract
 ---
 
 # Configure MCB Version Customization
 
 **Create MCB Version** groups version settings in cards: supported original bases,
-material slots, dynamic normals, modes, twisting bones and physic. Each card summarizes its
+material slots, dynamic normals, modes, twisting bones, physic and squishy interaction. Each card summarizes its
 state and expands only when you edit it. Settings are saved with the built version.
 Protection and Discord role access belong to the custom base asset.
 
@@ -194,10 +194,26 @@ off, the build removes the chains' bones and moves their weights to the nearest
 remaining parent, so the avatar carries no extra bones. A bone that another component
 uses, such as a contact, a constraint or a PhysBone of the logic, is kept.
 
-The **Avatar budget** card in the version options shows the cost of each choice
-against VRChat's PC limits, with the custom base's share apart from the avatar's.
-Players who hide Very Poor avatars see none of an avatar's PhysBones, colliders and
-contacts: keep PhysBones and contacts within 32 each for the motion to reach them.
+Each switch shows how many PhysBones it adds or how many bones it removes. XRay Gizmos
+0.2.8 shows the whole avatar against VRChat's PC limits in its **Avatar budget** panel
+over the Scene view, with the custom base's share apart from the avatar's. Players who
+hide Very Poor avatars see none of an avatar's PhysBones, colliders and contacts: keep
+PhysBones and contacts within 32 each for the motion to reach them.
+
+## Squishy interaction
+
+Bones whose name contains `interaction` (any case) are squishy chains of two bones, a
+base and a tip, such as `Left thigh interaction base` and `Left thigh interaction tip`:
+soft parts players can press. A bone named with both `interaction` and `physic` is
+squishy. Select **Support squishy** to let users of the version turn them on; the card
+lists the chains found in the custom models.
+
+Users switch **Squishy** in the version options; it is off by default, independent of
+**Physic**. When on, the build adds PhysBones that collide with players' hands: a touch
+squashes the chain (PhysBone squish) and it springs back, without stretching. Grabbing
+and posing are off. As for physic, chains that share a parent share one always-enabled
+PhysBone that depends on no synced parameter. When off, the build removes the bones and
+moves their weights to the nearest remaining parent.
 
 ## Reuse an existing store asset
 

@@ -3,7 +3,9 @@
 ## 1.12.0 — 2026-10-05
 
 - Physic: creators name a version's secondary-motion bones with "physic" and turn on Support physic in the version form. Users switch Physic on in the version options (off by default). On, the build gives the chains always-on PhysBones, one per parent bone, that every player simulates; off, the build removes those bones and moves their weights to the parent.
-- Avatar budget card, shared with My Avatar: parameters, bones, PhysBones and contacts against VRChat's PC limits, with the custom base's share including what its build adds or removes. It replaces the parameter graph of the Sliders card.
+- Squishy interaction, the same way: bones named with "interaction" (a chain of two) and Support squishy in the version form; on, players' hands squash them and they spring back (PhysBone squish with collision), off, the build removes them.
+- The parameter graph of the Sliders card is gone: XRay Gizmos 0.2.8 shows the avatar budget over the Scene view, with the custom base's share including the PhysBones its build adds and the bones it removes.
+- Modes are folded by default in the version form.
 - The avatar's own animations keep working on bones a version moves to another parent: the build copy's controllers follow the moved bones.
 - Authoring drafts can set the realistic material suggestion.
 - Fix hidden MCB editors left by interrupted operations raising errors after every script reload.

@@ -174,6 +174,8 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public List<BlendshapeMemory> blendshapeMemory = new List<BlendshapeMemory>();
     // Physic of versions that support it (secondary-motion PhysBones). Off: the build strips those bones instead.
     [HideInInspector] public bool physicEnabled;
+    // Squishy chains of versions that support them. Off: the build strips those bones instead.
+    [HideInInspector] public bool squishyEnabled;
     [HideInInspector] public List<ModeOriginalObject> modeOriginalObjects = new List<ModeOriginalObject>();
     [HideInInspector] public List<ModeOriginalShape> modeOriginalShapes = new List<ModeOriginalShape>();
     [HideInInspector] public List<ModeOriginalProperty> modeOriginalProperties = new List<ModeOriginalProperty>();

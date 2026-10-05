@@ -23,8 +23,8 @@ public static class VersionCustomizationBuild
     {
         public readonly List<Property> Properties = new List<Property>();
         public readonly List<TwistBoneService.Target> Twists = new List<TwistBoneService.Target>();
-        // Versions with physic: true adds PhysBones to the chains, false strips them. Null without physic.
-        public bool? Physic;
+        // Chain kinds the version supports: true adds PhysBones to their chains, false strips them.
+        public readonly Dictionary<PhysicService.Kind, bool> Chains = new Dictionary<PhysicService.Kind, bool>();
         public bool Applied;
     }
     private static readonly ConditionalWeakTable<GameObject, Plan> Plans = new ConditionalWeakTable<GameObject, Plan>();
@@ -59,12 +59,13 @@ public static class VersionCustomizationBuild
             }
         }
         foreach (var twist in config.twistBones) plan.Twists.Add(TwistBoneService.Resolve(avatar.transform, twist));
-        if (config.physic) plan.Physic = owner.physicEnabled;
+        foreach (var kind in PhysicService.Kind.All)
+            if (kind.SupportedBy(config)) plan.Chains[kind] = kind.EnabledOn(owner);
         Plans.Remove(avatar); Plans.Add(avatar, plan);
         var moved = MovedBones(owner, avatar.transform);
         // Own every authored controller graph too, including avatars that do not use VRCFury. Stripping physic keeps
         // its meshes in that build data.
-        if (plan.Properties.Count > 0 || plan.Physic == false || moved.Count > 0)
+        if (plan.Properties.Count > 0 || plan.Chains.ContainsValue(false) || moved.Count > 0)
         {
             var build = AttachmentAnimationBuild.Prepare(avatar);
             // The version reparented these bones; the avatar's own animations still use their former paths.
@@ -125,8 +126,9 @@ public static class VersionCustomizationBuild
         }
         foreach (var twist in plan.Twists) TwistBoneService.Generate(avatar, twist);
         // After armature links: clothing merged onto the chains is rebound with the body.
-        if (plan.Physic == true) PhysicService.AddPhysBones(avatar);
-        else if (plan.Physic == false) PhysicService.Strip(avatar, AttachmentAnimationBuild.Prepare(avatar).Keep);
+        var stripped = plan.Chains.Where(pair => !pair.Value).Select(pair => pair.Key).ToList();
+        if (stripped.Count > 0) PhysicService.Strip(avatar, stripped, AttachmentAnimationBuild.Prepare(avatar).Keep);
+        foreach (var pair in plan.Chains.Where(pair => pair.Value)) PhysicService.AddPhysBones(avatar, pair.Key);
         plan.Applied = true;
     }
 }

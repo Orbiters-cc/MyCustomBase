@@ -92,26 +92,34 @@ public partial class CreatorModeModule
         root.Add(section);
     }
 
-    // ---- Physic -----------------------------------------------------------------------------------------------
+    // ---- Physic and squishy ----------------------------------------------------------------------------------
 
-    // Chains are named, not configured: any bone of the custom models whose name contains "physic".
-    private void BuildPhysicSection(VisualElement root)
+    // Chains are named, not configured: bones of the custom models whose names carry the kind's word.
+    private void BuildChainSection(VisualElement root, PhysicService.Kind kind)
     {
-        bool on = Customization.physic;
-        var chains = CustomizationModels().SelectMany(m => PhysicService.Chains(m.transform)).ToList();
-        var groups = CustomizationModels().Sum(m => PhysicService.Groups(m.transform).Count);
-        int bones = CustomizationModels().Sum(m => PhysicService.Bones(m.transform).Count);
+        bool squishy = kind == PhysicService.Kind.Squishy;
+        string title = squishy ? "Squishy interaction" : "Physic";
+        bool on = kind.SupportedBy(Customization);
+        var models = CustomizationModels();
+        var chains = models.SelectMany(m => PhysicService.Chains(m.transform, kind)).ToList();
+        int groups = models.Sum(m => PhysicService.Groups(m.transform, kind).Count);
+        int bones = models.Sum(m => PhysicService.Bones(m.transform, kind).Count);
         string caption = !on
-            ? "Let users add secondary motion. Bones with \"physic\" in their name get PhysBones when users turn physic on, and are removed from the build when they leave it off."
-            : chains.Count == 0 ? "No bone of the custom models has \"physic\" in its name yet."
+            ? squishy
+                ? "Let players squash parts of the avatar by touching them. Bones with \"interaction\" in their name get squishy PhysBones when users turn it on, and are removed from the build when they leave it off."
+                : "Let users add secondary motion. Bones with \"physic\" in their name get PhysBones when users turn physic on, and are removed from the build when they leave it off."
+            : chains.Count == 0 ? $"No bone of the custom models has \"{kind.Marker}\" in its name yet."
             : $"{chains.Count} chain(s) · {bones} bone(s) · {groups} PhysBone(s) when users turn it on. Off by default: the build removes these bones.";
-        var pill = McbSectionUi.Pill(on ? "Supported" : "Support physic", () => ChangeCustomization(() => Customization.physic = !Customization.physic, true), on ? "accent" : null);
-        pill.tooltip = on ? "Stop supporting physic in this version" : "Users of this version can turn on PhysBones for the physic bones";
-        var section = McbSectionUi.Section("Physic", caption, out var body, pill);
+        var pill = McbSectionUi.Pill(on ? "Supported" : squishy ? "Support squishy" : "Support physic",
+            () => ChangeCustomization(() => kind.SetSupported(Customization, !kind.SupportedBy(Customization)), true), on ? "accent" : null);
+        pill.tooltip = on ? $"Stop supporting {title.ToLowerInvariant()} in this version" : $"Users of this version can turn on PhysBones for the {kind.Marker} bones";
+        var section = McbSectionUi.Section(title, caption, out var body, pill);
         if (!on) { section.Remove(body); root.Add(section); return; }
         if (chains.Count == 0)
         {
-            body.Add(McbSectionUi.Note("Rename the secondary-motion bones of the custom model, e.g. \"Left triceps physic\". Every bone of a chain needs the word, its tip included.", "warning"));
+            body.Add(McbSectionUi.Note(squishy
+                ? "Rename the bones of the custom model, e.g. \"Left biceps interaction base\" and its tip. Every bone of a chain needs the word."
+                : "Rename the secondary-motion bones of the custom model, e.g. \"Left triceps physic\". Every bone of a chain needs the word, its tip included.", "warning"));
             root.Add(section);
             return;
         }
@@ -119,7 +127,7 @@ public partial class CreatorModeModule
         chips.style.flexWrap = Wrap.Wrap;
         foreach (var chain in chains)
         {
-            int count = chain.GetComponentsInChildren<Transform>(true).Count(PhysicService.IsPhysic);
+            int count = chain.GetComponentsInChildren<Transform>(true).Count(kind.Owns);
             chips.Add(McbSectionUi.Chip(chain.name + (count > 1 ? " · " + count : ""), accent: true, tooltip: chain.parent.name + " / " + chain.name));
         }
         body.Add(chips);

@@ -260,14 +260,6 @@ public class VRCFuryService
         _vrcFuryType.GetField("content").SetValue(vrcf, feature);
     }
 
-    /// <summary>Estimates with the given number of sliders in place of the current sliders object's.</summary>
-    public static Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Options SliderParameterOptions(int plannedSliders) =>
-        new Orbiters.Toolkit.Editor.VRChat.Parameters.AvatarParameterBudget.Options
-        {
-            IsReservedSliderHost = gameObject => gameObject.name == SLIDERS_GAMEOBJECT_NAME,
-            PlannedSliders = plannedSliders
-        };
-
     /// <summary>
     /// A VRCFury Full Controller on <paramref name="host"/> that merges <paramref name="controller"/> into the FX layer. Its
     /// unsynced parameters stay global (not renamed), so contacts elsewhere on the avatar can drive them by name.

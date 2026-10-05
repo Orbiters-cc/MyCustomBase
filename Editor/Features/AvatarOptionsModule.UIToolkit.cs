@@ -58,11 +58,9 @@ public partial class AvatarOptionsModule
             hasContent |= BuildModeOptions(avatarOptionsRoot);
             hasContent |= refitDrawer.BuildUIToolkit(avatarOptionsRoot);
             hasContent |= customVeinsDrawer.BuildUIToolkit(avatarOptionsRoot);
-            hasContent |= BuildPhysicOption(avatarOptionsRoot);
+            foreach (var kind in PhysicService.Kind.All) hasContent |= BuildChainOption(avatarOptionsRoot, kind);
             hasContent |= blendshapeDrawer.BuildUIToolkit(avatarOptionsRoot);
             hasContent |= slidersDrawer.BuildUIToolkit(avatarOptionsRoot);
-            budgetPanel = null;
-            if (hasContent || editor.isCustomBase) hasContent |= BuildBudgetOption(avatarOptionsRoot);
         }
         finally
         {

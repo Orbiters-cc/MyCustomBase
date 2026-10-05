@@ -10,7 +10,8 @@ using UnityEngine.UIElements;
 // Modes users switch in MCB (a genre, dog ears, a body modification): their categories and rules.
 public partial class CreatorModeModule
 {
-    private readonly HashSet<string> collapsedModes = new HashSet<string>();
+    // Modes show folded to their summary; a mode opens when the creator expands or adds it.
+    private readonly HashSet<string> expandedModes = new HashSet<string>();
     private string modePickerFor;
     private string modePickerMesh;
     private readonly List<string> modePickerSelection = new List<string>();
@@ -51,6 +52,7 @@ public partial class CreatorModeModule
             if (modes.Category(category.id) == null) modes.categories.Add(category);
             bool first = modes.options.All(o => o.category != category.id);
             modes.options.Add(new ModeOption { id = id, label = label, category = category.id, enabledByDefault = category.exclusive && first });
+            expandedModes.Add(id);
         }, true);
     }
 
@@ -90,13 +92,13 @@ public partial class CreatorModeModule
     private VisualElement BuildModeCard(ModeOption option, ModeCategory category, List<(string path, SkinnedMeshRenderer renderer)> renderers)
     {
         var modes = Modes;
-        bool collapsed = collapsedModes.Contains(option.id);
+        bool collapsed = !expandedModes.Contains(option.id);
         var card = new VisualElement(); card.AddToClassList("mcb-subcard");
         card.EnableInClassList("mcb-mode-card--default", option.enabledByDefault);
         var header = new VisualElement(); header.AddToClassList("mcb-subcard__header");
         var chevron = McbSectionUi.IconAction(IconGlyph.Chevron, collapsed ? "Show this mode" : "Hide this mode", () =>
         {
-            if (!collapsedModes.Add(option.id)) collapsedModes.Remove(option.id);
+            if (!expandedModes.Add(option.id)) expandedModes.Remove(option.id);
             RefreshUIToolkit();
         });
         chevron.style.marginLeft = 0;
@@ -182,7 +184,7 @@ public partial class CreatorModeModule
         {
             string value = (e.newValue ?? "").Trim();
             if (value.Length == 0 || modes.options.Any(o => o != option && o.id == value)) return;
-            if (collapsedModes.Remove(option.id)) collapsedModes.Add(value);
+            if (expandedModes.Remove(option.id)) expandedModes.Add(value);
             option.id = value;
         }, true));
         identity.Add(id);

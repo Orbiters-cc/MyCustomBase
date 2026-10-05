@@ -173,7 +173,7 @@ public partial class CreatorModeModule
         BuildNormalsSection(content);
         BuildModesSection(content);
         BuildTwistSection(content);
-        BuildPhysicSection(content);
+        foreach (var kind in PhysicService.Kind.All) BuildChainSection(content, kind);
         BuildXMusclesSectionUIToolkit(content);
         BuildSuggestRealisticSectionUIToolkit(content);
         BuildBlendshapeEditorUIToolkit(content);

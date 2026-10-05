@@ -1,41 +1,52 @@
 #if UNITY_EDITOR
 using System.Linq;
 using Orbiters.Toolkit.Editor;
-using Orbiters.Toolkit.Editor.VRChat.Budget;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 
-// Physic and the avatar budget: what the build adds or removes, and where the avatar stands against VRChat's limits.
+// Physic and squishy: secondary-motion chains users turn on, or the build strips.
 public partial class AvatarOptionsModule
 {
-    private AvatarBudgetPanel budgetPanel;
+    // What a chain kind is called in the options, and what its chains do.
+    private sealed class ChainOption
+    {
+        public string Title, Noun, Motion, Tooltip;
+        public IconGlyph Glyph;
+    }
+
+    private static ChainOption Describe(PhysicService.Kind kind) => kind == PhysicService.Kind.Squishy
+        ? new ChainOption { Title = "Squishy", Noun = "interaction", Glyph = IconGlyph.People, Tooltip = "Players squash the version's interaction bones by touching them",
+            Motion = "squash when players touch them, and spring back" }
+        : new ChainOption { Title = "Physic", Noun = "physic", Glyph = IconGlyph.Bones, Tooltip = "Secondary motion on the version's physic bones",
+            Motion = "react to your movement, for everyone in the world" };
 
     // The switch reacts at once; the build applies the choice (PhysBones on the chains, or the chains stripped).
-    private bool BuildPhysicOption(VisualElement root)
+    private bool BuildChainOption(VisualElement root, PhysicService.Kind kind)
     {
         var owner = editor.customBaseTarget;
-        if (owner == null || !(owner.appliedCustomization?.physic ?? false)) return false;
+        if (owner == null || !kind.SupportedBy(owner.appliedCustomization)) return false;
+        var text = Describe(kind);
         var avatar = AvatarPaths.Root(owner);
-        var groups = PhysicService.Groups(avatar);
+        var groups = PhysicService.Groups(avatar, kind);
         int chains = groups.Sum(g => g.Chains.Count);
-        int bones = PhysicService.Bones(avatar).Count;
+        int bones = PhysicService.Bones(avatar, kind).Count;
 
         var card = CreateOptionCard("mcb-physic");
-        var header = Header(IconGlyph.Bones, "Physic", out var caption);
+        var header = Header(text.Glyph, text.Title, out var caption);
         card.Add(header);
 
         var stats = new VisualElement(); stats.AddToClassList("mcb-physic__stats");
         var physBones = Stat(IconGlyph.Sparkle, groups.Count + " PhysBone" + (groups.Count == 1 ? "" : "s") + " · " + chains + " chain" + (chains == 1 ? "" : "s"),
-            "Added by the build when physic is on. Plain PhysBones: every player in the world sees the motion.");
+            $"Added by the build when {text.Title.ToLowerInvariant()} is on. Plain PhysBones: every player in the world sees them.");
         var stripped = Stat(IconGlyph.Broom, bones + " bone" + (bones == 1 ? "" : "s") + " removed",
-            "Removed by the build when physic is off: their weights go to the parent bone, so the avatar stays light.");
+            $"Removed by the build when {text.Title.ToLowerInvariant()} is off: their weights go to the parent bone, so the avatar stays light.");
         stats.Add(physBones); stats.Add(stripped);
         card.Add(stats);
 
         // The switch flips on pointer down; the scene does not change, only what the build will do.
         ToggleSwitch toggle = null;
-        toggle = new ToggleSwitch(owner.physicEnabled, on => SetPhysic(on)) { tooltip = "Secondary motion on the version's physic bones" };
+        toggle = new ToggleSwitch(kind.EnabledOn(owner), on => Set(on)) { tooltip = text.Tooltip };
         toggle.AddToClassList("mcb-physic__switch");
         header.Add(toggle);
 
@@ -45,36 +56,20 @@ public partial class AvatarOptionsModule
             toggle.SetValueWithoutNotify(on);
             physBones.EnableInClassList("mcb-physic__stat--active", on);
             stripped.EnableInClassList("mcb-physic__stat--active", !on);
-            caption.text = chains == 0 ? "This version supports physic, but this avatar has no physic bones."
-                : on ? $"{chains} bone chain{(chains == 1 ? "" : "s")} react to your movement, for everyone in the world."
-                : $"Off: the build removes the {bones} physic bone{(bones == 1 ? "" : "s")} to keep your avatar light.";
+            caption.text = chains == 0 ? $"This version supports {text.Title.ToLowerInvariant()}, but this avatar has no {text.Noun} bones."
+                : on ? $"{chains} bone chain{(chains == 1 ? "" : "s")} {text.Motion}."
+                : $"Off: the build removes the {bones} {text.Noun} bone{(bones == 1 ? "" : "s")} to keep your avatar light.";
         }
-        Show(owner.physicEnabled);
+        Show(kind.EnabledOn(owner));
         toggle.SetEnabled(chains > 0);
-        void SetPhysic(bool on)
+        void Set(bool on)
         {
             if (chains == 0) return;
             Show(on);
-            Undo.RecordObject(owner, on ? "Enable physic" : "Disable physic");
-            owner.physicEnabled = on;
+            Undo.RecordObject(owner, (on ? "Enable " : "Disable ") + text.Title.ToLowerInvariant());
+            kind.SetEnabled(owner, on);
             EditorUtility.SetDirty(owner);
-            budgetPanel?.ScheduleRefresh();
         }
-        root.Add(card);
-        return true;
-    }
-
-    // Parameters, bones, PhysBones and contacts, with the custom base's share: shared with My Avatar.
-    private bool BuildBudgetOption(VisualElement root)
-    {
-        var owner = editor.customBaseTarget;
-        if (owner == null) return false;
-        var avatar = AvatarPaths.Root(owner).gameObject;
-        var card = CreateOptionCard("mcb-budget");
-        card.Add(Header(IconGlyph.Gauge, "Avatar budget", out var caption));
-        caption.text = "VRChat's limits for PC, with what the custom base adds once built.";
-        budgetPanel = new AvatarBudgetPanel(() => AvatarBudget.Estimate(avatar, slidersDrawer.ParameterOptions()));
-        card.Add(budgetPanel);
         root.Add(card);
         return true;
     }
