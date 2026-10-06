@@ -9,6 +9,8 @@
 - The avatar's own animations keep working on bones a version moves to another parent: the build copy's controllers follow the moved bones.
 - Authoring drafts can set the realistic material suggestion.
 - Fix hidden MCB editors left by interrupted operations raising errors after every script reload.
+- Fix versions with twisting bones uploading without any mesh (Ultirex 5.0.1 was invisible to everyone): the build copied every mesh that listed the twisted bone, in memory, after VRCFury had saved its files, and the SDK's save of the avatar dropped them. Only meshes weighted to the bone are copied now, once for all its twists, and the build saves them (Orbiters Toolkit 0.3.13).
+- Authoring drafts build with their own source and custom models, also on an avatar that has a version applied.
 - About credits Prefabulous Universal (MIT), which the twisting bones are adapted from.
 - Requires Orbiters Toolkit 0.3.13.
 

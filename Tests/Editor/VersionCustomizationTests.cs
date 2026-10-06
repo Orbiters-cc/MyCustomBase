@@ -192,7 +192,7 @@ public class VersionCustomizationTests
         clothingMesh.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 1, weight0 = 1 }, 3).ToArray();
         var clothing = Child(root.transform, "Jacket").gameObject.AddComponent<SkinnedMeshRenderer>(); clothing.sharedMesh = clothingMesh; clothing.bones = new[] { tip, lower };
         var config = new TwistBoneConfiguration { bone = "Arm/Elbow", aim = "Arm/Elbow/Wrist", up = "Arm" };
-        Assert.That(TwistBoneService.Generate(root, TwistBoneService.Resolve(root.transform, config)), Is.EqualTo(2));
+        Assert.That(TwistBoneService.Generate(root, new[] { TwistBoneService.Resolve(root.transform, config) }), Is.EqualTo(2));
         Own(body.sharedMesh); Own(clothing.sharedMesh);
         foreach (var renderer in new[] { body, clothing })
         {
@@ -205,6 +205,43 @@ public class VersionCustomizationTests
             for (int i = 0; i < 3; i++) Assert.That(Vector3.Distance(baked.vertices[i], mesh.vertices[i]), Is.LessThan(.00001f), "Rest pose must not move.");
         }
         Assert.That(mesh.bindposes.Length, Is.EqualTo(2)); Assert.That(mesh.boneWeights.All(w => w.weight0 == 1));
+    }
+
+    // Rexouium OneMesh: every renderer lists every bone. Only meshes weighted to a twist are copied, once for all twists.
+    [Test] public void TwistCopiesOnlyWeightedRenderersOnceForAllTwists()
+    {
+        var root = Own(new GameObject("Twist test"));
+        var head = Child(root.transform, "Head"); head.localPosition = Vector3.up * 3;
+        Transform Arm(string side, float x)
+        {
+            var arm = Child(root.transform, side + " arm"); arm.localPosition = new Vector3(x, 0, 0);
+            var elbow = Child(arm, side + " elbow"); elbow.localPosition = Vector3.up;
+            Child(elbow, side + " wrist").localPosition = Vector3.up;
+            return elbow;
+        }
+        var left = Arm("Left", -1); var right = Arm("Right", 1);
+        var bones = new[] { left, right, head };
+        Mesh Skin(params BoneWeight[] weights)
+        {
+            var mesh = MakeMesh(); mesh.vertices = weights.Select(w => bones[w.boneIndex0].position + Vector3.up * .5f).ToArray();
+            mesh.bindposes = bones.Select(b => b.worldToLocalMatrix).ToArray(); mesh.boneWeights = weights;
+            return mesh;
+        }
+        var bodyMesh = Skin(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, new BoneWeight { boneIndex0 = 1, weight0 = 1 }, new BoneWeight { boneIndex0 = 2, weight0 = 1 });
+        var featherMesh = Skin(new BoneWeight { boneIndex0 = 2, weight0 = 1 }, new BoneWeight { boneIndex0 = 2, weight0 = 1 }, new BoneWeight { boneIndex0 = 2, weight0 = 1 });
+        var body = Child(root.transform, "Body").gameObject.AddComponent<SkinnedMeshRenderer>(); body.sharedMesh = bodyMesh; body.bones = bones;
+        var feathers = Child(root.transform, "Feathers").gameObject.AddComponent<SkinnedMeshRenderer>(); feathers.sharedMesh = featherMesh; feathers.bones = bones;
+        var targets = new[] { "Left", "Right" }.Select(side => TwistBoneService.Resolve(root.transform, new TwistBoneConfiguration
+            { bone = side + " arm/" + side + " elbow", aim = side + " arm/" + side + " elbow/" + side + " wrist", up = side + " arm" })).ToArray();
+
+        Assert.That(TwistBoneService.Generate(root, targets), Is.EqualTo(1));
+        Own(body.sharedMesh);
+        Assert.That(feathers.sharedMesh, Is.SameAs(featherMesh)); Assert.That(feathers.bones.Length, Is.EqualTo(3));
+        Assert.That(body.sharedMesh, Is.Not.SameAs(bodyMesh)); Assert.That(body.sharedMesh.name, Is.EqualTo(bodyMesh.name + " (MCB Twist)"));
+        Assert.That(body.bones.Length, Is.EqualTo(5)); Assert.That(body.sharedMesh.bindposes.Length, Is.EqualTo(5));
+        Assert.That(body.bones.Skip(3).Select(b => b.name), Is.EqualTo(new[] { "ZMCB_Left elbow_Twist", "ZMCB_Right elbow_Twist" }));
+        var baked = Own(new Mesh()); body.BakeMesh(baked);
+        for (int i = 0; i < 3; i++) Assert.That(Vector3.Distance(baked.vertices[i], bodyMesh.vertices[i]), Is.LessThan(.00001f), "Rest pose must not move.");
     }
     private Mesh MakeMesh() => Own(new Mesh { vertices = new Vector3[3], triangles = new[] { 0, 1, 2 } });
     private static Transform Child(Transform parent, string name) { var t = new GameObject(name).transform; t.SetParent(parent, false); return t; }

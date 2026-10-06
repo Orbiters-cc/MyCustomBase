@@ -124,7 +124,7 @@ public static class VersionCustomizationBuild
             var state = machine.AddState("Locked modes"); state.motion = clip; state.writeDefaultValues = false; machine.defaultState = state;
             controller.AddLayer(new AnimatorControllerLayer { name = "MCB Modes", stateMachine = machine, defaultWeight = 1, blendingMode = AnimatorLayerBlendingMode.Override });
         }
-        foreach (var twist in plan.Twists) TwistBoneService.Generate(avatar, twist);
+        TwistBoneService.Generate(avatar, plan.Twists);
         // After armature links: clothing merged onto the chains is rebound with the body.
         var stripped = plan.Chains.Where(pair => !pair.Value).Select(pair => pair.Key).ToList();
         if (stripped.Count > 0) PhysicService.Strip(avatar, stripped, AttachmentAnimationBuild.Prepare(avatar).Keep);
