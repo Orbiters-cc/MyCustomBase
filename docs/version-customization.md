@@ -168,8 +168,9 @@ them, choose the **Ultirex**, **Linear** or a **Custom** weight curve, and chang
 up direction. **Confirm** saves; **Cancel** leaves the version unchanged.
 
 Twists are generated only on the upload/play copy, after VRCFury merges clothing
-armatures. Every skin weighted to the bone is processed, including clothing. Each
-bone adds a skinned bone, an up helper and a VRC aim constraint.
+armatures. Every skin weighted to the bone is processed, including clothing; skins
+that only list the bone keep their mesh. Each bone adds a skinned bone, an up helper
+and a VRC aim constraint.
 
 Bone paths are matched first. Originals that reparent a named joint resolve it
 through one unique skinned bone of that name; ambiguous matches fail.
@@ -214,6 +215,19 @@ squashes the chain (PhysBone squish) and it springs back, without stretching. Gr
 and posing are off. As for physic, chains that share a parent share one always-enabled
 PhysBone that depends on no synced parameter. When off, the build removes the bones and
 moves their weights to the nearest remaining parent.
+
+## Unused blendshapes
+
+Uploads leave out the custom base's blendshapes that nothing uses: a shape stays when
+an animation of the avatar drives it (sliders, modes, correctives, gestures, clothing
+links), when the avatar descriptor uses it (visemes, jaw flap, eyelids), or when it is
+a standard MMD morph on `Body`, which dance worlds animate by name. A removed shape that
+is set to a weight is baked into the mesh, so the avatar looks the same. Clothing keeps
+all its shapes, and play mode keeps every shape.
+
+A sculpted body carries most of its size in blendshapes: Ultirex's 380 unused shapes
+took 448 MB and put it over VRChat's 500 MB uncompressed limit. Without them, it
+uploads at 266 MB (106 MB to download).
 
 ## Reuse an existing store asset
 
