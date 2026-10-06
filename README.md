@@ -11,6 +11,7 @@
 - Fix hidden MCB editors left by interrupted operations raising errors after every script reload.
 - Fix versions with twisting bones uploading without any mesh (Ultirex 5.0.1 was invisible to everyone): the build copied every mesh that listed the twisted bone, in memory, after VRCFury had saved its files, and the SDK's save of the avatar dropped them. Only meshes weighted to the bone are copied now, once for all its twists, and the build saves them (Orbiters Toolkit 0.3.13).
 - Authoring drafts build with their own source and custom models, also on an avatar that has a version applied.
+- Uploads leave out the custom base's unused blendshapes: the ones no animation, viseme, eyelid or MMD dance uses are removed from its meshes, and one set to a weight is baked in. Ultirex went from 697 MB (over VRChat's 500 MB limit) to 266 MB uncompressed, 106 MB to download. Play mode keeps every shape.
 - About credits Prefabulous Universal (MIT), which the twisting bones are adapted from.
 - Requires Orbiters Toolkit 0.3.13.
 

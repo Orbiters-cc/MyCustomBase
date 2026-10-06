@@ -39,7 +39,12 @@ public static partial class MCBReFitIntegration
     /// A renderer is part of the body when a mesh of the same name exists in one of the base FBX files (by name, so it
     /// still works after a version swapped Body/Tail/Hair for native-mesh assets).
     /// </summary>
-    public static List<SkinnedMeshRenderer> GetRefitCandidates(MyCustomBase target)
+    public static List<SkinnedMeshRenderer> GetRefitCandidates(MyCustomBase target) => Renderers(target, customBase: false);
+
+    /// <summary>The avatar's skinned meshes that are part of its custom base: its base body and the applied version's renderers.</summary>
+    public static List<SkinnedMeshRenderer> GetCustomBaseRenderers(MyCustomBase target) => Renderers(target, customBase: true);
+
+    private static List<SkinnedMeshRenderer> Renderers(MyCustomBase target, bool customBase)
     {
         var result = new List<SkinnedMeshRenderer>();
         if (target == null) return result;
@@ -47,9 +52,8 @@ public static partial class MCBReFitIntegration
         var root = Root(target);
         foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
-            if (smr == null || smr.sharedMesh == null || RefitCandidates.IsEditorHelper(smr) || IsBodyRenderer(smr, baseMeshes)
-                || IsVersionRenderer(target, root, smr)) continue;
-            result.Add(smr);
+            if (smr == null || smr.sharedMesh == null || RefitCandidates.IsEditorHelper(smr)) continue;
+            if ((IsBodyRenderer(smr, baseMeshes) || IsVersionRenderer(target, root, smr)) == customBase) result.Add(smr);
         }
         return result;
     }

@@ -25,6 +25,8 @@ public static class VersionCustomizationBuild
         public readonly List<TwistBoneService.Target> Twists = new List<TwistBoneService.Target>();
         // Chain kinds the version supports: true adds PhysBones to their chains, false strips them.
         public readonly Dictionary<PhysicService.Kind, bool> Chains = new Dictionary<PhysicService.Kind, bool>();
+        // The custom base's renderers: the blendshapes nothing uses leave their meshes.
+        public readonly List<SkinnedMeshRenderer> Base = new List<SkinnedMeshRenderer>();
         public bool Applied;
     }
     private static readonly ConditionalWeakTable<GameObject, Plan> Plans = new ConditionalWeakTable<GameObject, Plan>();
@@ -33,11 +35,13 @@ public static class VersionCustomizationBuild
     {
         if (Plans.TryGetValue(avatar, out var previous) && previous.Applied) return;
         var owner = avatar.GetComponentInChildren<MyCustomBase>(true);
-        if (owner == null) return;
+        if (owner == null || owner.appliedCustomBaseAssetId <= 0) return;
+        var plan = new Plan();
+        plan.Base.AddRange(MCBReFitIntegration.GetCustomBaseRenderers(owner));
+        Plans.Remove(avatar); Plans.Add(avatar, plan);
         var config = owner.appliedCustomization;
         if (config == null) return;
         config.Validate();
-        var plan = new Plan();
         if (config.modes.options.Count > 0)
         {
             // Bone poses and other animated values were applied to the scene with the modes; the build keeps them.
@@ -61,7 +65,6 @@ public static class VersionCustomizationBuild
         foreach (var twist in config.twistBones) plan.Twists.Add(TwistBoneService.Resolve(avatar.transform, twist));
         foreach (var kind in PhysicService.Kind.All)
             if (kind.SupportedBy(config)) plan.Chains[kind] = kind.EnabledOn(owner);
-        Plans.Remove(avatar); Plans.Add(avatar, plan);
         var moved = MovedBones(owner, avatar.transform);
         // Own every authored controller graph too, including avatars that do not use VRCFury. Stripping physic keeps
         // its meshes in that build data.
@@ -124,12 +127,32 @@ public static class VersionCustomizationBuild
             var state = machine.AddState("Locked modes"); state.motion = clip; state.writeDefaultValues = false; machine.defaultState = state;
             controller.AddLayer(new AnimatorControllerLayer { name = "MCB Modes", stateMachine = machine, defaultWeight = 1, blendingMode = AnimatorLayerBlendingMode.Override });
         }
-        TwistBoneService.Generate(avatar, plan.Twists);
+        // The animations are final from here: the unused blendshapes leave the meshes before the twist and physic copy them.
+        TwistBoneService.Generate(avatar, plan.Twists, PruneBlendShapes(avatar, plan));
         // After armature links: clothing merged onto the chains is rebound with the body.
         var stripped = plan.Chains.Where(pair => !pair.Value).Select(pair => pair.Key).ToList();
         if (stripped.Count > 0) PhysicService.Strip(avatar, stripped, AttachmentAnimationBuild.Prepare(avatar).Keep);
         foreach (var pair in plan.Chains.Where(pair => pair.Value)) PhysicService.AddPhysBones(avatar, pair.Key);
         plan.Applied = true;
+    }
+
+    // Several hundred MB on a sculpted body (Ultirex: 380 unused shapes, 448 MB), over VRChat's upload limits. Play mode
+    // keeps them: it uploads nothing and enters faster.
+    private static Dictionary<SkinnedMeshRenderer, Mesh> PruneBlendShapes(GameObject avatar, Plan plan)
+    {
+        var copies = new Dictionary<SkinnedMeshRenderer, Mesh>();
+        if (EditorApplication.isPlayingOrWillChangePlaymode) return copies;
+        int removed = 0;
+        foreach (var renderer in plan.Base.Where(r => r != null && r.sharedMesh != null && r.transform.IsChildOf(avatar.transform)))
+        {
+            int before = renderer.sharedMesh.blendShapeCount;
+            var copy = BlendShapePruning.Prune(avatar, renderer);
+            if (copy == null) continue;
+            removed += before - copy.blendShapeCount;
+            copies.Add(renderer, copy);
+        }
+        if (removed > 0) MCBLogger.Log("[MCB] " + removed + " unused blendshapes left the custom base's meshes (" + copies.Count + " renderers).");
+        return copies;
     }
 }
 

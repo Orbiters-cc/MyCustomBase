@@ -159,6 +159,34 @@ public class VersionCustomizationTests
         Assert.That(AnimationUtility.GetEditorCurve(clip, binding).Evaluate(.5f), Is.Zero, "The authored clip must never be mutated.");
     }
 
+    // Ultirex: 380 of the body's 488 blendshapes are never used and took 448 MB, over VRChat's upload limits.
+    [Test] public void BuildRemovesTheCustomBaseUnusedBlendshapesAndBakesStaticOnes()
+    {
+        var (root, owner, renderer, _, _) = ModeAvatar("Blendshape pruning test");
+        var source = renderer.sharedMesh;
+        Vector3[] Offset(float y) => new[] { new Vector3(0, y, 0), Vector3.zero, Vector3.zero };
+        source.AddBlendShapeFrame("old sculpt", 100, Offset(1), new Vector3[3], new Vector3[3]);
+        source.AddBlendShapeFrame("jawline", 100, Offset(2), new Vector3[3], new Vector3[3]);
+        renderer.SetBlendShapeWeight(3, 50);
+        owner.nativeGeneratedRenderers.Add(renderer.gameObject);
+        var jacketMesh = Own(Object.Instantiate(source));
+        var jacket = Child(root.transform, "Jacket").gameObject.AddComponent<SkinnedMeshRenderer>(); jacket.sharedMesh = jacketMesh;
+        var controller = Own(new AnimatorController()); controller.AddLayer("Base");
+        root.AddComponent<Animator>().runtimeAnimatorController = controller;
+        ModeService.Set(owner, "female", true); ModeService.Set(owner, "dogears", true);
+
+        VersionCustomizationBuild.Capture(root); VersionCustomizationBuild.Apply(root);
+
+        var built = Own(renderer.sharedMesh);
+        Assert.That(built, Is.Not.SameAs(source));
+        Assert.That(Enumerable.Range(0, built.blendShapeCount).Select(built.GetBlendShapeName), Is.EqualTo(new[] { "ulti female", "dynamic dog ears" }),
+            "Shapes the modes lock stay; the unused and the static ones leave.");
+        Assert.That(renderer.GetBlendShapeWeight(0), Is.EqualTo(100));
+        Assert.That(built.vertices[0].y - source.vertices[0].y, Is.EqualTo(1).Within(1e-5), "The static shape is baked at its weight (50% of 2).");
+        Assert.That(source.blendShapeCount, Is.EqualTo(4), "The source mesh is never changed.");
+        Assert.That(jacket.sharedMesh, Is.SameAs(jacketMesh), "Clothing is not part of the custom base.");
+    }
+
     private (GameObject root, MyCustomBase owner, SkinnedMeshRenderer renderer, GameObject physics, Transform ears) ModeAvatar(string name)
     {
         var root = Own(new GameObject(name)); var owner = root.AddComponent<MyCustomBase>();

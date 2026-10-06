@@ -40,16 +40,25 @@ public static class TwistBoneService
         }
     }
 
-    /// <summary>Generates every twist, one mesh copy per renderer for all of them. Returns the renderers changed.</summary>
-    public static int Generate(GameObject avatar, IEnumerable<Target> targets)
+    /// <summary>
+    /// Generates every twist, one mesh copy per renderer for all of them. <paramref name="owned"/>: meshes this build
+    /// already made for a renderer, rewritten in place. Returns the renderers changed.
+    /// </summary>
+    public static int Generate(GameObject avatar, IEnumerable<Target> targets, IReadOnlyDictionary<SkinnedMeshRenderer, Mesh> owned = null)
     {
-        var copies = new Dictionary<SkinnedMeshRenderer, Mesh>();
-        try { foreach (var target in targets) Generate(avatar, target, copies); }
-        catch { foreach (var copy in copies.Values) UnityEngine.Object.DestroyImmediate(copy); throw; }
-        return copies.Count;
+        var copies = owned == null ? new Dictionary<SkinnedMeshRenderer, Mesh>() : owned.ToDictionary(p => p.Key, p => p.Value);
+        var changed = new HashSet<SkinnedMeshRenderer>();
+        try { foreach (var target in targets) Generate(avatar, target, copies, changed); }
+        catch
+        {
+            foreach (var pair in copies)
+                if (owned == null || !owned.ContainsKey(pair.Key)) UnityEngine.Object.DestroyImmediate(pair.Value);
+            throw;
+        }
+        return changed.Count;
     }
 
-    private static void Generate(GameObject avatar, Target target, Dictionary<SkinnedMeshRenderer, Mesh> copies)
+    private static void Generate(GameObject avatar, Target target, Dictionary<SkinnedMeshRenderer, Mesh> copies, HashSet<SkinnedMeshRenderer> changed)
     {
         if (target.Bone == null || target.Aim == null || target.Up == null)
             throw new InvalidOperationException("A configured twist target was removed during avatar preprocessing.");
@@ -74,7 +83,7 @@ public static class TwistBoneService
         constraint.GlobalWeight = 1;
         constraint.AffectsRotationX = constraint.AffectsRotationY = constraint.AffectsRotationZ = true;
         constraint.Locked = constraint.IsActive = true;
-        foreach (var renderer in renderers) SplitWeights(renderer, target, twist, copies);
+        foreach (var renderer in renderers) { SplitWeights(renderer, target, twist, copies); changed.Add(renderer); }
     }
 
     private static bool Weighted(SkinnedMeshRenderer renderer, Transform bone)
