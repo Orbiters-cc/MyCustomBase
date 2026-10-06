@@ -6,6 +6,7 @@
 - Squishy interaction, the same way: bones named with "interaction" (a chain of two) and Support squishy in the version form; on, players' hands squash them and they spring back (PhysBone squish with collision), off, the build removes them.
 - The parameter graph of the Sliders card is gone: XRay Gizmos 0.2.8 shows the avatar budget over the Scene view, with the custom base's share including the PhysBones its build adds and the bones it removes.
 - Modes are folded by default in the version form.
+- Unencrypted versions keep the original base's pose: switching a T-posed Rexouium to Ultirex 5.1 no longer leaves it in the star pose of the Ultirex FBX. The arms, hands, fingers, legs and feet point like the original base model; bone lengths, hips, spine and head stay the version's.
 - The avatar's own animations keep working on bones a version moves to another parent: the build copy's controllers follow the moved bones.
 - Authoring drafts can set the realistic material suggestion.
 - Fix hidden MCB editors left by interrupted operations raising errors after every script reload.

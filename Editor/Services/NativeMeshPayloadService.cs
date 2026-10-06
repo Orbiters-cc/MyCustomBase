@@ -450,7 +450,8 @@ public static partial class NativeMeshPayloadService
         ModelFileData patchFile,
         string binPath,
         string originalFbxPath,
-        FileManagerService fileManagerService)
+        FileManagerService fileManagerService,
+        string basePoseFbxPath = null)
     {
         if (avatarRoot == null)
         {
@@ -488,7 +489,7 @@ public static partial class NativeMeshPayloadService
         LogApplyProfile("Loaded/materialized native mesh payload asset", step, total, $"renderers={payload.renderers.Count} bones={payload.bones.Count}");
         ApplyPayloadToAvatar(avatarRoot, payload);
         LogApplyProfile("Applied native mesh payload to avatar", step, total);
-        ApplyPayloadAuthoringPose(avatarRoot, payload);
+        ApplyPayloadAuthoringPose(avatarRoot, payload, basePoseFbxPath);
         LogApplyProfile("Applied native mesh authoring pose to avatar", step, total, $"bones={payload.authoringPoseBones.Count}");
         UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] DONE apply payload total={total.Elapsed.TotalMilliseconds:F1} ms");
         return payload;
@@ -2809,7 +2810,9 @@ public static partial class NativeMeshPayloadService
         LogApplyProfile("Finished renderer mesh assignment", step, total, $"renderers={rendererTotal}");
     }
 
-    public static void ApplyPayloadAuthoringPose(Transform avatarRoot, NativeMeshPayloadAsset payload)
+    /// <param name="basePoseFbxPath">The original base model the avatar is on. A plain payload's skeleton is the version
+    /// model's own rest pose (Ultirex's is a star pose); with this model the avatar keeps the base's pose instead.</param>
+    public static void ApplyPayloadAuthoringPose(Transform avatarRoot, NativeMeshPayloadAsset payload, string basePoseFbxPath = null)
     {
         if (avatarRoot == null || payload == null)
         {
@@ -2880,8 +2883,76 @@ public static partial class NativeMeshPayloadService
         }
 
         AvatarDefinitionGenerationService.ApplyNativeMeshAvatar(avatarRoot, payload);
+        if (string.IsNullOrEmpty(payload.sourceFbxPath) && !string.IsNullOrEmpty(basePoseFbxPath)) KeepBasePose(avatarRoot, basePoseFbxPath);
         RefreshAvatarSkinnedRenderers(avatarRoot, payload.payloadHash != null && payload.payloadHash.StartsWith("raw:", StringComparison.Ordinal));
         MCBLogger.Log($"[NativeMeshPayload] Applied authoring pose deltas to {applied}/{payload.authoringPoseBones.Count} transforms.");
+    }
+
+    // Limb bones and the humanoid bone each one points at. The spine, neck and head keep the version's own shape.
+    private static readonly (HumanBodyBones bone, HumanBodyBones toward)[] PoseLimbs =
+    {
+        (HumanBodyBones.LeftUpperLeg, HumanBodyBones.LeftLowerLeg), (HumanBodyBones.LeftLowerLeg, HumanBodyBones.LeftFoot), (HumanBodyBones.LeftFoot, HumanBodyBones.LeftToes),
+        (HumanBodyBones.RightUpperLeg, HumanBodyBones.RightLowerLeg), (HumanBodyBones.RightLowerLeg, HumanBodyBones.RightFoot), (HumanBodyBones.RightFoot, HumanBodyBones.RightToes),
+        (HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm), (HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand), (HumanBodyBones.LeftHand, HumanBodyBones.LeftMiddleProximal),
+        (HumanBodyBones.RightUpperArm, HumanBodyBones.RightLowerArm), (HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand), (HumanBodyBones.RightHand, HumanBodyBones.RightMiddleProximal),
+        (HumanBodyBones.LeftThumbProximal, HumanBodyBones.LeftThumbIntermediate), (HumanBodyBones.LeftThumbIntermediate, HumanBodyBones.LeftThumbDistal),
+        (HumanBodyBones.LeftIndexProximal, HumanBodyBones.LeftIndexIntermediate), (HumanBodyBones.LeftIndexIntermediate, HumanBodyBones.LeftIndexDistal),
+        (HumanBodyBones.LeftMiddleProximal, HumanBodyBones.LeftMiddleIntermediate), (HumanBodyBones.LeftMiddleIntermediate, HumanBodyBones.LeftMiddleDistal),
+        (HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftRingIntermediate), (HumanBodyBones.LeftRingIntermediate, HumanBodyBones.LeftRingDistal),
+        (HumanBodyBones.LeftLittleProximal, HumanBodyBones.LeftLittleIntermediate), (HumanBodyBones.LeftLittleIntermediate, HumanBodyBones.LeftLittleDistal),
+        (HumanBodyBones.RightThumbProximal, HumanBodyBones.RightThumbIntermediate), (HumanBodyBones.RightThumbIntermediate, HumanBodyBones.RightThumbDistal),
+        (HumanBodyBones.RightIndexProximal, HumanBodyBones.RightIndexIntermediate), (HumanBodyBones.RightIndexIntermediate, HumanBodyBones.RightIndexDistal),
+        (HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightMiddleIntermediate), (HumanBodyBones.RightMiddleIntermediate, HumanBodyBones.RightMiddleDistal),
+        (HumanBodyBones.RightRingProximal, HumanBodyBones.RightRingIntermediate), (HumanBodyBones.RightRingIntermediate, HumanBodyBones.RightRingDistal),
+        (HumanBodyBones.RightLittleProximal, HumanBodyBones.RightLittleIntermediate), (HumanBodyBones.RightLittleIntermediate, HumanBodyBones.RightLittleDistal),
+    };
+
+    /// <summary>
+    /// Poses the avatar's limbs like its original base model's rest pose (e.g. a T-pose): each limb bone is turned, parents
+    /// first, to point where the same humanoid bone points in that model. Bone lengths, the hips and the spine stay the
+    /// version's own; non-humanoid bones follow their parents.
+    /// </summary>
+    internal static bool KeepBasePose(Transform avatarRoot, string basePoseFbxPath)
+    {
+        var model = AssetDatabase.LoadAssetAtPath<GameObject>(MCBUtils.ToUnityPath(basePoseFbxPath));
+        var baseAnimator = model != null ? model.GetComponent<Animator>() : null;
+        var animator = avatarRoot != null ? avatarRoot.GetComponent<Animator>() : null;
+        if (baseAnimator == null || baseAnimator.avatar == null || !baseAnimator.avatar.isHuman || animator == null || animator.avatar == null || !animator.avatar.isHuman)
+        {
+            MCBLogger.LogWarning($"[NativeMeshPayload] The original base pose could not be kept: '{basePoseFbxPath}' or the applied avatar is not a valid humanoid.");
+            return false;
+        }
+
+        var instance = UnityEngine.Object.Instantiate(model);
+        instance.hideFlags = HideFlags.HideAndDontSave;
+        try
+        {
+            var reference = instance.GetComponent<Animator>();
+            // The bones the meshes are skinned to: MCB's logic proxies carry the same names, and an Animator may bind those.
+            var weighted = new HashSet<Transform>(avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true).SelectMany(r => r.bones).Where(b => b != null));
+            var byName = avatarRoot.GetComponentsInChildren<Transform>(true).GroupBy(t => t.name, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(weighted.Contains).First(), StringComparer.Ordinal);
+            var mapped = animator.avatar.humanDescription.human.GroupBy(h => h.humanName, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().boneName, StringComparer.Ordinal);
+            Transform Bone(HumanBodyBones bone) =>
+                mapped.TryGetValue(HumanTrait.BoneName[(int)bone], out var name) && byName.TryGetValue(name, out var transform) ? transform : null;
+            // Directions are compared in each avatar's own root space, so where the avatar stands does not matter.
+            var toAvatar = avatarRoot.rotation * Quaternion.Inverse(instance.transform.rotation);
+            var recorded = new HashSet<Transform>();
+            int turned = 0;
+            foreach (var (bone, toward) in PoseLimbs)
+            {
+                Transform from = Bone(bone), to = Bone(toward);
+                Transform baseFrom = reference.GetBoneTransform(bone), baseTo = reference.GetBoneTransform(toward);
+                if (from == null || to == null || baseFrom == null || baseTo == null) continue;
+                Vector3 current = to.position - from.position, wanted = toAvatar * (baseTo.position - baseFrom.position);
+                if (current.sqrMagnitude < 1e-10f || wanted.sqrMagnitude < 1e-10f) continue;
+                if (recorded.Add(from)) Undo.RecordObject(from, "Keep Original Base Pose");
+                from.rotation = Quaternion.FromToRotation(current, wanted) * from.rotation;
+                turned++;
+            }
+            return turned > 0;
+        }
+        finally { UnityEngine.Object.DestroyImmediate(instance); }
     }
 
     private static void ApplyPayloadStructuralBoneTransforms(Transform avatarRoot, NativeMeshPayloadAsset payload)

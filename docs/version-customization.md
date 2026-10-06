@@ -42,6 +42,12 @@ already use another custom base built on the same original. Users download and
 apply it exactly like an encrypted version. **Supported original bases** and
 **Support new version** are hidden: there is no per-original copy to choose.
 
+An unencrypted package carries its model's own rest pose, which can differ from the
+original's (Ultirex's FBX is in a star pose). When it is applied, MCB turns the arms,
+hands, fingers, legs and feet to point like the original base model the avatar is on,
+so switching from a T-posed base keeps the T-pose. Bone lengths, the hips, the spine,
+neck and head stay the version's.
+
 Unencrypted versions need advanced mesh replacement. MCB stores very large meshes
 in one codec (ZSTD) so a package stays below the 600 MB upload limit.
 

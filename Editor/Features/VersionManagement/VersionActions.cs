@@ -1885,7 +1885,7 @@ public class VersionActions
         string binPath = ResolveVersionPatchPath(version, patchFile);
         // Preparation has already materialized the payload cache; assign meshes/pose synchronously.
         NativeMeshPayloadService.ApplyEncryptedPayload(editor.customBaseTarget.transform.root, version, patchFile,
-            binPath, originalFbxPath, fileManagerService);
+            binPath, originalFbxPath, fileManagerService, targetFbxPath);
     }
 
     private void RestoreBackupsForVersion(CustomBaseVersion version, string fallbackFbxPath, bool requireBackup = true)
@@ -2031,7 +2031,7 @@ public class VersionActions
                 ResolveVersionPatchPath(version, patchFile),
                 ResolvePayloadKeyPath(version, patchFile, targetFbxPath, "advanced mesh authoring pose"),
                 fileManagerService);
-            NativeMeshPayloadService.ApplyPayloadAuthoringPose(root, payload);
+            NativeMeshPayloadService.ApplyPayloadAuthoringPose(root, payload, targetFbxPath);
         }
     }
 
