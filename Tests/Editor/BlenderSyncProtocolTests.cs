@@ -14,17 +14,22 @@ public class BlenderSyncProtocolTests
     private static readonly Type Service = typeof(BlenderSyncService);
     private static readonly string[] BicepKeys = { "XMSL_BAKE_Bicep_01", "XMSL_BAKE_Bicep_02", "XMSL_BAKE_Bicep_03" };
 
-    // The xmuscle block written by XMuscle Orbit Helper API 1.
-    private const string XMuscleV1 = @"{
-    ""apiVersion"": 1,
+    // The xmuscle block written by XMuscle Orbit Helper API 2: a stretch sensor, then a twist sensor on a pivot.
+    private const string XMuscleV2 = @"{
+    ""apiVersion"": 2,
     ""muscles"": [{
       ""name"": ""Bicep"",
-      ""bone"": ""LowerArm.L"",
-      ""axis"": ""X"",
+      ""sensors"": [
+        { ""receiver"": { ""bone"": ""UpperArm.L"", ""position"": [-0.0057, 0.0279, 0.0419] },
+          ""sender"": { ""bone"": ""LowerArm.L"", ""position"": [0.0011, 0.0814, 0.0178] } },
+        { ""receiver"": { ""bone"": ""UpperArm.L"", ""position"": [0.1437, 0.0, 0.0] },
+          ""sender"": { ""bone"": ""LowerArm.L"", ""position"": [0.0, 0.0, 0.1437] },
+          ""aim"": { ""bone"": ""LowerArm.L"" } }
+      ],
       ""samples"": [
-        { ""shapeKey"": ""XMSL_BAKE_Bicep_01"", ""mesh"": ""Body"", ""angleDeg"": 0.0 },
-        { ""shapeKey"": ""XMSL_BAKE_Bicep_02"", ""mesh"": ""Body"", ""angleDeg"": 45.0 },
-        { ""shapeKey"": ""XMSL_BAKE_Bicep_03"", ""mesh"": ""Body"", ""angleDeg"": 90.0 }
+        { ""shapeKey"": ""XMSL_BAKE_Bicep_01"", ""mesh"": ""Body"", ""distances"": [0.4378, 0.2032] },
+        { ""shapeKey"": ""XMSL_BAKE_Bicep_02"", ""mesh"": ""Body"", ""distances"": [0.384, 0.2032] },
+        { ""shapeKey"": ""XMSL_BAKE_Bicep_03"", ""mesh"": ""Body"", ""distances"": [0.2877, 0.2032] }
       ]
     }],
     ""warnings"": [""Triceps: Choose a valid pose bone on the selected armature""]
@@ -88,7 +93,7 @@ public class BlenderSyncProtocolTests
         Directory.Delete(folder, true);
     }
 
-    private static string Manifest(int protocolVersion = 2, string xmuscle = XMuscleV1) =>
+    private static string Manifest(int protocolVersion = 2, string xmuscle = XMuscleV2) =>
         ManifestTemplate.Replace("{protocolVersion}", protocolVersion.ToString()).Replace("{xmuscle}", xmuscle);
 
     private static string Heartbeat(int protocolVersion = 2, string token = "token") =>
@@ -124,13 +129,17 @@ public class BlenderSyncProtocolTests
 
     private static void AssertBicep(MuscleCorrectiveSet set)
     {
-        Assert.AreEqual(1, set.apiVersion);
+        Assert.AreEqual(2, set.apiVersion);
         var muscle = set.muscles.Single();
         Assert.AreEqual("Bicep", muscle.name);
-        Assert.AreEqual("LowerArm.L", muscle.bone);
-        Assert.AreEqual("X", muscle.axis);
+        Assert.AreEqual(2, muscle.sensors.Count);
+        Assert.AreEqual("UpperArm.L", muscle.sensors[0].receiver.bone);
+        CollectionAssert.AreEqual(new[] { 0.0011f, 0.0814f, 0.0178f }, muscle.sensors[0].sender.position);
+        Assert.IsFalse(muscle.sensors[0].HasAim);
+        Assert.IsTrue(muscle.sensors[1].HasAim);
+        Assert.AreEqual("LowerArm.L", muscle.sensors[1].aim.bone);
         CollectionAssert.AreEqual(BicepKeys, muscle.samples.Select(sample => sample.shapeKey));
-        CollectionAssert.AreEqual(new[] { 0f, 45f, 90f }, muscle.samples.Select(sample => sample.angleDeg));
+        CollectionAssert.AreEqual(new[] { 0.384f, 0.2032f }, muscle.samples[1].distances);
         CollectionAssert.AreEqual(new[] { "Body", "Body", "Body" }, muscle.samples.Select(sample => sample.mesh));
         CollectionAssert.AreEqual(new[] { "Triceps: Choose a valid pose bone on the selected armature" }, set.warnings);
     }
@@ -185,7 +194,7 @@ public class BlenderSyncProtocolTests
         // Newtonsoft writes the manifest's field names, so a stored set reads back like a manifest block.
         var jsonConvert = Type.GetType("Newtonsoft.Json.JsonConvert, Newtonsoft.Json", true);
         string json = (string)jsonConvert.GetMethod("SerializeObject", new[] { typeof(object) }).Invoke(null, new object[] { set });
-        StringAssert.Contains("\"shapeKey\":\"XMSL_BAKE_Bicep_02\",\"mesh\":\"Body\",\"angleDeg\":45.0", json);
+        StringAssert.Contains("\"shapeKey\":\"XMSL_BAKE_Bicep_02\",\"mesh\":\"Body\",\"distances\":[0.384,0.2032]", json);
         AssertBicep(ReadManifest(Manifest(xmuscle: json)).xmuscle);
 
         AssertBicep(JsonUtility.FromJson<MuscleCorrectiveSet>(JsonUtility.ToJson(set)));

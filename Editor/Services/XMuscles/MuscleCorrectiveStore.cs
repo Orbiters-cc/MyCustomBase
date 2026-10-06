@@ -37,7 +37,9 @@ internal static class MuscleCorrectiveStore
         EditorUtility.SetDirty(customBase);
     }
 
-    public static int ContactCount(MuscleCorrectiveSet set) => set?.muscles?.Count(muscle => muscle?.samples?.Count > 0) * 2 ?? 0;
+    /// <summary>Each sensor of a muscle with samples is a receiver and a sender.</summary>
+    public static int ContactCount(MuscleCorrectiveSet set) =>
+        set?.muscles?.Where(muscle => muscle?.samples?.Count > 0).Sum(muscle => 2 * (muscle.sensors?.Count ?? 0)) ?? 0;
 
     public static int ShapeCount(MuscleCorrectiveSet set) =>
         set?.muscles?.Where(muscle => muscle?.samples != null).SelectMany(muscle => muscle.samples).Select(sample => sample.mesh + "/" + sample.shapeKey).Distinct().Count() ?? 0;

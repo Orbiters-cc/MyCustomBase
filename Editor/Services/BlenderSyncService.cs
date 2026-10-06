@@ -1510,8 +1510,9 @@ public static class BlenderSyncService
         string statusVerb = usedAdvancedMeshBlenderLink ? "processed" : "imported";
         SetStatus($"Blender export {statusVerb} for {session.customBaseName}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}", MessageType.Info);
         LogMuscleCorrectives(manifest.xmuscle);
-        // Without XMuscle Orbit Helper in Blender there is no xmuscle block: the stored correctives stay as they are.
-        if (manifest.xmuscle != null)
+        // Without XMuscle Orbit Helper in Blender there is no xmuscle block, and another API's block is not read: the stored
+        // correctives stay as they are.
+        if (manifest.xmuscle != null && manifest.xmuscle.apiVersion == MuscleCorrectiveSet.ApiVersion)
         {
             var exportedMeshes = models
                 .Where(model => model.shapeKeysByMesh != null)
@@ -1550,6 +1551,13 @@ public static class BlenderSyncService
     {
         if (set == null)
         {
+            return;
+        }
+
+        if (set.apiVersion != MuscleCorrectiveSet.ApiVersion)
+        {
+            MCBLogger.LogWarning($"[BlenderSync] XMuscles: the export comes from XMuscle Orbit Helper API {set.apiVersion}, MCB reads API " +
+                                 $"{MuscleCorrectiveSet.ApiVersion}: update XMuscle Orbit Helper to {BlenderAddonService.XMuscleToolkitVersion} in Blender and export again.");
             return;
         }
 

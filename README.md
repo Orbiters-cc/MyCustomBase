@@ -1,12 +1,17 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.1 — 2026-10-06
+
+- Unencrypted versions keep the original base's pose: switching a T-posed Rexouium to Ultirex 5.1 no longer leaves it in the star pose of the Ultirex FBX. The arms, hands, fingers, legs and feet point like the original base model; bone lengths, hips, spine and head stay the version's.
+- XMuscles: **Build rig on this avatar** places each contact where Blender measured it (XMuscle Orbit Helper API 2): a receiver and sender along the muscle's stretch, and for twisting muscles a receiver on a pivot an Aim constraint keeps along the twisting bone, so it reads the twist alone (2D blend tree). Exports from another helper API are not stored.
+- Requires Orbiters Toolkit 0.3.14.
+
 ## 1.12.0 — 2026-10-05
 
 - Physic: creators name a version's secondary-motion bones with "physic" and turn on Support physic in the version form. Users switch Physic on in the version options (off by default). On, the build gives the chains always-on PhysBones, one per parent bone, that every player simulates; off, the build removes those bones and moves their weights to the parent.
 - Squishy interaction, the same way: bones named with "interaction" (a chain of two) and Support squishy in the version form; on, players' hands squash them and they spring back (PhysBone squish with collision), off, the build removes them.
 - The parameter graph of the Sliders card is gone: XRay Gizmos 0.2.8 shows the avatar budget over the Scene view, with the custom base's share including the PhysBones its build adds and the bones it removes.
 - Modes are folded by default in the version form.
-- Unencrypted versions keep the original base's pose: switching a T-posed Rexouium to Ultirex 5.1 no longer leaves it in the star pose of the Ultirex FBX. The arms, hands, fingers, legs and feet point like the original base model; bone lengths, hips, spine and head stay the version's.
 - The avatar's own animations keep working on bones a version moves to another parent: the build copy's controllers follow the moved bones.
 - Authoring drafts can set the realistic material suggestion.
 - Fix hidden MCB editors left by interrupted operations raising errors after every script reload.
@@ -84,10 +89,15 @@ with the banner pipeline (asset field `mcbBannerEffectVersion`).
 
 Correctives baked with XMuscles in Blender (XMuscle Orbit Helper) come with each Magic Sync export (`manifest.xmuscle`)
 and are kept on the custom base per exported mesh (`MuscleCorrectiveStore`). The Creator panel shows them with their
-contact cost; **Build rig on this avatar** (`MuscleDriverGenerator`) adds, per muscle, a contact sender down the moving
-bone and a proximity receiver up its parent (their reading follows the bend at any avatar scale), a 1D blend tree over
-the correctives inside one Direct blend tree, and a VRCFury Full Controller. Publishing the rig with a version waits for
-the prototype check in Gesture Manager and VRChat.
+contact cost; **Build rig on this avatar** (`MuscleDriverGenerator`) turns each sensor the bake measured (XMuscle Orbit
+Helper API 2) into a proximity receiver and a point sender where Blender measured them: the muscle's stretch, from its
+origin to its insertion, and for a muscle whose drivers read a twist, a receiver on a pivot that a VRC Aim constraint
+keeps along the twisting bone (up held by its parent), so it reads the twist alone. A 1D blend tree (2D Freeform
+Cartesian with a twist) puts each corrective fully on at the readings its baked distances give, inside one Direct blend
+tree, with a VRCFury Full Controller. Contacts run on every client and scale with the avatar; a VRC Raycast would only
+hit the wearer's own colliders on the wearer's client (and colliders are PC only), so others would not see the muscles.
+Exports from another XMuscle Orbit Helper API are not stored. Publishing the rig with a version waits for the prototype
+check in Gesture Manager and VRChat.
 
 ## Custom base FBX backup invariant
 

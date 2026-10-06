@@ -8,13 +8,19 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using VRC.Dynamics;
+using VRC.SDK3.Dynamics.Constraint.Components;
 using VRC.SDK3.Dynamics.Contact.Components;
 
 /// <summary>
-/// XMuscles in VRChat: the corrective blendshapes of each baked muscle follow its joint through contacts. A contact sender a
-/// little way down the moving bone and a proximity receiver as far up its parent bone tell how bent the joint is (about 0
-/// straight, 1 folded); a 1D blend tree per muscle, inside one Direct blend tree, turns that into the correctives; VRCFury
-/// merges the controller into the FX layer. Contacts scale with the avatar, so the reading is the same at any avatar scale.
+/// XMuscles in VRChat: the corrective blendshapes of each baked muscle follow the pose through contacts. Each sensor the
+/// Blender bake measured becomes a proximity receiver and a point sender on the avatar's bones, where the bake measured
+/// them; the receiver reads 1 - distance / radius. The stretch sensor goes from the muscle's origin to its insertion, as the
+/// X-Muscle stretches. A twist sensor's receiver rides on a pivot that a VRC Aim constraint keeps along the twisting bone,
+/// with that bone's rest X held as up by its parent, so it reads the twist alone (exactly, for a hinge that twists).
+/// A blend tree per muscle (1D, or 2D for a muscle that also follows a twist), inside one Direct blend tree, puts each
+/// corrective fully on at the readings it was baked at; VRCFury merges the controller into the FX layer. Contacts scale
+/// with the avatar, so the readings are the same at any avatar scale. Contacts run on every client, so everyone sees the
+/// muscles (a VRC Raycast only hits a player's own colliders on that player's client).
 /// Generated again from scratch each time (the previous rig is removed first).
 /// </summary>
 internal static class MuscleDriverGenerator
@@ -23,8 +29,12 @@ internal static class MuscleDriverGenerator
     public const string ContactPrefix = "MCB XM ";
     public const string ParameterPrefix = "MCB/XM/";
     public const string OneParameter = "MCB/XM/One";
-    // The receiver reads 0 at its edge and 1 at its centre; the sender is a point.
-    private const float SenderRadius = 0.001f;
+    // The receiver's radius leaves room past the farthest baked distance, so a pose beyond the bake still reads above 0.
+    internal const float RadiusMargin = 1.25f;
+    // The sender is a point, in Blender world units (it scales with the avatar like the distances).
+    internal const float SenderRadius = 0.001f;
+    // The aim target's distance down the twisting bone (only its direction counts).
+    private const float AimLength = 0.1f;
 
     internal sealed class Result
     {
@@ -36,35 +46,15 @@ internal static class MuscleDriverGenerator
         public readonly List<string> Warnings = new List<string>();
     }
 
-    /// <summary>One muscle's joint as the contacts measure it: where both contacts go and how far apart they are at a bend.</summary>
-    internal readonly struct Joint
-    {
-        public readonly Transform Bone, Parent;
-        public readonly Vector3 BoneDirection, ParentDirection;
-        public readonly float Distance;
-        public readonly float RestAngle;
+    /// <summary>A Blender bone-space offset in the Unity bone's space: a Blender FBX keeps each bone's Y and Z and mirrors its X.</summary>
+    internal static Vector3 FromBlenderBone(float[] offset) =>
+        offset == null || offset.Length < 3 ? Vector3.zero : new Vector3(-offset[0], offset[1], offset[2]);
 
-        public Joint(Transform bone, Transform parent, Vector3 boneDirection, Vector3 parentDirection, float distance)
-        {
-            Bone = bone;
-            Parent = parent;
-            BoneDirection = boneDirection;
-            ParentDirection = parentDirection;
-            Distance = distance;
-            RestAngle = Vector3.Angle(parentDirection, boneDirection);
-        }
+    /// <summary>The receiver radius for a sensor whose baked distances reach <paramref name="farthest"/> (Blender world units).</summary>
+    internal static float Radius(float farthest) => Mathf.Max(farthest, SenderRadius * 10f) * RadiusMargin;
 
-        /// <summary>
-        /// What the receiver reads with the joint bent by <paramref name="degrees"/> from its rest pose: the contacts are
-        /// <see cref="Distance"/> from the joint on each bone, so they are 2 d sin(θ/2) apart for an opening θ, and the
-        /// receiver's radius is 2 d.
-        /// </summary>
-        public float Proximity(float degrees)
-        {
-            float opening = Mathf.Clamp(RestAngle - Mathf.Abs(degrees), 0f, 180f);
-            return Mathf.Clamp01(1f - Mathf.Sin(opening * 0.5f * Mathf.Deg2Rad));
-        }
-    }
+    /// <summary>What a receiver of <paramref name="radius"/> reads with its point sender <paramref name="distance"/> away (same units).</summary>
+    internal static float Reading(float distance, float radius) => Mathf.Clamp01(1f - Mathf.Max(0f, distance - SenderRadius) / radius);
 
     /// <param name="renderersByMesh">The avatar's renderer for each Blender mesh name the samples use.</param>
     /// <param name="controllerPath">Where the generated controller is saved (its clips and blend trees go inside it).</param>
@@ -94,27 +84,29 @@ internal static class MuscleDriverGenerator
         root.transform.SetParent(avatar.transform, false);
         result.Root = root;
         result.Controller = controller;
+        // Blender world units on this avatar: the FBX comes in at the avatar root's scale.
+        float scale = Mathf.Abs(avatar.transform.lossyScale.x);
 
         var children = new List<ChildMotion>();
         foreach (var muscle in set.muscles)
         {
             if (muscle?.samples == null || muscle.samples.Count == 0) continue;
-            var bone = FindBone(avatar.transform, muscle.bone);
-            if (bone == null || bone.parent == null)
+            int sensorCount = muscle.sensors?.Count ?? 0;
+            if (sensorCount < 1 || sensorCount > 2)
             {
-                result.Warnings.Add("Muscle ‘" + muscle.name + "’: no bone ‘" + muscle.bone + "’ with a parent on the avatar.");
+                result.Warnings.Add("Muscle ‘" + muscle.name + "’: " + (sensorCount == 0 ? "no sensors, bake it again in Blender." : sensorCount + " sensors, at most 2 are blended."));
                 continue;
             }
-            if (!TryJoint(bone, out var joint))
+            var samples = muscle.samples.Where(sample => sample != null && !string.IsNullOrEmpty(sample.shapeKey)).ToList();
+            if (samples.Any(sample => sample.distances == null || sample.distances.Count != sensorCount))
             {
-                result.Warnings.Add("Muscle ‘" + muscle.name + "’: ‘" + muscle.bone + "’ has no length to place its contacts on.");
+                result.Warnings.Add("Muscle ‘" + muscle.name + "’: a sample has no distance for each sensor, bake it again in Blender.");
                 continue;
             }
 
             var shapes = new List<(MuscleCorrectiveSample sample, SkinnedMeshRenderer renderer)>();
-            foreach (var sample in muscle.samples)
+            foreach (var sample in samples)
             {
-                if (sample == null || string.IsNullOrEmpty(sample.shapeKey)) continue;
                 if (renderersByMesh == null || !renderersByMesh.TryGetValue(sample.mesh ?? string.Empty, out var renderer) || renderer == null)
                 {
                     result.Warnings.Add("Muscle ‘" + muscle.name + "’: no renderer on the avatar for mesh ‘" + sample.mesh + "’.");
@@ -126,31 +118,53 @@ internal static class MuscleDriverGenerator
             }
             if (shapes.Count == 0) continue;
 
-            if (muscle.samples.Any(sample => sample.angleDeg > 0f) && muscle.samples.Any(sample => sample.angleDeg < 0f))
-                result.Warnings.Add("Muscle ‘" + muscle.name + "’ has samples on both sides of its rest pose: a contact reads only how far the " +
-                                    "joint is bent, so the two sides share their correctives.");
-
-            string parameter = ParameterPrefix + Sanitize(muscle.name);
-            string tag = "MCB_XM_" + Sanitize(muscle.name) + "_" + Mathf.Abs((avatar.name + muscle.name).GetHashCode()).ToString("x");
-            AddContacts(joint, muscle.name, tag, parameter);
-            result.Contacts += 2;
-            controller.AddParameter(new AnimatorControllerParameter { name = parameter, type = AnimatorControllerParameterType.Float, defaultFloat = 0f });
+            var radii = Enumerable.Range(0, sensorCount).Select(i => Radius(shapes.Max(shape => shape.sample.distances[i]))).ToArray();
+            var parameters = new string[sensorCount];
+            string problem = null;
+            var placed = new List<GameObject>();
+            for (int i = 0; i < sensorCount && problem == null; i++)
+            {
+                string label = muscle.name + (sensorCount > 1 ? " " + (i + 1) : string.Empty);
+                parameters[i] = ParameterPrefix + Sanitize(muscle.name) + (sensorCount > 1 ? "/" + (i + 1) : string.Empty);
+                string tag = "MCB_XM_" + Sanitize(label) + "_" + Mathf.Abs((avatar.name + label).GetHashCode()).ToString("x");
+                problem = AddSensor(avatar.transform, muscle.sensors[i], label, tag, parameters[i], radii[i], scale, placed);
+            }
+            if (problem != null)
+            {
+                foreach (var created in placed) Undo.DestroyObjectImmediate(created);
+                result.Warnings.Add("Muscle ‘" + muscle.name + "’: " + problem);
+                continue;
+            }
+            result.Contacts += 2 * sensorCount;
+            foreach (string parameter in parameters)
+                controller.AddParameter(new AnimatorControllerParameter { name = parameter, type = AnimatorControllerParameterType.Float, defaultFloat = 0f });
 
             var tree = new BlendTree
             {
                 name = muscle.name,
-                blendType = BlendTreeType.Simple1D,
-                blendParameter = parameter,
+                blendType = sensorCount == 1 ? BlendTreeType.Simple1D : BlendTreeType.FreeformCartesian2D,
+                blendParameter = parameters[0],
+                blendParameterY = sensorCount > 1 ? parameters[1] : parameters[0],
                 useAutomaticThresholds = false,
                 hideFlags = HideFlags.HideInHierarchy
             };
             AssetDatabase.AddObjectToAsset(tree, controller);
-            var thresholds = new List<(float threshold, Motion motion)> { (joint.Proximity(0f), Clip(controller, avatar, muscle.name + " rest", shapes, null)) };
+            var readings = new List<(Vector2 reading, Motion motion)>();
             foreach (var shape in shapes)
-                thresholds.Add((joint.Proximity(shape.sample.angleDeg), Clip(controller, avatar, muscle.name + " " + shape.sample.shapeKey, shapes, shape.sample)));
-            // Equal readings (the same bend) cannot be told apart: the first one is kept.
-            foreach (var group in thresholds.OrderBy(item => item.threshold).GroupBy(item => Mathf.Round(item.threshold * 10000f)))
-                tree.AddChild(group.First().motion, group.First().threshold);
+            {
+                var reading = new Vector2(Reading(shape.sample.distances[0], radii[0]), sensorCount > 1 ? Reading(shape.sample.distances[1], radii[1]) : 0f);
+                // Equal readings (the same pose) cannot be told apart: the first one is kept.
+                if (readings.Any(other => (other.reading - reading).sqrMagnitude < 1e-8f))
+                {
+                    result.Warnings.Add("Muscle ‘" + muscle.name + "’: ‘" + shape.sample.shapeKey + "’ was baked at the same reading as another sample and is left out.");
+                    continue;
+                }
+                readings.Add((reading, Clip(controller, avatar, muscle.name + " " + shape.sample.shapeKey, shapes, shape.sample)));
+            }
+            if (sensorCount == 1)
+                foreach (var item in readings.OrderBy(item => item.reading.x)) tree.AddChild(item.motion, item.reading.x);
+            else
+                foreach (var item in readings) tree.AddChild(item.motion, item.reading);
             children.Add(new ChildMotion { motion = tree, directBlendParameter = OneParameter, timeScale = 1f });
             foreach (var shape in shapes) result.Blendshapes.Add(shape.renderer.name + "/" + shape.sample.shapeKey);
             result.Muscles++;
@@ -163,7 +177,7 @@ internal static class MuscleDriverGenerator
         return result;
     }
 
-    /// <summary>Removes a rig made earlier: its root object and the contacts it put on the bones.</summary>
+    /// <summary>Removes a rig made earlier: its root object and the contacts and pivots it put on the bones.</summary>
     public static void Remove(GameObject avatar)
     {
         if (avatar == null) return;
@@ -175,51 +189,66 @@ internal static class MuscleDriverGenerator
         }
     }
 
-    /// <summary>The joint at this bone: halfway down the shorter of the bone and its parent, toward the bone's child and the parent's head.</summary>
-    internal static bool TryJoint(Transform bone, out Joint joint)
+    // Places a sensor's receiver and sender (and the pivot of a twist sensor); returns what is missing, or null.
+    private static string AddSensor(Transform avatar, MuscleSensor sensor, string label, string tag, string parameter, float radius, float scale, List<GameObject> placed)
     {
-        joint = default;
-        var parent = bone.parent;
-        var tail = Enumerable.Range(0, bone.childCount).Select(bone.GetChild)
-            .Where(child => !child.name.StartsWith(ContactPrefix, StringComparison.Ordinal))
-            .OrderByDescending(child => (child.position - bone.position).sqrMagnitude).FirstOrDefault();
-        Vector3 toParent = parent.position - bone.position;
-        Vector3 toChild = tail != null ? tail.position - bone.position : Vector3.zero;
-        float parentLength = toParent.magnitude, childLength = toChild.magnitude;
-        if (parentLength < 1e-5f) return false;
-        if (childLength < 1e-5f)
+        var receiverBone = FindBone(avatar, sensor?.receiver?.bone);
+        var senderBone = FindBone(avatar, sensor?.sender?.bone);
+        if (receiverBone == null || senderBone == null)
+            return "no bone ‘" + (receiverBone == null ? sensor?.receiver?.bone : sensor?.sender?.bone) + "’ on the avatar.";
+
+        Transform receiverParent = receiverBone;
+        Vector3 receiverOrigin = receiverBone.position;
+        Quaternion receiverAxes = receiverBone.rotation;
+        if (sensor.HasAim)
         {
-            // An end bone: along its own axis as far as the parent is long.
-            toChild = bone.rotation * Vector3.up * parentLength;
-            childLength = parentLength;
+            var aimBone = FindBone(avatar, sensor.aim.bone);
+            if (aimBone == null) return "no bone ‘" + sensor.aim.bone + "’ on the avatar.";
+            var pivot = Create(ContactPrefix + label + " (pivot)", receiverBone, aimBone.position, aimBone.rotation, placed);
+            var target = Create(ContactPrefix + label + " (aim)", aimBone, aimBone.position + aimBone.rotation * Vector3.up * (AimLength * scale), aimBone.rotation, placed);
+            var aim = pivot.AddComponent<VRCAimConstraint>();
+            aim.AimAxis = Vector3.up;
+            aim.UpAxis = Vector3.right;
+            aim.WorldUp = VRCConstraintBase.WorldUpType.ObjectRotationUp;
+            aim.WorldUpTransform = receiverBone;
+            aim.WorldUpVector = Quaternion.Inverse(receiverBone.rotation) * aimBone.rotation * Vector3.right;
+            aim.Sources.Add(new VRCConstraintSource(target.transform, 1f));
+            aim.RotationAtRest = pivot.transform.localEulerAngles;
+            aim.Locked = true;
+            aim.IsActive = true;
+            receiverParent = pivot.transform;
+            receiverOrigin = aimBone.position;
+            receiverAxes = aimBone.rotation;
         }
-        joint = new Joint(bone, parent, toChild / childLength, toParent / parentLength, 0.5f * Mathf.Min(parentLength, childLength));
-        return true;
-    }
 
-    private static void AddContacts(Joint joint, string muscle, string tag, string parameter)
-    {
-        var sender = new GameObject(ContactPrefix + muscle + " (bend)");
-        Undo.RegisterCreatedObjectUndo(sender, "Generate XMuscles");
-        sender.transform.SetParent(joint.Bone, false);
-        sender.transform.position = joint.Bone.position + joint.BoneDirection * joint.Distance;
-        var send = sender.AddComponent<VRCContactSender>();
-        send.shapeType = ContactBase.ShapeType.Sphere;
-        send.radius = SenderRadius / Scale(sender.transform);
-        send.collisionTags = new List<string> { tag };
-
-        var receiver = new GameObject(ContactPrefix + muscle + " (reading)");
-        Undo.RegisterCreatedObjectUndo(receiver, "Generate XMuscles");
-        receiver.transform.SetParent(joint.Parent, false);
-        receiver.transform.position = joint.Bone.position + joint.ParentDirection * joint.Distance;
+        var receiver = Create(ContactPrefix + label + " (reading)", receiverParent,
+            receiverOrigin + receiverAxes * (FromBlenderBone(sensor.receiver.position) * scale), receiverAxes, placed);
         var receive = receiver.AddComponent<VRCContactReceiver>();
         receive.shapeType = ContactBase.ShapeType.Sphere;
-        receive.radius = 2f * joint.Distance / Scale(receiver.transform);
+        receive.radius = radius * scale / Scale(receiver.transform);
         receive.collisionTags = new List<string> { tag };
         receive.receiverType = ContactReceiver.ReceiverType.Proximity;
         receive.parameter = parameter;
         receive.allowSelf = true;
         receive.allowOthers = false;
+
+        var sender = Create(ContactPrefix + label + " (sender)", senderBone,
+            senderBone.position + senderBone.rotation * (FromBlenderBone(sensor.sender.position) * scale), senderBone.rotation, placed);
+        var send = sender.AddComponent<VRCContactSender>();
+        send.shapeType = ContactBase.ShapeType.Sphere;
+        send.radius = SenderRadius * scale / Scale(sender.transform);
+        send.collisionTags = new List<string> { tag };
+        return null;
+    }
+
+    private static GameObject Create(string name, Transform parent, Vector3 position, Quaternion rotation, List<GameObject> placed)
+    {
+        var created = new GameObject(name);
+        Undo.RegisterCreatedObjectUndo(created, "Generate XMuscles");
+        created.transform.SetParent(parent, false);
+        created.transform.SetPositionAndRotation(position, rotation);
+        placed.Add(created);
+        return created;
     }
 
     private static float Scale(Transform transform)
@@ -228,7 +257,7 @@ internal static class MuscleDriverGenerator
         return Mathf.Max(1e-6f, (Mathf.Abs(scale.x) + Mathf.Abs(scale.y) + Mathf.Abs(scale.z)) / 3f);
     }
 
-    // A clip holding every corrective of the muscle: this sample's at 100, the others at 0 (rest: all at 0).
+    // A clip holding every corrective of the muscle: this sample's at 100, the others at 0.
     private static AnimationClip Clip(AnimatorController controller, GameObject avatar, string name,
         List<(MuscleCorrectiveSample sample, SkinnedMeshRenderer renderer)> shapes, MuscleCorrectiveSample on)
     {

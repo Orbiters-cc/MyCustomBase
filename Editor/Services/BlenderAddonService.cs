@@ -10,8 +10,8 @@ using UnityEditor;
 /// </summary>
 public static class BlenderAddonService
 {
-    public const string BlenderAddonVersion = "0.1.0";
-    public const string XMuscleToolkitVersion = "0.9.0";
+    public const string BlenderAddonVersion = "0.2.0";
+    public const string XMuscleToolkitVersion = "0.10.0";
     private const string BlenderAddonUrlPrefsKey = "MCB_BlenderAddonDownloadUrl";
     private const string ExtensionRepository = "user_default";
     private const string BlenderAddonId = "mcb_blender";
