@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Orbiters.Toolkit.Editor.Animations;
 using Orbiters.Toolkit.Editor.VRChat.Attachments;
 using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 using UnityEditor;
@@ -25,10 +26,15 @@ public static class VersionCustomizationBuild
         public readonly List<TwistBoneService.Target> Twists = new List<TwistBoneService.Target>();
         // Chain kinds the version supports: true adds PhysBones to their chains, false strips them.
         public readonly Dictionary<PhysicService.Kind, bool> Chains = new Dictionary<PhysicService.Kind, bool>();
+        public readonly Dictionary<PhysicService.Kind, PhysBoneSettings> Settings = new Dictionary<PhysicService.Kind, PhysBoneSettings>();
         // The custom base's renderers: the blendshapes nothing uses leave their meshes.
         public readonly List<SkinnedMeshRenderer> Base = new List<SkinnedMeshRenderer>();
+        // Bones resting in another frame than on the original base model: animations written for that model are turned.
+        public Dictionary<Transform, BoneFrameRetarget.Frame> Frames = new Dictionary<Transform, BoneFrameRetarget.Frame>();
         public bool Applied;
     }
+    // Re-exported bone rolls (Ultirex V5.1's toes: 100–180°); pose differences kept by the version stay well below.
+    private const float ReorientedAngle = 20f;
     private static readonly ConditionalWeakTable<GameObject, Plan> Plans = new ConditionalWeakTable<GameObject, Plan>();
 
     public static void Capture(GameObject avatar)
@@ -38,9 +44,14 @@ public static class VersionCustomizationBuild
         if (owner == null || owner.appliedCustomBaseAssetId <= 0) return;
         var plan = new Plan();
         plan.Base.AddRange(MCBReFitIntegration.GetCustomBaseRenderers(owner));
+        plan.Frames = ReorientedBones(owner, avatar.transform, plan.Base);
         Plans.Remove(avatar); Plans.Add(avatar, plan);
         var config = owner.appliedCustomization;
-        if (config == null) return;
+        if (config == null)
+        {
+            if (plan.Frames.Count > 0) AttachmentAnimationBuild.Prepare(avatar);
+            return;
+        }
         config.Validate();
         if (config.modes.options.Count > 0)
         {
@@ -64,11 +75,11 @@ public static class VersionCustomizationBuild
         }
         foreach (var twist in config.twistBones) plan.Twists.Add(TwistBoneService.Resolve(avatar.transform, twist));
         foreach (var kind in PhysicService.Kind.All)
-            if (kind.SupportedBy(config)) plan.Chains[kind] = kind.EnabledOn(owner);
+            if (kind.SupportedBy(config)) { plan.Chains[kind] = kind.EnabledOn(owner); plan.Settings[kind] = kind.SettingsOf(config); }
         var moved = MovedBones(owner, avatar.transform);
         // Own every authored controller graph too, including avatars that do not use VRCFury. Stripping physic keeps
         // its meshes in that build data.
-        if (plan.Properties.Count > 0 || plan.Chains.ContainsValue(false) || moved.Count > 0)
+        if (plan.Properties.Count > 0 || plan.Chains.ContainsValue(false) || moved.Count > 0 || plan.Frames.Count > 0)
         {
             var build = AttachmentAnimationBuild.Prepare(avatar);
             // The version reparented these bones; the avatar's own animations still use their former paths.
@@ -91,6 +102,45 @@ public static class VersionCustomizationBuild
         return original.Keys.Select(t => (t, Former(t, 0))).Where(m => m.Item2 != AnimationUtility.CalculateTransformPath(m.t, root)).ToList();
     }
 
+    /// <summary>
+    /// The custom base's bones whose frame turned from the original base model's (the base FBX with its skeleton), compared in the
+    /// avatar's applied pose: a re-exported model can roll bones while keeping their shape, and the avatar's animations,
+    /// written for the original, store absolute rotations. Humanoid bones are posed through muscles and stay out.
+    /// </summary>
+    internal static Dictionary<Transform, BoneFrameRetarget.Frame> ReorientedBones(MyCustomBase owner, Transform root, IEnumerable<SkinnedMeshRenderer> renderers)
+    {
+        var frames = new Dictionary<Transform, BoneFrameRetarget.Frame>();
+        var bones = renderers.Where(r => r != null).SelectMany(r => r.bones).Where(b => b != null && b != root && b.IsChildOf(root)).Distinct().ToList();
+        // The base model with this skeleton: a manually listed or recorded model can be a prop (a face tracking debug panel).
+        var model = AvatarBaseModels.WithSkeleton(owner.baseFbxFiles, bones);
+        if (model == null) return frames;
+        var original = model.GetComponentsInChildren<Transform>(true).GroupBy(t => t.name, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var animator = root.GetComponent<Animator>();
+        var humanoid = new HashSet<string>(animator != null && animator.avatar != null && animator.avatar.isHuman
+            ? animator.avatar.humanDescription.human.Select(h => h.boneName) : Enumerable.Empty<string>(), StringComparer.Ordinal);
+        Quaternion Rest(Transform t, Transform space) => Quaternion.Inverse(space.rotation) * t.rotation;
+        foreach (var bone in bones)
+        {
+            if (humanoid.Contains(bone.name) || bone.parent == null || !original.TryGetValue(bone.name, out var before) || before.parent == null) continue;
+            var frame = BoneFrameRetarget.Frame.Between(Rest(before.parent, model.transform), Rest(before, model.transform), Rest(bone.parent, root), Rest(bone, root));
+            if (Quaternion.Angle(frame.Left, Quaternion.identity) > ReorientedAngle || Quaternion.Angle(frame.Right, Quaternion.identity) > ReorientedAngle)
+                frames[bone] = frame;
+        }
+        return frames;
+    }
+
+    // After VRCFury: its merged controllers (the logic's own animations included) are build copies by now.
+    private static void Reorient(GameObject avatar, IEnumerable<AnimatorController> controllers, Dictionary<Transform, BoneFrameRetarget.Frame> frames)
+    {
+        var byPath = new Dictionary<string, BoneFrameRetarget.Frame>(StringComparer.Ordinal);
+        foreach (var pair in frames)
+            if (pair.Key != null && pair.Key.IsChildOf(avatar.transform)) byPath[AnimationUtility.CalculateTransformPath(pair.Key, avatar.transform)] = pair.Value;
+        var clips = controllers.SelectMany(c => c.animationClips).Where(AttachmentAnimationBuild.IsBuildData).ToList();
+        int changed = BoneFrameRetarget.Retarget(clips, byPath);
+        if (changed > 0) MCBLogger.Log("[MCB] " + changed + " animations follow the custom base's re-oriented bones (" + string.Join(", ", frames.Keys.Where(k => k != null).Select(k => k.name).Take(6)) + (frames.Count > 6 ? "…" : "") + ").");
+    }
+
     public static void Apply(GameObject avatar)
     {
         if (!Plans.TryGetValue(avatar, out var plan) || plan.Applied) return;
@@ -111,6 +161,7 @@ public static class VersionCustomizationBuild
             }
         }
         var controllers = BlendShapeLinkEngine.CollectBuiltControllers(avatar).ToArray();
+        if (plan.Frames.Count > 0) Reorient(avatar, controllers, plan.Frames);
         foreach (var clip in controllers.SelectMany(c => c.animationClips).Where(c => c != null).Distinct())
         {
             // Remove all competing writers, including additive layers. A final override writes the fixed values once.
@@ -132,7 +183,7 @@ public static class VersionCustomizationBuild
         // After armature links: clothing merged onto the chains is rebound with the body.
         var stripped = plan.Chains.Where(pair => !pair.Value).Select(pair => pair.Key).ToList();
         if (stripped.Count > 0) PhysicService.Strip(avatar, stripped, AttachmentAnimationBuild.Prepare(avatar).Keep);
-        foreach (var pair in plan.Chains.Where(pair => pair.Value)) PhysicService.AddPhysBones(avatar, pair.Key);
+        foreach (var pair in plan.Chains.Where(pair => pair.Value)) PhysicService.AddPhysBones(avatar, pair.Key, plan.Settings[pair.Key]);
         plan.Applied = true;
     }
 

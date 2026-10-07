@@ -192,7 +192,7 @@ public static class SmrPathService
                 if (replacementMesh == null) continue;
 
                 Undo.RecordObject(targetSmr, "Refresh Mesh from FBX");
-                targetSmr.sharedMesh = replacementMesh;
+                EyelidBlendshapes.Assign(targetSmr, replacementMesh);
                 EditorUtility.SetDirty(targetSmr);
                 refreshedCount++;
             }
@@ -777,7 +777,7 @@ public static class SmrPathService
         EditorUtility.SetDirty(plan.target.transform);
 
         Undo.RecordObject(plan.target, "Restore FBX Renderer State");
-        plan.target.sharedMesh = plan.source.sharedMesh;
+        EyelidBlendshapes.Assign(plan.target, plan.source.sharedMesh);
         plan.target.bones = plan.resolvedBones;
         plan.target.rootBone = plan.resolvedRootBone;
         // Bounds validation requires the restored bone palette to match this mesh.
@@ -876,7 +876,7 @@ public static class SmrPathService
             if (!meshLookup.TryGetValue(smr.sharedMesh.name, out var replacementMesh)) continue;
 
             Undo.RecordObject(smr, "Refresh Mesh from FBX");
-            smr.sharedMesh = replacementMesh;
+            EyelidBlendshapes.Assign(smr, replacementMesh);
             EditorUtility.SetDirty(smr);
             refreshedCount++;
         }

@@ -96,6 +96,22 @@ public class PhysicServiceTests
         Assert.False(PhysicService.Kind.All.Any(k => k.Owns(root.transform.Find(Physic.HostName))), "a generated object is never mistaken for a chain");
     }
 
+    [Test] public void AVersionTunesItsChainsAndStoresOnlyWhatDiffersFromTheDefaults()
+    {
+        var customization = new VersionCustomization { physic = true };
+        customization.physicSettings.spring = .376f;
+        var entries = new List<object>();
+        customization.Write(entries);
+        Assert.AreEqual(2, entries.Count, "the flag and the tuned physic; squishy keeps its defaults and stores nothing");
+        var settings = Physic.SettingsOf(VersionCustomization.Read(entries));
+        Assert.AreEqual(.376f, settings.spring, 1e-6f);
+        Assert.AreEqual(PhysBoneSettings.PhysicDefaults().pull, settings.pull);
+
+        PhysicService.AddPhysBones(root, Physic, settings);
+        Assert.True(root.transform.Find(Physic.HostName).GetComponentsInChildren<VRCPhysBone>(true).All(b => Mathf.Approximately(b.spring, .376f)));
+        Assert.AreEqual(.915f, Squishy.SettingsOf(VersionCustomization.Read(entries)).spring, 1e-6f);
+    }
+
     [Test] public void SquishyChainsCollideWithHandsAndSquash()
     {
         Assert.AreEqual(1, PhysicService.AddPhysBones(root, Squishy));

@@ -172,3 +172,13 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Looking at Unity editor windows
+
+When a Unity editor with a working MCP for Unity bridge is involved, look at its windows only through Orbiters
+Toolkit's `orbiters_editor_window` MCP tool (skill `orbiters-toolkit`; call it with `execute_custom_tool` when the typed
+tool lacks a parameter). It captures in the background without bringing Unity forward or changing the user's layout,
+tabs, scrolling or selection: shown windows, inactive docked tabs, windows that are not open (`window_type` +
+`open_if_missing`), long windows (`width`/`height`/`scroll_to`) and any object's Inspector without selecting it
+(`inspect`). Never ask the user to open, focus or scroll a window for a screenshot, and never use desktop screenshots,
+window-capture APIs or mouse/keyboard input on Unity to look at it. If a capture fails, fix the tool.

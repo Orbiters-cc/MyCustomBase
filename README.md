@@ -1,5 +1,30 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.3 — 2026-10-07
+
+- Fix legs folded inward in VRChat on versions exported from a posed armature (Ultirex 5.1, whose model has its legs
+  spread 26° in a star pose): the avatar's humanoid definition now rests at the pose its meshes are bound in, which is
+  where applying the version puts the limbs, instead of the model's exported pose. Partial meshes (feathers) no longer
+  decide it: the payload whose meshes weigh on the most humanoid bones defines the avatar. Avatars get the corrected
+  definition at their next upload or version apply.
+- Fix eyes that move the wrong blendshapes in VRChat after a version changed the face mesh: the avatar descriptor's
+  eyelid blendshapes (blink, looking up, looking down) are indices into the mesh, and Ultirex's mesh has "Throat" and
+  "TailSkinny" where Rexouium had "LookUp" and "LookDown". Applying or resetting a version now keeps them on the same
+  shapes by name (a shape the new mesh lacks is turned off). Avatars that already have a version applied: apply it again.
+- Fix twisted feet in VRChat on versions whose model rolled bones the base's animations rotate (Ultirex 5.1: its toes
+  rest up to 180° turned from Rexouium's, so the toe curl of Rexouium and of the Ultirex logic turned the paws over).
+  At upload, rotation animations written for the original base model (the base FBX with the avatar's skeleton) turn
+  each bone the same way from its rest pose on the version's skeleton. Animations made for the version stay as they are.
+- Fix a prop's model taken for the avatar's base model: Adjerry91's face tracking template adds a debug panel with its own
+  FBX, and the detected base FBX files listed it first, so versions could treat it as the model they apply to and the
+  upload stripped its blendshapes. Detection now lists the model with the avatar's skeleton first (the FBX with the most
+  of the avatar's bones, then the one its meshes are skinned to) and leaves out model files with none of them (bone-less
+  panels, static props). Avatars made of several models keep every model that carries the skeleton.
+- Physic and Squishy chains are tuned per version: a version can store its PhysBone pull, momentum (spring), stiffness,
+  gravity, immobile and angle limits (`physicSettings`, `squishySettings` in its customization). Versions that store
+  none keep the values used so far.
+- The About window is now the Toolkit's shared one (requires Orbiters Toolkit 0.3.17).
+
 ## 1.12.2 — 2026-10-07
 
 - Fix "Unsupported conversion of vertex data (format 0 to 4, dimensions 4 to 4)" in builds of versions with twisting bones (Ultirex): Unity logged it when a twist gave a vertex more than four bone influences. Both twists were applied already; the build now writes the weights without the error.

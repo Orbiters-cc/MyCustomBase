@@ -2797,7 +2797,7 @@ public static partial class NativeMeshPayloadService
             }
 
             if (targetRenderer.sharedMesh != record.mesh) {
-                targetRenderer.sharedMesh = record.mesh;
+                EyelidBlendshapes.Assign(targetRenderer, record.mesh);
                 RefreshSkinnedRenderer(targetRenderer, record.mesh);
             }
             EditorUtility.SetDirty(targetRenderer);

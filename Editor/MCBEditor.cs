@@ -1593,6 +1593,8 @@ public class MCBEditor : UnityEditor.Editor
 
         var uniquePaths = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Each model file's skinned meshes in the scene: those skinned to the avatar's armature tell its base model apart.
+        var skinned = new Dictionary<string, List<SkinnedMeshRenderer>>(StringComparer.OrdinalIgnoreCase);
 
         void TryAddPath(string path)
         {
@@ -1612,7 +1614,13 @@ public class MCBEditor : UnityEditor.Editor
         {
             foreach (var smr in MeshFinder.GetAllSkinnedMeshRenderers(root))
             {
-                TryAddFbxPathFromObject(smr != null ? smr.sharedMesh : null, TryAddPath);
+                TryAddFbxPathFromObject(smr != null ? smr.sharedMesh : null, path =>
+                {
+                    TryAddPath(path);
+                    path = path.Replace("\\", "/");
+                    if (!skinned.TryGetValue(path, out var renderers)) skinned[path] = renderers = new List<SkinnedMeshRenderer>();
+                    renderers.Add(smr);
+                });
             }
 
             foreach (var meshFilter in root.GetComponentsInChildren<MeshFilter>(true))
@@ -1621,10 +1629,19 @@ public class MCBEditor : UnityEditor.Editor
             }
         }
 
-        foreach (string path in AvatarSceneMeshProvenanceService.GetAdditionalDiscoverySources(customBaseTarget, uniquePaths.Count > 0))
+        var baseModels = new AvatarBaseModels(root);
+        GameObject Model(string path) => AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        IEnumerable<SkinnedMeshRenderer> Skinned(string path) =>
+            skinned.TryGetValue(path, out var renderers) ? renderers : Enumerable.Empty<SkinnedMeshRenderer>();
+        // A prop's model file (a face tracking debug panel) does not stand for the base model's meshes.
+        bool hasMeshSources = uniquePaths.Any(path => baseModels.Carries(Model(path), Skinned(path)));
+        foreach (string path in AvatarSceneMeshProvenanceService.GetAdditionalDiscoverySources(customBaseTarget, hasMeshSources))
         {
             TryAddPath(path);
         }
+
+        // Versions apply to the first base FBX: the model with the avatar's skeleton, never a prop found before it.
+        uniquePaths = baseModels.BaseFirst(uniquePaths, Model, Skinned);
 
         cachedDetectedAvatarRootInstanceId = rootInstanceId;
         cachedDetectedAvatarFbxPaths = uniquePaths;

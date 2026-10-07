@@ -14,6 +14,8 @@ public sealed class VersionCustomization
     public const string LayoutKey = "rendererLayout";
     public const string PhysicKey = "physic";
     public const string SquishyKey = "squishy";
+    public const string PhysicSettingsKey = "physicSettings";
+    public const string SquishySettingsKey = "squishySettings";
     public ModeConfiguration modes = new ModeConfiguration();
     public List<TwistBoneConfiguration> twistBones = new List<TwistBoneConfiguration>();
     public List<MeshBlendshapeSelection> dynamicNormalBlendshapes = new List<MeshBlendshapeSelection>();
@@ -22,6 +24,9 @@ public sealed class VersionCustomization
     public bool physic;
     // Bones named with "interaction" are squishy chains players can squash by touching them; users choose the same way.
     public bool squishy;
+    // How each kind's chains move. Versions that never tuned them store nothing and use the defaults.
+    public PhysBoneSettings physicSettings = PhysBoneSettings.PhysicDefaults();
+    public PhysBoneSettings squishySettings = PhysBoneSettings.SquishyDefaults();
 
     public static VersionCustomization Read(IEnumerable<object> entries) => new VersionCustomization
     {
@@ -30,7 +35,9 @@ public sealed class VersionCustomization
         dynamicNormalBlendshapes = ExtraCustomizationUtils.GetObject<List<MeshBlendshapeSelection>>(entries, NormalsKey) ?? new List<MeshBlendshapeSelection>(),
         rendererLayout = ExtraCustomizationUtils.GetObject<RendererLayoutConfiguration>(entries, LayoutKey) ?? new RendererLayoutConfiguration(),
         physic = ExtraCustomizationUtils.HasFlag(entries, PhysicKey),
-        squishy = ExtraCustomizationUtils.HasFlag(entries, SquishyKey)
+        squishy = ExtraCustomizationUtils.HasFlag(entries, SquishyKey),
+        physicSettings = ExtraCustomizationUtils.GetObject<PhysBoneSettings>(entries, PhysicSettingsKey) ?? PhysBoneSettings.PhysicDefaults(),
+        squishySettings = ExtraCustomizationUtils.GetObject<PhysBoneSettings>(entries, SquishySettingsKey) ?? PhysBoneSettings.SquishyDefaults()
     };
 
     public void Write(List<object> entries)
@@ -41,6 +48,8 @@ public sealed class VersionCustomization
         ExtraCustomizationUtils.SetObject(entries, LayoutKey, rendererLayout != null && !rendererLayout.IsEmpty ? rendererLayout : null);
         ExtraCustomizationUtils.SetFlag(entries, PhysicKey, physic);
         ExtraCustomizationUtils.SetFlag(entries, SquishyKey, squishy);
+        ExtraCustomizationUtils.SetObject(entries, PhysicSettingsKey, physicSettings != null && !physicSettings.SameAs(PhysBoneSettings.PhysicDefaults()) ? physicSettings : null);
+        ExtraCustomizationUtils.SetObject(entries, SquishySettingsKey, squishySettings != null && !squishySettings.SameAs(PhysBoneSettings.SquishyDefaults()) ? squishySettings : null);
     }
 
     public VersionCustomization Clone() => JsonConvert.DeserializeObject<VersionCustomization>(JsonConvert.SerializeObject(this));
@@ -72,6 +81,8 @@ public sealed class VersionCustomization
                 throw new ArgumentException("Dynamic normal selections need valid blendshape names.");
         }
         (rendererLayout ?? throw new ArgumentException("The renderer layout cannot be null.")).Validate();
+        (physicSettings ?? throw new ArgumentException("Physic settings cannot be null.")).Validate("Physic");
+        (squishySettings ?? throw new ArgumentException("Squishy settings cannot be null.")).Validate("Squishy");
     }
 
     internal static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

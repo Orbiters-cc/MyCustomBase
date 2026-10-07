@@ -27,29 +27,34 @@ public static class PhysicService
         public readonly string Marker;
         // Holds the generated PhysBones on the build copy. Its name contains no marker.
         public readonly string HostName;
-        internal readonly Action<VRCPhysBone, Group> Configure;
+        internal readonly Action<VRCPhysBone, Group, PhysBoneSettings> Configure;
+        internal readonly Func<PhysBoneSettings> Defaults;
+        private readonly Func<VersionCustomization, PhysBoneSettings> settings;
         private readonly Func<VersionCustomization, bool> supported;
         private readonly Action<VersionCustomization, bool> support;
         private readonly Func<MyCustomBase, bool> enabled;
         private readonly Action<MyCustomBase, bool> enable;
 
-        private Kind(string marker, string hostName, Action<VRCPhysBone, Group> configure,
+        private Kind(string marker, string hostName, Action<VRCPhysBone, Group, PhysBoneSettings> configure,
+            Func<PhysBoneSettings> defaults, Func<VersionCustomization, PhysBoneSettings> settings,
             Func<VersionCustomization, bool> supported, Action<VersionCustomization, bool> support,
             Func<MyCustomBase, bool> enabled, Action<MyCustomBase, bool> enable)
         {
-            Marker = marker; HostName = hostName; Configure = configure;
+            Marker = marker; HostName = hostName; Configure = configure; Defaults = defaults; this.settings = settings;
             this.supported = supported; this.support = support; this.enabled = enabled; this.enable = enable;
         }
 
         public static readonly Kind Physic = new Kind("physic", "MCB PhysBones", ConfigurePhysic,
-            c => c.physic, (c, value) => c.physic = value, o => o.physicEnabled, (o, value) => o.physicEnabled = value);
+            PhysBoneSettings.PhysicDefaults, c => c.physicSettings, c => c.physic, (c, value) => c.physic = value, o => o.physicEnabled, (o, value) => o.physicEnabled = value);
         public static readonly Kind Squishy = new Kind("interaction", "MCB Squishy PhysBones", ConfigureSquishy,
-            c => c.squishy, (c, value) => c.squishy = value, o => o.squishyEnabled, (o, value) => o.squishyEnabled = value);
+            PhysBoneSettings.SquishyDefaults, c => c.squishySettings, c => c.squishy, (c, value) => c.squishy = value, o => o.squishyEnabled, (o, value) => o.squishyEnabled = value);
         public static readonly Kind[] All = { Physic, Squishy };
 
         /// <summary>A bone of this kind. A bone named with both markers is squishy.</summary>
         public bool Owns(Transform bone) => bone != null && Named(bone, Marker) && (this == Squishy || !Named(bone, Squishy.Marker));
         public bool SupportedBy(VersionCustomization customization) => customization != null && supported(customization);
+        /// <summary>How the version tunes this kind's chains, or the defaults.</summary>
+        public PhysBoneSettings SettingsOf(VersionCustomization customization) => customization != null ? settings(customization) ?? Defaults() : Defaults();
         public void SetSupported(VersionCustomization customization, bool value) => support(customization, value);
         public bool EnabledOn(MyCustomBase owner) => owner != null && enabled(owner);
         public void SetEnabled(MyCustomBase owner, bool value) => enable(owner, value);
@@ -144,9 +149,11 @@ public static class PhysicService
         return (physBones, transforms, removed);
     }
 
-    /// <summary>Adds one PhysBone per group of the kind under a new object of the build copy. Returns how many.</summary>
-    public static int AddPhysBones(GameObject avatar, Kind kind)
+    /// <summary>Adds one PhysBone per group of the kind under a new object of the build copy, tuned with
+    /// <paramref name="settings"/> (the kind's defaults when null). Returns how many.</summary>
+    public static int AddPhysBones(GameObject avatar, Kind kind, PhysBoneSettings settings = null)
     {
+        settings ??= kind.Defaults();
         var groups = Groups(avatar.transform, kind);
         if (groups.Count == 0) return 0;
         var host = new GameObject(kind.HostName).transform;
@@ -165,42 +172,29 @@ public static class PhysicService
             bone.allowGrabbing = VRCPhysBoneBase.AdvancedBool.False;
             bone.allowPosing = VRCPhysBoneBase.AdvancedBool.False;
             bone.resetWhenDisabled = true;
-            kind.Configure(bone, group);
+            kind.Configure(bone, group, settings);
         }
         return groups.Count;
     }
 
-    // Tuned on Ultirex's muscle physics: follows the body's own movement (still in world space), firm, no collision.
-    private static void ConfigurePhysic(VRCPhysBone bone, Group group)
+    // Follows the body's own movement (still in world space), no collision.
+    private static void ConfigurePhysic(VRCPhysBone bone, Group group, PhysBoneSettings settings)
     {
-        bone.pull = .585f;
-        bone.spring = .752f;
-        bone.stiffness = .2f;
-        bone.gravity = .327f;
-        bone.gravityFalloff = .483f;
+        Tune(bone, settings);
         bone.immobileType = VRCPhysBoneBase.ImmobileType.World;
-        bone.immobile = 1f;
         bone.limitType = VRCPhysBoneBase.LimitType.Polar;
-        bone.maxAngleX = 50.4f;
-        bone.maxAngleZ = 45f;
         bone.radius = 0;
         bone.allowCollision = VRCPhysBoneBase.AdvancedBool.False;
         // Bones point along their local Y axis, as Blender exports them.
         bone.endpointPosition = new Vector3(0, EndpointLength / Scale(group), 0);
     }
 
-    // Tuned on Ultirex's squishy parts: players' hands collide with the chain, which squashes and springs back.
-    private static void ConfigureSquishy(VRCPhysBone bone, Group group)
+    // Players' hands collide with the chain, which squashes and springs back.
+    private static void ConfigureSquishy(VRCPhysBone bone, Group group, PhysBoneSettings settings)
     {
-        bone.pull = .585f;
-        bone.spring = .915f;
-        bone.stiffness = .2f;
-        bone.gravity = .16f;
-        bone.gravityFalloff = 0f;
+        Tune(bone, settings);
         bone.immobileType = VRCPhysBoneBase.ImmobileType.AllMotion;
-        bone.immobile = .292f;
         bone.limitType = VRCPhysBoneBase.LimitType.Angle;
-        bone.maxAngleX = 34f;
         bone.radius = SquishRadius / Scale(group);
         bone.allowCollision = VRCPhysBoneBase.AdvancedBool.True;
         bone.maxSquish = .5f;
@@ -208,6 +202,18 @@ public static class PhysicService
         // A two-bone chain squashes along its own tip; a lone bone needs a short virtual one.
         bool tipped = group.Chains.All(chain => chain.Cast<Transform>().Any(Kind.Squishy.Owns));
         bone.endpointPosition = tipped ? Vector3.zero : new Vector3(0, SquishRadius / Scale(group), 0);
+    }
+
+    private static void Tune(VRCPhysBone bone, PhysBoneSettings settings)
+    {
+        bone.pull = settings.pull;
+        bone.spring = settings.spring;
+        bone.stiffness = settings.stiffness;
+        bone.gravity = settings.gravity;
+        bone.gravityFalloff = settings.gravityFalloff;
+        bone.immobile = settings.immobile;
+        bone.maxAngleX = settings.maxAngleX;
+        bone.maxAngleZ = settings.maxAngleZ;
     }
 
     private static float Scale(Group group) => Mathf.Max(1e-4f, group.Chains[0].lossyScale.y);
