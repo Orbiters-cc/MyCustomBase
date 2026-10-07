@@ -357,7 +357,7 @@ namespace MCBEditorUtils
                                         }
                                     }
 
-                                    Debug.Log($"({nameof(DynamicNormals)}) Erasing custom split normals on blendshape {blendShape} in SMR {smr.name} resulted in {nonZero} non-zero vertices and {zero} zero vertices");
+                                    MCBLogger.Log($"({nameof(DynamicNormals)}) Erasing custom split normals on blendshape {blendShape} in SMR {smr.name} resulted in {nonZero} non-zero vertices and {zero} zero vertices");
                                 }
 
                                 normalsMs += step.Elapsed.TotalMilliseconds;
@@ -375,7 +375,7 @@ namespace MCBEditorUtils
                      
                     if (captureFrame != null)
                     {
-                        Debug.Log($"[DynamicNormalsProfile] Captured normal frames directly: mesh={smr.name} vertices={vertexCount} selected={applicableBlendShapes.Count} totalMs={profile.Elapsed.TotalMilliseconds:F1} bakeMs={bakeMs:F1} normalsMs={normalsMs:F1}");
+                        MCBLogger.Log($"[DynamicNormalsProfile] Captured normal frames directly: mesh={smr.name} vertices={vertexCount} selected={applicableBlendShapes.Count} totalMs={profile.Elapsed.TotalMilliseconds:F1} bakeMs={bakeMs:F1} normalsMs={normalsMs:F1}");
                         return;
                     }
 
@@ -386,7 +386,7 @@ namespace MCBEditorUtils
                         AssetDatabase.SaveAssets();
                         // Reload the asset to ensure we're using the saved version
                         newMesh = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
-                        Debug.Log($"[DynamicNormals] Saved dynamic normals mesh as asset at: {assetPath}");
+                        MCBLogger.Log($"[DynamicNormals] Saved dynamic normals mesh as asset at: {assetPath}");
                     }
                     else
                     {
@@ -394,7 +394,7 @@ namespace MCBEditorUtils
                     }
                     
                     smr.sharedMesh = newMesh;
-                    Debug.Log($"[DynamicNormalsProfile] mesh={smr.name} vertices={vertexCount} shapes={smrBlendShapes.Count} selected={applicableBlendShapes.Count} totalMs={profile.Elapsed.TotalMilliseconds:F1} bakeMs={bakeMs:F1} normalsMs={normalsMs:F1} addFramesMs={addMs:F1} readFramesMs={readMs:F1}");
+                    MCBLogger.Log($"[DynamicNormalsProfile] mesh={smr.name} vertices={vertexCount} shapes={smrBlendShapes.Count} selected={applicableBlendShapes.Count} totalMs={profile.Elapsed.TotalMilliseconds:F1} bakeMs={bakeMs:F1} normalsMs={normalsMs:F1} addFramesMs={addMs:F1} readFramesMs={readMs:F1}");
                 }
                 finally
                 {

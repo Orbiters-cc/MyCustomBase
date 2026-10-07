@@ -878,7 +878,6 @@ public class MCBEditor : UnityEditor.Editor
             }
             RefreshUiToolkitSections();
             Repaint();
-            MCBLogger.Log($"[MCBEditor] Loaded {cached.versions.Count} cached versions");
         }
 
         if (HasServerAccess && (forceRefetch || cached.versions.Count == 0))

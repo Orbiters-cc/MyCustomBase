@@ -206,7 +206,9 @@ internal static class MuscleDriverGenerator
             if (aimBone == null) return "no bone ‘" + sensor.aim.bone + "’ on the avatar.";
             var pivot = Create(ContactPrefix + label + " (pivot)", receiverBone, aimBone.position, aimBone.rotation, placed);
             var target = Create(ContactPrefix + label + " (aim)", aimBone, aimBone.position + aimBone.rotation * Vector3.up * (AimLength * scale), aimBone.rotation, placed);
-            var aim = pivot.AddComponent<VRCAimConstraint>();
+            // Undo.AddComponent: a component added with GameObject.AddComponent to an object registered for undo is left
+            // dangling when the generation is undone.
+            var aim = Undo.AddComponent<VRCAimConstraint>(pivot);
             aim.AimAxis = Vector3.up;
             aim.UpAxis = Vector3.right;
             aim.WorldUp = VRCConstraintBase.WorldUpType.ObjectRotationUp;
@@ -223,7 +225,7 @@ internal static class MuscleDriverGenerator
 
         var receiver = Create(ContactPrefix + label + " (reading)", receiverParent,
             receiverOrigin + receiverAxes * (FromBlenderBone(sensor.receiver.position) * scale), receiverAxes, placed);
-        var receive = receiver.AddComponent<VRCContactReceiver>();
+        var receive = Undo.AddComponent<VRCContactReceiver>(receiver);
         receive.shapeType = ContactBase.ShapeType.Sphere;
         receive.radius = radius * scale / Scale(receiver.transform);
         receive.collisionTags = new List<string> { tag };
@@ -234,7 +236,7 @@ internal static class MuscleDriverGenerator
 
         var sender = Create(ContactPrefix + label + " (sender)", senderBone,
             senderBone.position + senderBone.rotation * (FromBlenderBone(sensor.sender.position) * scale), senderBone.rotation, placed);
-        var send = sender.AddComponent<VRCContactSender>();
+        var send = Undo.AddComponent<VRCContactSender>(sender);
         send.shapeType = ContactBase.ShapeType.Sphere;
         send.radius = SenderRadius * scale / Scale(sender.transform);
         send.collisionTags = new List<string> { tag };

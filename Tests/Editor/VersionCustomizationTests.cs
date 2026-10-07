@@ -271,6 +271,57 @@ public class VersionCustomizationTests
         var baked = Own(new Mesh()); body.BakeMesh(baked);
         for (int i = 0; i < 3; i++) Assert.That(Vector3.Distance(baked.vertices[i], bodyMesh.vertices[i]), Is.LessThan(.00001f), "Rest pose must not move.");
     }
+    // Ultirex's elbows: a twist on a vertex with four influences gives it a fifth. Unity narrows the skin channels to
+    // 16 bits then, and logged "Unsupported conversion of vertex data" converting the old float weights.
+    [Test] public void TwistsPastFourInfluencesKeepTheRestOfTheMeshAndLogNothing()
+    {
+        var root = Own(new GameObject("Twist test"));
+        Transform Arm(string side, float x)
+        {
+            var arm = Child(root.transform, side + " arm"); arm.localPosition = new Vector3(x, 0, 0);
+            var elbow = Child(arm, side + " elbow"); elbow.localPosition = Vector3.up;
+            Child(elbow, side + " wrist").localPosition = Vector3.up;
+            return elbow;
+        }
+        var left = Arm("Left", -1); var right = Arm("Right", 1);
+        var spine = Child(root.transform, "Spine"); var head = Child(spine, "Head"); head.localPosition = Vector3.up * 3;
+        var bones = new[] { left, right, spine, head };
+        var mesh = MakeMesh();
+        mesh.vertices = new[] { left.position + Vector3.up * .5f, right.position + Vector3.up * .5f, head.position };
+        mesh.uv2 = new[] { Vector2.one, Vector2.up, Vector2.right };
+        mesh.colors = new[] { Color.red, Color.green, Color.blue };
+        mesh.bindposes = bones.Select(b => b.worldToLocalMatrix).ToArray();
+        mesh.boneWeights = new[]
+        {
+            new BoneWeight { boneIndex0 = 0, weight0 = .4f, boneIndex1 = 1, weight1 = .3f, boneIndex2 = 2, weight2 = .2f, boneIndex3 = 3, weight3 = .1f },
+            new BoneWeight { boneIndex0 = 1, weight0 = .4f, boneIndex1 = 0, weight1 = .3f, boneIndex2 = 2, weight2 = .2f, boneIndex3 = 3, weight3 = .1f },
+            new BoneWeight { boneIndex0 = 3, weight0 = .4f, boneIndex1 = 2, weight1 = .3f, boneIndex2 = 0, weight2 = .2f, boneIndex3 = 1, weight3 = .1f },
+        };
+        var smile = new[] { Vector3.up, Vector3.zero, Vector3.right };
+        mesh.AddBlendShapeFrame("smile", 100, smile, new Vector3[3], new Vector3[3]);
+        var body = Child(root.transform, "Body").gameObject.AddComponent<SkinnedMeshRenderer>(); body.sharedMesh = mesh; body.bones = bones;
+        var targets = new[] { "Left", "Right" }.Select(side => TwistBoneService.Resolve(root.transform, new TwistBoneConfiguration
+            { bone = side + " arm/" + side + " elbow", aim = side + " arm/" + side + " elbow/" + side + " wrist", up = side + " arm" })).ToArray();
+
+        var conversions = new List<string>();
+        void Watch(string condition, string stack, LogType type) { if (condition.Contains("vertex data")) conversions.Add(condition); }
+        Application.logMessageReceived += Watch;
+        try { Assert.That(TwistBoneService.Generate(root, targets), Is.EqualTo(1)); }
+        finally { Application.logMessageReceived -= Watch; }
+        var twisted = Own(body.sharedMesh);
+        Assert.That(conversions, Is.Empty);
+        Assert.That(twisted.GetBonesPerVertex().ToArray(), Is.EqualTo(new byte[] { 6, 6, 4 }), "Each elbow vertex takes both twists.");
+        var weights = twisted.GetAllBoneWeights().ToArray();
+        foreach (int twist in new[] { 4, 5 }) Assert.That(weights.Where(w => w.boneIndex == twist).Sum(w => w.weight), Is.GreaterThan(.1f));
+        var top = twisted.boneWeights[0];
+        Assert.That(new[] { top.boneIndex0, top.boneIndex1 }, Is.EqualTo(new[] { 4, 5 }), "Both twists are among the four skinned influences.");
+        Assert.That(twisted.uv2, Is.EqualTo(mesh.uv2)); Assert.That(twisted.colors, Is.EqualTo(mesh.colors));
+        Assert.That(twisted.triangles, Is.EqualTo(mesh.triangles)); Assert.That(twisted.bindposes.Length, Is.EqualTo(6));
+        var deltas = new Vector3[3]; twisted.GetBlendShapeFrameVertices(0, 0, deltas, null, null);
+        Assert.That(twisted.blendShapeCount, Is.EqualTo(1)); Assert.That(deltas, Is.EqualTo(smile));
+        var baked = Own(new Mesh()); body.BakeMesh(baked);
+        for (int i = 0; i < 3; i++) Assert.That(Vector3.Distance(baked.vertices[i], mesh.vertices[i]), Is.LessThan(.0001f), "Rest pose must not move.");
+    }
     private Mesh MakeMesh() => Own(new Mesh { vertices = new Vector3[3], triangles = new[] { 0, 1, 2 } });
     private static Transform Child(Transform parent, string name) { var t = new GameObject(name).transform; t.SetParent(parent, false); return t; }
     private static VersionCustomization Configuration(string earsClip = "0123456789abcdef0123456789abcdef") => new VersionCustomization { modes = new ModeConfiguration

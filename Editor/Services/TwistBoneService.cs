@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Unity.Collections;
 using UnityEngine;
+using UnityEngine.Rendering;
 using VRC.Dynamics;
 using VRC.SDK3.Dynamics.Constraint.Components;
 
@@ -118,7 +119,7 @@ public static class TwistBoneService
         var output = new List<BoneWeight1>(weights.Length + vertices.Length);
         var outputCounts = new byte[vertices.Length];
         var curve = target.Configuration.curve.ToCurve();
-        int cursor = 0;
+        int cursor = 0, most = 0;
         for (int vertex = 0; vertex < vertices.Length; vertex++)
         {
             var vertexWeights = new List<BoneWeight1>(counts[vertex] + 1);
@@ -136,6 +137,7 @@ public static class TwistBoneService
             if (vertexWeights.Count > byte.MaxValue) throw new InvalidOperationException("Twist would exceed 255 influences on " + renderer.name);
             vertexWeights.Sort((a, b) => b.weight.CompareTo(a.weight));
             outputCounts[vertex] = (byte)vertexWeights.Count;
+            most = Math.Max(most, vertexWeights.Count);
             output.AddRange(vertexWeights);
         }
         if (!copies.TryGetValue(renderer, out var copy))
@@ -144,11 +146,23 @@ public static class TwistBoneService
             copy.name = source.name + " (MCB Twist)";
             copies.Add(renderer, copy);
         }
+        if (most > 4) DropSkinChannels(copy);
         copy.bindposes = poses.Concat(new[] { poses[lower] }).ToArray();
         using var nativeCounts = new NativeArray<byte>(outputCounts, Allocator.Temp);
         using var nativeWeights = new NativeArray<BoneWeight1>(output.ToArray(), Allocator.Temp);
         copy.SetBoneWeights(nativeCounts, nativeWeights);
         renderer.sharedMesh = copy;
         renderer.bones = bones.Concat(new[] { twist }).ToArray();
+    }
+
+    // Over four influences, Unity narrows the skin channels to 16 bits but can't convert the weights already there:
+    // "Unsupported conversion of vertex data (format 0 to 4)". Without them, SetBoneWeights writes new channels, and
+    // every other vertex attribute, blendshape and bindpose stays.
+    private static void DropSkinChannels(Mesh mesh)
+    {
+        if (!mesh.HasVertexAttribute(VertexAttribute.BlendWeight)
+            || mesh.GetVertexAttributeFormat(VertexAttribute.BlendWeight) == VertexAttributeFormat.UNorm16) return;
+        mesh.SetVertexBufferParams(mesh.vertexCount, mesh.GetVertexAttributes()
+            .Where(a => a.attribute != VertexAttribute.BlendWeight && a.attribute != VertexAttribute.BlendIndices).ToArray());
     }
 }

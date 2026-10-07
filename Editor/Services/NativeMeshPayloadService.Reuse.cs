@@ -58,14 +58,6 @@ public static partial class NativeMeshPayloadService
             IsAdvancedMeshPatchTransform(p?.transform) && GetGeneratedPayloadPath(version, p, GetPayloadIdentity(p)) == path);
     }
 
-    internal static CustomBaseVersion ResolveAppliedMeshVersion(Transform root,
-        IEnumerable<CustomBaseVersion> candidates, int assetId, string version, string defaultVersion)
-    {
-        var paths = ResolveAppliedGeneratedMeshRenderers(root)
-            .Select(r => MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(r.sharedMesh)));
-        return ResolveAppliedMeshVersionFromPaths(paths, candidates, assetId, version, defaultVersion);
-    }
-
     internal static CustomBaseVersion ResolveAppliedMeshVersionFromPaths(IEnumerable<string> meshPaths,
         IEnumerable<CustomBaseVersion> candidates, int assetId, string version, string defaultVersion)
     {

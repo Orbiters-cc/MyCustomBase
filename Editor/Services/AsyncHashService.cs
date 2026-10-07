@@ -56,7 +56,6 @@ public class AsyncHashService
         string cachedHash = PersistentCache.Instance.GetCachedHash(normalizedPath);
         if (!string.IsNullOrEmpty(cachedHash))
         {
-            MCBLogger.Log($"[AsyncHashService] Using cached hash for: {Path.GetFileName(normalizedPath)}");
             return cachedHash;
         }
 

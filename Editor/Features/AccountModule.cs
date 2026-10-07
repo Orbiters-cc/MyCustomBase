@@ -21,6 +21,7 @@ public class AccountModule
     private string authToken;
     private bool userInfoRequested;
     private VisualElement accountRoot;
+    private bool stateRefreshPending;
 
     public AccountModule(MCBEditor editor, NetworkService networkService)
     {
@@ -33,13 +34,22 @@ public class AccountModule
         LoadAuthData();
         ApplyUserInfoFromCache();
         RequestAccountUserInfo();
-        _ = RefreshStateAsync();
+        RequestStateRefresh();
     }
 
     public void AttachUIToolkit(VisualElement root)
     {
         accountRoot = root;
+        if (stateRefreshPending) RequestStateRefresh();
         RefreshUIToolkit();
+    }
+
+    // Only the account row shows the connection state: an editor that never draws it (an authoring session, a window's
+    // source editor) does not ask the server for it.
+    private void RequestStateRefresh()
+    {
+        stateRefreshPending = accountRoot == null;
+        if (!stateRefreshPending) _ = RefreshStateAsync();
     }
 
     public void DetachUIToolkit()
@@ -252,7 +262,7 @@ public class AccountModule
         LoadAuthData();
         ApplyUserInfoFromCache();
         RequestAccountUserInfo();
-        _ = RefreshStateAsync();
+        RequestStateRefresh();
         RefreshUIToolkit();
         editor.Repaint();
     }
@@ -271,7 +281,6 @@ public class AccountModule
             }
 
             string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT;
-            MCBLogger.Log("[MCB] Refreshing account state...");
             string newState = await networkService.CheckConnectionAsync(url, authToken);
             if (string.IsNullOrEmpty(newState)) newState = "disconnected";
             connectionState = newState;

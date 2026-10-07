@@ -249,7 +249,6 @@ public class PersistentCache
             {
                 if (cacheEntry.IsValid() && DateTime.Now - cacheEntry.cacheTime < HASH_CACHE_MAX_AGE)
                 {
-                    MCBLogger.Log($"[PersistentCache] Hash cache hit for: {normalizedPath}");
                     return cacheEntry.hash;
                 }
 

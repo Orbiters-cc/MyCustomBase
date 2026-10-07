@@ -25,7 +25,7 @@ public class DynamicNormalsService
     {
         int count = originalMeshes.Count;
         originalMeshes.Clear();
-        Debug.Log($"[DynamicNormals] Flushed {count} original mesh reference(s) from cache.");
+        MCBLogger.Log($"[DynamicNormals] Flushed {count} original mesh reference(s) from cache.");
     }
 
     public void Apply(IReadOnlyList<MeshBlendshapeSelection> selections)
@@ -145,7 +145,7 @@ public class DynamicNormalsService
 
         if (AssetDatabase.DeleteAsset(normalizedPath))
         {
-            Debug.Log($"[DynamicNormals] Deleted current dynamic normals asset at: {normalizedPath}");
+            MCBLogger.Log($"[DynamicNormals] Deleted current dynamic normals asset at: {normalizedPath}");
             AssetDatabase.SaveAssets();
         }
         else
@@ -193,7 +193,7 @@ public class DynamicNormalsService
 
         if (paths.Count > 0)
         {
-            Debug.Log($"[DynamicNormals] Preferred original mesh FBX path(s): {string.Join(", ", paths)}");
+            MCBLogger.Log($"[DynamicNormals] Preferred original mesh FBX path(s): {string.Join(", ", paths)}");
         }
 
         return paths;
@@ -212,7 +212,7 @@ public class DynamicNormalsService
             var mesh = FindMeshAtPath(meshName, preferredPath);
             if (mesh != null)
             {
-                Debug.Log($"[DynamicNormals] Found original mesh in preferred FBX at: {preferredPath}");
+                MCBLogger.Log($"[DynamicNormals] Found original mesh in preferred FBX at: {preferredPath}");
                 return mesh;
             }
         }
@@ -236,7 +236,7 @@ public class DynamicNormalsService
                     if (fallbackMesh == null)
                     {
                         fallbackMesh = mesh;
-                        Debug.Log($"[DynamicNormals] Found fallback mesh at: {assetPath}");
+                        MCBLogger.Log($"[DynamicNormals] Found fallback mesh at: {assetPath}");
                     }
                 }
             }
@@ -279,7 +279,7 @@ public class DynamicNormalsService
         string originalMeshPath = AssetDatabase.GetAssetPath(originalMesh);
         if (string.IsNullOrEmpty(originalMeshPath))
         {
-            Debug.Log("[DynamicNormals] Original mesh has no asset path, no dynamic normals asset to delete.");
+            MCBLogger.Log("[DynamicNormals] Original mesh has no asset path, no dynamic normals asset to delete.");
             return;
         }
 
@@ -294,7 +294,7 @@ public class DynamicNormalsService
             bool deleted = AssetDatabase.DeleteAsset(assetPath);
             if (deleted)
             {
-                Debug.Log($"[DynamicNormals] Deleted dynamic normals asset at: {assetPath}");
+                MCBLogger.Log($"[DynamicNormals] Deleted dynamic normals asset at: {assetPath}");
                 AssetDatabase.SaveAssets();
             }
             else
@@ -304,7 +304,7 @@ public class DynamicNormalsService
         }
         else
         {
-            Debug.Log($"[DynamicNormals] No dynamic normals asset found at: {assetPath}");
+            MCBLogger.Log($"[DynamicNormals] No dynamic normals asset found at: {assetPath}");
         }
     }
 

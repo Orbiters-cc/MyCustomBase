@@ -90,7 +90,7 @@ public sealed class MCBReFitTests
 
         using (var original = info.ResolveOriginal())
         {
-            Assert.That(original.Avatar, Is.SameAs(basePrefab), "Without an .fbx.old backup the base file is the original.");
+            Assert.That(original.Avatar, Is.SameAs(basePrefab), "Without an .fbx.originalbase backup the base file is the original.");
             Assert.That(original.Body.sharedMesh, Is.SameAs(bodyMesh));
         }
     }

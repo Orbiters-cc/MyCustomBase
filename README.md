@@ -1,5 +1,13 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.2 — 2026-10-07
+
+- Fix "Unsupported conversion of vertex data (format 0 to 4, dimensions 4 to 4)" in builds of versions with twisting bones (Ultirex): Unity logged it when a twist gave a vertex more than four bone influences. Both twists were applied already; the build now writes the weights without the error.
+- XMuscles: undoing **Build rig on this avatar** removes its contacts and constraints cleanly; Unity no longer warns that a component "had become dangling during an undo operation".
+- Faster version list: the applied version is worked out once when the avatar's meshes or versions change, not for every row on every refresh, and a refresh adds an undo step or an unsaved change only when MCB's state actually changed. Hidden MCB inspectors no longer ask the server for the account state.
+- Quieter Console: the apply, native mesh and dynamic normals timings now follow Advanced Options › Log in Console (off by default), and with it on, cache hits, account refreshes and version-state checks are no longer logged on every refresh. Warnings and errors are unchanged.
+- Fix the wording of the message shown when you do not own the MCB.
+
 ## 1.12.1 — 2026-10-06
 
 - Unencrypted versions keep the original base's pose: switching a T-posed Rexouium to Ultirex 5.1 no longer leaves it in the star pose of the Ultirex FBX. The arms, hands, fingers, legs and feet point like the original base model; bone lengths, hips, spine and head stay the version's.
@@ -101,13 +109,13 @@ check in Gesture Manager and VRChat.
 
 ## Custom base FBX backup invariant
 
-MCB custom base versions are applied over the original/default base FBX. If the default base is `A` and custom bases are `B` or `C`, then `*.fbx.old` is always the preserved copy of `A`.
+MCB custom base versions are applied over the original/default base FBX. If the default base is `A` and custom bases are `B` or `C`, then `*.fbx.originalbase` (next to the FBX) is always the preserved copy of `A`.
 
-- Applying a custom FBX or version creates `*.fbx.old` only when it is missing.
-- Existing `*.fbx.old` files must not be overwritten, deleted, or moved during apply/reset flows.
-- Resetting to Base Default copies `*.fbx.old` back over `*.fbx` while keeping `*.fbx.old` in place.
-- The only valid state without `*.fbx.old` is the untouched default-base state where `*.fbx` is already `A`.
-- XOR `.bin` patches are computed against `A`, so version switching depends on `*.fbx.old` remaining the original default source.
+- Applying a custom FBX or version creates `*.fbx.originalbase` only when it is missing.
+- Existing `*.fbx.originalbase` files must not be overwritten, deleted, or moved during apply/reset flows.
+- Resetting to Base Default copies `*.fbx.originalbase` back over `*.fbx` while keeping `*.fbx.originalbase` in place.
+- The only valid state without `*.fbx.originalbase` is the untouched default-base state where `*.fbx` is already `A`.
+- XOR `.bin` patches are computed against `A`, so version switching depends on `*.fbx.originalbase` remaining the original default source.
 
 ## Editor health checks
 

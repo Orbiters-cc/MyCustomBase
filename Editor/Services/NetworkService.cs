@@ -91,7 +91,7 @@ public class NetworkService
                 }
                 catch { /* ignore parse error and fall through to generic handling */ }
                 // If no assetId, return a generic message
-                return (false, null, "You do not seems to own the MCB. Get the MCB from the Orbiters website and try again.");
+                return (false, null, "You do not seem to own this MCB. Get it from the Orbiters website and try again.");
             }
 
             if (req.result != UnityWebRequest.Result.Success)

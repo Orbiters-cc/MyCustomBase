@@ -16,6 +16,7 @@ public class VersionActions
     private const float BlendshapeWeightEpsilon = 0.001f;
     private const string AdvancedMeshDeliveryMode = "UNITY_NATIVE_MESH_ASSET";
     private const string FbxReplacementDeliveryMode = "FBX_REPLACEMENT";
+    private const string UpdateStateUndoName = "Update MCB State";
     private const double ApplyProgressIntroSeconds = 0.08d;
     private const double ApplyProgressCompletionHoldSeconds = 0.6d;
     private const float DownloadApplyProgressStart = 0.02f;
@@ -41,7 +42,7 @@ public class VersionActions
 
             if (enabled)
             {
-                UnityEngine.Debug.Log($"[VersionApplyProfile] START {operation}");
+                MCBLogger.Log($"[VersionApplyProfile] START {operation}");
             }
         }
 
@@ -52,7 +53,7 @@ public class VersionActions
                 return;
             }
 
-            UnityEngine.Debug.Log($"[VersionApplyProfile] {label}: step={step.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms");
+            MCBLogger.Log($"[VersionApplyProfile] {label}: step={step.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms");
             step.Restart();
         }
 
@@ -63,7 +64,7 @@ public class VersionActions
                 return;
             }
 
-            UnityEngine.Debug.Log($"[VersionApplyProfile] {label} {operation}: total={total.Elapsed.TotalMilliseconds:F1} ms");
+            MCBLogger.Log($"[VersionApplyProfile] {label} {operation}: total={total.Elapsed.TotalMilliseconds:F1} ms");
         }
     }
 
@@ -195,7 +196,6 @@ public class VersionActions
         editor.Repaint();
 
         UpdateCurrentBaseFbxHash();
-        MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash.");
 
         if (string.IsNullOrEmpty(editor.currentBaseFbxHash))
         {
@@ -1628,7 +1628,7 @@ public class VersionActions
         
         CommitActiveTransition();
         if (!finalize) return; // A saved-custom transition will commit or restore its encompassing snapshot.
-        MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating applied state.");
+        MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash and applied state.");
         // Force a recalculation of current/default FBX hashes after every switch. Advanced
         // transitions can restore .originalbase bytes even though the visible mesh is a native
         // payload, and the persisted advanced marker keeps version detection authoritative.
@@ -2865,13 +2865,13 @@ public class VersionActions
         var step = new System.Diagnostics.Stopwatch();
         profile.Start();
         step.Start();
-        UnityEngine.Debug.Log("[VersionApplyProfile] Async hash/state recalculation START");
+        MCBLogger.Log("[VersionApplyProfile] Async hash/state recalculation START");
 
         var paths = GetCurrentFBXPaths();
         string path = paths.FirstOrDefault();
         if (string.IsNullOrEmpty(path))
         {
-            UnityEngine.Debug.Log($"[VersionApplyProfile] Async hash/state recalculation ABORT missing FBX path total={profile.Elapsed.TotalMilliseconds:F1} ms");
+            MCBLogger.Log($"[VersionApplyProfile] Async hash/state recalculation ABORT missing FBX path total={profile.Elapsed.TotalMilliseconds:F1} ms");
             yield break;
         }
 
@@ -2888,7 +2888,7 @@ public class VersionActions
         {
             hashService.InvalidateHashCache(originalPath);
         }
-        UnityEngine.Debug.Log($"[VersionApplyProfile] Invalidated FBX hash cache: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms paths={paths.Count}");
+        MCBLogger.Log($"[VersionApplyProfile] Invalidated FBX hash cache: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms paths={paths.Count}");
         step.Restart();
 
         // Ensure any imports/updates are finished
@@ -2896,7 +2896,7 @@ public class VersionActions
         {
             yield return null;
         }
-        UnityEngine.Debug.Log($"[VersionApplyProfile] Waited for editor import/update before hashing: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
+        MCBLogger.Log($"[VersionApplyProfile] Waited for editor import/update before hashing: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
         step.Restart();
 
         // Calculate hashes
@@ -2909,7 +2909,7 @@ public class VersionActions
             if (fbxHashRecalculationGeneration != expectedHashGeneration ||
                 (expectedApplyGeneration.HasValue && applyProgressGeneration != expectedApplyGeneration.Value))
             {
-                UnityEngine.Debug.Log("[VersionApplyProfile] Async hash/state recalculation ABORT superseded by a newer apply generation.");
+                MCBLogger.Log("[VersionApplyProfile] Async hash/state recalculation ABORT superseded by a newer apply generation.");
                 yield break;
             }
             yield return null;
@@ -2918,10 +2918,10 @@ public class VersionActions
         string originalHash = originalHashTask != null ? originalHashTask.Result : null;
         if (string.IsNullOrWhiteSpace(currentHash) || (hasBackup && string.IsNullOrWhiteSpace(originalHash)))
         {
-            UnityEngine.Debug.Log("[VersionApplyProfile] Async hash/state recalculation ABORT stale or unavailable hash result.");
+            MCBLogger.Log("[VersionApplyProfile] Async hash/state recalculation ABORT stale or unavailable hash result.");
             yield break;
         }
-        UnityEngine.Debug.Log($"[VersionApplyProfile] Calculated primary FBX/current+backup hashes: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
+        MCBLogger.Log($"[VersionApplyProfile] Calculated primary FBX/current+backup hashes: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
         step.Restart();
 
         foreach (string targetPath in paths.Skip(1))
@@ -2932,32 +2932,32 @@ public class VersionActions
                 if (fbxHashRecalculationGeneration != expectedHashGeneration ||
                     (expectedApplyGeneration.HasValue && applyProgressGeneration != expectedApplyGeneration.Value))
                 {
-                    UnityEngine.Debug.Log("[VersionApplyProfile] Async hash/state recalculation ABORT superseded by a newer apply generation.");
+                    MCBLogger.Log("[VersionApplyProfile] Async hash/state recalculation ABORT superseded by a newer apply generation.");
                     yield break;
                 }
                 yield return null;
             }
             if (string.IsNullOrWhiteSpace(targetHashTask.Result))
             {
-                UnityEngine.Debug.Log($"[VersionApplyProfile] Async hash/state recalculation ABORT stale or unavailable hash for '{targetPath}'.");
+                MCBLogger.Log($"[VersionApplyProfile] Async hash/state recalculation ABORT stale or unavailable hash for '{targetPath}'.");
                 yield break;
             }
         }
-        UnityEngine.Debug.Log($"[VersionApplyProfile] Calculated additional FBX hashes: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
+        MCBLogger.Log($"[VersionApplyProfile] Calculated additional FBX hashes: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
         step.Restart();
 
         // Update editor state
         if (fbxHashRecalculationGeneration != expectedHashGeneration ||
             (expectedApplyGeneration.HasValue && applyProgressGeneration != expectedApplyGeneration.Value))
         {
-            UnityEngine.Debug.Log("[VersionApplyProfile] Async hash/state recalculation ABORT superseded before state update.");
+            MCBLogger.Log("[VersionApplyProfile] Async hash/state recalculation ABORT superseded before state update.");
             yield break;
         }
 
         editor.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
         UpdateAppliedVersionAndState(currentHash);
         editor.Repaint();
-        UnityEngine.Debug.Log($"[VersionApplyProfile] Async hash/state recalculation DONE: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
+        MCBLogger.Log($"[VersionApplyProfile] Async hash/state recalculation DONE: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
     }
     
     // FIX: Centralized and corrected state detection logic. This is the single source of truth.
@@ -2977,8 +2977,9 @@ public class VersionActions
                 var pendingMarkerVersion = ResolvePersistedAppliedVersion();
                 if (pendingMarkerVersion != null && IsAdvancedMeshVersionApplied(pendingMarkerVersion))
                 {
-                    MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state before hash is ready: {pendingMarkerVersion.version}");
-                    PersistAppliedVersionState(pendingMarkerVersion);
+                    var previousVersion = editor.customBaseTarget.appliedCustomBaseVersion;
+                    if (PersistAppliedVersionState(pendingMarkerVersion, true) || !Equals(previousVersion, pendingMarkerVersion))
+                        MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state before hash is ready: {pendingMarkerVersion.version}");
                     return;
                 }
 
@@ -2991,7 +2992,6 @@ public class VersionActions
         editor.currentAppliedFbxHash = currentFileHash;
 
         var candidateVersions = editor.GetAllVersions() ?? new System.Collections.Generic.List<CustomBaseVersion>();
-        MCBLogger.Log($"[VersionActions] UpdateAppliedVersionAndState hash={currentFileHash} candidates={candidateVersions.Count}");
 
         // If we have no candidates yet, don't decide custom state prematurely
         if (string.IsNullOrEmpty(currentFileHash) || (!editor.fetchAttempted && candidateVersions.Count == 0))
@@ -3002,33 +3002,52 @@ public class VersionActions
         }
 
         if (editor?.customBaseTarget == null) return;
-        Undo.RecordObject(editor.customBaseTarget, "Update MCB State");
+        // This runs on every inspector rebuild: the custom base is recorded for undo and marked dirty only when one of its
+        // values changes, and the outcome is logged only when it changes.
+        var target = editor.customBaseTarget;
+        var previous = target.appliedCustomBaseVersion;
 
         var markerVersion = ResolvePersistedAppliedVersion(candidateVersions);
         if (markerVersion != null && IsAdvancedMeshVersionApplied(markerVersion))
         {
-            MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state: {markerVersion.version}");
-            PersistAppliedVersionState(markerVersion);
+            if (PersistAppliedVersionState(markerVersion, true) || !Equals(previous, markerVersion))
+                MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state: {markerVersion.version}");
             return;
         }
 
         var matchingVersion = FindMatchingAppliedVersion(candidateVersions, currentFileHash);
+        bool changed;
 
         if (matchingVersion != null)
         {
-            MCBLogger.Log($"[VersionActions] Matched applied version: {matchingVersion.version}");
             editor.isCustomBase = true;
             editor.currentIsCustom = false;
-            editor.customBaseTarget.appliedCustomBaseVersion = matchingVersion;
-            SyncAppliedVersionBlendshapeLinkCache(matchingVersion);
-            SyncAppliedVersionAnimationPositionOffsetCache(matchingVersion);
+            var links = BuildAppliedVersionBlendshapeLinkCache(matchingVersion);
+            var offsets = BuildAppliedVersionAnimationPositionOffsetCache(matchingVersion);
+            // The applied version is saved with the custom base: another version, or the same one with new contents, counts.
+            changed = JsonUtility.ToJson(previous) != JsonUtility.ToJson(matchingVersion) ||
+                      !SameSerializedEntries(target.appliedVersionBlendshapeLinksCache, links) ||
+                      !SameSerializedEntries(target.appliedVersionAnimationPositionOffsetsCache, offsets);
+            if (changed)
+            {
+                Undo.RecordObject(target, UpdateStateUndoName);
+                SetCache(ref target.appliedVersionBlendshapeLinksCache, links);
+                SetCache(ref target.appliedVersionAnimationPositionOffsetsCache, offsets);
+                MCBLogger.Log($"[VersionActions] Matched applied version: {matchingVersion.version}");
+            }
+            target.appliedCustomBaseVersion = matchingVersion;
         }
         else
         {
             editor.isCustomBase = false;
-            editor.customBaseTarget.appliedCustomBaseVersion = null;
-            SyncAppliedVersionAnimationPositionOffsetCache(null);
-            
+            changed = previous != null || target.appliedVersionAnimationPositionOffsetsCache?.Count > 0;
+            if (changed)
+            {
+                Undo.RecordObject(target, UpdateStateUndoName);
+                target.appliedVersionAnimationPositionOffsetsCache?.Clear();
+            }
+            target.appliedCustomBaseVersion = null;
+
             // Detect user-custom base only when feature is enabled and we have attempted fetching versions
             string fbxPath = GetCurrentFBXPath();
             bool hasBackup = !string.IsNullOrEmpty(fbxPath) && fileManagerService.BackupExists(fbxPath);
@@ -3058,40 +3077,71 @@ public class VersionActions
                 editor.currentIsCustom = false;
             }
             
-            MCBLogger.Log("[VersionActions] No matching version hash found. Marking state as non-custom-base.");
+            if (changed)
+                MCBLogger.Log("[VersionActions] No matching version hash found. Marking state as non-custom-base.");
         }
 
-        EditorUtility.SetDirty(editor.customBaseTarget);
+        if (changed) EditorUtility.SetDirty(target);
     }
 
-    private void PersistAppliedVersionState(CustomBaseVersion version)
+    private void PersistAppliedVersionState(CustomBaseVersion version) => PersistAppliedVersionState(version, false);
+
+    /// <param name="onlyWhenChanged">For state refreshes: the custom base is recorded for undo and marked dirty only
+    /// when one of its values changes.</param>
+    /// <returns>Whether the custom base was written.</returns>
+    private bool PersistAppliedVersionState(CustomBaseVersion version, bool onlyWhenChanged)
     {
         if (editor?.customBaseTarget == null || version == null || version == VersionListDrawer.RESET_VERSION)
         {
             ClearAppliedVersionState();
-            return;
+            return true;
         }
 
-        editor.customBaseTarget.appliedCustomBaseVersion = version;
+        var target = editor.customBaseTarget;
         var appliedAsset = editor.GetSelectedAsset();
-        if (appliedAsset != null && appliedAsset.id == version.assetId && !string.IsNullOrWhiteSpace(appliedAsset.name))
-            editor.customBaseTarget.appliedCustomBaseName = appliedAsset.name;
-        else if (editor.customBaseTarget.appliedCustomBaseAssetId != version.assetId)
-            editor.customBaseTarget.appliedCustomBaseName = "";
-        editor.customBaseTarget.appliedCustomBaseAssetId = version.assetId;
-        editor.customBaseTarget.appliedCustomBaseVersionString = version.version ?? "";
-        editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = version.defaultAviVersion ?? "";
-        editor.customBaseTarget.appliedCustomBaseSourceVersionKey = version.sourceVersionKey ?? "";
-        editor.customBaseTarget.appliedCustomBaseDeliveryMode = NativeMeshPayloadService.VersionUsesAdvancedMesh(version)
+        string name = appliedAsset != null && appliedAsset.id == version.assetId && !string.IsNullOrWhiteSpace(appliedAsset.name)
+            ? appliedAsset.name
+            : target.appliedCustomBaseAssetId != version.assetId ? "" : target.appliedCustomBaseName;
+        string versionString = version.version ?? "";
+        string defaultAviVersion = version.defaultAviVersion ?? "";
+        string sourceVersionKey = version.sourceVersionKey ?? "";
+        string deliveryMode = NativeMeshPayloadService.VersionUsesAdvancedMesh(version)
             ? AdvancedMeshDeliveryMode
             : FbxReplacementDeliveryMode;
+        var links = BuildAppliedVersionBlendshapeLinkCache(version);
+        var offsets = BuildAppliedVersionAnimationPositionOffsetCache(version);
+        var customization = VersionCustomization.Read(version.extraCustomization);
+
+        target.appliedCustomBaseVersion = version;
         editor.isCustomBase = true;
         editor.currentIsCustom = false;
-        SyncAppliedVersionBlendshapeLinkCache(version);
-        SyncAppliedVersionAnimationPositionOffsetCache(version);
-        editor.customBaseTarget.appliedCustomization = VersionCustomization.Read(version.extraCustomization);
-        EditorUtility.SetDirty(editor.customBaseTarget);
+        if (onlyWhenChanged)
+        {
+            if (target.appliedCustomBaseName == name &&
+                target.appliedCustomBaseAssetId == version.assetId &&
+                target.appliedCustomBaseVersionString == versionString &&
+                target.appliedCustomBaseDefaultAviVersion == defaultAviVersion &&
+                target.appliedCustomBaseSourceVersionKey == sourceVersionKey &&
+                target.appliedCustomBaseDeliveryMode == deliveryMode &&
+                SameSerializedEntries(target.appliedVersionBlendshapeLinksCache, links) &&
+                SameSerializedEntries(target.appliedVersionAnimationPositionOffsetsCache, offsets) &&
+                JsonUtility.ToJson(target.appliedCustomization) == JsonUtility.ToJson(customization))
+                return false;
+            Undo.RecordObject(target, UpdateStateUndoName);
+        }
+
+        target.appliedCustomBaseName = name;
+        target.appliedCustomBaseAssetId = version.assetId;
+        target.appliedCustomBaseVersionString = versionString;
+        target.appliedCustomBaseDefaultAviVersion = defaultAviVersion;
+        target.appliedCustomBaseSourceVersionKey = sourceVersionKey;
+        target.appliedCustomBaseDeliveryMode = deliveryMode;
+        SetCache(ref target.appliedVersionBlendshapeLinksCache, links);
+        SetCache(ref target.appliedVersionAnimationPositionOffsetsCache, offsets);
+        target.appliedCustomization = customization;
+        EditorUtility.SetDirty(target);
         editor.serializedObject.Update();
+        return true;
     }
 
     private void ClearAppliedVersionState()
@@ -3126,7 +3176,8 @@ public class VersionActions
         string versionString = editor.customBaseTarget.appliedCustomBaseVersionString;
         var candidates = new List<CustomBaseVersion>();
         if (candidateVersions != null) candidates.AddRange(candidateVersions.Where(v => v != null));
-        if (editor.GetAllVersions() != null) candidates.AddRange(editor.GetAllVersions().Where(v => v != null));
+        var allVersions = editor.GetAllVersions();
+        if (allVersions != null) candidates.AddRange(allVersions.Where(v => v != null));
         if (editor.selectedVersionForAction != null) candidates.Add(editor.selectedVersionForAction);
         if (editor.recommendedVersion != null) candidates.Add(editor.recommendedVersion);
 
@@ -3136,15 +3187,14 @@ public class VersionActions
             .Select(group => group.First())
             .ToList();
 
-        var inferredAdvanced = InferAdvancedVersionFromGeneratedMeshPaths(candidates);
+        var inferredAdvanced = InferAdvancedVersionFromGeneratedMeshPaths(candidates, out bool hasGeneratedMeshes);
         if (inferredAdvanced != null)
         {
             return inferredAdvanced;
         }
 
         // Shared meshes without an unambiguous identity must not revive a stale marker.
-        if (NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
-                editor.customBaseTarget.transform.root).Count > 0)
+        if (hasGeneratedMeshes)
             return null;
 
         if (applied != null && !string.IsNullOrWhiteSpace(applied.version) && applied != VersionListDrawer.RESET_VERSION)
@@ -3170,28 +3220,75 @@ public class VersionActions
             (string.IsNullOrWhiteSpace(defaultAviVersion) || string.Equals(v.defaultAviVersion, defaultAviVersion, StringComparison.Ordinal)));
     }
 
-    private CustomBaseVersion InferAdvancedVersionFromGeneratedMeshPaths(IReadOnlyList<CustomBaseVersion> candidates)
+    // Every version row asks for the applied version on each UI rebuild: the inference from the avatar's generated meshes
+    // is reused while the meshes, the applied marker and the candidate versions are the same objects it was made from.
+    private sealed class GeneratedMeshInference
     {
+        public MyCustomBase Target;
+        public int[] Meshes;
+        public string[] Paths;
+        public string Marker;
+        public List<CustomBaseVersion> Available;
+        public CustomBaseVersion Match;
+    }
+
+    private GeneratedMeshInference generatedMeshInference;
+
+    private CustomBaseVersion InferAdvancedVersionFromGeneratedMeshPaths(IReadOnlyList<CustomBaseVersion> candidates, out bool hasGeneratedMeshes)
+    {
+        hasGeneratedMeshes = false;
         if (editor?.customBaseTarget == null)
         {
             return null;
         }
 
+        var target = editor.customBaseTarget;
+        var root = target.transform.root;
+        var meshes = root.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .Select(renderer => renderer.sharedMesh != null ? renderer.sharedMesh.GetInstanceID() : 0)
+            .ToArray();
+        var cached = generatedMeshInference;
+        bool sameMeshes = cached != null && cached.Target == target && cached.Meshes.SequenceEqual(meshes);
+        var paths = sameMeshes
+            ? cached.Paths
+            : NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(root)
+                .Select(renderer => MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        hasGeneratedMeshes = paths.Length > 0;
+
         var available = new List<CustomBaseVersion>();
-        if (candidates != null)
+        if (hasGeneratedMeshes)
         {
-            available.AddRange(candidates.Where(v => v != null));
+            if (candidates != null)
+            {
+                available.AddRange(candidates.Where(v => v != null));
+            }
+
+            var local = VersionRepository.Scan();
+            available.AddRange(local.imported.Where(v => v != null));
+            available.AddRange(local.unsubmitted.Where(v => v != null));
+            if (!string.IsNullOrEmpty(target.appliedCustomBaseSourceVersionKey))
+                available = available.Where(v => v.sourceVersionKey == target.appliedCustomBaseSourceVersionKey).ToList();
         }
 
-        var local = VersionRepository.Scan();
-        available.AddRange(local.imported.Where(v => v != null));
-        available.AddRange(local.unsubmitted.Where(v => v != null));
-        var target = editor.customBaseTarget;
-        if (!string.IsNullOrEmpty(target.appliedCustomBaseSourceVersionKey))
-            available = available.Where(v => v.sourceVersionKey == target.appliedCustomBaseSourceVersionKey).ToList();
-        var match = NativeMeshPayloadService.ResolveAppliedMeshVersion(
-            target.transform.root, available, target.appliedCustomBaseAssetId,
-            target.appliedCustomBaseVersionString, target.appliedCustomBaseDefaultAviVersion);
+        string marker = $"{target.appliedCustomBaseAssetId}|{target.appliedCustomBaseVersionString}|" +
+                        $"{target.appliedCustomBaseDefaultAviVersion}|{target.appliedCustomBaseSourceVersionKey}";
+        if (!sameMeshes || cached.Marker != marker || !SameObjects(cached.Available, available))
+        {
+            var inferred = hasGeneratedMeshes
+                ? NativeMeshPayloadService.ResolveAppliedMeshVersionFromPaths(paths, available, target.appliedCustomBaseAssetId,
+                    target.appliedCustomBaseVersionString, target.appliedCustomBaseDefaultAviVersion)
+                : null;
+            if (inferred != null && !inferred.Equals(cached?.Match))
+                MCBLogger.Log($"[VersionActions] Inferred native mesh applied version {inferred.version} from generated mesh provenance.");
+            cached = generatedMeshInference = new GeneratedMeshInference
+            {
+                Target = target, Meshes = meshes, Paths = paths, Marker = marker, Available = available, Match = inferred
+            };
+        }
+
+        var match = cached.Match;
         if (match == null)
         {
             return null;
@@ -3211,8 +3308,17 @@ public class VersionActions
             editor.importedVersions.Add(match);
         }
 
-        MCBLogger.Log($"[VersionActions] Inferred native mesh applied version {match.version} from generated mesh provenance.");
         return match;
+    }
+
+    private static bool SameObjects<T>(List<T> cached, List<T> current) where T : class
+    {
+        if (cached.Count != current.Count) return false;
+        for (int i = 0; i < current.Count; i++)
+        {
+            if (!ReferenceEquals(cached[i], current[i])) return false;
+        }
+        return true;
     }
 
     private bool IsAdvancedMeshVersionApplied(CustomBaseVersion version)
@@ -3266,16 +3372,37 @@ public class VersionActions
     private void SyncAppliedVersionBlendshapeLinkCache(CustomBaseVersion version)
     {
         if (editor?.customBaseTarget == null) return;
+        SetCache(ref editor.customBaseTarget.appliedVersionBlendshapeLinksCache, BuildAppliedVersionBlendshapeLinkCache(version));
+    }
 
-        var cache = editor.customBaseTarget.appliedVersionBlendshapeLinksCache;
-        if (cache == null)
-        {
-            cache = new List<CreatorBlendshapeEntry>();
-            editor.customBaseTarget.appliedVersionBlendshapeLinksCache = cache;
-        }
+    private void SyncAppliedVersionAnimationPositionOffsetCache(CustomBaseVersion version)
+    {
+        if (editor?.customBaseTarget == null) return;
+        SetCache(ref editor.customBaseTarget.appliedVersionAnimationPositionOffsetsCache, BuildAppliedVersionAnimationPositionOffsetCache(version));
+    }
 
+    private static void SetCache<T>(ref List<T> cache, List<T> entries)
+    {
+        if (cache == null) cache = new List<T>();
         cache.Clear();
-        if (version?.customBlendshapes == null || version.customBlendshapes.Length == 0) return;
+        cache.AddRange(entries);
+    }
+
+    // Compared as Unity serializes them: entries rebuilt from the same version are equal to the cached ones.
+    private static bool SameSerializedEntries<T>(List<T> cache, List<T> entries)
+    {
+        if ((cache?.Count ?? 0) != entries.Count) return false;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            if (JsonUtility.ToJson(cache[i]) != JsonUtility.ToJson(entries[i])) return false;
+        }
+        return true;
+    }
+
+    private static List<CreatorBlendshapeEntry> BuildAppliedVersionBlendshapeLinkCache(CustomBaseVersion version)
+    {
+        var cache = new List<CreatorBlendshapeEntry>();
+        if (version?.customBlendshapes == null || version.customBlendshapes.Length == 0) return cache;
 
         foreach (var entry in version.customBlendshapes)
         {
@@ -3306,21 +3433,13 @@ public class VersionActions
 
             cache.Add(cached);
         }
+        return cache;
     }
 
-    private void SyncAppliedVersionAnimationPositionOffsetCache(CustomBaseVersion version)
+    private static List<AnimationPositionOffsetEntry> BuildAppliedVersionAnimationPositionOffsetCache(CustomBaseVersion version)
     {
-        if (editor?.customBaseTarget == null) return;
-
-        var cache = editor.customBaseTarget.appliedVersionAnimationPositionOffsetsCache;
-        if (cache == null)
-        {
-            cache = new List<AnimationPositionOffsetEntry>();
-            editor.customBaseTarget.appliedVersionAnimationPositionOffsetsCache = cache;
-        }
-
-        cache.Clear();
-        if (version == null) return;
+        var cache = new List<AnimationPositionOffsetEntry>();
+        if (version == null) return cache;
 
         foreach (var offset in AnimationPositionOffsetService.BuildOffsetsForVersion(version))
         {
@@ -3332,6 +3451,7 @@ public class VersionActions
                 offset = offset.offset
             });
         }
+        return cache;
     }
 
     private void SmartSelectVersion()

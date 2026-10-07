@@ -54,7 +54,7 @@ public static partial class NativeMeshPayloadService
         System.Diagnostics.Stopwatch total,
         string details = null)
     {
-        UnityEngine.Debug.Log(
+        MCBLogger.Log(
             string.IsNullOrWhiteSpace(details)
                 ? $"[NativeMeshPayloadProfile] {label}: step={step.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms"
                 : $"[NativeMeshPayloadProfile] {label}: step={step.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms {details}");
@@ -482,7 +482,7 @@ public static partial class NativeMeshPayloadService
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
-        UnityEngine.Debug.Log(
+        MCBLogger.Log(
             $"[NativeMeshPayloadProfile] START apply payload version={version.version}");
 
         NativeMeshPayloadAsset payload = MaterializeEncryptedPayloadAsset(version, patchFile, binPath, originalFbxPath, fileManagerService);
@@ -491,7 +491,7 @@ public static partial class NativeMeshPayloadService
         LogApplyProfile("Applied native mesh payload to avatar", step, total);
         ApplyPayloadAuthoringPose(avatarRoot, payload, basePoseFbxPath);
         LogApplyProfile("Applied native mesh authoring pose to avatar", step, total, $"bones={payload.authoringPoseBones.Count}");
-        UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] DONE apply payload total={total.Elapsed.TotalMilliseconds:F1} ms");
+        MCBLogger.Log($"[NativeMeshPayloadProfile] DONE apply payload total={total.Elapsed.TotalMilliseconds:F1} ms");
         return payload;
     }
 
@@ -534,7 +534,7 @@ public static partial class NativeMeshPayloadService
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
-        UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] START async apply payload version={version.version}");
+        MCBLogger.Log($"[NativeMeshPayloadProfile] START async apply payload version={version.version}");
 
         NativeMeshPayloadAsset payload = null;
         var materialize = MaterializeEncryptedPayloadAssetCoroutine(
@@ -561,7 +561,7 @@ public static partial class NativeMeshPayloadService
         ApplyPayloadAuthoringPose(avatarRoot, payload);
         LogApplyProfile("Applied native mesh authoring pose to avatar", step, total, $"bones={payload.authoringPoseBones.Count}");
         reportProgress?.Invoke(1f, "Advanced mesh applied...");
-        UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] DONE async apply payload total={total.Elapsed.TotalMilliseconds:F1} ms");
+        MCBLogger.Log($"[NativeMeshPayloadProfile] DONE async apply payload total={total.Elapsed.TotalMilliseconds:F1} ms");
     }
 
     public static NativeMeshPayloadAsset MaterializeEncryptedPayloadAsset(
@@ -609,14 +609,14 @@ public static partial class NativeMeshPayloadService
         var existing = LoadPayloadAsset(payloadAssetPath);
         if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
         {
-            UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Using cached native mesh payload asset: {payloadAssetPath}");
+            MCBLogger.Log($"[NativeMeshPayloadProfile] Using cached native mesh payload asset: {payloadAssetPath}");
             return existing;
         }
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         var step = System.Diagnostics.Stopwatch.StartNew();
         long binBytes = new FileInfo(binPath).Length;
-        UnityEngine.Debug.Log(
+        MCBLogger.Log(
             $"[NativeMeshPayloadProfile] Materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} plain={IsPlainPayloadTransform(patchFile.transform)}");
 
         byte[] binData = File.ReadAllBytes(binPath);
@@ -713,7 +713,7 @@ public static partial class NativeMeshPayloadService
                 status);
         });
 
-        UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Started advanced mesh payload preparation preload: {payloadAssetPath}");
+        MCBLogger.Log($"[NativeMeshPayloadProfile] Started advanced mesh payload preparation preload: {payloadAssetPath}");
         return new NativeMeshPayloadPreparationPreload(payloadAssetPath, payloadHash, payloadCompression, status, task);
     }
 
@@ -765,14 +765,14 @@ public static partial class NativeMeshPayloadService
         var existing = LoadPayloadAsset(payloadAssetPath);
         if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
         {
-            UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Using cached native mesh payload asset: {payloadAssetPath}");
+            MCBLogger.Log($"[NativeMeshPayloadProfile] Using cached native mesh payload asset: {payloadAssetPath}");
             reportProgress?.Invoke(1f, "Loaded cached advanced mesh...");
             completed?.Invoke(existing);
             yield break;
         }
 
         long binBytes = new FileInfo(binPath).Length;
-        UnityEngine.Debug.Log(
+        MCBLogger.Log(
             $"[NativeMeshPayloadProfile] Async materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} plain={IsPlainPayloadTransform(patchFile.transform)}");
 
         string assetName = Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(payloadAssetPath));
@@ -782,7 +782,7 @@ public static partial class NativeMeshPayloadService
         {
             status = preparationPreload.status;
             prepareTask = preparationPreload.task;
-            UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Reusing advanced mesh payload preparation preload: {payloadAssetPath}");
+            MCBLogger.Log($"[NativeMeshPayloadProfile] Reusing advanced mesh payload preparation preload: {payloadAssetPath}");
         }
         else
         {
@@ -1569,7 +1569,7 @@ public static partial class NativeMeshPayloadService
             record.mesh = ReadMesh(reader);
             record.mesh.name = BuildUniqueSubAssetName($"{record.mesh.name}_{ShortHash(payloadHash)}", usedMeshNames);
             payload.renderers.Add(record);
-            UnityEngine.Debug.Log(
+            MCBLogger.Log(
                 $"[NativeMeshPayloadProfile] Read renderer {i + 1}/{rendererCount} '{record.rendererName}' mesh='{record.mesh.name}' " +
                 $"verts={record.mesh.vertexCount} subMeshes={record.mesh.subMeshCount} blendShapes={record.mesh.blendShapeCount}: " +
                 $"step={rendererStep.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms");
@@ -2158,7 +2158,7 @@ public static partial class NativeMeshPayloadService
                 }
             }
             progress?.Invoke(1f);
-            UnityEngine.Debug.Log($"[NativeMeshPayloadProfile] Created mesh={data.name} frames={framesAdded} maxBlendShapeCallMs={maximumCallMs:F1} frameBudgeted={yieldToEditor}");
+            MCBLogger.Log($"[NativeMeshPayloadProfile] Created mesh={data.name} frames={framesAdded} maxBlendShapeCallMs={maximumCallMs:F1} frameBudgeted={yieldToEditor}");
             completed?.Invoke(mesh);
             finished = true;
         }
@@ -2801,7 +2801,7 @@ public static partial class NativeMeshPayloadService
                 RefreshSkinnedRenderer(targetRenderer, record.mesh);
             }
             EditorUtility.SetDirty(targetRenderer);
-            UnityEngine.Debug.Log(
+            MCBLogger.Log(
                 $"[NativeMeshPayloadProfile] Applied renderer {rendererIndex}/{rendererTotal} '{targetRenderer.name}' " +
                 $"mesh='{record.mesh.name}' bones={(record.bonePaths?.Count ?? 0)} verts={record.mesh.vertexCount}: " +
                 $"step={rendererStep.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms");
