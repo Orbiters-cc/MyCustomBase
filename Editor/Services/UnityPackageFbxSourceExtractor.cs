@@ -145,7 +145,7 @@ public static class UnityPackageFbxSourceExtractor
 
             byte[] bytes = new byte[(int)size];
             ReadExactlyOrThrow(stream, bytes, 0, bytes.Length, $"pathname for {objectId}");
-            string publishedPath = Encoding.UTF8.GetString(bytes).Trim('\0', '\r', '\n', ' ');
+            string publishedPath = ReadPublishedPath(bytes);
             if (!TryNormalizePublishedFbxPath(publishedPath, out string normalizedPath)) return;
 
             if (objectIdByPublishedPath.TryGetValue(normalizedPath, out string existingObjectId) &&
@@ -162,6 +162,14 @@ public static class UnityPackageFbxSourceExtractor
             objectIdByPublishedPath[normalizedPath] = objectId;
         });
         return result;
+    }
+
+    // The asset path is the first line: Unity can write more after it (e.g. "\n00").
+    internal static string ReadPublishedPath(byte[] pathnameBytes)
+    {
+        string text = Encoding.UTF8.GetString(pathnameBytes);
+        int lineEnd = text.IndexOfAny(new[] { '\r', '\n' });
+        return (lineEnd >= 0 ? text.Substring(0, lineEnd) : text).Trim('\0', ' ');
     }
 
     private static Dictionary<string, string> ExtractSelectedAssets(

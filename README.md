@@ -1,5 +1,46 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.4 — 2026-10-08
+
+- Fix avatars placed under another object in the scene (an "Avatars" folder object) losing their armature and meshes on
+  version apply or reset: the avatar root is now the object with the avatar descriptor, never the top of the scene.
+- Fix switching from one FBX version to another leaving models the first one patched and the next one does not (a head
+  FBX patched by A only kept A's bytes, and a later reset missed it): those models get their original bytes and import
+  settings back first.
+- Reset puts back each model's own import settings, kept (as `<model>.fbx.originalimport~`) before a version first gave
+  it its own Avatar. Models the version never touched (hair, props, generic models) are left as they are; before, every
+  base FBX was switched to the version folder's humanoid Avatar.
+- Fix HDiff versions failing to apply, and creators' patches falling back to full XOR files, when the project or avatar
+  folder has non-ASCII characters (Japanese Booth folders, accented user names): paths reach HDiff as UTF-8.
+- Original-base backups are written to a temporary file, verified and then moved into place; a reset refuses a backup
+  whose bytes differ from the ones recorded when it was made, and a damaged cached original key is replaced. When the
+  base package was re-imported while a version was applied, the newly imported original replaces the stale backup (the
+  old one is kept aside) instead of being overwritten by it.
+- Fix "default avatar.asset" not built for a version when the creator's FBX had an original-base backup.
+- Applied advanced versions stay recognised after a Unity editor upgrade (their shared meshes sit in a folder named
+  after the editor version they were made with).
+- **Delete local files** refuses while the version is applied or its files are used (scenes, assets, a model's Avatar).
+- Plain advanced versions made of several FBX models reset every model their renderers come from, not only the first.
+- A replaced renderer the user deleted or renamed no longer blocks every reset or switch of an XOR advanced version: the
+  others are restored and a "Renderers skipped" warning names it (as plain versions already did).
+- Creators can no longer build an XOR advanced version while their base FBX is not its original: reset it first.
+- Reset and **Clear cache** remove the generated advanced meshes and humanoid Avatars nothing uses any more (decrypted
+  meshes no longer stay in the project); those a version switch's Undo still needs are kept.
+- Undoing a version switch older than the last five, whose files MCB no longer keeps, leaves the files as they are and
+  says so instead of silently restoring only the scene.
+- Custom veins removal only takes off MCB's own veins texture and the keywords and toggles MCB switched on: a detail
+  normal map, `_NORMALMAP` or `USE_NORMAL_MAPS` set by the user or My Avatar stays.
+- Version switches wait while a refit runs on the avatar (My Avatar or the ReFit panel). A fit taken back in any tool
+  stays taken back after switching versions, and only fits made for a version are saved with it.
+- Mode locks run before the clothing links at upload, so refitted clothing, Follow Body Blendshapes and accessories take
+  the locked values too; a mode that overrides animations a later build step added (face tracking) logs a warning.
+- Version downloads interrupted by a script reload no longer leave their files in the system temp folder.
+- The version list is read from the cache while a version is applied (it was always fetched again, and empty offline).
+- Version compare checks the original model before decoding and the decoded model against its hash.
+- The MCB build step also finds the custom base component on a child of the avatar. The live animator controller no
+  longer picks My Avatar's face tracking test copy.
+- Requires Orbiters Toolkit 0.3.18.
+
 ## 1.12.3 — 2026-10-07
 
 - Fix legs folded inward in VRChat on versions exported from a posed armature (Ultirex 5.1, whose model has its legs

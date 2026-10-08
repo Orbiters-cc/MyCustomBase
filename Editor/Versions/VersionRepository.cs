@@ -471,6 +471,10 @@ public static class VersionRepository
 
     // ------------------------------------------------------------------ lifecycle
 
+    /// <summary>
+    /// Deletes a version's local files. Refuses while an avatar, scene, asset or model importer still uses them (its
+    /// applied meshes, Avatar or logic): deleting them would break that avatar.
+    /// </summary>
     public static void Delete(CustomBaseVersion version)
     {
         string folder = MCBUtils.GetVersionDataPath(version);
@@ -478,6 +482,10 @@ public static class VersionRepository
         if (IsInProgress(folder))
         {
             throw new InvalidOperationException($"Version {version.version} is currently being built or published and cannot be deleted.");
+        }
+        if (CollectVersionFoldersInUse(null, "Delete Version Files").Contains(NormalizeFullPath(folder)))
+        {
+            throw new InvalidOperationException($"Version {version.version} is still used by an avatar, scene or model in this project. Reset the avatar or switch it to another version first.");
         }
 
         string full = Path.GetFullPath(folder);
@@ -593,34 +601,11 @@ public static class VersionRepository
 
         try
         {
-            var keepFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            void KeepFolder(string unityPath)
-            {
-                string path = NormalizeFullPath(unityPath);
-                if (path != null) keepFolders.Add(path);
-            }
-
-            KeepFolder(MCBUtils.GetVersionDataPath(editor != null && editor.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseVersion : null));
-            // Every avatar open in a scene keeps its applied version, not only the one in the inspector.
-            foreach (var target in UnityEngine.Object.FindObjectsOfType<MyCustomBase>(true))
-            {
-                try
-                {
-                    KeepFolder(MCBUtils.GetVersionDataPath(target.appliedCustomBaseVersion));
-                    KeepFolder(MCBUtils.GetVersionDataPath(target.appliedCustomBaseAssetId, target.appliedCustomBaseVersionString,
-                        target.appliedCustomBaseDefaultAviVersion, target.appliedCustomBaseSourceVersionKey));
-                }
-                catch (ArgumentException) { }
-            }
+            var keepFolders = CollectVersionFoldersInUse(editor, "Flush Removable Data");
             foreach (var unsubmitted in Scan(true).unsubmitted)
             {
-                KeepFolder(MCBUtils.GetVersionDataPath(unsubmitted));
-            }
-            foreach (string usedAsset in CollectVersionAssetsInUse())
-            {
-                // <versions root>/<assetId>/versions/<version>/<file>: keep that version folder.
-                var parts = usedAsset.Substring(MCBUtils.ASSET_VERSIONS_FOLDER.Length + 1).Split('/');
-                if (parts.Length > 3) KeepFolder(string.Join("/", MCBUtils.ASSET_VERSIONS_FOLDER, parts[0], parts[1], parts[2]));
+                string path = NormalizeFullPath(MCBUtils.GetVersionDataPath(unsubmitted));
+                if (path != null) keepFolders.Add(path);
             }
 
             string versionsRoot = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
@@ -682,30 +667,63 @@ public static class VersionRepository
     }
 
     /// <summary>
+    /// Version folders (normalized full paths) that are applied to an open avatar or hold files something still uses.
+    /// </summary>
+    private static HashSet<string> CollectVersionFoldersInUse(MCBEditor editor, string progressTitle)
+    {
+        var keepFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void KeepFolder(string unityPath)
+        {
+            string path = NormalizeFullPath(unityPath);
+            if (path != null) keepFolders.Add(path);
+        }
+
+        KeepFolder(MCBUtils.GetVersionDataPath(editor != null && editor.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseVersion : null));
+        // Every avatar open in a scene keeps its applied version, not only the one in the inspector.
+        foreach (var target in UnityEngine.Object.FindObjectsOfType<MyCustomBase>(true))
+        {
+            try
+            {
+                KeepFolder(MCBUtils.GetVersionDataPath(target.appliedCustomBaseVersion));
+                KeepFolder(MCBUtils.GetVersionDataPath(target.appliedCustomBaseAssetId, target.appliedCustomBaseVersionString,
+                    target.appliedCustomBaseDefaultAviVersion, target.appliedCustomBaseSourceVersionKey));
+            }
+            catch (ArgumentException) { }
+        }
+        foreach (string usedAsset in CollectVersionAssetsInUse(progressTitle))
+        {
+            // <versions root>/<assetId>/versions/<version>/<file>: keep that version folder.
+            var parts = usedAsset.Substring(MCBUtils.ASSET_VERSIONS_FOLDER.Length + 1).Split('/');
+            if (parts.Length > 3) KeepFolder(string.Join("/", MCBUtils.ASSET_VERSIONS_FOLDER, parts[0], parts[1], parts[2]));
+        }
+        return keepFolders;
+    }
+
+    /// <summary>
     /// Version files something still uses: open scenes (unsaved changes included), project assets such as scenes, prefabs
     /// and materials, and model importers copying an Avatar from a version.
     /// </summary>
-    private static HashSet<string> CollectVersionAssetsInUse()
+    private static HashSet<string> CollectVersionAssetsInUse(string progressTitle)
     {
         string prefix = MCBUtils.ASSET_VERSIONS_FOLDER + "/";
         bool IsVersionAsset(string path) => !string.IsNullOrEmpty(path) && path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            EditorUtility.DisplayProgressBar("Flush Removable Data", "Checking which versions are still in use...", 0.2f);
+            EditorUtility.DisplayProgressBar(progressTitle, "Checking which versions are still in use...", 0.2f);
             var projectAssets = AssetDatabase.GetAllAssetPaths()
                 .Where(path => path.StartsWith("Assets/", StringComparison.Ordinal) && !IsVersionAsset(path) && !AssetDatabase.IsValidFolder(path))
                 .ToArray();
             used.UnionWith(AssetDatabase.GetDependencies(projectAssets, true).Where(IsVersionAsset));
 
-            EditorUtility.DisplayProgressBar("Flush Removable Data", "Checking model Avatars...", 0.6f);
+            EditorUtility.DisplayProgressBar(progressTitle, "Checking model Avatars...", 0.6f);
             foreach (string guid in AssetDatabase.FindAssets("t:Model", new[] { "Assets" }))
             {
                 if (AssetImporter.GetAtPath(AssetDatabase.GUIDToAssetPath(guid)) is ModelImporter importer && importer.sourceAvatar != null)
                     used.Add(AssetDatabase.GetAssetPath(importer.sourceAvatar));
             }
 
-            EditorUtility.DisplayProgressBar("Flush Removable Data", "Checking open scenes...", 0.8f);
+            EditorUtility.DisplayProgressBar(progressTitle, "Checking open scenes...", 0.8f);
             var roots = Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount)
                 .Select(UnityEngine.SceneManagement.SceneManager.GetSceneAt)
                 .Where(scene => scene.isLoaded)

@@ -328,6 +328,46 @@ public sealed class VersionSafetyRegressionTests
         finally { PersistentCache.Instance.InvalidateHash(file); }
     }
 
+    [Test] public void OriginalBackupIsRefreshedOnlyForAReimportedOriginal()
+    {
+        string target = Path.Combine(folder, "base.fbx"), custom = Path.Combine(folder, "custom.fbx");
+        string backup = target + FileManagerService.OriginalSuffix;
+        File.WriteAllText(target, "original A");
+        File.WriteAllText(custom, "version B");
+        var manager = new FileManagerService();
+        manager.ReplaceFbxWithCustomCopy(target, custom);
+        Assert.AreEqual(FileManagerService.OriginalBackupState.AppliedVersion, manager.RefreshStaleOriginalBackup(target, null));
+        Assert.AreEqual("original A", File.ReadAllText(backup));
+
+        // A version output MCB did not write itself (another editor, an older MCB) is known from the version.
+        File.WriteAllText(target, "version C");
+        var versionC = new CustomBaseVersion { versionFiles = new[] { new ModelFileData {
+            transform = ModelFileTransforms.XorBinToFbx, outputHash = manager.CalculateFileHash(target) } } };
+        Assert.AreEqual(FileManagerService.OriginalBackupState.AppliedVersion, manager.RefreshStaleOriginalBackup(target, new[] { versionC }));
+        Assert.AreEqual("original A", File.ReadAllText(backup));
+
+        // The base package was re-imported over the applied version: the backup must follow, the old one is kept aside.
+        File.WriteAllText(target, "original A2");
+        Assert.AreEqual(FileManagerService.OriginalBackupState.Refreshed, manager.RefreshStaleOriginalBackup(target, new[] { versionC }));
+        Assert.AreEqual("original A2", File.ReadAllText(backup));
+        Assert.That(Directory.GetFiles(folder, "base.fbx.originalbase.backup*").Select(File.ReadAllText), Is.EquivalentTo(new[] { "original A" }));
+        Assert.AreEqual(FileManagerService.OriginalBackupState.MatchesBackup, manager.RefreshStaleOriginalBackup(target, null));
+    }
+
+    [Test] public void DamagedOriginalBackupIsNeverRestored()
+    {
+        string target = Path.Combine(folder, "base.fbx"), custom = Path.Combine(folder, "custom.fbx");
+        File.WriteAllText(target, "original A");
+        File.WriteAllText(custom, "version B");
+        var manager = new FileManagerService();
+        manager.ReplaceFbxWithCustomCopy(target, custom);
+        File.WriteAllText(target + FileManagerService.OriginalSuffix, "original A, truncat");
+
+        Assert.Throws<InvalidDataException>(() => manager.RestoreBackup(target));
+        Assert.AreEqual("version B", File.ReadAllText(target));
+        Assert.IsEmpty(Directory.GetFiles(folder, "*.pending-*"));
+    }
+
     private static byte[] Archive(string name) => Archive((name, Encoding.UTF8.GetBytes("new")));
 
     private static byte[] Archive(params (string name, byte[] bytes)[] entries)

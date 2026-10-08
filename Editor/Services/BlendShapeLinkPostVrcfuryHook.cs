@@ -5,8 +5,8 @@ using VRC.SDKBase.Editor.BuildPipeline;
 
 public class BlendShapeLinkPostVrcfuryHook : IVRCSDKPreprocessAvatarCallback
 {
-    // VRCFury uses -10000; this runs after generated controllers are assigned, and before Orbiters Toolkit links refitted
-    // blendshapes (-8960), which then also copy the curves these correctives add.
+    // VRCFury uses -10000; this runs after generated controllers are assigned, before the mode locks (-8970) and before
+    // Orbiters Toolkit links refitted blendshapes (-8960), which then also copy the curves these correctives add.
     public int callbackOrder => -9000;
 
     public bool OnPreprocessAvatar(GameObject avatarRoot)

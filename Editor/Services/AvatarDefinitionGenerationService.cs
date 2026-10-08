@@ -915,6 +915,59 @@ public static partial class AvatarDefinitionGenerationService
         }
     }
 
+    private const string OriginalImportSettingsSuffix = ".originalimport~";
+
+    /// <summary>
+    /// Where a model's import settings are kept while a version changes them (its .meta before the first change). Unity
+    /// ignores names ending in '~', so the copy is never imported.
+    /// </summary>
+    public static string OriginalImportSettingsPath(string fbxPath) => MCBUtils.ToUnityPath(fbxPath) + OriginalImportSettingsSuffix;
+
+    /// <summary>Keeps the model's import settings before a version changes them. The first copy stays until the reset.</summary>
+    public static void BackupOriginalImportSettings(string fbxPath)
+    {
+        if (string.IsNullOrWhiteSpace(fbxPath)) return;
+        string unityPath = MCBUtils.ToUnityPath(fbxPath);
+        string meta = Path.GetFullPath(unityPath) + ".meta";
+        string backup = Path.GetFullPath(OriginalImportSettingsPath(unityPath));
+        if (File.Exists(backup) || !File.Exists(meta)) return;
+        AssetDatabase.WriteImportSettingsIfDirty(unityPath);
+        File.Copy(meta, backup);
+    }
+
+    /// <summary>
+    /// Puts back the import settings kept by <see cref="BackupOriginalImportSettings"/> and reimports the model. False when
+    /// none were kept (or they belong to another asset), leaving the model as it is.
+    /// </summary>
+    public static bool RestoreOriginalImportSettings(string fbxPath)
+    {
+        if (string.IsNullOrWhiteSpace(fbxPath)) return false;
+        string unityPath = MCBUtils.ToUnityPath(fbxPath);
+        string meta = Path.GetFullPath(unityPath) + ".meta";
+        string backup = Path.GetFullPath(OriginalImportSettingsPath(unityPath));
+        if (!File.Exists(backup)) return false;
+        if (!File.Exists(meta) || MetaGuid(meta) != MetaGuid(backup))
+        {
+            MCBLogger.LogWarning($"[AvatarGeneration] The saved import settings of '{unityPath}' belong to another asset and were not restored.");
+            File.Delete(backup);
+            return false;
+        }
+        if (File.ReadAllText(meta) != File.ReadAllText(backup))
+        {
+            File.Copy(backup, meta, true);
+            AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+        }
+        File.Delete(backup);
+        return true;
+    }
+
+    private static string MetaGuid(string metaPath)
+    {
+        foreach (string line in File.ReadLines(metaPath))
+            if (line.StartsWith("guid:", StringComparison.Ordinal)) return line.Substring(5).Trim();
+        return null;
+    }
+
     private static bool ApplyAvatarToFbxImporter(string fbxPath, Avatar avatar)
     {
         if (avatar == null || string.IsNullOrWhiteSpace(fbxPath))

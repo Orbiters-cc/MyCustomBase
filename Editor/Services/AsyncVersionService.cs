@@ -193,34 +193,22 @@ public class AsyncVersionService
         }
     }
 
-    private async Task<string> GetBaseFbxHashAsync(string fbxPath)
+    // Versions are served for the original: its backup once a version replaced the FBX, else the FBX itself.
+    private static string GetBaseFbxHashPath(string fbxPath)
     {
-        // Check if we have a backup file (original)
-        string originalPath = fbxPath + FileManagerService.OriginalSuffix;
-        bool hasBackup = System.IO.File.Exists(originalPath);
+        string originalPath = FileManagerService.GetOriginalBasePath(fbxPath);
+        return System.IO.File.Exists(originalPath) ? originalPath : fbxPath;
+    }
 
-        if (hasBackup)
-        {
-            // Use original file hash for server compatibility
-            return await hashService.CalculateFileHashAsync(originalPath);
-        }
-        else
-        {
-            // Use current file hash
-            return await hashService.CalculateFileHashAsync(fbxPath);
-        }
+    private Task<string> GetBaseFbxHashAsync(string fbxPath)
+    {
+        return hashService.CalculateFileHashAsync(GetBaseFbxHashPath(fbxPath));
     }
 
     private string GetBaseFbxHashIfCached(string fbxPath)
     {
         if (string.IsNullOrEmpty(fbxPath)) return null;
-        string originalPath = fbxPath + FileManagerService.OriginalSuffix;
-        if (System.IO.File.Exists(originalPath))
-        {
-            string orig = hashService.GetHashIfCached(originalPath);
-            if (!string.IsNullOrEmpty(orig)) return orig;
-        }
-        return hashService.GetHashIfCached(fbxPath);
+        return hashService.GetHashIfCached(GetBaseFbxHashPath(fbxPath));
     }
 
     public void StartVersionFetchInBackground(string fbxPath, string authToken, int assetId, bool useCache = true, string sourceVersionKey = null)
@@ -258,18 +246,7 @@ public class AsyncVersionService
 
     public bool AreVersionsCached(string fbxPath, string authToken, int assetId, string sourceVersionKey = null)
     {
-        // We need the hash to check cache, but we can check if the hash is cached
-        string cachedHash = hashService.GetHashIfCached(fbxPath);
-        if (string.IsNullOrEmpty(cachedHash))
-        {
-            // Check for backup file hash
-            string originalPath = fbxPath + FileManagerService.OriginalSuffix;
-            if (System.IO.File.Exists(originalPath))
-            {
-                cachedHash = hashService.GetHashIfCached(originalPath);
-            }
-        }
-
+        string cachedHash = GetBaseFbxHashIfCached(fbxPath);
         if (string.IsNullOrEmpty(cachedHash))
             return false;
 
@@ -279,18 +256,7 @@ public class AsyncVersionService
 
     public (List<CustomBaseVersion> versions, CustomBaseVersion recommended) GetCachedVersions(string fbxPath, string authToken, int assetId, string sourceVersionKey = null)
     {
-        // Try to get cached hash first
-        string cachedHash = hashService.GetHashIfCached(fbxPath);
-        if (string.IsNullOrEmpty(cachedHash))
-        {
-            // Check for backup file hash
-            string originalPath = fbxPath + FileManagerService.OriginalSuffix;
-            if (System.IO.File.Exists(originalPath))
-            {
-                cachedHash = hashService.GetHashIfCached(originalPath);
-            }
-        }
-
+        string cachedHash = GetBaseFbxHashIfCached(fbxPath);
         if (string.IsNullOrEmpty(cachedHash))
             return (new List<CustomBaseVersion>(), null);
 

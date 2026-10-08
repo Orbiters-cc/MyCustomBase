@@ -23,8 +23,9 @@ public static class OriginalBaseLibrary
         if (string.IsNullOrEmpty(hash)) throw new FileNotFoundException("Original FBX is missing.", path);
         Directory.CreateDirectory(Root);
         string destination = Path.Combine(Root, hash + ".originalbase");
-        if (!File.Exists(destination)) File.Copy(path, destination, false);
-        if (MCBUtils.CalculateFileHash(destination) != hash) throw new InvalidDataException("The saved original key failed verification.");
+        // A damaged key (truncated copy, edited file) is replaced by a verified one instead of failing forever.
+        if (!File.Exists(destination) || MCBUtils.CalculateFileHash(destination) != hash)
+            FileManagerService.WriteVerifiedCopy(path, destination, hash, replaceExisting: true);
         return hash;
     }
     public static string Resolve(ModelFileData file)

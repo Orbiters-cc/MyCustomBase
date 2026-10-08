@@ -494,21 +494,24 @@ internal static class MCBHdiffPatchWrapper
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
     private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
 
+    // The libraries are built with HDiffPatch's UTF-8 file API: every path is decoded as UTF-8 (MultiByteToWideChar with
+    // CP_UTF8, then CreateFileW), and messages come back as UTF-8. Strings cross as UTF-8 bytes, never in the ANSI code
+    // page, which cannot hold Japanese folder names or accented user names.
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void HdiffStringOutput(string str);
+    private delegate void HdiffStringOutput(IntPtr utf8);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void HpatchStringOutput(string str);
+    private delegate void HpatchStringOutput(IntPtr utf8);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate void RegisterDelegateHdiffzNative(HdiffStringOutput del);
 
-    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Ansi)]
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate int HDiffUnityNative(
-        string oldFileName,
-        string newFileName,
-        string outDiffFileName,
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] diffOptions,
+        IntPtr oldFileName,
+        IntPtr newFileName,
+        IntPtr outDiffFileName,
+        IntPtr[] diffOptions,
         int diffOptionSize);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -517,17 +520,17 @@ internal static class MCBHdiffPatchWrapper
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate void RegisterErrorDelegateHpatchzNative(HpatchStringOutput del);
 
-    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Ansi)]
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate int HPatchUnityNative(
         int optionCount,
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] options,
-        string oldPath,
-        string diffFileName,
-        string outNewPath);
+        IntPtr[] options,
+        IntPtr oldPath,
+        IntPtr diffFileName,
+        IntPtr outNewPath);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Ansi)]
     private delegate int HDiffGetInfoNative(
-        string diffFileName,
+        IntPtr diffFileName,
         out ulong oldSize,
         out ulong newSize,
         StringBuilder compressType,
@@ -599,8 +602,11 @@ internal static class MCBHdiffPatchWrapper
 
             HdiffDiffResult Diff(string optionLine)
             {
-                string[] options = optionLine.Split(' ');
-                return (HdiffDiffResult)s_hdiffUnity(baseFbxPath, modifiedFbxPath, hdiffOutputPath, options, options.Length);
+                using (var strings = new NativeUtf8Strings())
+                {
+                    IntPtr[] options = strings.AddAll(optionLine.Split(' '));
+                    return (HdiffDiffResult)s_hdiffUnity(strings.Add(baseFbxPath), strings.Add(modifiedFbxPath), strings.Add(hdiffOutputPath), options, options.Length);
+                }
             }
         }
         finally
@@ -627,7 +633,10 @@ internal static class MCBHdiffPatchWrapper
         s_hpatchErrorCallback = errorCallback;
         try
         {
-            return (HdiffPatchResult)s_hpatchUnity(0, new string[0], baseFbxPath, hdiffPath, outputFbxPath);
+            using (var strings = new NativeUtf8Strings())
+            {
+                return (HdiffPatchResult)s_hpatchUnity(0, new IntPtr[0], strings.Add(baseFbxPath), strings.Add(hdiffPath), strings.Add(outputFbxPath));
+            }
         }
         finally
         {
@@ -648,7 +657,11 @@ internal static class MCBHdiffPatchWrapper
         EnsureDiffInfoExportLoaded();
 
         var sb = new StringBuilder(260);
-        int result = s_hdiffGetInfo(hdiffPath, out oldSize, out newSize, sb, sb.Capacity);
+        int result;
+        using (var strings = new NativeUtf8Strings())
+        {
+            result = s_hdiffGetInfo(strings.Add(hdiffPath), out oldSize, out newSize, sb, sb.Capacity);
+        }
         if (result != 0)
         {
             return false;
@@ -829,24 +842,73 @@ internal static class MCBHdiffPatchWrapper
         }
     }
 
-    private static void HdiffLogWrapper(string str)
+    private static void HdiffLogWrapper(IntPtr utf8)
     {
-        s_hdiffLogCallback?.Invoke(str);
+        s_hdiffLogCallback?.Invoke(FromUtf8(utf8));
     }
 
-    private static void HdiffErrorWrapper(string str)
+    private static void HdiffErrorWrapper(IntPtr utf8)
     {
-        s_hdiffErrorCallback?.Invoke(str);
+        s_hdiffErrorCallback?.Invoke(FromUtf8(utf8));
     }
 
-    private static void HpatchLogWrapper(string str)
+    private static void HpatchLogWrapper(IntPtr utf8)
     {
-        s_hpatchLogCallback?.Invoke(str);
+        s_hpatchLogCallback?.Invoke(FromUtf8(utf8));
     }
 
-    private static void HpatchErrorWrapper(string str)
+    private static void HpatchErrorWrapper(IntPtr utf8)
     {
-        s_hpatchErrorCallback?.Invoke(str);
+        s_hpatchErrorCallback?.Invoke(FromUtf8(utf8));
+    }
+
+    private static string FromUtf8(IntPtr utf8)
+    {
+        if (utf8 == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        int length = 0;
+        while (Marshal.ReadByte(utf8, length) != 0)
+        {
+            length++;
+        }
+
+        var bytes = new byte[length];
+        Marshal.Copy(utf8, bytes, 0, length);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    /// <summary>Null-terminated UTF-8 copies of strings for one native call, freed on dispose.</summary>
+    private sealed class NativeUtf8Strings : IDisposable
+    {
+        private readonly System.Collections.Generic.List<IntPtr> allocations = new System.Collections.Generic.List<IntPtr>();
+
+        public IntPtr Add(string value)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
+            IntPtr pointer = Marshal.AllocHGlobal(bytes.Length + 1);
+            allocations.Add(pointer);
+            Marshal.Copy(bytes, 0, pointer, bytes.Length);
+            Marshal.WriteByte(pointer, bytes.Length, 0);
+            return pointer;
+        }
+
+        public IntPtr[] AddAll(string[] values)
+        {
+            return values.Select(Add).ToArray();
+        }
+
+        public void Dispose()
+        {
+            foreach (IntPtr pointer in allocations)
+            {
+                Marshal.FreeHGlobal(pointer);
+            }
+
+            allocations.Clear();
+        }
     }
 #endif
 }

@@ -54,6 +54,32 @@ public class McbInstanceIdentityTests
         }
     }
 
+    // A build preview's copy (My Avatar's face tracking test) lives in a preview scene with the original's ids: neither moves.
+    [Test]
+    public void EnsureIdentityLeavesTheOriginalAndItsPreviewCopyAlone()
+    {
+        var avatar = new GameObject("MCB preview identity test");
+        var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
+        try
+        {
+            var original = avatar.AddComponent<MyCustomBase>();
+            McbInstanceIdentityService.EnsureIdentity(original);
+            string id = original.mcbComponentId;
+            var copy = Object.Instantiate(avatar);
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(copy, scene);
+
+            McbInstanceIdentityService.EnsureIdentity(original);
+
+            Assert.That(original.mcbComponentId, Is.EqualTo(id));
+            Assert.That(copy.GetComponent<MyCustomBase>().mcbComponentId, Is.EqualTo(id));
+        }
+        finally
+        {
+            Object.DestroyImmediate(avatar);
+            UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene);
+        }
+    }
+
     [Test]
     public void RecoveryValidationRejectsIncompleteHistory()
     {

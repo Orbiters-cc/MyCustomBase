@@ -204,19 +204,22 @@ public static class SmrPathService
         return RefreshTargetMeshesByCurrentMeshName(avatarRoot, unityFbxPath, fbxRoot, meshNameFilter);
     }
 
+    /// <param name="skipMissingRenderers">Renderers the user deleted or renamed on the avatar are left out (and listed in
+    /// <paramref name="missingRenderers"/>) instead of stopping the restoration.</param>
     public static int RestoreTargetStateFromFbx(
         Transform avatarRoot,
         string fbxPath,
         IEnumerable<ModelFileSmrPathData> smrPaths,
         Func<SkinnedMeshRenderer, bool> preserveMesh = null,
-        bool skipMissingRenderers = false)
+        bool skipMissingRenderers = false,
+        List<string> missingRenderers = null)
     {
         if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
 
         var fbxRoot = GetFbxRoot(MCBUtils.ToUnityPath(fbxPath));
         return fbxRoot == null
             ? 0
-            : RestoreTargetStateFromFbxRoot(avatarRoot, fbxRoot.transform, smrPaths, preserveMesh, skipMissingRenderers);
+            : RestoreTargetStateFromFbxRoot(avatarRoot, fbxRoot.transform, smrPaths, preserveMesh, skipMissingRenderers, missingRenderers);
     }
 
     internal static int RestoreTargetStateFromFbxRoot(
@@ -224,7 +227,8 @@ public static class SmrPathService
         Transform fbxRoot,
         IEnumerable<ModelFileSmrPathData> smrPaths,
         Func<SkinnedMeshRenderer, bool> preserveMesh = null,
-        bool skipMissingRenderers = false)
+        bool skipMissingRenderers = false,
+        List<string> missingRenderers = null)
     {
         if (avatarRoot == null || fbxRoot == null) return 0;
 
@@ -240,6 +244,11 @@ public static class SmrPathService
                 var targetTransform = FindTransformByRelativePath(avatarRoot, entry.avatarPath);
                 var targetRenderer = targetTransform != null ? targetTransform.GetComponent<SkinnedMeshRenderer>() : null;
                 var sourceRenderer = ResolveFbxRenderer(fbxRoot, entry);
+                if (targetRenderer == null && sourceRenderer != null && skipMissingRenderers)
+                {
+                    missingRenderers?.Add(entry.avatarPath);
+                    continue;
+                }
                 if (targetRenderer == null || sourceRenderer == null)
                 {
                     MCBLogger.LogWarning(
@@ -377,6 +386,32 @@ public static class SmrPathService
         }
 
         return plans.Count;
+    }
+
+    /// <summary>
+    /// The models among <paramref name="modelPaths"/> the avatar renderers at <paramref name="rendererPaths"/> come from:
+    /// the model the renderer is an instance of, else the model with a renderer at the same path, else the first model
+    /// with a renderer of the same name.
+    /// </summary>
+    public static List<string> ResolveSourceModels(Transform avatarRoot, IEnumerable<string> rendererPaths, IList<string> modelPaths)
+    {
+        var result = new List<string>();
+        if (avatarRoot == null || rendererPaths == null || modelPaths == null || modelPaths.Count == 0) return result;
+        var models = modelPaths.Where(path => !string.IsNullOrWhiteSpace(path)).Select(MCBUtils.ToUnityPath)
+            .Select(path => (path, root: GetFbxRoot(path))).Where(model => model.root != null).ToList();
+        foreach (string rendererPath in rendererPaths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.Ordinal))
+        {
+            var target = FindTransformByRelativePath(avatarRoot, rendererPath);
+            var renderer = target != null ? target.GetComponent<SkinnedMeshRenderer>() : null;
+            var source = renderer != null ? PrefabUtility.GetCorrespondingObjectFromOriginalSource(renderer) : null;
+            string sourcePath = source != null ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(source)) : null;
+            string name = rendererPath.Substring(rendererPath.LastIndexOf('/') + 1);
+            string match = models.Select(model => model.path).FirstOrDefault(path => string.Equals(path, sourcePath, StringComparison.OrdinalIgnoreCase))
+                ?? models.FirstOrDefault(model => FindTransformByRelativePath(model.root.transform, rendererPath)?.GetComponent<SkinnedMeshRenderer>() != null).path
+                ?? models.FirstOrDefault(model => model.root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Any(r => r.name == name)).path;
+            if (match != null && !result.Contains(match, StringComparer.OrdinalIgnoreCase)) result.Add(match);
+        }
+        return result;
     }
 
     private static Transform UniqueChild(Transform parent, string name)

@@ -205,6 +205,15 @@ public static partial class MCBReFitIntegration
         return footprint;
     }
 
+    public const string RefitRunningMessage =
+        "A refit is running on this avatar (My Avatar or the ReFit panel). Wait until it is done, then switch or reset the version.";
+
+    /// <summary>
+    /// A refit (any tool's) is at work on the avatar: switching or resetting the version meanwhile would save or restore
+    /// fits of two custom bases, so the switch waits (<see cref="RefitRunningMessage"/>).
+    /// </summary>
+    public static bool IsRefitRunning(MyCustomBase target) => target != null && RefitRunner.IsRunning(Root(target));
+
     /// <summary>A version was applied or reset: the other tools check the avatar's clothing again.</summary>
     public static void NotifyCustomBaseChanged(MyCustomBase target)
     {
@@ -225,13 +234,18 @@ public static partial class MCBReFitIntegration
         if (restored > 0) MCBLogger.Log($"[MCB] ReFit: restored {restored} asset mesh(es) to their original version.");
     }
 
-    /// <summary>Restores one refitted mesh and stops restoring its saved fit for the applied version.</summary>
+    /// <summary>Restores one refitted mesh and stops restoring its saved fit for the applied version (<see cref="ForgetSavedFit"/>).</summary>
     public static void RestoreAsset(MyCustomBase target, SkinnedMeshRenderer renderer)
     {
         var record = RefitRecords.Find(renderer);
         if (target == null || record == null) return;
-        DisableSavedFit(target, renderer.transform);
-        RefitRecords.Remove(record);
+        RefitRecords.Discard(record);
+    }
+
+    /// <summary>A refit taken back by any tool (RefitRecords.Discard): its saved fit for the applied version is not put back.</summary>
+    internal static void ForgetSavedFit(MyCustomBase target, SkinnedMeshRenderer renderer)
+    {
+        if (target != null && renderer != null) DisableSavedFit(target, renderer.transform);
     }
 
     public static List<string> GetBlendShapeNamesWithTransferredReFit(MyCustomBase target, string sourceBlendShapeName) =>
@@ -395,17 +409,24 @@ public static partial class MCBReFitIntegration
     }
 }
 
-/// <summary>Tells the Orbiters tools which custom base an avatar with MCB uses.</summary>
-internal sealed class McbCustomBaseProvider : ICustomBaseProvider
+/// <summary>Tells the Orbiters tools which custom base an avatar with MCB uses, and forgets saved fits they take back.</summary>
+internal sealed class McbCustomBaseProvider : ICustomBaseProvider, ICustomBaseFits
 {
     [InitializeOnLoadMethod]
     private static void Register() => CustomBases.Register(new McbCustomBaseProvider());
 
     public CustomBaseInfo Describe(Transform avatarRoot)
     {
-        var mcb = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
-        if (mcb == null) mcb = avatarRoot.GetComponentInParent<MyCustomBase>(true);
+        var mcb = Find(avatarRoot);
         return mcb != null ? MCBReFitIntegration.Describe(mcb) : null;
+    }
+
+    public void Forget(Transform avatarRoot, SkinnedMeshRenderer renderer) => MCBReFitIntegration.ForgetSavedFit(Find(avatarRoot), renderer);
+
+    private static MyCustomBase Find(Transform avatarRoot)
+    {
+        var mcb = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
+        return mcb != null ? mcb : avatarRoot.GetComponentInParent<MyCustomBase>(true);
     }
 }
 #endif

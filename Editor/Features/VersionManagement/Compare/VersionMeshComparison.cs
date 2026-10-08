@@ -332,6 +332,23 @@ internal sealed class VersionMeshComparison : IDisposable
             if (cached != null) cachedPayloads[patch] = cached;
         }
 
+        // Every key is checked first: a model that is not this version's original (a version still applied, another base)
+        // would decode to garbage, or make the native patcher fail with an unclear error.
+        Report(0.05f, "Checking the original models…");
+        var originals = new Dictionary<FbxTarget, byte[]>();
+        var check = Task.Run(() =>
+        {
+            foreach (var fbx in targets)
+            {
+                byte[] original = File.ReadAllBytes(fbx.OriginalPath);
+                if (!string.IsNullOrWhiteSpace(fbx.SourceHash) && !string.Equals(Sha256(original), fbx.SourceHash, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException($"The original model '{Path.GetFileName(fbx.Path)}' is not the one this version was made for, so its meshes cannot be shown. Reset the avatar to its original model, then try again.");
+                lock (originals) originals[fbx] = original;
+            }
+        });
+        while (!check.IsCompleted) yield return null;
+        if (check.IsFaulted) throw check.Exception.GetBaseException();
+
         // HDiff runs its native patcher on the main thread; XOR replacements decode on a worker below.
         foreach (var fbx in targets.Where(t => t.Replacement != null && t.Replacement.Hdiff))
         {
@@ -347,11 +364,12 @@ internal sealed class VersionMeshComparison : IDisposable
             int done = 0, total = Math.Max(1, targets.Count);
             foreach (var fbx in targets)
             {
-                byte[] original = File.ReadAllBytes(fbx.OriginalPath);
-                if (!string.IsNullOrWhiteSpace(fbx.SourceHash) && !string.Equals(Sha256(original), fbx.SourceHash, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"The original model '{Path.GetFileName(fbx.Path)}' is not the one this version was made for, so its meshes cannot be shown. Reset the avatar to its original model, then try again.");
+                byte[] original = originals[fbx];
                 if (fbx.Replacement != null && !fbx.Replacement.Hdiff)
                     fbx.AfterBytes = MCBXor.Transform(original, File.ReadAllBytes(fbx.Replacement.BinPath));
+                string expectedOutput = fbx.Replacement?.Patch?.outputHash;
+                if (fbx.AfterBytes != null && !string.IsNullOrWhiteSpace(expectedOutput) && !string.Equals(Sha256(fbx.AfterBytes), expectedOutput.Trim(), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException($"The version's model '{Path.GetFileName(fbx.Path)}' did not decode to the file the creator published. Download this version again, then try again.");
                 Report(0.2f + 0.2f * done / total, "Reading the models…");
 
                 const FbxReadOptions options = FbxReadOptions.Render | FbxReadOptions.ShapeOffsets;
@@ -375,6 +393,7 @@ internal sealed class VersionMeshComparison : IDisposable
             }
         });
         while (!read.IsCompleted) yield return null;
+        originals.Clear();
         if (read.IsFaulted) throw read.Exception.GetBaseException();
 
         Report(0.62f, "Matching the avatar's meshes…");

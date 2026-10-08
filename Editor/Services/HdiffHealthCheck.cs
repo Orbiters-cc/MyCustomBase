@@ -32,7 +32,8 @@ public static class HdiffHealthCheck
 #endif
         }
 
-        string folder = Path.Combine(Path.GetTempPath(), "mcb_hdiff_health_" + Guid.NewGuid().ToString("N"));
+        // Booth packages and user folders are often non-ASCII: the native libraries must open such paths too.
+        string folder = Path.Combine(Path.GetTempPath(), "mcb_hdiff_health_\u30a2\u30d0\u30bf\u30fc_\u00e9_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         try
         {

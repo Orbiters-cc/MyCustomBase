@@ -47,8 +47,11 @@ public static class McbInstanceIdentityService
         if (!IsClientId(componentId)) return;
 
         var duplicates = Resources.FindObjectsOfTypeAll<MyCustomBase>()
+            // Copies in preview scenes (build previews such as My Avatar's face tracking test) are not duplicates: they
+            // keep the original's id, which must never move because of them.
             .Where(candidate => candidate != null &&
                                 candidate.gameObject.scene.IsValid() &&
+                                !UnityEditor.SceneManagement.EditorSceneManager.IsPreviewScene(candidate.gameObject.scene) &&
                                 string.Equals(candidate.mcbComponentId, componentId, StringComparison.OrdinalIgnoreCase))
             .OrderBy(candidate => GlobalObjectId.GetGlobalObjectIdSlow(candidate).ToString(), StringComparer.Ordinal)
             .ToList();

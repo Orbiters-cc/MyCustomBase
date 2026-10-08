@@ -43,17 +43,28 @@ public static partial class MCBReFitIntegration
     // (RefitRecords.SiblingOrdinals), both when its fit is saved and when it is put back; unique names keep the plain path.
     internal static string SnapshotKey(string rendererPath, IReadOnlyList<int> ordinals) => CacheKey(RefitRecords.PathKey(rendererPath, ordinals));
 
-    /// <summary>Saves the applied fits of the avatar (by any tool) for this version, their meshes copied next to them.</summary>
+    /// <summary>
+    /// Saves the applied fits of the avatar (by any tool) for this version, their meshes copied next to them. A fit made for
+    /// another custom base (a refit that finished while the version changed) is never saved as this version's; a tool that
+    /// does not know the base (ReFit's wizard) leaves the key empty.
+    /// </summary>
     public static void SaveVersionFits(MyCustomBase target, CustomBaseVersion version)
     {
         string folder = GetVersionRefitFolder(target, version);
         if (folder == null) return;
         var root = Root(target);
+        string baseKey = BaseKey(version);
         foreach (var record in RefitRecords.All(root))
         {
             var renderer = record.GetComponent<SkinnedMeshRenderer>();
             string rendererPath = renderer != null ? RefitRecords.PathUnder(root, renderer.transform) : null;
             if (!record.Applied || rendererPath == null) continue;
+            if (!string.IsNullOrEmpty(record.baseKey) && record.baseKey != baseKey)
+            {
+                MCBLogger.LogWarning("[MCB] ReFit: " + renderer.name + " was refitted for another custom base (" + (record.baseName ?? record.baseKey) +
+                                     "), so it is not saved for this version.");
+                continue;
+            }
             var ordinals = RefitRecords.SiblingOrdinals(root, renderer.transform);
             if (record.original?.mesh == null || !EditorUtility.IsPersistent(record.original.mesh))
                 throw new InvalidOperationException("Save the original accessory mesh as an asset before saving its version-specific ReFit.");

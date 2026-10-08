@@ -72,7 +72,9 @@ public class FileManagerService
         public string hdiffFallbackReason;
     }
 
-    public string CalculateFileHash(string path)
+    public string CalculateFileHash(string path) => HashFile(path);
+
+    private static string HashFile(string path)
     {
         if (!File.Exists(path)) return null;
         using (var sha256 = MCBHashing.CreateSha256())
@@ -85,14 +87,43 @@ public class FileManagerService
         }
     }
 
+    /// <summary>
+    /// Copies <paramref name="sourcePath"/> to a temporary file next to <paramref name="destinationPath"/>, checks its hash,
+    /// then moves it into place: a crash, a full disk or a changing source never leaves a truncated key or model behind.
+    /// Without <paramref name="replaceExisting"/>, an existing destination makes the move throw an <see cref="IOException"/>.
+    /// </summary>
+    internal static void WriteVerifiedCopy(string sourcePath, string destinationPath, string expectedHash, bool replaceExisting)
+    {
+        if (string.IsNullOrWhiteSpace(expectedHash)) throw new ArgumentNullException(nameof(expectedHash));
+        // Ends in "~": Unity never imports it, even when a refresh runs during the copy.
+        string pendingPath = destinationPath + ".pending-" + Guid.NewGuid().ToString("N") + "~";
+        try
+        {
+            File.Copy(sourcePath, pendingPath, false);
+            if (!string.Equals(HashFile(pendingPath), expectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"The staged copy of {Path.GetFileName(destinationPath)} failed hash verification.");
+            }
+
+            if (replaceExisting && File.Exists(destinationPath)) File.Replace(pendingPath, destinationPath, null);
+            else File.Move(pendingPath, destinationPath);
+        }
+        finally
+        {
+            if (File.Exists(pendingPath)) File.Delete(pendingPath);
+        }
+    }
+
     public void CreateBackup(string fbxPath)
     {
         if (string.IsNullOrEmpty(fbxPath) || !File.Exists(fbxPath)) return;
         string backupPath = GetOriginalBasePath(fbxPath);
         if (File.Exists(backupPath)) return;
-        File.Copy(fbxPath, backupPath);
+        string hash = HashFile(fbxPath);
+        WriteVerifiedCopy(fbxPath, backupPath, hash, replaceExisting: false);
+        OriginalBaseLedger.SetOriginal(fbxPath, hash);
     }
-    
+
     public bool BackupExists(string fbxPath)
     {
         return !string.IsNullOrEmpty(fbxPath) && File.Exists(GetOriginalBasePath(fbxPath));
@@ -136,31 +167,30 @@ public class FileManagerService
         string backupPath = GetOriginalBasePath(targetFullPath);
         if (!File.Exists(backupPath))
         {
-            File.Copy(targetFullPath, backupPath);
+            CreateBackup(targetFullPath);
             MCBLogger.Log($"[FileManager] Created original FBX backup: {backupPath}");
         }
 
+        string customHash = HashFile(customFullPath);
+        // Every content MCB puts over the original is recorded, so a later base re-import can be told apart from it.
+        OriginalBaseLedger.AddWritten(targetFullPath, customHash);
         if (FilesAreEqual(targetFullPath, customFullPath))
         {
             return false;
         }
 
-        string pendingPath = targetFullPath + ".pending-" + Guid.NewGuid().ToString("N");
-        try
-        {
-            File.Copy(customFullPath, pendingPath, false);
-            if (!FilesAreEqual(customFullPath, pendingPath))
-            {
-                throw new InvalidDataException("The staged FBX replacement failed integrity verification.");
-            }
+        WriteVerifiedCopy(customFullPath, targetFullPath, customHash, replaceExisting: true);
+        return true;
+    }
 
-            File.Replace(pendingPath, targetFullPath, null);
-            return true;
-        }
-        finally
-        {
-            if (File.Exists(pendingPath)) File.Delete(pendingPath);
-        }
+    /// <summary>
+    /// Records content MCB wrote over <paramref name="fbxPath"/> by other means than <see cref="ReplaceFbxWithCustomCopy"/>,
+    /// so <see cref="RefreshStaleOriginalBackup"/> never mistakes it for a re-imported original.
+    /// </summary>
+    public void RecordWrittenFbx(string fbxPath)
+    {
+        string hash = HashFile(fbxPath);
+        if (hash != null) OriginalBaseLedger.AddWritten(fbxPath, hash);
     }
 
     private static bool FilesAreEqual(string firstPath, string secondPath)
@@ -207,12 +237,14 @@ public class FileManagerService
     {
         string backupPath = GetOriginalBasePath(fbxPath);
         if (!File.Exists(backupPath)) return;
-        File.Copy(backupPath, fbxPath, true);
+        string backupHash = VerifyBackup(fbxPath, backupPath, null);
+        WriteVerifiedCopy(backupPath, fbxPath, backupHash, replaceExisting: true);
     }
 
     // Force-restore a specific FBX regardless of current selection/state.
     // The .originalbase file is the immutable default-base source and must remain in place.
-    public void ForceRestoreBackupAtPath(string unityFbxPath)
+    // A backup whose content changed since it was made (or differs from expectedOriginalHash) is refused, never restored.
+    public void ForceRestoreBackupAtPath(string unityFbxPath, string expectedOriginalHash = null)
     {
         if (string.IsNullOrEmpty(unityFbxPath)) throw new ArgumentNullException(nameof(unityFbxPath));
         string unityPath = MCBUtils.ToUnityPath(unityFbxPath);
@@ -224,18 +256,235 @@ public class FileManagerService
             throw new FileNotFoundException($"Backup FBX not found: {fullBackupPath}");
         }
 
+        string backupHash = VerifyBackup(fullFbxPath, fullBackupPath, expectedOriginalHash);
         if (FbxMatchesBackupAtPath(unityPath))
         {
             MCBLogger.Log($"[FileManager] Skipped original FBX restore; target already matches backup: {unityPath}");
             return;
         }
 
-        File.Copy(fullBackupPath, fullFbxPath, true);
+        WriteVerifiedCopy(fullBackupPath, fullFbxPath, backupHash, replaceExisting: true);
         MCBLogger.Log($"[FileManager] Restored original FBX backup and reimporting: {unityPath}");
 
         // Force Unity to reimport the restored FBX
         AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
         AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+    }
+
+    // The backup's hash, after checking it against the expected original, else against the hash recorded when it was made.
+    private static string VerifyBackup(string fbxPath, string backupPath, string expectedOriginalHash)
+    {
+        string backupHash = HashFile(backupPath);
+        if (string.IsNullOrEmpty(backupHash) || new FileInfo(backupPath).Length == 0)
+        {
+            throw new InvalidDataException($"The original FBX backup is empty or unreadable: {backupPath}");
+        }
+
+        string expected = !string.IsNullOrWhiteSpace(expectedOriginalHash)
+            ? expectedOriginalHash.Trim()
+            : OriginalBaseLedger.GetOriginal(fbxPath);
+        if (expected == null)
+        {
+            // Made before backups were recorded: its current content is the reference from now on.
+            RecordOriginal(fbxPath, backupHash);
+        }
+        else if (!string.Equals(expected, backupHash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"The original FBX backup {Path.GetFileName(backupPath)} is damaged or was replaced (expected {expected}, found {backupHash}). " +
+                "Re-import the avatar's original base package before resetting.");
+        }
+
+        return backupHash;
+    }
+
+    public enum OriginalBackupState
+    {
+        /// <summary>No <c>.originalbase</c>: the FBX itself is the original.</summary>
+        NoBackup,
+        /// <summary>The FBX holds the backed-up original.</summary>
+        MatchesBackup,
+        /// <summary>The FBX holds content MCB wrote, or a known version output: the backup stays the original.</summary>
+        AppliedVersion,
+        /// <summary>The FBX held a newly imported original: the backup now holds it, the old one was kept aside.</summary>
+        Refreshed,
+        /// <summary>
+        /// The FBX holds content MCB cannot attribute, and the backup was made before MCB recorded its writes. Nothing was
+        /// changed: ask before restoring the backup over it.
+        /// </summary>
+        Unknown
+    }
+
+    /// <summary>
+    /// Checks the <c>.originalbase</c> of <paramref name="unityFbxPath"/> before it is used (reset, XOR key, version
+    /// switch). When the base package was re-imported or updated while a version was applied, the FBX holds a new original
+    /// and the backup an old one: restoring would put the old base back, and keys would decrypt nothing. The FBX is such a
+    /// fresh original when it is one of <paramref name="knownVersions"/>' originals, or when it is neither the backup, nor
+    /// a version output, nor anything MCB wrote over it since the backup was made. The backup is then replaced (atomically,
+    /// verified) and the old one kept as <c>*.fbx.originalbase.backup&lt;date&gt;</c>.
+    /// </summary>
+    public OriginalBackupState RefreshStaleOriginalBackup(string unityFbxPath, IEnumerable<CustomBaseVersion> knownVersions,
+        IEnumerable<string> knownOutputHashes = null)
+    {
+        if (string.IsNullOrWhiteSpace(unityFbxPath)) throw new ArgumentNullException(nameof(unityFbxPath));
+        string fullFbxPath = Path.GetFullPath(MCBUtils.ToUnityPath(unityFbxPath));
+        string fullBackupPath = GetOriginalBasePath(fullFbxPath);
+        if (!File.Exists(fullBackupPath) || !File.Exists(fullFbxPath)) return OriginalBackupState.NoBackup;
+
+        string currentHash = HashFile(fullFbxPath);
+        string backupHash = HashFile(fullBackupPath);
+        if (string.Equals(currentHash, backupHash, StringComparison.OrdinalIgnoreCase)) return OriginalBackupState.MatchesBackup;
+
+        var versions = (knownVersions ?? Enumerable.Empty<CustomBaseVersion>()).Where(version => version != null).ToList();
+        bool knownOriginal = CollectOriginalHashes(versions).Contains(currentHash);
+        if (!knownOriginal)
+        {
+            var outputs = new HashSet<string>(CollectFbxOutputHashes(versions), StringComparer.OrdinalIgnoreCase);
+            if (knownOutputHashes != null) outputs.UnionWith(knownOutputHashes.Where(hash => !string.IsNullOrWhiteSpace(hash)));
+            if (outputs.Contains(currentHash) || OriginalBaseLedger.WasWritten(fullFbxPath, currentHash)) return OriginalBackupState.AppliedVersion;
+            if (!OriginalBaseLedger.HasRecord(fullFbxPath)) return OriginalBackupState.Unknown;
+        }
+
+        string keptToken = CreatePreMcbBackup(fullBackupPath);
+        WriteVerifiedCopy(fullFbxPath, fullBackupPath, currentHash, replaceExisting: true);
+        OriginalBaseLedger.ResetOriginal(fullFbxPath, currentHash);
+        MCBLogger.LogWarning(
+            $"[FileManager] {Path.GetFileName(fullFbxPath)} holds a newly imported original base: its original-base backup now holds it. " +
+            $"The previous backup was kept as {Path.GetFileName(GetPreMcbBackupPath(fullBackupPath, keptToken))}.");
+        return OriginalBackupState.Refreshed;
+    }
+
+    /// <summary>The hashes of the FBX files the given versions write (FBX replacements), against any supported original.</summary>
+    public static IEnumerable<string> CollectFbxOutputHashes(IEnumerable<CustomBaseVersion> versions) =>
+        (versions ?? Enumerable.Empty<CustomBaseVersion>())
+        .Where(version => version != null)
+        .SelectMany(version => (version.versionFiles ?? Array.Empty<ModelFileData>())
+            .Concat((version.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>())
+                .SelectMany(original => original?.versionFiles ?? Array.Empty<ModelFileData>())))
+        .Where(file => file != null && ModelFileTransforms.IsFbxReplacementTransform(file.transform) && !string.IsNullOrWhiteSpace(file.outputHash))
+        .Select(file => file.outputHash.Trim().ToLowerInvariant());
+
+    private static HashSet<string> CollectOriginalHashes(IEnumerable<CustomBaseVersion> versions) =>
+        new HashSet<string>(versions
+            .SelectMany(version => (version.sourceFiles ?? Array.Empty<ModelFileData>())
+                .Concat((version.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>())
+                    .SelectMany(original => original?.sourceFiles ?? Array.Empty<ModelFileData>())))
+            .Where(file => file != null && !string.IsNullOrWhiteSpace(file.hash))
+            .Select(file => file.hash.Trim()), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Per-project record (Library/MCB) of each FBX's original-base hash and of the contents MCB wrote over the FBX since,
+    /// so a damaged backup and a re-imported original can be recognised.
+    /// </summary>
+    private static class OriginalBaseLedger
+    {
+        private const int MaxWrittenPerFbx = 64;
+        private static readonly object Gate = new object();
+        private static string LedgerPath => Path.GetFullPath(Path.Combine("Library", "MCB", "original-base-ledger.json"));
+
+        private sealed class Entry
+        {
+            public string original;
+            public List<string> written = new List<string>();
+        }
+
+        public static bool HasRecord(string fbxPath)
+        {
+            lock (Gate) return Load().ContainsKey(Key(fbxPath));
+        }
+
+        public static string GetOriginal(string fbxPath)
+        {
+            lock (Gate) return Load().TryGetValue(Key(fbxPath), out var entry) ? entry.original : null;
+        }
+
+        public static bool WasWritten(string fbxPath, string hash)
+        {
+            lock (Gate)
+                return hash != null && Load().TryGetValue(Key(fbxPath), out var entry) &&
+                       entry.written.Contains(hash, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public static void SetOriginal(string fbxPath, string hash) => Update(fbxPath, entry => entry.original = hash);
+
+        // A new original invalidates everything written over the old one.
+        public static void ResetOriginal(string fbxPath, string hash) => Update(fbxPath, entry =>
+        {
+            entry.original = hash;
+            entry.written.Clear();
+        });
+
+        public static void AddWritten(string fbxPath, string hash) => Update(fbxPath, entry =>
+        {
+            if (hash == null || entry.written.Contains(hash, StringComparer.OrdinalIgnoreCase)) return;
+            entry.written.Add(hash);
+            if (entry.written.Count > MaxWrittenPerFbx) entry.written.RemoveAt(0);
+        });
+
+        private static void Update(string fbxPath, Action<Entry> change)
+        {
+            if (string.IsNullOrWhiteSpace(fbxPath)) return;
+            try
+            {
+                lock (Gate)
+                {
+                    var entries = Load();
+                    string key = Key(fbxPath);
+                    if (!entries.TryGetValue(key, out var entry) || entry == null) entries[key] = entry = new Entry();
+                    if (entry.written == null) entry.written = new List<string>();
+                    change(entry);
+                    Save(entries);
+                }
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                MCBLogger.LogWarning($"[FileManager] Could not update the original-base ledger: {ex.Message}");
+            }
+        }
+
+        // Project-relative, so the record survives moving the project; no Unity API, so any thread may ask.
+        private static string Key(string fbxPath)
+        {
+            string full = Path.GetFullPath(fbxPath).Replace('\\', '/');
+            string root = Path.GetFullPath(".").Replace('\\', '/').TrimEnd('/') + "/";
+            return (full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full.Substring(root.Length) : full).ToLowerInvariant();
+        }
+
+        private static Dictionary<string, Entry> Load()
+        {
+            try
+            {
+                if (File.Exists(LedgerPath))
+                {
+                    var entries = JsonConvert.DeserializeObject<Dictionary<string, Entry>>(File.ReadAllText(LedgerPath));
+                    if (entries != null) return new Dictionary<string, Entry>(entries, StringComparer.Ordinal);
+                }
+            }
+            catch (Exception ex) when (ex is IOException || ex is JsonException || ex is UnauthorizedAccessException)
+            {
+                MCBLogger.LogWarning($"[FileManager] Ignoring an unreadable original-base ledger: {ex.Message}");
+            }
+            return new Dictionary<string, Entry>(StringComparer.Ordinal);
+        }
+
+        private static void Save(Dictionary<string, Entry> entries)
+        {
+            // Models (and their backups) that no longer exist, such as health-check scratch files, are forgotten.
+            foreach (string key in entries.Keys.Where(key => !File.Exists(key) && !File.Exists(key + OriginalBaseSuffix)).ToList())
+                entries.Remove(key);
+            Directory.CreateDirectory(Path.GetDirectoryName(LedgerPath));
+            string temporary = LedgerPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, JsonConvert.SerializeObject(entries, Formatting.Indented));
+                if (File.Exists(LedgerPath)) File.Replace(temporary, LedgerPath, null);
+                else File.Move(temporary, LedgerPath);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+        }
     }
 
     public static string GetOriginalBasePath(string fbxPath)
@@ -317,38 +566,36 @@ public class FileManagerService
             {
                 throw new InvalidDataException($"Existing original-base key has a different hash and was not overwritten: {GetOriginalBasePath(targetUnityPath)}");
             }
+            RecordOriginal(targetFullPath, normalizedExpectedHash);
             return false;
         }
 
-        string temporaryPath = originalBaseFullPath + ".pending-" + Guid.NewGuid().ToString("N");
         bool created = true;
         try
         {
-            File.Copy(sourceFullPath, temporaryPath, false);
-            if (!string.Equals(CalculateFileHash(temporaryPath), normalizedExpectedHash, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidDataException("The staged original-base key failed hash verification.");
-            }
-
-            try
-            {
-                File.Move(temporaryPath, originalBaseFullPath);
-            }
-            catch (IOException) when (File.Exists(originalBaseFullPath))
-            {
-                string existingHash = CalculateFileHash(originalBaseFullPath);
-                if (!string.Equals(existingHash, normalizedExpectedHash, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidDataException($"Original-base key was created concurrently with different content: {GetOriginalBasePath(targetUnityPath)}");
-                }
-                created = false;
-            }
-            return created;
+            WriteVerifiedCopy(sourceFullPath, originalBaseFullPath, normalizedExpectedHash, replaceExisting: false);
         }
-        finally
+        catch (IOException) when (File.Exists(originalBaseFullPath))
         {
-            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            string existingHash = CalculateFileHash(originalBaseFullPath);
+            if (!string.Equals(existingHash, normalizedExpectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"Original-base key was created concurrently with different content: {GetOriginalBasePath(targetUnityPath)}");
+            }
+            created = false;
         }
+        RecordOriginal(targetFullPath, normalizedExpectedHash);
+        return created;
+    }
+
+    // Records an original whose backup already existed or was mapped from elsewhere. A different model in the FBX was put
+    // there by MCB before its writes were recorded (or declared not original by the mapping): it is a version, not a base.
+    private static void RecordOriginal(string fbxPath, string originalHash)
+    {
+        OriginalBaseLedger.SetOriginal(fbxPath, originalHash);
+        string currentHash = HashFile(fbxPath);
+        if (currentHash != null && !string.Equals(currentHash, originalHash, StringComparison.OrdinalIgnoreCase))
+            OriginalBaseLedger.AddWritten(fbxPath, currentHash);
     }
 
     public void RestorePreMcbBackup(string targetUnityPath, string token)
@@ -787,13 +1034,8 @@ public class FileManagerService
             MCBUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
 
             var entries = modelEntries ?? Array.Empty<ModelFilePackageEntry>();
-            // A reset definition belongs to the original model, never to a package-wide avatar.
-            var defaultAvatar = entries.Where(entry => !string.IsNullOrWhiteSpace(entry?.sourceFbxPath))
-                .Select(entry => AssetDatabase.LoadAssetAtPath<GameObject>(entry.sourceFbxPath)?.GetComponent<Animator>()?.avatar)
-                .FirstOrDefault(avatar => avatar != null && avatar.isHuman);
-            if (defaultAvatar != null)
-                AvatarDefinitionGenerationService.SaveAvatarCopy(defaultAvatar,
-                    MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.DEFAULT_AVATAR_NAME));
+            // A reset definition belongs to the original model, never to a package-wide avatar or to a version the FBX holds.
+            SaveDefaultAvatar(entries, MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.DEFAULT_AVATAR_NAME));
 
             for (int i = 0; i < entries.Count; i++)
             {
@@ -1049,6 +1291,76 @@ public class FileManagerService
             if (!AssetDatabase.CopyAsset(sourceTexturePath, veinsDestPath))
                 throw new IOException($"Failed to copy custom veins normal map to {veinsDestPath}");
         }
+    }
+
+    // The first humanoid Avatar among the entries' original models. sourceFbxPath is the *.fbx.originalbase key once a
+    // backup exists, which Unity cannot load: the model is the FBX itself while it holds the original, else a temporary
+    // import of the backup.
+    private static void SaveDefaultAvatar(IEnumerable<ModelFilePackageEntry> entries, string outputPath)
+    {
+        foreach (var entry in entries)
+        {
+            string fbxPath = entry?.localTargetPath ?? StripOriginalBaseSuffix(entry?.sourceFbxPath);
+            if (string.IsNullOrWhiteSpace(fbxPath)) continue;
+            string temporaryFolder = null;
+            try
+            {
+                var model = LoadOriginalModel(fbxPath, out temporaryFolder);
+                var avatar = model != null ? model.GetComponent<Animator>()?.avatar : null;
+                if (avatar == null || !avatar.isHuman) continue;
+                AvatarDefinitionGenerationService.SaveAvatarCopy(avatar, outputPath);
+                return;
+            }
+            finally
+            {
+                DeleteTemporaryImport(temporaryFolder);
+            }
+        }
+    }
+
+    /// <summary>Removes a temporary import folder of <see cref="LoadOriginalModel"/>.</summary>
+    public static void DeleteTemporaryImport(string temporaryFolder)
+    {
+        if (string.IsNullOrWhiteSpace(temporaryFolder) || AssetDatabase.DeleteAsset(temporaryFolder)) return;
+        string fullPath = Path.GetFullPath(temporaryFolder);
+        if (Directory.Exists(fullPath)) Directory.Delete(fullPath, true);
+        if (File.Exists(fullPath + ".meta")) File.Delete(fullPath + ".meta");
+    }
+
+    private static string StripOriginalBaseSuffix(string path) =>
+        path != null && path.EndsWith(OriginalBaseSuffix, StringComparison.OrdinalIgnoreCase)
+            ? path.Substring(0, path.Length - OriginalBaseSuffix.Length)
+            : path;
+
+    /// <summary>
+    /// The original model of the FBX at <paramref name="fbxUnityPath"/>: the asset itself while it holds the original bytes
+    /// and import settings, else a temporary import of the original bytes (its *.fbx.originalbase) with the original import
+    /// settings (scale, rig, humanoid mapping; those kept before a version changed them) under a new GUID, in
+    /// <paramref name="temporaryFolder"/>, which the caller deletes with <see cref="DeleteTemporaryImport"/>.
+    /// </summary>
+    public static GameObject LoadOriginalModel(string fbxUnityPath, out string temporaryFolder)
+    {
+        temporaryFolder = null;
+        string unityPath = MCBUtils.ToUnityPath(fbxUnityPath);
+        string fullPath = Path.GetFullPath(unityPath);
+        string backupPath = GetOriginalBasePath(fullPath);
+        string originalBytes = File.Exists(backupPath) && !FilesAreEqual(fullPath, backupPath) ? backupPath : fullPath;
+        string keptSettings = Path.GetFullPath(AvatarDefinitionGenerationService.OriginalImportSettingsPath(unityPath));
+        string originalMeta = File.Exists(keptSettings) ? keptSettings : fullPath + ".meta";
+        if (originalBytes == fullPath && originalMeta == fullPath + ".meta")
+            return AssetDatabase.LoadAssetAtPath<GameObject>(unityPath);
+
+        string folder = MCBUtils.CombineUnityPath(MCBUtils.ASSETS_BASE_FOLDER, "generated", "originalBaseImports", Guid.NewGuid().ToString("N"));
+        string copy = MCBUtils.CombineUnityPath(folder, Path.GetFileName(unityPath));
+        Directory.CreateDirectory(Path.GetFullPath(folder));
+        temporaryFolder = folder;
+        WriteVerifiedCopy(originalBytes, Path.GetFullPath(copy), HashFile(originalBytes), replaceExisting: false);
+        if (File.Exists(originalMeta))
+            File.WriteAllText(Path.GetFullPath(copy) + ".meta",
+                System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(originalMeta), @"(?m)^guid: [0-9a-f]{32}", "guid: " + GUID.Generate()));
+        // Import only this model: a refresh could import unrelated pending assets or reload scripts mid-build.
+        AssetDatabase.ImportAsset(copy, ImportAssetOptions.ForceSynchronousImport);
+        return AssetDatabase.LoadAssetAtPath<GameObject>(copy);
     }
 
     private static string SanitizeFileName(string value)

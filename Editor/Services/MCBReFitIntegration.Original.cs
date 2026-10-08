@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 using Orbiters.Toolkit.Editor.Refit;
@@ -44,11 +45,37 @@ public static partial class MCBReFitIntegration
         return ImportOriginal(fbxPath, backup, AnimationUtility.CalculateTransformPath(source.renderer.transform, source.sourceAvatar.transform));
     }
 
+    // Users of each temporary import: every ResolveOriginal shares the folder of its backup, deleted with its last user.
+    private static readonly Dictionary<string, int> OriginalImportUsers = new Dictionary<string, int>(StringComparer.Ordinal);
+
     private static CustomBaseOriginal ImportOriginal(string fbxPath, string backup, string bodyPath)
     {
         string hash = MCBUtils.CalculateFileHash(backup);
         if (string.IsNullOrEmpty(hash)) throw new FileNotFoundException("The original base backup could not be read.", backup);
         string folder = OriginalImportFolder + "/" + hash.Substring(0, 16);
+        AcquireOriginalImport(folder);
+        try { return LoadOriginal(folder, fbxPath, backup, bodyPath); }
+        catch
+        {
+            ReleaseOriginalImport(folder);
+            throw;
+        }
+    }
+
+    internal static void AcquireOriginalImport(string folder) =>
+        OriginalImportUsers[folder] = OriginalImportUsers.TryGetValue(folder, out int users) ? users + 1 : 1;
+
+    /// <summary>One user of the temporary import is done: the folder goes with the last one.</summary>
+    internal static void ReleaseOriginalImport(string folder)
+    {
+        if (!OriginalImportUsers.TryGetValue(folder, out int users)) return;
+        if (users > 1) { OriginalImportUsers[folder] = users - 1; return; }
+        OriginalImportUsers.Remove(folder);
+        AssetDatabase.DeleteAsset(folder);
+    }
+
+    private static CustomBaseOriginal LoadOriginal(string folder, string fbxPath, string backup, string bodyPath)
+    {
         string copy = folder + "/" + Path.GetFileName(fbxPath);
         Directory.CreateDirectory(Path.GetFullPath(folder));
         if (!File.Exists(Path.GetFullPath(copy)))
@@ -66,11 +93,8 @@ public static partial class MCBReFitIntegration
         var avatar = AssetDatabase.LoadAssetAtPath<GameObject>(copy);
         var body = avatar != null ? avatar.transform.Find(bodyPath)?.GetComponent<SkinnedMeshRenderer>() : null;
         if (body == null)
-        {
-            AssetDatabase.DeleteAsset(folder);
             throw new InvalidOperationException("The original base backup of " + Path.GetFileName(fbxPath) + " has no body at " + bodyPath + ".");
-        }
-        return new CustomBaseOriginal { Avatar = avatar, Body = body, Cleanup = () => AssetDatabase.DeleteAsset(folder) };
+        return new CustomBaseOriginal { Avatar = avatar, Body = body, Cleanup = () => ReleaseOriginalImport(folder) };
     }
 
     private static bool SameContent(string a, string b) =>

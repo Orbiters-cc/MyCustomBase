@@ -4,9 +4,11 @@ using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
 public class VersionCustomizationTests
@@ -157,6 +159,61 @@ public class VersionCustomizationTests
         Assert.That(renderer.GetBlendShapeWeight(0), Is.EqualTo(100)); Assert.That(renderer.GetBlendShapeWeight(1), Is.EqualTo(100)); Assert.That(physics.activeSelf);
         Assert.That(AnimationUtility.GetEditorCurve(built, earsBinding), Is.Null, "Bone poses stay in the scene; other ear animations keep working.");
         Assert.That(AnimationUtility.GetEditorCurve(clip, binding).Evaluate(.5f), Is.Zero, "The authored clip must never be mutated.");
+    }
+
+    // The clothing links copy body curves: the modes must be locked before they run, so clothing follows the locked values.
+    [Test] public void ModeLocksRunAfterCorrectivesAndBeforeEveryClothingLink()
+    {
+        int Order(string name)
+        {
+            var type = AppDomain.CurrentDomain.GetAssemblies().Where(a => a.GetName().Name.StartsWith("mcb") || a.GetName().Name.StartsWith("Orbiters"))
+                .SelectMany(a => a.GetTypes()).Single(t => t.Name == name && t.GetProperty("callbackOrder") != null);
+            return (int)type.GetProperty("callbackOrder").GetValue(Activator.CreateInstance(type, true));
+        }
+        int survey = Order("VersionCustomizationSurveyHook"), locks = Order("VersionCustomizationLockHook"), apply = Order("VersionCustomizationApplyHook");
+        Assert.That(survey, Is.GreaterThan(-10000).And.LessThan(-9010), "After VRCFury, before face tracking renames its curves.");
+        Assert.That(locks, Is.GreaterThan(Order("BlendShapeLinkPostVrcfuryHook")));
+        foreach (string link in new[] { "RefitLinkHook", "SurfaceFollowHook", "AttachmentFinishHook" })
+            Assert.That(locks, Is.LessThan(Order(link)), link + " copies body curves: it must see the locked ones.");
+        Assert.That(apply, Is.GreaterThan(Order("AttachmentFinishHook")), "Pruning stays after every animation-adding step.");
+    }
+
+    [Test] public void ClothingLinksCopyTheLockedModeValuesAndOtherStepsAreReported()
+    {
+        var (root, owner, renderer, _, _) = ModeAvatar("Mode clothing test");
+        var jacketMesh = Own(Object.Instantiate(renderer.sharedMesh));
+        var jacket = Child(root.transform, "Jacket").gameObject.AddComponent<SkinnedMeshRenderer>(); jacket.sharedMesh = jacketMesh;
+        var controller = Own(new AnimatorController()); controller.AddLayer("Gestures");
+        var own = Own(new AnimationClip { name = "Own" });
+        var female = EditorCurveBinding.FloatCurve("Body", typeof(SkinnedMeshRenderer), "blendShape.ulti female");
+        AnimationUtility.SetEditorCurve(own, female, AnimationCurve.Constant(0, 1, 0));
+        controller.layers[0].stateMachine.AddState("Own").motion = own;
+        root.AddComponent<Animator>().runtimeAnimatorController = controller;
+        ModeService.Set(owner, "female", true); ModeService.Set(owner, "dogears", true);
+
+        VersionCustomizationBuild.Capture(root);
+        VersionCustomizationBuild.Survey(root);
+        // The build works on its own copy of the avatar's controller.
+        var built = (AnimatorController)root.GetComponent<Animator>().runtimeAnimatorController;
+        Assert.That(built, Is.Not.SameAs(controller));
+        // A later build step (face tracking) animates a locked shape the avatar's own animations did not.
+        var added = Own(new AnimationClip { name = "Face tracking" });
+        AnimationUtility.SetEditorCurve(added, EditorCurveBinding.FloatCurve("Body", typeof(SkinnedMeshRenderer), "blendShape.dynamic dog ears"), AnimationCurve.Constant(0, 1, 30));
+        built.AddLayer("Face tracking"); built.layers[built.layers.Length - 1].stateMachine.AddState("Track").motion = added;
+        LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("dynamic dog ears.*overrides those animations"));
+        VersionCustomizationBuild.Lock(root);
+        // As ReFit's link hook does, after the lock.
+        BlendShapeSync.Apply(root, new[] { new BlendShapeCopy { Source = renderer, SourceShape = "ulti female", Destination = jacket, DestinationShape = "ulti female" } }, "Test");
+
+        Assert.That(jacket.GetBlendShapeWeight(0), Is.EqualTo(100), "Clothing takes the locked weight.");
+        Assert.That(AnimationUtility.GetEditorCurve(own, female).Evaluate(.5f), Is.Zero, "The authored clip must never be mutated.");
+        var locked = (AnimationClip)built.layers.Single(l => l.name == "MCB Modes").stateMachine.defaultState.motion;
+        locked.SampleAnimation(root, .5f);
+        Assert.That(renderer.GetBlendShapeWeight(0), Is.EqualTo(100));
+        Assert.That(jacket.GetBlendShapeWeight(0), Is.EqualTo(100), "The locked value is copied onto the clothing shape.");
+        var jacketFemale = EditorCurveBinding.FloatCurve("Jacket", typeof(SkinnedMeshRenderer), "blendShape.ulti female");
+        Assert.That(built.animationClips.Where(c => c != locked).Any(c => AnimationUtility.GetEditorCurve(c, jacketFemale) != null), Is.False,
+            "No unlocked body curve reaches the clothing.");
     }
 
     // Ultirex: 380 of the body's 488 blendshapes are never used and took 448 MB, over VRChat's upload limits.

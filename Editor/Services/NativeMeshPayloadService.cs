@@ -248,6 +248,7 @@ public static partial class NativeMeshPayloadService
         {
             throw new FileNotFoundException("Source FBX file for native mesh payload was not found.", fullSourcePath);
         }
+        if (sourcePoseRoot == null) RequireOriginalModelImported(sourceFbxPath);
 
         GameObject payloadSource = customFbx;
         byte[] baseData = File.ReadAllBytes(fullSourcePath);
@@ -827,12 +828,15 @@ public static partial class NativeMeshPayloadService
         completed?.Invoke(payload);
     }
 
+    /// <param name="missingRenderers">Receives the replaced renderers the avatar no longer has (deleted or renamed by the
+    /// user): they are skipped, the other renderers are still restored.</param>
     public static int RestoreOriginalMeshesFromFbx(
         Transform avatarRoot,
         CustomBaseVersion version,
         IEnumerable<string> sourceFbxPaths,
         MyCustomBase target = null,
-        CustomBaseVersion preserveVersion = null)
+        CustomBaseVersion preserveVersion = null,
+        List<string> missingRenderers = null)
     {
         if (avatarRoot == null)
         {
@@ -852,11 +856,13 @@ public static partial class NativeMeshPayloadService
             // renderers the user deleted from their avatar out of the restoration.
             bool plain = VersionProtection.IsPlain(version);
             var smrPaths = plain ? new List<ModelFileSmrPathData>() : SmrPathService.ResolveSmrPathsForSource(version, sourcePath, target);
+            var missing = new List<string>();
             int restored = SmrPathService.RestoreTargetStateFromFbx(avatarRoot, sourcePath, smrPaths,
                 renderer => preserveVersion != null && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), preserveVersion),
-                skipMissingRenderers: plain);
+                skipMissingRenderers: true, missingRenderers: missing);
             restoredTotal += restored;
-            if (restored == 0)
+            missingRenderers?.AddRange(missing);
+            if (restored == 0 && missing.Count == 0)
             {
                 throw new InvalidOperationException(
                     $"No renderer could be safely restored from '{sourcePath}'. The existing mesh and bone bindings were left together unchanged.");
@@ -925,8 +931,7 @@ public static partial class NativeMeshPayloadService
                     string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
                     string meshName = renderer.sharedMesh != null ? renderer.sharedMesh.name : null;
                     string shortHash = ShortHash(patch.outputHash);
-                    if ((!string.IsNullOrWhiteSpace(meshPath) &&
-                         meshPath == GetGeneratedPayloadPath(version, patch, GetPayloadIdentity(patch))) ||
+                    if (IsGeneratedPayloadPath(meshPath, version, patch) ||
                         (!string.IsNullOrWhiteSpace(meshName) &&
                          meshName.IndexOf(shortHash, StringComparison.OrdinalIgnoreCase) >= 0))
                     {
@@ -971,8 +976,7 @@ public static partial class NativeMeshPayloadService
                     string meshPath = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh));
                     string meshName = renderer.sharedMesh != null ? renderer.sharedMesh.name : null;
                     string shortHash = ShortHash(patch.outputHash);
-                    if ((!string.IsNullOrWhiteSpace(meshPath) &&
-                         meshPath == GetGeneratedPayloadPath(version, patch, GetPayloadIdentity(patch))) ||
+                    if (IsGeneratedPayloadPath(meshPath, version, patch) ||
                         (!string.IsNullOrWhiteSpace(meshName) &&
                          meshName.IndexOf(shortHash, StringComparison.OrdinalIgnoreCase) >= 0))
                     {
@@ -1138,18 +1142,10 @@ public static partial class NativeMeshPayloadService
         return GetGeneratedPayloadStorageInfo(GeneratedFolder);
     }
 
+    /// <summary>Deletes the version's generated payloads that nothing uses; meshes an avatar still shows are kept.</summary>
     public static GeneratedPayloadStorageInfo DeleteGeneratedPayloadsForVersion(CustomBaseVersion version)
     {
-        string folder = GetGeneratedPayloadVersionFolder(version);
-        GeneratedPayloadStorageInfo storageInfo = GetGeneratedPayloadStorageInfo(folder);
-        if (!storageInfo.HasContent)
-        {
-            return storageInfo;
-        }
-
-        DeleteGeneratedPayloadFolder(folder);
-        PruneEmptyGeneratedPayloadAssetFolder(version);
-        return storageInfo;
+        return DeleteUnreferencedPayloadsOfVersion(version);
     }
 
     public static GeneratedPayloadStorageInfo DeleteAllGeneratedPayloads()
@@ -1161,6 +1157,7 @@ public static partial class NativeMeshPayloadService
     /// Bones only the custom model has are created on apply and are not required.</summary>
     public static List<string> CollectSkeletonBones(GameObject customFbx, string sourceFbxPath, IEnumerable<ModelFileSmrPathData> smrPaths)
     {
+        RequireOriginalModelImported(sourceFbxPath);
         var source = ResolveSourcePoseRoot(sourceFbxPath);
         if (source == null) throw new InvalidDataException("The original model is needed to list the skeleton of a plain payload: " + sourceFbxPath);
         var originalNames = new HashSet<string>(source.GetComponentsInChildren<Transform>(true).Where(t => t != source).Select(t => t.name), StringComparer.Ordinal);
@@ -1441,6 +1438,22 @@ public static partial class NativeMeshPayloadService
 
         var sourceAsset = AssetDatabase.LoadAssetAtPath<GameObject>(sourceUnityPath);
         return sourceAsset != null ? sourceAsset.transform : null;
+    }
+
+    /// <summary>
+    /// Pose deltas and skeleton lists are read from the model imported at the source path. While a version's model is
+    /// imported there instead of the original (its .originalbase), they would describe that version: refuse the build.
+    /// </summary>
+    internal static void RequireOriginalModelImported(string sourceFbxPath)
+    {
+        string modelPath = StripOriginalSuffix(MCBUtils.ToUnityPath(sourceFbxPath));
+        if (!IsAssetDatabasePath(modelPath)) return;
+        string originalPath = Path.GetFullPath(FileManagerService.GetOriginalBasePath(modelPath));
+        string importedPath = Path.GetFullPath(modelPath);
+        if (!File.Exists(originalPath) || !File.Exists(importedPath)) return;
+        if (MCBUtils.CalculateFileHash(importedPath) == MCBUtils.CalculateFileHash(originalPath)) return;
+        throw new InvalidOperationException(
+            $"'{Path.GetFileName(modelPath)}' is currently replaced by a version's model, not its original. Reset the avatar to its original base, then build again.");
     }
 
     private static bool IsAssetDatabasePath(string unityPath)

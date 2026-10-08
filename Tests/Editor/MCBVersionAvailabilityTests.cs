@@ -67,6 +67,22 @@ public class MCBVersionAvailabilityTests
             paths, new[] { otherAsset }, 15, "0.5.3", "1.0.0"), Is.Null);
     }
 
+    // A Unity upgrade changes where new shared payloads are cached, not which version an applied one belongs to.
+    [Test]
+    public void SharedMeshCachedByAnotherUnityVersionIsStillRecognised()
+    {
+        var current = SharedVersion("0.5.3", 'a', 'b');
+        var paths = new[] { OldSharedPath(14, 'a'), OldSharedPath(14, 'b') };
+        Assert.That(NativeMeshPayloadService.IsSharedMeshForVersion(paths[0], current), Is.True);
+        Assert.That(NativeMeshPayloadService.ResolveAppliedMeshVersionFromPaths(
+            paths, new[] { current }, 14, "0.5.3", "1.0.0"), Is.SameAs(current));
+        Assert.That(NativeMeshPayloadService.IsSharedMeshForVersion(OldSharedPath(15, 'a'), current), Is.False);
+        Assert.That(NativeMeshPayloadService.IsSharedMeshForVersion(OldSharedPath(14, 'c'), current), Is.False);
+    }
+
+    private static string OldSharedPath(int assetId, char hash) =>
+        "Assets/MCB/generated/advancedMeshPayloads/" + assetId + "/shared-2021.3.0f1/" + new string(hash, 64) + ".asset";
+
     private static string SharedPath(char hash) =>
         "Assets/MCB/generated/advancedMeshPayloads/14/shared-" + UnityEngine.Application.unityVersion + "/" + new string(hash, 64) + ".asset";
 

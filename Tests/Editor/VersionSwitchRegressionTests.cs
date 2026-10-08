@@ -12,6 +12,7 @@ using Orbiters.Toolkit.Editor;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
 public sealed class VersionSwitchRegressionTests
@@ -126,6 +127,163 @@ public sealed class VersionSwitchRegressionTests
             Undo.RevertAllDownToGroup(setupGroup);
             VersionSwitchFileUndo.Forget(folder);
             AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
+    // Only the last switches keep their files. Undoing an older one moves the scene back and leaves its files (reported).
+    [Test]
+    public void UndoBeyondTheKeptSwitchesLeavesTheirFilesAsTheyAre()
+    {
+        string folder = "Assets/MCB_UndoTest_" + Guid();
+        string path = folder + "/body.txt";
+        var type = typeof(VersionActions).GetNestedType("VersionTransitionRollbackSnapshot", BindingFlags.NonPublic);
+        Undo.IncrementCurrentGroup();
+        int setupGroup = Undo.GetCurrentGroup();
+        bool ignoreFailingMessages = LogAssert.ignoreFailingMessages;
+        try
+        {
+            LogAssert.ignoreFailingMessages = true;
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            File.WriteAllText(path, "version 0");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            for (int i = 1; i <= 6; i++)
+            {
+                var snapshot = type.GetMethod("Capture").Invoke(null, new object[] { new[] { path }, null, null });
+                File.WriteAllText(path, "version " + i);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                type.GetMethod("Commit").Invoke(snapshot, null);
+            }
+
+            for (int i = 0; i < 5; i++) Undo.PerformUndo();
+            Assert.AreEqual("version 1", File.ReadAllText(path));
+            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("only keeps the files of the last 5 switches"));
+            Undo.PerformUndo();
+            Assert.AreEqual("version 1", File.ReadAllText(path), "The oldest switch kept no copies: its files stay.");
+            Undo.PerformRedo();
+            Undo.PerformRedo();
+            Assert.AreEqual("version 2", File.ReadAllText(path), "Redo of a kept switch still restores its files.");
+        }
+        finally
+        {
+            LogAssert.ignoreFailingMessages = ignoreFailingMessages;
+            Undo.RevertAllDownToGroup(setupGroup);
+            VersionSwitchFileUndo.Forget(folder);
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
+    // Reset puts back the import settings kept before a version changed them; a model nothing kept is left alone.
+    [Test]
+    public void ResetRestoresTheImportSettingsKeptBeforeTheVersion()
+    {
+        string folder = "Assets/MCB_ImportTest_" + Guid();
+        string path = folder + "/model.txt";
+        try
+        {
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            File.WriteAllText(path, "model");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            AvatarDefinitionGenerationService.BackupOriginalImportSettings(path);
+            var importer = AssetImporter.GetAtPath(path);
+            importer.userData = "changed by a version";
+            importer.SaveAndReimport();
+            AvatarDefinitionGenerationService.BackupOriginalImportSettings(path);
+
+            Assert.That(AvatarDefinitionGenerationService.RestoreOriginalImportSettings(path), Is.True);
+            Assert.That(AssetImporter.GetAtPath(path).userData, Is.Empty, "The first kept settings are the original ones.");
+            Assert.That(File.Exists(AvatarDefinitionGenerationService.OriginalImportSettingsPath(path)), Is.False);
+            Assert.That(AvatarDefinitionGenerationService.RestoreOriginalImportSettings(path), Is.False);
+        }
+        finally
+        {
+            File.Delete(AvatarDefinitionGenerationService.OriginalImportSettingsPath(path));
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
+    // Removing MCB's veins switches off only what MCB switched on; a detail normal map MCB did not set stays.
+    [Test]
+    public void VeinsRemovalKeepsTheMaterialsOwnNormalMaps()
+    {
+        string folder = MCBUtils.ASSETS_BASE_FOLDER + "/VeinsTest_" + Guid();
+        string veinsPath = folder + "/veins normal.png";
+        var avatar = new GameObject("Avatar");
+        var material = new Material(Shader.Find("Standard"));
+        var normal = new Texture2D(2, 2);
+        var userDetail = new Texture2D(2, 2);
+        try
+        {
+            CreateAssetFolder(folder);
+            File.WriteAllBytes(veinsPath, normal.EncodeToPNG());
+            AssetDatabase.ImportAsset(veinsPath, ImportAssetOptions.ForceSynchronousImport);
+            material.SetTexture("_BumpMap", normal);
+            material.EnableKeyword("_NORMALMAP");
+            var renderer = new GameObject("Body").AddComponent<SkinnedMeshRenderer>();
+            renderer.transform.SetParent(avatar.transform);
+            renderer.sharedMaterial = material;
+            var service = new MaterialService(avatar.transform);
+
+            material.SetTexture("_DetailNormalMap", userDetail);
+            Assert.That(service.RemoveDetailNormalMap(renderer, false), Is.False);
+            Assert.That(material.GetTexture("_DetailNormalMap"), Is.SameAs(userDetail));
+
+            Assert.That(service.SetDetailNormalMap(renderer, veinsPath, false), Is.True);
+            Assert.That(material.IsKeywordEnabled("_DETAIL_MULX2"), Is.True);
+            Assert.That(service.RemoveDetailNormalMap(renderer, false), Is.True);
+            Assert.That(material.GetTexture("_DetailNormalMap"), Is.Null);
+            Assert.That(material.IsKeywordEnabled("_DETAIL_MULX2"), Is.False);
+            Assert.That(material.IsKeywordEnabled("_NORMALMAP"), Is.True, "The material's own normal map stays on.");
+        }
+        finally
+        {
+            Object.DestroyImmediate(avatar);
+            Object.DestroyImmediate(material);
+            Object.DestroyImmediate(normal);
+            Object.DestroyImmediate(userDetail);
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
+    // Pose deltas are read from the imported source model: a version's model imported in its place stops the build.
+    [Test]
+    public void PayloadBuildRefusesWhileTheSourceModelIsReplaced()
+    {
+        string folder = "Assets/MCB_PoseTest_" + Guid();
+        tempPaths.Add(Path.GetFullPath(folder));
+        Directory.CreateDirectory(Path.GetFullPath(folder));
+        string model = folder + "/model.bytes";
+        File.WriteAllText(model, "original");
+        File.WriteAllText(FileManagerService.GetOriginalBasePath(model), "original");
+        Assert.DoesNotThrow(() => NativeMeshPayloadService.RequireOriginalModelImported(FileManagerService.GetOriginalBasePath(model)));
+        File.WriteAllText(model, "version");
+        Assert.Throws<InvalidOperationException>(() => NativeMeshPayloadService.RequireOriginalModelImported(model));
+    }
+
+    // Deleting a version's generated meshes keeps what an avatar still uses and removes the rest, humanoid Avatars too.
+    [Test]
+    public void DeletingVersionPayloadsKeepsWhatAnAvatarUses()
+    {
+        var version = new CustomBaseVersion { assetId = 999990, version = "cleanup-test" };
+        string assetFolder = "Assets/MCB/generated/advancedMeshPayloads/999990";
+        string folder = assetFolder + "/cleanup-test";
+        var avatar = new GameObject("Avatar");
+        try
+        {
+            CreateAssetFolder(folder);
+            var used = AvatarBuilder.BuildGenericAvatar(avatar, "");
+            var unused = AvatarBuilder.BuildGenericAvatar(avatar, "");
+            AssetDatabase.CreateAsset(used, folder + "/payload.humanoid-used.asset");
+            AssetDatabase.CreateAsset(unused, folder + "/payload.humanoid-unused.asset");
+            avatar.AddComponent<Animator>().avatar = used;
+
+            NativeMeshPayloadService.DeleteGeneratedPayloadsForVersion(version);
+            Assert.That(AssetDatabase.LoadAssetAtPath<Avatar>(folder + "/payload.humanoid-used.asset"), Is.Not.Null);
+            Assert.That(File.Exists(folder + "/payload.humanoid-unused.asset"), Is.False);
+        }
+        finally
+        {
+            Object.DestroyImmediate(avatar);
+            AssetDatabase.DeleteAsset(assetFolder);
         }
     }
 
@@ -623,6 +781,16 @@ public sealed class VersionSwitchRegressionTests
     };
 
     private static string Guid() => System.Guid.NewGuid().ToString("N");
+
+    private static void CreateAssetFolder(string folder)
+    {
+        string parent = "Assets";
+        foreach (string segment in folder.Substring("Assets/".Length).Split('/'))
+        {
+            if (!AssetDatabase.IsValidFolder(parent + "/" + segment)) AssetDatabase.CreateFolder(parent, segment);
+            parent += "/" + segment;
+        }
+    }
 
     private string TempFolder()
     {

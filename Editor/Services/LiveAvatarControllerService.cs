@@ -116,10 +116,12 @@ public class LiveAvatarControllerService
         if (selected == null)
         {
             var allCustomBases = Resources.FindObjectsOfTypeAll<MyCustomBase>();
+            // Preview scenes hold tools' copies (e.g. My Avatar's face tracking test), never the avatar itself.
             var anyCustomBase = allCustomBases.FirstOrDefault(x =>
                 x != null &&
                 x.gameObject != null &&
-                x.gameObject.scene.IsValid());
+                x.gameObject.scene.IsValid() &&
+                !UnityEditor.SceneManagement.EditorSceneManager.IsPreviewScene(x.gameObject.scene));
             if (anyCustomBase != null) return anyCustomBase.transform.root.gameObject;
             return null;
         }

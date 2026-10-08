@@ -411,6 +411,29 @@ public class AvatarBaseSourceWorkflowTests
     }
 
     [Test]
+    public void UnityPackageExtractionReadsOnlyThePathnameFirstLine()
+    {
+        string packagePath = CreateUnityPackage(
+            ("dddddddd", "Assets/AvatarC/body.fbx\n00", new byte[] { 7, 8, 9 }),
+            ("eeeeeeee", "Assets/AvatarD/body.fbx\r\n", new byte[] { 1, 2 }));
+        UnityPackageFbxSourceExtractor.ExtractionResult extraction = null;
+        try
+        {
+            extraction = UnityPackageFbxSourceExtractor.ExtractFbxEntries(packagePath);
+            Assert.That(extraction.entries.Select(entry => entry.publishedSourcePath), Is.EquivalentTo(new[]
+            {
+                "Assets/AvatarC/body.fbx",
+                "Assets/AvatarD/body.fbx"
+            }));
+        }
+        finally
+        {
+            extraction?.Dispose();
+            if (File.Exists(packagePath)) File.Delete(packagePath);
+        }
+    }
+
+    [Test]
     public void UnityPackageExtractionRejectsTraversalAndCleansItsSession()
     {
         string packagePath = CreateUnityPackage(

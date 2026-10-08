@@ -83,6 +83,8 @@ public static class MCBMeshDelivery
         MCBDeliveryDecision choice = null;
         long received = 0;
         var started = System.Diagnostics.Stopwatch.StartNew();
+        bool succeeded = false;
+        MCBDownloadTempFiles.Track(destination);
         try
         {
             Directory.CreateDirectory(staging);
@@ -150,6 +152,7 @@ public static class MCBMeshDelivery
             });
             if (recordMeasurements && metrics.downloadedMeshes > 0) MCBPerformance.RecordDownload(choice, received, started.Elapsed.TotalMilliseconds, true);
             MCBLogger.Log($"[MCBMeshReuse] Downloaded {metrics.downloadedMeshes} meshes, reused {metrics.reusedMeshes}; received {metrics.downloadedBytes} bytes, avoided {metrics.reusedBytes} bytes.");
+            succeeded = true;
             return (true, null);
         }
         catch (Exception ex) {
@@ -158,7 +161,11 @@ public static class MCBMeshDelivery
             if (File.Exists(destination)) File.Delete(destination);
             return (false, ex.GetBaseException().Message);
         }
-        finally { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+        finally
+        {
+            if (Directory.Exists(staging)) Directory.Delete(staging, true);
+            MCBDownloadTempFiles.Finish(destination, succeeded);
+        }
     }
 }
 #endif

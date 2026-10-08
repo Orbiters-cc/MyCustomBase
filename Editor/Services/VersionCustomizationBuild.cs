@@ -10,7 +10,11 @@ using UnityEditor.Animations;
 using UnityEngine;
 using VRC.SDKBase.Editor.BuildPipeline;
 
-/// <summary>Capture on the build copy before armature merges; apply after animation and clothing links.</summary>
+/// <summary>
+/// Capture on the build copy before armature merges; lock the modes' values after the correctives and before the clothing
+/// links (which then copy the locked values onto clothing too); apply the rest (re-oriented bones, twists, pruning, physic)
+/// after every animation-adding step.
+/// </summary>
 public static class VersionCustomizationBuild
 {
     private sealed class Property
@@ -31,7 +35,10 @@ public static class VersionCustomizationBuild
         public readonly List<SkinnedMeshRenderer> Base = new List<SkinnedMeshRenderer>();
         // Bones resting in another frame than on the original base model: animations written for that model are turned.
         public Dictionary<Transform, BoneFrameRetarget.Frame> Frames = new Dictionary<Transform, BoneFrameRetarget.Frame>();
-        public bool Applied;
+        // The locked values the avatar's own animations write, right after VRCFury built them: others are added later by
+        // build steps (face tracking, correctives) that the lock then overrides.
+        public HashSet<(string, Type, string)> OwnAnimated;
+        public bool Locked, Applied;
     }
     // Re-exported bone rolls (Ultirex V5.1's toes: 100–180°); pose differences kept by the version stay well below.
     private const float ReorientedAngle = 20f;
@@ -141,9 +148,27 @@ public static class VersionCustomizationBuild
         if (changed > 0) MCBLogger.Log("[MCB] " + changed + " animations follow the custom base's re-oriented bones (" + string.Join(", ", frames.Keys.Where(k => k != null).Select(k => k.name).Take(6)) + (frames.Count > 6 ? "…" : "") + ").");
     }
 
-    public static void Apply(GameObject avatar)
+    /// <summary>Notes which locked values the avatar's own animations write, once VRCFury built them (see <see cref="Lock"/>).</summary>
+    public static void Survey(GameObject avatar)
     {
-        if (!Plans.TryGetValue(avatar, out var plan) || plan.Applied) return;
+        if (!Plans.TryGetValue(avatar, out var plan) || plan.Locked || plan.Properties.Count == 0) return;
+        var locked = new HashSet<(string, Type, string)>(plan.Properties.Where(p => p.Target != null && p.Target.IsChildOf(avatar.transform))
+            .Select(p => (AnimationUtility.CalculateTransformPath(p.Target, avatar.transform), p.Type, p.Name)));
+        plan.OwnAnimated = new HashSet<(string, Type, string)>(Animated(avatar).Where(locked.Contains));
+    }
+
+    private static IEnumerable<(string, Type, string)> Animated(GameObject avatar) =>
+        BlendShapeLinkEngine.CollectBuiltControllers(avatar).SelectMany(c => c.animationClips).Where(c => c != null).Distinct()
+            .SelectMany(AnimationUtility.GetCurveBindings).Select(b => (b.path, b.type, b.propertyName));
+
+    /// <summary>
+    /// Locks the enabled modes' blendshapes and objects: the renderers' weights, no other animation writing them, and a
+    /// constant override layer. Runs before the clothing links (refits, Follow Body Blendshapes, accessories), so they copy
+    /// the locked values onto the clothing shapes too.
+    /// </summary>
+    public static void Lock(GameObject avatar)
+    {
+        if (!Plans.TryGetValue(avatar, out var plan) || plan.Locked) return;
         var properties = new Dictionary<(string, Type, string), float>();
         foreach (var property in plan.Properties)
         {
@@ -161,13 +186,23 @@ public static class VersionCustomizationBuild
             }
         }
         var controllers = BlendShapeLinkEngine.CollectBuiltControllers(avatar).ToArray();
-        if (plan.Frames.Count > 0) Reorient(avatar, controllers, plan.Frames);
+        var overridden = new HashSet<(string, Type, string)>();
         foreach (var clip in controllers.SelectMany(c => c.animationClips).Where(c => c != null).Distinct())
         {
             // Remove all competing writers, including additive layers. A final override writes the fixed values once.
             foreach (var binding in AnimationUtility.GetCurveBindings(clip))
-                if (properties.ContainsKey((binding.path, binding.type, binding.propertyName))) AnimationUtility.SetEditorCurve(clip, binding, null);
+            {
+                var key = (binding.path, binding.type, binding.propertyName);
+                if (!properties.ContainsKey(key)) continue;
+                AnimationUtility.SetEditorCurve(clip, binding, null);
+                if (plan.OwnAnimated != null && !plan.OwnAnimated.Contains(key)) overridden.Add(key);
+            }
         }
+        // Animations other build steps added (My Avatar's face tracking, another tool's layers) lose to the mode: say so.
+        foreach (var key in overridden)
+            Debug.LogWarning("[MCB] The enabled modes keep " + (key.Item2 == typeof(GameObject) ? "object '" + key.Item1 + "' " + (properties[key] > .5f ? "on" : "off")
+                : "blendshape '" + key.Item3.Substring("blendShape.".Length) + "' of '" + key.Item1 + "' at " + properties[key]) +
+                ", which a build step after VRCFury also animates (face tracking or another tool): the mode overrides those animations.", avatar);
         foreach (var controller in controllers.Where(c => properties.Count > 0))
         {
             var clip = new AnimationClip { name = "MCB Modes", hideFlags = HideFlags.HideInHierarchy };
@@ -178,6 +213,14 @@ public static class VersionCustomizationBuild
             var state = machine.AddState("Locked modes"); state.motion = clip; state.writeDefaultValues = false; machine.defaultState = state;
             controller.AddLayer(new AnimatorControllerLayer { name = "MCB Modes", stateMachine = machine, defaultWeight = 1, blendingMode = AnimatorLayerBlendingMode.Override });
         }
+        plan.Locked = true;
+    }
+
+    public static void Apply(GameObject avatar)
+    {
+        if (!Plans.TryGetValue(avatar, out var plan) || plan.Applied) return;
+        Lock(avatar);
+        if (plan.Frames.Count > 0) Reorient(avatar, BlendShapeLinkEngine.CollectBuiltControllers(avatar), plan.Frames);
         // The animations are final from here: the unused blendshapes leave the meshes before the twist and physic copy them.
         TwistBoneService.Generate(avatar, plan.Twists, PruneBlendShapes(avatar, plan));
         // After armature links: clothing merged onto the chains is rebound with the body.
@@ -217,6 +260,30 @@ internal sealed class VersionCustomizationCaptureHook : IVRCSDKPreprocessAvatarC
     }
 }
 
+// Right after VRCFury (-10000) built the avatar's animations, before face tracking (-9010) and the correctives (-9000).
+internal sealed class VersionCustomizationSurveyHook : IVRCSDKPreprocessAvatarCallback
+{
+    public int callbackOrder => -9500;
+    public bool OnPreprocessAvatar(GameObject avatarGameObject)
+    {
+        try { VersionCustomizationBuild.Survey(avatarGameObject); return true; }
+        catch (Exception ex) { Debug.LogException(ex); return false; }
+    }
+}
+
+// After the correctives (-9000), before the clothing links copy body curves: ReFit (-8960), Follow Body Blendshapes
+// (-8950) and accessories (-8900).
+internal sealed class VersionCustomizationLockHook : IVRCSDKPreprocessAvatarCallback
+{
+    public int callbackOrder => -8970;
+    public bool OnPreprocessAvatar(GameObject avatarGameObject)
+    {
+        try { VersionCustomizationBuild.Lock(avatarGameObject); return true; }
+        catch (Exception ex) { Debug.LogException(ex); return false; }
+    }
+}
+
+// After every animation-adding step: pruning must see the final animations.
 internal sealed class VersionCustomizationApplyHook : IVRCSDKPreprocessAvatarCallback
 {
     public int callbackOrder => -8800;

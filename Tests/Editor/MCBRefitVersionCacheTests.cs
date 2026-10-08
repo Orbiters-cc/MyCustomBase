@@ -48,7 +48,7 @@ public class MCBRefitVersionCacheTests
                 AssetDatabase.CreateAsset(fitted, fixture + "/fitted" + i + ".asset");
                 renderer.sharedMesh = fitted;
                 RefitRecords.Register(renderer, originalState, fitted, fixture + "/fitted" + i + ".asset", null, new List<RefitShape>(),
-                    OrbitersRefit.FitKind.Fitted, "b", "B", "MCB");
+                    OrbitersRefit.FitKind.Fitted, MCBReFitIntegration.BaseKey(version), "B", "MCB");
                 renderers.Add(renderer);
                 originals.Add(original);
             }
@@ -70,6 +70,12 @@ public class MCBRefitVersionCacheTests
             Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, version), Is.EqualTo(1));
             Assert.That(renderers[0].sharedMesh, Is.SameAs(saved[0]));
             Assert.That(renderers[1].sharedMesh, Is.SameAs(originals[1]), "Only the removed accessory's fit stops being restored.");
+
+            // Any tool's Restore (My Avatar's, ReFit's) takes the saved fit back too, through the toolkit.
+            RefitRecords.Discard(renderers[0].GetComponent<OrbitersRefit>());
+            Assert.That(renderers[0].sharedMesh, Is.SameAs(originals[0]));
+            MCBReFitIntegration.RestoreOriginalAssetMeshes(mcb);
+            Assert.That(MCBReFitIntegration.RestoreVersionFits(mcb, version), Is.Zero, "A refit undone in My Avatar must not come back with the version.");
         }
         finally
         {
@@ -120,7 +126,7 @@ public class MCBRefitVersionCacheTests
                 AssetDatabase.CreateAsset(fitted, fixture + "/fitted" + i + ".asset");
                 renderer.sharedMesh = fitted;
                 RefitRecords.Register(renderer, originalState, fitted, fixture + "/fitted" + i + ".asset", null, new List<RefitShape>(),
-                    OrbitersRefit.FitKind.Fitted, "b", "B", "MCB");
+                    OrbitersRefit.FitKind.Fitted, MCBReFitIntegration.BaseKey(version), "B", "MCB");
                 renderers.Add(renderer);
                 bones.Add(bone);
                 originals.Add(original);
@@ -201,7 +207,7 @@ public class MCBRefitVersionCacheTests
             renderer.SetBlendShapeWeight(0, 42);
             accessory.transform.localPosition = Vector3.right;
             RefitRecords.Register(renderer, originalState, fitted, fixture + "/fitted.asset", null, new List<RefitShape>(),
-                OrbitersRefit.FitKind.Fitted, "b", "B", "MCB");
+                OrbitersRefit.FitKind.Fitted, MCBReFitIntegration.BaseKey(versionB), "B", "MCB");
             var metadataType = AppDomain.CurrentDomain.GetAssemblies()
                 .Select(a => a.GetType("Orbiters.ReFit.ReFitGeneratedAssetMetadata")).FirstOrDefault(t => t != null);
             if (metadataType != null && RefitEngine.Available)
@@ -242,7 +248,9 @@ public class MCBRefitVersionCacheTests
             renderer.sharedMesh = fitted;
             renderer.SetBlendShapeWeight(0, 80);
             RefitRecords.Register(renderer, originalC, fitted, fixture + "/fitted.asset", null, new List<RefitShape>(),
-                OrbitersRefit.FitKind.Fitted, "c", "C", "My Avatar");
+                OrbitersRefit.FitKind.Fitted, MCBReFitIntegration.BaseKey(versionC), "C", "My Avatar");
+            MCBReFitIntegration.SaveVersionFits(mcb, versionB);
+            Assert.That(renderer.sharedMesh, Is.SameAs(fitted), "A fit for C is never saved as B's (a refit that finished while switching).");
             MCBReFitIntegration.SaveVersionFits(mcb, versionC);
             var savedC = renderer.sharedMesh;
             Assert.That(savedC, Is.Not.SameAs(saved));

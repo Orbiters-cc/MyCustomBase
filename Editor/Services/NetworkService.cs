@@ -2,6 +2,7 @@
 using Orbiters.Toolkit.Editor.Net;
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -181,6 +182,8 @@ public class NetworkService
         string authToken = null)
     {
         int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
+        bool succeeded = false;
+        MCBDownloadTempFiles.Track(destinationPath);
         try
         {
             string directory = Path.GetDirectoryName(destinationPath);
@@ -190,11 +193,11 @@ public class NetworkService
             }
 
             using (var request = await MCBManagedRequest.SendAuthorizedAsync(
-                       target => new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
+                       target => MCBDownloadTempFiles.Attach(destinationPath, new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
                        {
                            downloadHandler = new DownloadHandlerFile(destinationPath),
                            timeout = timeoutSeconds
-                       },
+                       }),
                        url, authToken, MCBRequestPolicy.Backend("Download file"),
                        running =>
                        {
@@ -207,6 +210,7 @@ public class NetworkService
 
                 if (request.result == UnityWebRequest.Result.Success)
                 {
+                    succeeded = true;
                     return (true, null);
                 }
 
@@ -239,6 +243,10 @@ public class NetworkService
              MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download file"));
              MCBLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
              return (false, $"Download exception: {ex.Message}");
+        }
+        finally
+        {
+            MCBDownloadTempFiles.Finish(destinationPath, succeeded);
         }
     }
 
@@ -551,6 +559,143 @@ public class NetworkService
         return response != null && !string.IsNullOrEmpty(response.state) ? response.state : "disconnected";
     }
 
+}
+
+/// <summary>
+/// Version downloads staged in the system temp folder (mcb_dl_*.zip, mcb-mesh-delivery-*, ...). A domain reload ends a
+/// running download, or the work that would have used and deleted its file, without any cleanup: the version's data (plain
+/// meshes unencrypted) would stay in %TEMP%. The files of this editor's downloads are deleted before the reload (or right
+/// after it, while the aborted request still held them), and leftovers of crashed editors are swept on load once a day old.
+/// </summary>
+[InitializeOnLoad]
+public static class MCBDownloadTempFiles
+{
+    private const string PendingSessionKey = "MCB.DownloadTempFiles.Pending";
+    private static readonly TimeSpan StaleAge = TimeSpan.FromDays(1);
+    private static readonly (string prefix, string extension)[] StaleFiles =
+        { ("mcb_dl_", ".zip"), ("mcb_upload_", ".zip"), ("mcb-rekey-", ".fbx"), ("mcb-logic-", ".unitypackage") };
+    private static readonly string[] StagingFolderPrefixes = { "mcb-mesh-delivery-", "mcb-source-support-" };
+    // Tracked files and the request writing each (null once finished): another editor's downloads are never touched.
+    private static readonly System.Collections.Generic.Dictionary<string, UnityWebRequest> Tracked =
+        new System.Collections.Generic.Dictionary<string, UnityWebRequest>(StringComparer.OrdinalIgnoreCase);
+
+    static MCBDownloadTempFiles()
+    {
+        AssemblyReloadEvents.beforeAssemblyReload += DeleteTracked;
+        EditorApplication.delayCall += Sweep;
+    }
+
+    /// <summary>Marks <paramref name="path"/> as a file of a download (or download work) running in this editor.</summary>
+    public static void Track(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        lock (Tracked) Tracked[Path.GetFullPath(path)] = null;
+    }
+
+    internal static UnityWebRequest Attach(string path, UnityWebRequest request)
+    {
+        lock (Tracked) Tracked[Path.GetFullPath(path)] = request;
+        return request;
+    }
+
+    /// <summary>
+    /// The download of <paramref name="path"/> ended. A file in the temp folder stays tracked until a reload, unless its
+    /// caller removed it: the reload would also end the work that reads and deletes it.
+    /// </summary>
+    public static void Finish(string path, bool succeeded)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        string fullPath = Path.GetFullPath(path);
+        lock (Tracked)
+        {
+            if (succeeded && IsInTemp(fullPath)) Tracked[fullPath] = null;
+            else Tracked.Remove(fullPath);
+            foreach (string gone in Tracked.Where(entry => entry.Value == null && !File.Exists(entry.Key)).Select(entry => entry.Key).ToList())
+                Tracked.Remove(gone);
+        }
+    }
+
+    private static void DeleteTracked()
+    {
+        System.Collections.Generic.KeyValuePair<string, UnityWebRequest>[] entries;
+        lock (Tracked)
+        {
+            entries = Tracked.ToArray();
+            Tracked.Clear();
+        }
+
+        var left = new System.Collections.Generic.List<string>();
+        foreach (var entry in entries)
+        {
+            // Aborting releases the file the native download handler still holds open.
+            try
+            {
+                entry.Value?.Abort();
+                entry.Value?.Dispose();
+            }
+            catch (Exception) { }
+            if (!TryDelete(entry.Key)) left.Add(entry.Key);
+        }
+        SessionState.SetString(PendingSessionKey, string.Join("\n", left));
+    }
+
+    private static void Sweep()
+    {
+        string pending = SessionState.GetString(PendingSessionKey, string.Empty);
+        SessionState.EraseString(PendingSessionKey);
+        foreach (string path in pending.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)) TryDelete(path);
+
+        try
+        {
+            string temp = Path.GetTempPath();
+            DateTime staleBefore = DateTime.UtcNow - StaleAge;
+            // One listing of the temp folder, which can be large: every name MCB stages there starts with "mcb".
+            foreach (string entry in Directory.EnumerateFileSystemEntries(temp, "mcb*", SearchOption.TopDirectoryOnly).ToList())
+            {
+                string name = Path.GetFileName(entry);
+                bool ours = File.Exists(entry)
+                    ? StaleFiles.Any(file => name.StartsWith(file.prefix, StringComparison.OrdinalIgnoreCase) && name.EndsWith(file.extension, StringComparison.OrdinalIgnoreCase))
+                    : StagingFolderPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                if (ours && File.GetLastWriteTimeUtc(entry) < staleBefore) TryDelete(entry);
+            }
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+        {
+            MCBLogger.LogWarning($"[NetworkService] Could not sweep stale download files: {ex.Message}");
+        }
+    }
+
+    // The file or folder, and the download's staging folder in the temp folder when it is in one.
+    private static bool TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+            else if (Directory.Exists(path)) Directory.Delete(path, true);
+            string staging = StagingFolderOf(path);
+            if (staging != null && Directory.Exists(staging)) Directory.Delete(staging, true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static string StagingFolderOf(string path)
+    {
+        string temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        for (string folder = Path.GetDirectoryName(Path.GetFullPath(path)); !string.IsNullOrEmpty(folder); folder = Path.GetDirectoryName(folder))
+        {
+            if (!string.Equals(Path.GetDirectoryName(folder), temp, StringComparison.OrdinalIgnoreCase)) continue;
+            string name = Path.GetFileName(folder);
+            return StagingFolderPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ? folder : null;
+        }
+        return null;
+    }
+
+    private static bool IsInTemp(string fullPath) =>
+        fullPath.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase);
 }
 
 public static class EditorAsyncExtensions

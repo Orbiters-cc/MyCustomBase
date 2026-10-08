@@ -71,6 +71,13 @@ public class MaterialService
         "_DetailEnabled"
     };
 
+    // Keywords and toggles that also switch the main normal map on: kept while the material has its own normal map.
+    private static readonly string[] MainNormalFeatures = { "_NORMALMAP", "USE_NORMAL_MAPS" };
+    private static readonly string[] MainNormalTextureProperties = { "_BumpMap", "_NormalMap", "_MainNormalMap" };
+    // Material tag listing the keywords ("kw:") and toggles ("prop:") MCB switched on for custom veins: only those are
+    // switched off again when the veins are removed.
+    internal const string EnabledDetailFeaturesTag = "MCBDetailNormalFeatures";
+
     private static readonly string[] DetailNormalStrengthProperties =
     {
         "_DetailNormalMapScale",
@@ -418,6 +425,12 @@ public class MaterialService
             return false;
         }
 
+        // A detail normal the user or another tool set is not MCB's to remove.
+        if (!HasVersionVeins(material))
+        {
+            return false;
+        }
+
         // Remove the detail normal map by setting it to null
         PrepareMaterialEdit(smr, material, "MCB Remove Detail Normal Map");
         if (!TrySetDetailNormalTexture(material, null))
@@ -586,17 +599,34 @@ public class MaterialService
             return;
         }
 
-        SetDetailNormalKeyword(material, true);
-
-        foreach (var property in DetailNormalToggleProperties)
+        var enabled = new HashSet<string>(ReadEnabledDetailFeatures(material), StringComparer.Ordinal);
+        var keywords = ResolveDetailNormalKeywords(material);
+        if (keywords.Count == 0)
         {
-            if (material.HasProperty(property))
+            MCBLogger.LogError($"[MaterialService] No valid detail normal keyword found in shader '{material.shader?.name}'. Please report this shader for support.");
+        }
+        foreach (var (keyword, name) in keywords)
+        {
+            if (material.IsKeywordEnabled(keyword)) continue;
+            material.SetKeyword(keyword, true);
+            enabled.Add("kw:" + name);
+        }
+
+        foreach (var property in DetailNormalToggleProperties.Distinct())
+        {
+            if (material.HasProperty(property) && material.GetFloat(property) < 0.5f)
             {
                 material.SetFloat(property, 1f);
+                enabled.Add("prop:" + property);
             }
         }
+        material.SetOverrideTag(EnabledDetailFeaturesTag, string.Join(" ", enabled.OrderBy(name => name, StringComparer.Ordinal)));
     }
 
+    /// <summary>
+    /// Switches off what <see cref="EnableDetailNormalFeatures"/> switched on, and nothing else: keywords the material
+    /// already used stay, and so do the main normal map's while it has one.
+    /// </summary>
     private void DisableDetailNormalFeatures(Material material)
     {
         if (material == null)
@@ -604,16 +634,29 @@ public class MaterialService
             return;
         }
 
-        SetDetailNormalKeyword(material, false);
-
-        foreach (var property in DetailNormalToggleProperties)
+        bool hasMainNormalMap = MainNormalTextureProperties.Any(property => material.HasProperty(property) && material.GetTexture(property) != null);
+        var keywords = ResolveDetailNormalKeywords(material);
+        foreach (string feature in ReadEnabledDetailFeatures(material))
         {
-            if (material.HasProperty(property))
+            string name = feature.Substring(feature.IndexOf(':') + 1);
+            if (hasMainNormalMap && MainNormalFeatures.Contains(name)) continue;
+            if (feature.StartsWith("kw:", StringComparison.Ordinal))
             {
-                material.SetFloat(property, 0f);
+                foreach (var (keyword, keywordName) in keywords)
+                    if (keywordName == name) material.SetKeyword(keyword, false);
+            }
+            else if (material.HasProperty(name))
+            {
+                material.SetFloat(name, 0f);
             }
         }
+        material.SetOverrideTag(EnabledDetailFeaturesTag, "");
     }
+
+    private static IEnumerable<string> ReadEnabledDetailFeatures(Material material) =>
+        material.GetTag(EnabledDetailFeaturesTag, false, string.Empty)
+            .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .Where(feature => feature.StartsWith("kw:", StringComparison.Ordinal) || feature.StartsWith("prop:", StringComparison.Ordinal));
 
     private void ApplyDetailNormalOpacity(Material material, float opacity)
     {
@@ -697,79 +740,23 @@ public class MaterialService
         return false;
     }
 
-    private void SetDetailNormalKeyword(Material material, bool enable)
+    // The detail normal keywords the material's shader declares. Checking the declared names first avoids Unity's error logging.
+    private static List<(LocalKeyword keyword, string name)> ResolveDetailNormalKeywords(Material material)
     {
+        var result = new List<(LocalKeyword keyword, string name)>();
         if (material == null || material.shader == null)
         {
-            return;
+            return result;
         }
 
-        var shader = material.shader;
-        var validKeywords = new List<(LocalKeyword keyword, string name)>();
-        bool hasAnyKeyword = false;
-
-        // Get all keyword names from the shader to avoid Unity error logging
-        var shaderKeywordNames = shader.keywordSpace.keywordNames;
-
-        foreach (var candidate in DetailNormalKeywordCandidates)
+        var shaderKeywordNames = material.shader.keywordSpace.keywordNames;
+        foreach (var candidate in DetailNormalKeywordCandidates.Distinct())
         {
-            // Check if keyword exists in shader before constructing LocalKeyword
-            // This avoids Unity's internal error logging
-            bool keywordExists = false;
-            foreach (var keywordName in shaderKeywordNames)
-            {
-                if (keywordName == candidate)
-                {
-                    keywordExists = true;
-                    break;
-                }
-            }
-
-            if (!keywordExists)
-            {
-                continue;
-            }
-
-            // Keyword exists, safe to construct LocalKeyword
-            var localKeyword = new LocalKeyword(shader, candidate);
-            if (localKeyword.isValid)
-            {
-                validKeywords.Add((localKeyword, candidate));
-                hasAnyKeyword = true;
-            }
+            if (!shaderKeywordNames.Contains(candidate)) continue;
+            var localKeyword = new LocalKeyword(material.shader, candidate);
+            if (localKeyword.isValid) result.Add((localKeyword, candidate));
         }
-
-        if (hasAnyKeyword)
-        {
-            foreach (var (keyword, name) in validKeywords)
-            {
-                material.SetKeyword(keyword, enable);
-            }
-        }
-        else if (enable)
-        {
-            // Only log error when trying to enable and no valid keyword was found
-            MCBLogger.LogError($"[MaterialService] No valid detail normal keyword found in shader '{shader.name}'. Please report this shader for support.");
-        }
-
-#pragma warning disable CS0618
-        foreach (var candidate in DetailNormalKeywordCandidates)
-        {
-            if (enable && validKeywords.Any(vk => vk.name == candidate))
-            {
-                continue;
-            }
-
-            try
-            {
-                material.DisableKeyword(candidate);
-            }
-            catch
-            {
-                // Expected - keyword doesn't exist, ignore
-            }
-        }
-#pragma warning restore CS0618
+        return result;
     }
     private void PrepareMaterialEdit(SkinnedMeshRenderer smr, Material material, string undoLabel)
     {

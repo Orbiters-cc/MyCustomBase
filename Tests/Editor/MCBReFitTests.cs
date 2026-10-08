@@ -125,6 +125,30 @@ public sealed class MCBReFitTests
         Assert.That(controller.parameters.Select(p => p.name), Does.Contain("ExistingFactor"));
     }
 
+    // Every ResolveOriginal of a replaced FBX shares one temporary import: it stays until its last user is done.
+    [Test]
+    public void TheTemporaryOriginalImportStaysUntilItsLastUserIsDone()
+    {
+        string folder = "Assets/MCB-OriginalImportTest-" + Guid.NewGuid().ToString("N");
+        AssetDatabase.CreateFolder("Assets", folder.Substring("Assets/".Length));
+        try
+        {
+            CustomBaseOriginal Use()
+            {
+                MCBReFitIntegration.AcquireOriginalImport(folder);
+                return new CustomBaseOriginal { Cleanup = () => MCBReFitIntegration.ReleaseOriginalImport(folder) };
+            }
+            var placement = Use();
+            var refit = Use();
+            refit.Dispose();
+            refit.Dispose();
+            Assert.That(AssetDatabase.IsValidFolder(folder), Is.True, "The line-up still shows the original body.");
+            placement.Dispose();
+            Assert.That(AssetDatabase.IsValidFolder(folder), Is.False, "The last user removes the import.");
+        }
+        finally { AssetDatabase.DeleteAsset(folder); }
+    }
+
     private SkinnedMeshRenderer AddRenderer(string name, Mesh mesh)
     {
         var go = new GameObject(name);

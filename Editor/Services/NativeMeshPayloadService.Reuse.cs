@@ -52,10 +52,28 @@ public static partial class NativeMeshPayloadService
 
     internal static bool IsSharedMeshForVersion(string path, CustomBaseVersion version)
     {
-        if (string.IsNullOrEmpty(path) || !path.StartsWith(GeneratedFolder + "/", StringComparison.Ordinal)
-            || !path.Contains("/shared-")) return false;
+        if (SharedPayloadKey(path) == null) return false;
         return version == null || (version.versionFiles ?? Array.Empty<ModelFileData>()).Any(p =>
-            IsAdvancedMeshPatchTransform(p?.transform) && GetGeneratedPayloadPath(version, p, GetPayloadIdentity(p)) == path);
+            IsAdvancedMeshPatchTransform(p?.transform) && IsGeneratedPayloadPath(path, version, p));
+    }
+
+    // Shared payloads are cached per Unity version; a mesh applied under another editor version is still the same payload.
+    internal static bool IsGeneratedPayloadPath(string meshPath, CustomBaseVersion version, ModelFileData patch)
+    {
+        if (string.IsNullOrEmpty(meshPath)) return false;
+        string expected = GetGeneratedPayloadPath(version, patch, GetPayloadIdentity(patch));
+        if (meshPath == expected) return true;
+        string key = SharedPayloadKey(meshPath);
+        return key != null && key == SharedPayloadKey(expected);
+    }
+
+    // "<generated>/<assetId>/shared-<unity version>/<content hash>.asset" without its Unity version, else null.
+    static string SharedPayloadKey(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !path.StartsWith(GeneratedFolder + "/", StringComparison.Ordinal)) return null;
+        string[] parts = path.Substring(GeneratedFolder.Length + 1).Split('/');
+        if (parts.Length != 3 || !parts[1].StartsWith("shared-", StringComparison.Ordinal)) return null;
+        return parts[0] + "/" + parts[2];
     }
 
     internal static CustomBaseVersion ResolveAppliedMeshVersionFromPaths(IEnumerable<string> meshPaths,
@@ -79,19 +97,27 @@ public static partial class NativeMeshPayloadService
         return persisted ?? (matches.Length == 1 ? matches[0] : null);
     }
 
-    static GeneratedPayloadStorageInfo DeleteUnreferencedGeneratedPayloads()
+    /// <summary>
+    /// Deletes the generated payloads and humanoid Avatars under <paramref name="folder"/> (those <paramref name="include"/>
+    /// accepts) that nothing uses any more. Saved assets, unsaved/open avatars and the version switches Undo can still go
+    /// back to all own references.
+    /// </summary>
+    static GeneratedPayloadStorageInfo DeleteUnreferencedGeneratedPayloads(string folder = GeneratedFolder, Func<string, bool> include = null)
     {
-        if (!AssetDatabase.IsValidFolder(GeneratedFolder)) return new GeneratedPayloadStorageInfo(0, 0, 0);
-        // Saved assets and unsaved/open avatars both own references. Never remove their meshes.
+        if (!AssetDatabase.IsValidFolder(folder)) return new GeneratedPayloadStorageInfo(0, 0, 0);
+        var loaded = CollectLoadedGeneratedAssets();
+        var candidates = AssetDatabase.FindAssets("t:NativeMeshPayloadAsset", new[] { folder })
+            .Concat(AssetDatabase.FindAssets("t:Avatar", new[] { folder }))
+            .Select(AssetDatabase.GUIDToAssetPath).Distinct(StringComparer.Ordinal)
+            .Where(path => !loaded.Contains(path) && (include == null || include(path))).ToList();
+        long bytes = 0; int assets = 0, files = 0;
+        // Searching every project asset for references is slow: only when something may be deleted.
+        if (candidates.Count == 0) return new GeneratedPayloadStorageInfo(0, 0, 0);
         var owners = AssetDatabase.GetAllAssetPaths().Where(p =>
             p.StartsWith("Assets/", StringComparison.Ordinal) && !p.StartsWith(GeneratedFolder + "/", StringComparison.Ordinal)
             && (p.EndsWith(".unity") || p.EndsWith(".prefab") || p.EndsWith(".asset"))).ToArray();
         var retained = new HashSet<string>(AssetDatabase.GetDependencies(owners, true), StringComparer.Ordinal);
-        foreach (var renderer in Resources.FindObjectsOfTypeAll<SkinnedMeshRenderer>())
-            if (renderer.sharedMesh != null) retained.Add(AssetDatabase.GetAssetPath(renderer.sharedMesh));
-        long bytes = 0; int assets = 0, files = 0;
-        foreach (string guid in AssetDatabase.FindAssets("t:NativeMeshPayloadAsset", new[] { GeneratedFolder })) {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
+        foreach (string path in candidates) {
             if (retained.Contains(path)) continue;
             long size = File.Exists(path) ? new FileInfo(path).Length : 0;
             bool hasMeta = File.Exists(path + ".meta");
@@ -99,6 +125,37 @@ public static partial class NativeMeshPayloadService
             if (AssetDatabase.DeleteAsset(path)) { bytes += size; assets++; files += hasMeta ? 2 : 1; }
         }
         return new GeneratedPayloadStorageInfo(bytes, assets, files);
+    }
+
+    // Generated assets open objects (unsaved avatars included) or a version switch Undo/Redo still use.
+    static HashSet<string> CollectLoadedGeneratedAssets()
+    {
+        var loaded = new HashSet<string>(VersionSwitchFileUndo.RetainedAssets(), StringComparer.Ordinal);
+        foreach (var renderer in Resources.FindObjectsOfTypeAll<SkinnedMeshRenderer>())
+            if (renderer.sharedMesh != null) loaded.Add(AssetDatabase.GetAssetPath(renderer.sharedMesh));
+        foreach (var animator in Resources.FindObjectsOfTypeAll<Animator>())
+            if (animator.avatar != null) loaded.Add(AssetDatabase.GetAssetPath(animator.avatar));
+        return loaded;
+    }
+
+    /// <summary>Deletes the generated assets of <paramref name="version"/> nothing uses any more, its shared payloads included.</summary>
+    internal static GeneratedPayloadStorageInfo DeleteUnreferencedPayloadsOfVersion(CustomBaseVersion version)
+    {
+        string versionFolder = GetGeneratedPayloadVersionFolder(version);
+        if (versionFolder == null) return new GeneratedPayloadStorageInfo(0, 0, 0);
+        string assetFolder = MCBUtils.CombineUnityPath(GeneratedFolder, version.assetId.ToString());
+        var deleted = DeleteUnreferencedGeneratedPayloads(assetFolder, path =>
+        {
+            // A humanoid Avatar belongs to the payload it was generated from ("<payload>.humanoid-<key>.asset").
+            int humanoid = path.IndexOf(".humanoid-", StringComparison.Ordinal);
+            string payloadPath = humanoid >= 0 ? path.Substring(0, humanoid) + ".asset" : path;
+            return payloadPath.StartsWith(versionFolder + "/", StringComparison.Ordinal) || IsSharedMeshForVersion(payloadPath, version);
+        });
+        string fullPath = GetGeneratedPayloadFullPath(versionFolder);
+        if (Directory.Exists(fullPath) && !Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories).Any())
+            DeleteGeneratedPayloadFolder(versionFolder);
+        PruneEmptyGeneratedPayloadAssetFolder(version);
+        return deleted;
     }
 }
 #endif

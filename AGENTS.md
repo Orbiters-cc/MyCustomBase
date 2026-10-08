@@ -71,6 +71,10 @@
 - Applies:
   - version-based links
   - manual links
+- Version customization hooks (`Editor/Services/VersionCustomizationBuild.cs`): capture at `-10105`, note at `-9500`
+  which locked mode values the avatar's own animations write, lock modes at `-8970` (after the correctives, before
+  ReFit/Follow Body/attachment links copy body curves onto clothing, so clothing follows the locked values), then
+  re-orient, prune unused blendshapes, twist and physic at `-8800` (after every step that adds animations).
 
 ### Animator Mutation Strategy
 - MCB plans, Toolkit rewrites:
@@ -146,7 +150,9 @@
 - Build-time links cover every transferred shape, with the recorded source/generated pairs (renamed outputs too):
   `RefitBuild` captures at -10110 and links at -8960, after `BlendShapeLinkPostVrcfuryHook` (-9000), so curves the
   correctives add are copied. Do not add VRCFury Blendshape Link components or a second animation-rewrite system.
-- Version switching: `SaveVersionFits` keeps every applied record of the avatar per version (mesh copied into the version
+- Version switching waits while any tool's refit runs (`MCBReFitIntegration.IsRefitRunning`). Taking a fit back in any
+  tool goes through `RefitRecords.Discard`, which also disables the fit MCB saved for the version.
+- Version switching: `SaveVersionFits` keeps every applied record made for that version (matching base key, or none) (mesh copied into the version
   folder, `MCBRefitVersionSnapshot`), `RestoreOriginalAssetMeshes` restores and removes them, `RestoreVersionFits` puts
   back those saved for the applied version on renderers still using the original or saved mesh.
 - Verify link behavior with Toolkit's `RefitBuildTests` (actual animation sampling, exact bindings, authoring-asset
