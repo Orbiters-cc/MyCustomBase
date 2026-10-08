@@ -39,6 +39,8 @@ REQUIRED_COMPRESSION_FILES = (
     "Editor/Plugins/Compression/ZSTD-LICENSE.txt",
 )
 ALLOWED_EXTERNAL_ASMDEF_REFERENCES = {
+    # MCP for Unity: only MCB.MCP.Editor uses it, compiled when that package is installed (MCB_MCP version define).
+    "MCPForUnity.Editor",
     "Orbiters.Toolkit",
     "Orbiters.Toolkit.VRChat",
     "Orbiters.Toolkit.Editor",
