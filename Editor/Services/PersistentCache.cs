@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 using Newtonsoft.Json;
@@ -94,6 +95,32 @@ public class VersionCacheEntry
         this.accountKey = accountKey;
     }
 
+    /// <summary>
+    /// A copy that shares nothing with this entry: the cache never hands out or keeps the lists and versions an inspector
+    /// clears or a delivery manifest rewrites.
+    /// </summary>
+    public VersionCacheEntry Copy()
+    {
+        var versions = CopyVersions(serverVersions);
+        return new VersionCacheEntry
+        {
+            sourceVersionKey = sourceVersionKey,
+            baseFbxHash = baseFbxHash,
+            assetId = assetId,
+            serverVersions = versions,
+            recommendedVersion = recommendedVersion == null ? null : versions.FirstOrDefault(v => v != null && v.Equals(recommendedVersion)) ?? CopyVersion(recommendedVersion),
+            cacheTime = cacheTime,
+            accountKey = accountKey
+        };
+    }
+
+    internal static List<CustomBaseVersion> CopyVersions(List<CustomBaseVersion> versions) => versions == null
+        ? new List<CustomBaseVersion>()
+        : JsonConvert.DeserializeObject<List<CustomBaseVersion>>(JsonConvert.SerializeObject(versions)) ?? new List<CustomBaseVersion>();
+
+    private static CustomBaseVersion CopyVersion(CustomBaseVersion version) =>
+        JsonConvert.DeserializeObject<CustomBaseVersion>(JsonConvert.SerializeObject(version));
+
     public bool IsValid(string currentBaseFbxHash, string currentAccountKey, int currentAssetId, TimeSpan maxAge)
     {
         return baseFbxHash == currentBaseFbxHash &&
@@ -135,6 +162,10 @@ public class PersistentCache
     private PersistentCacheData cacheData;
     private string cacheFilePath; 
     private readonly object cacheLock = new object();
+    // The latest snapshot waiting for the writer thread, and whether one is running.
+    private readonly object writeLock = new object();
+    private string pendingJson;
+    private bool writing;
 
     private PersistentCache()
     {
@@ -207,14 +238,47 @@ public class PersistentCache
             return BitConverter.ToString(hmac.ComputeHash(Encoding.UTF8.GetBytes(authToken))).Replace("-", "").ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Snapshots the cache on the calling thread (its entries are private copies, so nothing changes them meanwhile) and
+    /// writes the latest snapshot on a worker thread; snapshots taken while one is written are coalesced.
+    /// </summary>
     private void SaveCache()
     {
+        string json;
         lock (cacheLock)
         {
+            json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
+        }
+
+        lock (writeLock)
+        {
+            pendingJson = json;
+            if (writing) return;
+            writing = true;
+        }
+        Task.Run(WritePendingSnapshots);
+    }
+
+    private void WritePendingSnapshots()
+    {
+        while (true)
+        {
+            string json;
+            lock (writeLock)
+            {
+                json = pendingJson;
+                pendingJson = null;
+                if (json == null)
+                {
+                    writing = false;
+                    return;
+                }
+            }
+
             try
             {
-                string json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
-                string tempPath = cacheFilePath + ".tmp";
+                // One temporary file per editor process: another editor may save the same cache at the same time.
+                string tempPath = cacheFilePath + "." + System.Diagnostics.Process.GetCurrentProcess().Id + ".tmp";
                 File.WriteAllText(tempPath, json);
 
                 if (File.Exists(cacheFilePath))
@@ -225,8 +289,6 @@ public class PersistentCache
                 {
                     File.Move(tempPath, cacheFilePath);
                 }
-
-                MCBLogger.Log($"[PersistentCache] Saved cache with {cacheData.hashCache.Count} hash entries and {cacheData.versionCache.Count} version entries.");
             }
             catch (Exception ex)
             {
@@ -317,7 +379,7 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
                     if (cacheEntry.IsValid(baseFbxHash, accountKey, assetId, VERSION_CACHE_MAX_AGE))
                     {
                         MCBLogger.Log($"[PersistentCache] Version cache hit for hash: {baseFbxHash}");
-                        return cacheEntry;
+                        return cacheEntry.Copy();
                     }
 
                     cacheData.versionCache.Remove(cacheKey);
@@ -358,7 +420,7 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
                     if (fallbackEntry.IsValid(baseFbxHash, fallbackEntry.accountKey, assetId, VERSION_CACHE_MAX_AGE))
                     {
                         MCBLogger.Log($"[PersistentCache] Version cache fallback hit without auth token for hash: {baseFbxHash}");
-                        return fallbackEntry;
+                        return fallbackEntry.Copy();
                     }
 
                     cacheData.versionCache.Remove(fallbackKey);
@@ -377,7 +439,8 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
 
         string accountKey = AccountKey(authToken);
         string cacheKey = VersionCacheKey(baseFbxHash, accountKey, assetId, sourceVersionKey);
-        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, accountKey, assetId) { sourceVersionKey = sourceVersionKey };
+        // The cache keeps its own copies: callers go on using, clearing and rewriting theirs.
+        var cacheEntry = new VersionCacheEntry(baseFbxHash, serverVersions, recommendedVersion, accountKey, assetId) { sourceVersionKey = sourceVersionKey }.Copy();
         
         lock (cacheLock)
         {
@@ -386,6 +449,21 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         MCBLogger.Log($"[PersistentCache] Cached {serverVersions?.Count ?? 0} versions for hash: {baseFbxHash}");
         
         SaveCache();
+    }
+
+    /// <summary>Forgets the versions cached for this account and selection (its access to the asset was denied).</summary>
+    public void RemoveCachedVersions(string baseFbxHash, string authToken, int assetId, string sourceVersionKey = null)
+    {
+        if (string.IsNullOrEmpty(baseFbxHash) || string.IsNullOrEmpty(authToken))
+            return;
+
+        string cacheKey = VersionCacheKey(baseFbxHash, AccountKey(authToken), assetId, sourceVersionKey);
+        bool removed;
+        lock (cacheLock)
+        {
+            removed = cacheData.versionCache.Remove(cacheKey);
+        }
+        if (removed) SaveCache();
     }
 
     private static string VersionCacheKey(string baseFbxHash, string accountKey, int assetId, string sourceVersionKey) =>

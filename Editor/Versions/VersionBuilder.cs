@@ -37,10 +37,11 @@ public static class VersionBuilder
         string formSignature,
         OriginalBaseVersionData[] originalVersions = null,
         string sourceVersionKey = null,
-        VersionCustomization customization = null)
+        VersionCustomization customization = null,
+        IEnumerable<string> originalModelPaths = null)
     {
         VersionArtifact result = null;
-        MCBWork.Drain(BuildCoroutine(value => result = value, fileManagerService, assetId, versionString, defaultAviVersion, packageEntries, logicPrefab, includeCustomVeins, customVeinsTexture, includeDynamicNormalsBody, includeDynamicNormalsFlexing, additionalAnimationAssetPaths, metadataFactory, formSignature, originalVersions, sourceVersionKey, customization));
+        MCBWork.Drain(BuildCoroutine(value => result = value, fileManagerService, assetId, versionString, defaultAviVersion, packageEntries, logicPrefab, includeCustomVeins, customVeinsTexture, includeDynamicNormalsBody, includeDynamicNormalsFlexing, additionalAnimationAssetPaths, metadataFactory, formSignature, originalVersions, sourceVersionKey, customization, originalModelPaths));
         return result;
     }
 
@@ -61,7 +62,9 @@ public static class VersionBuilder
         string formSignature,
         OriginalBaseVersionData[] originalVersions = null,
         string sourceVersionKey = null,
-        VersionCustomization customization = null)
+        VersionCustomization customization = null,
+        // The avatar's original base models: kept out of the logic package with what they use (FileManagerService).
+        IEnumerable<string> originalModelPaths = null)
     {
         if (fileManagerService == null) throw new ArgumentNullException(nameof(fileManagerService));
         if (metadataFactory == null) throw new ArgumentNullException(nameof(metadataFactory));
@@ -95,7 +98,8 @@ public static class VersionBuilder
                 includeDynamicNormalsBody,
                 includeDynamicNormalsFlexing,
                 animationPaths,
-                customization?.dynamicNormalBlendshapes);
+                customization?.dynamicNormalBlendshapes,
+                originalModelPaths);
             Mark("Package model and logic");
 
             var metadata = metadataFactory();

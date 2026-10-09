@@ -22,7 +22,6 @@ REQUIRED_USS_FILES = (
 )
 REQUIRED_HDIFF_FILES = (
     "Editor/Plugins/Hdiff/THIRD_PARTY_NOTICES.md",
-    "Editor/Plugins/Hdiff/hdiffinfo.dll",
     "Editor/Plugins/Hdiff/hdiffz.dll",
     "Editor/Plugins/Hdiff/hpatchz.dll",
 )

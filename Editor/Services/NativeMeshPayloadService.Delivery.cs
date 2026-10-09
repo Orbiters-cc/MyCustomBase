@@ -60,7 +60,12 @@ public static partial class NativeMeshPayloadService
         var encoding = System.Threading.Tasks.Task.Run(() => EncodeDeliveryVariants(plain, key, outputPath, rendererCount, metrics));
         while (!encoding.IsCompleted) yield return null;
         var result = encoding.GetAwaiter().GetResult();
-        foreach (var variant in result.variants) MCBMeshDelivery.StoreVerifiedBlob(variant, Path.Combine(Path.GetDirectoryName(outputPath), variant.path));
+        // Hashing and copying the blobs into the shared cache (which prunes them once unused) stays off the main thread.
+        var storing = System.Threading.Tasks.Task.Run(() => {
+            foreach (var variant in result.variants) MCBMeshDelivery.StoreVerifiedBlob(variant, Path.Combine(Path.GetDirectoryName(outputPath), variant.path));
+        });
+        while (!storing.IsCompleted) yield return null;
+        storing.GetAwaiter().GetResult();
         completed(result);
     }
 

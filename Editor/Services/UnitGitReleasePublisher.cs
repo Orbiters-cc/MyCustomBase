@@ -155,7 +155,10 @@ public static class UnitGitReleasePublisher
             object entry = api.CreateReleaseEntry();
             api.SetReleaseEntryValue(entry, "tool", "MCB");
             api.SetReleaseEntryValue(entry, "type", "mcb-version");
-            api.SetReleaseEntryValue(entry, "name", string.IsNullOrWhiteSpace(assetName) ? "MCB Asset" : assetName.Trim());
+            // Named after the published version's asset; an unknown name still identifies that asset, never another one.
+            string releaseName = !string.IsNullOrWhiteSpace(assetName) ? assetName.Trim()
+                : version != null && version.assetId > 0 ? "MCB Asset " + version.assetId : "MCB Asset";
+            api.SetReleaseEntryValue(entry, "name", releaseName);
             api.SetReleaseEntryValue(entry, "version", version?.version ?? string.Empty);
             api.SetReleaseEntryValue(entry, "title", version?.title ?? string.Empty);
             api.SetReleaseEntryValue(entry, "changelog", version?.changelog ?? string.Empty);

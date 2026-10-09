@@ -1,5 +1,20 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.5 — 2026-10-09
+
+- The account row and its sign-in buttons are Orbiters Toolkit's (`OrbitersAccountElement`), as in My Avatar: MCB's own
+  account and sign-in modules are gone. Signing out still asks first. The sign-in buttons now show in the account row
+  under the banner instead of a card above the gallery. MCB still reads the signed-in creator's details (whether Orbiters
+  trusts them, for a new custom base's protection settings).
+- Source FBX files are taken from a `.unitypackage` through Orbiters Toolkit's `UnityPackageReader`, the one reader every
+  Orbiters tool shares: the package's structure is checked as strictly as before an import (tar checksums, record names,
+  one GUID per path), and each FBX is hashed while it is extracted instead of being read again afterwards.
+- The server address comes only from Orbiters Toolkit: `MCBUtils`' unused `SERVER_BASE_URL`, `API_BASE_URL`,
+  `TOKEN_ENDPOINT` and its own copy of the development switch's key are gone.
+- The bone position offsets find the avatar's MCB component with the blendshape links' lookup instead of a copy of it;
+  the unused `BlendShapeLinkService.ApplyVersionLinks` is gone.
+- Requires Orbiters Toolkit 0.3.19.
+
 ## 1.12.4 — 2026-10-08
 
 - Fix avatars placed under another object in the scene (an "Avatars" folder object) losing their armature and meshes on

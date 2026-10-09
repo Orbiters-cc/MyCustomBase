@@ -112,7 +112,11 @@ public partial class AssetGalleryModule
     private Texture2D createThumbnail;
     private Texture2D createBanner;
     private bool isEditingSelectedAssetMedia;
-    private bool isSavingSelectedAssetMedia;
+    // Every media edit gets a new number and a save belongs to the edit it started in: an earlier upload that finishes
+    // after the user left (or started another edit) never clears the newer edit or its "Saving..." state.
+    private int selectedAssetMediaEdit = 1;
+    private int savingSelectedAssetMediaEdit;
+    private bool isSavingSelectedAssetMedia => savingSelectedAssetMediaEdit != 0 && savingSelectedAssetMediaEdit == selectedAssetMediaEdit;
     private string selectedAssetMediaEditError;
     private Texture2D editThumbnail;
     private Texture2D editBanner;

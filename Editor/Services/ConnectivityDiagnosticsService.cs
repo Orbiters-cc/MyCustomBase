@@ -57,7 +57,8 @@ public enum MCBRequestFailureScope
     BackendResource,
     ExternalResource,
     LocalOnly,
-    Diagnostics
+    Diagnostics,
+    Transfer
 }
 
 public sealed class MCBRequestPolicy
@@ -113,6 +114,19 @@ public sealed class MCBRequestPolicy
         {
             context = context,
             failureScope = MCBRequestFailureScope.Diagnostics
+        };
+    }
+
+    /// <summary>
+    /// A large download: any answer proves the server reachable, but a dropped, stalled or refused transfer never takes MCB
+    /// offline by itself. The caller retries and reports a server it could never reach.
+    /// </summary>
+    public static MCBRequestPolicy Transfer(string context)
+    {
+        return new MCBRequestPolicy
+        {
+            context = context,
+            failureScope = MCBRequestFailureScope.Transfer
         };
     }
 }
@@ -470,6 +484,15 @@ public static partial class MCBConnectivityMonitor
             return;
         }
 
+        if (policy.failureScope == MCBRequestFailureScope.Transfer)
+        {
+            if (request != null && request.responseCode > 0)
+            {
+                MarkServerReachable();
+            }
+            return;
+        }
+
         bool success = IsUnityWebRequestSuccess(request);
         if (policy.failureScope == MCBRequestFailureScope.Backend)
         {
@@ -525,7 +548,7 @@ public static partial class MCBConnectivityMonitor
         }
 
         long statusCode = (long)response.StatusCode;
-        if (policy.failureScope == MCBRequestFailureScope.Backend)
+        if (policy.failureScope == MCBRequestFailureScope.Backend || policy.failureScope == MCBRequestFailureScope.Transfer)
         {
             MarkServerReachable();
             return;
@@ -563,7 +586,8 @@ public static partial class MCBConnectivityMonitor
         }
 
         policy = policy ?? MCBRequestPolicy.Backend(null);
-        if (policy.failureScope == MCBRequestFailureScope.Diagnostics || policy.failureScope == MCBRequestFailureScope.LocalOnly)
+        if (policy.failureScope == MCBRequestFailureScope.Diagnostics || policy.failureScope == MCBRequestFailureScope.LocalOnly ||
+            policy.failureScope == MCBRequestFailureScope.Transfer)
         {
             return;
         }

@@ -201,7 +201,7 @@ public class VersionActions
         if (string.IsNullOrEmpty(editor.currentBaseFbxHash))
         {
             MCBLogger.LogWarning("[VersionActions] Version fetch aborted because currentBaseFbxHash is empty.");
-            editor.serverVersions.Clear();
+            editor.serverVersions = new System.Collections.Generic.List<CustomBaseVersion>();
             UpdateAppliedVersionAndState(); // This will clear the applied state
             editor.isFetching = false;
             editor.Repaint();
@@ -212,7 +212,7 @@ public class VersionActions
         if (selectedAsset == null)
         {
             MCBLogger.Log("[VersionActions] Version fetch skipped because no asset is selected in the gallery.");
-            editor.serverVersions.Clear();
+            editor.serverVersions = new System.Collections.Generic.List<CustomBaseVersion>();
             editor.recommendedVersion = null;
             editor.isFetching = false;
             editor.Repaint();
@@ -251,13 +251,14 @@ public class VersionActions
         }
         else
         {
-            // Handle access denied specially (error encoded as ACCESS_DENIED:{assetId})
-            if (!string.IsNullOrEmpty(error) && error.StartsWith("ACCESS_DENIED:"))
+            // No access (403 ACCESS_DENIED): the version list shows the store link instead of an error, and nothing cached.
+            if (!string.IsNullOrEmpty(error) && error.StartsWith(NetworkService.AccessDeniedPrefix, StringComparison.Ordinal))
             {
-                editor.accessDeniedAssetId = error.Substring("ACCESS_DENIED:".Length);
+                editor.accessDeniedAssetId = error.Substring(NetworkService.AccessDeniedPrefix.Length);
                 editor.warningsModule.Clear(); // Do not show generic error box
-                editor.serverVersions.Clear();
+                editor.serverVersions = new System.Collections.Generic.List<CustomBaseVersion>();
                 editor.recommendedVersion = null;
+                PersistentCache.Instance.RemoveCachedVersions(requestedBaseHash, requestedToken, requestedAssetId, requestedSourceVersionKey);
             }
             else
             {
@@ -343,38 +344,11 @@ public class VersionActions
         string advancedMeshPipelineDecision = null;
         if (advancedMeshApply && version.meshDelivery != 1)
         {
-            var sizeTask = delivery != null
-                ? Task.FromResult((success: true, contentLength: delivery.packageBytes, error: (string)null))
-                : networkService.GetDownloadContentLengthAsync(url, requestedToken);
-            while (!sizeTask.IsCompleted)
-            {
-                if (applyAfter)
-                {
-                    ReportApplyProgress(DownloadApplyProgressStart, "Preparing download...");
-                }
-                yield return null;
-            }
-
-            try
-            {
-                var sizeResult = sizeTask.Result;
-                string memoryDecision;
-                if (sizeResult.success)
-                {
-                    useInMemoryPackage = CanUseInMemoryVersionPackage(sizeResult.contentLength, out memoryDecision);
-                }
-                else
-                {
-                    memoryDecision = $"using disk because ZIP size metadata failed: {sizeResult.error}";
-                }
-                advancedMeshPipelineDecision = memoryDecision;
-                MCBLogger.Log($"[VersionActions] Advanced mesh RAM download decision: {memoryDecision}");
-            }
-            catch (Exception ex)
-            {
-                advancedMeshPipelineDecision = $"using disk because RAM download path evaluation failed: {ex.GetBaseException().Message}";
-                MCBLogger.LogWarning($"[VersionActions] Could not evaluate RAM download path. Falling back to disk. {ex.GetBaseException().Message}");
-            }
+            // The package size comes with the version's delivery variants. Without them the download goes to disk: probing
+            // the model URL would redirect to signed storage (which refuses HEAD) and count as a download.
+            if (delivery != null) useInMemoryPackage = CanUseInMemoryVersionPackage(delivery.packageBytes, out advancedMeshPipelineDecision);
+            else advancedMeshPipelineDecision = "using disk because the version does not list its package size.";
+            MCBLogger.Log($"[VersionActions] Advanced mesh RAM download decision: {advancedMeshPipelineDecision}");
         }
         
         // --- Setup phase (no yield returns) ---
@@ -455,6 +429,9 @@ public class VersionActions
             yield return null;
         }
         
+        // The speed sample covers the transfer only, not the checks and extraction below.
+        double downloadMilliseconds = (EditorApplication.timeSinceStartup - downloadStartedAt) * 1000;
+
         // --- Process result and cleanup ---
         bool success;
         string error;
@@ -513,8 +490,7 @@ public class VersionActions
             }
         }
         bool extractionSucceeded = false;
-        if (version.meshDelivery != 1) MCBPerformance.RecordDownload(deliveryDecision, (long)downloadedBytes,
-            (EditorApplication.timeSinceStartup - downloadStartedAt) * 1000, success);
+        if (version.meshDelivery != 1) MCBPerformance.RecordDownload(deliveryDecision, (long)downloadedBytes, downloadMilliseconds, success);
         string tempExtractPath = null;
         
         try

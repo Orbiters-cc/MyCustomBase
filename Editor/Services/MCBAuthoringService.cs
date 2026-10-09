@@ -120,25 +120,31 @@ public static class MCBAuthoringService
     public static IEnumerator Build(MyCustomBase owner, Action<VersionArtifact> complete)
     {
         var draft = JsonConvert.DeserializeObject<Draft>(owner.creatorAuthoringDraftJson ?? "null") ?? throw new InvalidOperationException("Configure an authoring draft first.");
+        // One build or publish at a time across MCP and every creator window (each editor only knows its own isSubmitting).
+        using var operation = VersionOperationGuard.Acquire("building version " + draft.version);
         using var session = new Session(owner); var editor = session.Editor;
         if (editor.isSubmitting) throw new InvalidOperationException("This avatar already has an active operation.");
         var previousAsset = editor.GetSelectedAsset();
-        editor.SetCreatorWindowAsset(draft.asset); editor.serializedObject.Update();
-        // Build exactly the saved draft: an open creator form may have loaded another version's settings meanwhile, and
-        // opening the editor detects the scene avatar's own models, which differ from the draft's when a version is applied.
-        var (sources, customs) = Models(draft);
-        Undo.RecordObject(owner, "Build MCB authoring draft");
-        UseModels(owner, sources, customs);
-        owner.creatorCustomization = draft.customization.Clone();
-        owner.useAdvancedMeshReplacementForCreator = draft.advancedMesh;
-        owner.customBlendshapesForCreator = draft.blendshapes;
-        var veins = string.IsNullOrWhiteSpace(draft.customVeins) ? null : AssetDatabase.LoadAssetAtPath<Texture2D>(draft.customVeins);
-        owner.includeCustomVeinsForCreator = veins != null; owner.customVeinsNormalMap = veins;
-        owner.includeSuggestRealisticForCreator = draft.suggestRealistic.Count > 0; owner.suggestRealisticMeshPathsForCreator = draft.suggestRealistic.ToList();
-        editor.serializedObject.Update();
-        editor.creatorModule.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
         editor.isSubmitting = true;
-        try { yield return editor.creatorModule.BuildNewVersionCoroutine(complete); }
+        try
+        {
+            editor.SetCreatorWindowAsset(draft.asset); editor.serializedObject.Update();
+            // Build exactly the saved draft: an open creator form may have loaded another version's settings meanwhile, and
+            // opening the editor detects the scene avatar's own models, which differ from the draft's when a version is applied.
+            var (sources, customs) = Models(draft);
+            Undo.RecordObject(owner, "Build MCB authoring draft");
+            UseModels(owner, sources, customs);
+            owner.creatorCustomization = draft.customization.Clone();
+            owner.useAdvancedMeshReplacementForCreator = draft.advancedMesh;
+            owner.customBlendshapesForCreator = draft.blendshapes;
+            var veins = string.IsNullOrWhiteSpace(draft.customVeins) ? null : AssetDatabase.LoadAssetAtPath<Texture2D>(draft.customVeins);
+            owner.includeCustomVeinsForCreator = veins != null; owner.customVeinsNormalMap = veins;
+            owner.includeSuggestRealisticForCreator = draft.suggestRealistic.Count > 0; owner.suggestRealisticMeshPathsForCreator = draft.suggestRealistic.ToList();
+            editor.serializedObject.Update();
+            editor.creatorModule.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
+            yield return editor.creatorModule.BuildNewVersionCoroutine(complete, operation);
+        }
+        // The window's asset is restored whatever failed, including a draft model that no longer loads.
         finally { editor.isSubmitting = false; EditorUtility.ClearProgressBar(); editor.SetCreatorWindowAsset(previousAsset); }
     }
 
@@ -162,8 +168,13 @@ public static class MCBAuthoringService
     {
         using var session = new Session(owner);
         bool published = false;
-        yield return VersionPublisher.PublishCoroutine(session.Editor, new NetworkService(), new FileManagerService(), version, () => published = true, interactive: false);
-        if (!published) throw new InvalidOperationException(session.Editor.submitError ?? "Publication did not finish.");
+        // The release checkpoint names the published asset: the draft's when it is this version's asset.
+        var draft = string.IsNullOrWhiteSpace(owner.creatorAuthoringDraftJson) ? null : JsonConvert.DeserializeObject<Draft>(owner.creatorAuthoringDraftJson);
+        string assetName = draft?.asset != null && draft.asset.id == version.assetId ? draft.asset.name : null;
+        yield return VersionPublisher.PublishCoroutine(session.Editor, new NetworkService(), new FileManagerService(), version, () => published = true,
+            interactive: false, assetName: assetName);
+        if (!published) throw new InvalidOperationException(string.IsNullOrWhiteSpace(session.Editor.submitError)
+            ? "Publication did not finish. Inspect MCB warnings and the Console." : session.Editor.submitError);
         complete();
     }
 
@@ -252,8 +263,9 @@ public static class MCBAuthoringService
             var linking = OriginalBaseSupportService.Register(registration.existingAssetId, session.Editor.authToken, requested);
             while (!linking.IsCompleted) yield return null;
             var versions = linking.GetAwaiter().GetResult();
-            var sources = versions.SelectMany(v => v.sourceFiles).Where(f => registration.sourceFiles.Any(s => s.hash == f.hash && string.Equals(s.path, f.path, StringComparison.OrdinalIgnoreCase))).ToArray();
-            if (sources.Length != registration.sourceFiles.Length) throw new InvalidDataException("Linked asset returned incomplete original-source bindings.");
+            // Originals can share files: bind one source per requested file.
+            var sources = CustomBaseSourceSetupTransaction.SelectRequestedSources(versions.SelectMany(v => v.sourceFiles), registration.sourceFiles,
+                OriginalBaseLibrary.Key(registration.sourceFiles));
             BindSources(owner, registration, sources);
             int.TryParse(AuthenticationService.GetAuth()?.user, out int ownerId);
             complete(new AvatarDiscoveredAsset { id = registration.existingAssetId, name = existing.Value<string>("name"), ownerId = ownerId,
@@ -273,9 +285,8 @@ public static class MCBAuthoringService
         var result = JsonConvert.DeserializeObject<CreateCustomBaseAssetResponse>(request.downloadHandler.text)?.asset;
         if (result == null || result.id <= 0) throw new InvalidOperationException("Registration returned no asset.");
         // An idempotent retry can return all registered original versions. Bind only the requested scene's originals.
-        var sceneSources = (result.sourceFiles ?? Array.Empty<ModelFileData>()).Where(f => registration.sourceFiles.Any(s =>
-            string.Equals(s.path, f.path, StringComparison.OrdinalIgnoreCase) && s.hash == f.hash)).ToArray();
-        if (sceneSources.Length != registration.sourceFiles.Length) throw new InvalidOperationException("Registration did not return the requested original-source bindings.");
+        var sceneSources = CustomBaseSourceSetupTransaction.SelectRequestedSources(result.sourceFiles, registration.sourceFiles,
+            OriginalBaseLibrary.Key(registration.sourceFiles));
         BindSources(owner, registration, sceneSources);
         int.TryParse(AuthenticationService.GetAuth()?.user, out int authenticatedUserId);
         complete(new AvatarDiscoveredAsset { id = result.id, name = result.name, ownerId = result.ownerId ?? authenticatedUserId,

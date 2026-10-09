@@ -42,12 +42,10 @@ public class MCBEditor : UnityEditor.Editor
 
     // --- Services and Modules ---
     private NetworkService networkService;
-    private AuthenticationModule authModule;
     public VersionManagementModule versionModule;
     public CreatorModeModule creatorModule;
     private AssetGalleryModule assetGalleryModule;
     private AdvancedModeModule advancedModule;
-    private AccountModule accountModule;
     private DependencyInstallerModule dependencyInstallerModule;
     private AvatarOptionsModule avatarOptionsModule;
     private AdjustMaterialModule adjustMaterialModule;
@@ -57,10 +55,8 @@ public class MCBEditor : UnityEditor.Editor
     private OrbitersGlowSurfaceElement chromeSurfaceHost;
     private VisualElement headerHost;
     private VisualElement bannerHost;
-    private VisualElement accountHost;
     private VisualElement dependencyHost;
     private VisualElement connectivityHost;
-    private VisualElement authHost;
     private VisualElement statusHost;
     private VisualElement galleryHost;
     private VisualElement selectedAssetActionsHost;
@@ -85,7 +81,8 @@ public class MCBEditor : UnityEditor.Editor
     public bool isAuthenticated;
     public string authToken;
     public bool fetchAttempted;
-    public bool isFetching, isDownloading, isDeleting, isSubmitting, isApplying;
+    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these.
+    [NonSerialized] public bool isFetching, isDownloading, isDeleting, isSubmitting, isApplying;
     public string fetchError, submitError;
     public string accessDeniedAssetId;
     public string currentBaseFbxHash;
@@ -110,6 +107,7 @@ public class MCBEditor : UnityEditor.Editor
     private bool initialBackgroundRefreshStarted;
     private bool lastConnectivityBlocked;
     private bool connectivityRecoveryScheduled;
+    private bool projectRefreshPending;
 
     // Runtime state for detection
     public string currentAppliedFbxHash;
@@ -163,13 +161,10 @@ public class MCBEditor : UnityEditor.Editor
         networkService = new NetworkService();
         var fileManagerService = new FileManagerService();
         
-        authModule = new AuthenticationModule(this);
         versionModule = new VersionManagementModule(this, networkService, fileManagerService);
         creatorModule = new CreatorModeModule(this);
         assetGalleryModule = new AssetGalleryModule(this);
         advancedModule = new AdvancedModeModule(this);
-        accountModule = new AccountModule(this, networkService);
-        accountModule.Initialize();
         dependencyInstallerModule = new DependencyInstallerModule(this);
         dependencyInstallerModule.Initialize();
         avatarOptionsModule = new AvatarOptionsModule(this);
@@ -202,8 +197,8 @@ public class MCBEditor : UnityEditor.Editor
         
         // Subscribe to play mode state changes
         EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
-        EditorApplication.projectChanged += OnProjectChanged;
-        EditorApplication.hierarchyChanged += OnHierarchyChanged;
+        LiveEditors.Add(this);
+        HookProjectChanges();
 
         PlayPendingComponentAddedMeshEffect();
     }
@@ -216,8 +211,6 @@ public class MCBEditor : UnityEditor.Editor
         AuthenticationService.Changed -= SyncAuthentication;
         OrbitersEnvironment.Changed -= SyncAuthentication;
         asyncInitializationScheduled = false;
-        accountModule?.DetachUIToolkit();
-        authModule?.DetachUIToolkit();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
         creatorModule?.DetachUIToolkit();
@@ -230,10 +223,8 @@ public class MCBEditor : UnityEditor.Editor
         chromeSurfaceHost = null;
         headerHost = null;
         bannerHost = null;
-        accountHost = null;
         dependencyHost = null;
         connectivityHost = null;
-        authHost = null;
         statusHost = null;
         galleryHost = null;
         selectedAssetActionsHost = null;
@@ -257,8 +248,7 @@ public class MCBEditor : UnityEditor.Editor
         {
             warningsModule.Changed -= OnWarningsChanged;
         }
-        EditorApplication.projectChanged -= OnProjectChanged;
-        EditorApplication.hierarchyChanged -= OnHierarchyChanged;
+        LiveEditors.Remove(this);
     }
 
     public override VisualElement CreateInspectorGUI()
@@ -276,16 +266,15 @@ public class MCBEditor : UnityEditor.Editor
         stage.AddToClassList("mcb-header__stage");
         shell.Header.Add(stage);
         bannerHost = shell.Banner;
-        accountHost = shell.Account;
+        // The shared Orbiters account row (sign-in buttons when signed out), as in My Avatar.
+        shell.Account.Add(new OrbitersAccountElement("mcb/check-connection", _ => SyncAuthentication(),
+            "Connect your Orbiters account to publish and download your bases.", confirmLogout: true));
 
         dependencyHost = new VisualElement();
         uiToolkitRoot.Add(dependencyHost);
 
         connectivityHost = new VisualElement();
         uiToolkitRoot.Add(connectivityHost);
-
-        authHost = new VisualElement();
-        uiToolkitRoot.Add(authHost);
 
         galleryHost = new VisualElement();
         uiToolkitRoot.Add(galleryHost);
@@ -323,8 +312,6 @@ public class MCBEditor : UnityEditor.Editor
         bottomBarImGuiContainer.AddToClassList("mcb-imgui-statusbar");
         uiToolkitRoot.Add(bottomBarImGuiContainer);
 
-        accountModule?.AttachUIToolkit(accountHost);
-        authModule?.AttachUIToolkit(authHost);
         dependencyInstallerModule?.AttachUIToolkit(dependencyHost);
         assetGalleryModule?.AttachUIToolkit(galleryHost, selectedAssetActionsHost, commentsHost);
         creatorModule?.AttachUIToolkit(creatorHost);
@@ -333,6 +320,8 @@ public class MCBEditor : UnityEditor.Editor
         RefreshUiToolkitSections();
         OrderUiToolkitLayers();
         dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(3000);
+        // Shown again (an inactive docked tab selected): catch up with the project changes made while hidden.
+        uiToolkitRoot.RegisterCallback<AttachToPanelEvent>(_ => { if (projectRefreshPending) uiToolkitRoot?.schedule.Execute(RefreshPendingEditors); });
 
         return uiToolkitRoot;
     }
@@ -349,8 +338,6 @@ public class MCBEditor : UnityEditor.Editor
         try
         {
             DrawVectorBannerUIToolkit();
-            accountModule?.RefreshUIToolkit();
-            authModule?.RefreshUIToolkit();
             dependencyInstallerModule?.RefreshUIToolkit();
             RefreshConnectivityDiagnosticsUIToolkit();
             assetGalleryModule?.RefreshUIToolkit();
@@ -384,7 +371,6 @@ public class MCBEditor : UnityEditor.Editor
         headerHost?.BringToFront();
         dependencyHost?.BringToFront();
         connectivityHost?.BringToFront();
-        authHost?.BringToFront();
         galleryHost?.BringToFront();
         selectedAssetActionsHost?.BringToFront();
         statusHost?.BringToFront();
@@ -405,7 +391,6 @@ public class MCBEditor : UnityEditor.Editor
         {
             connectivityHost.style.display = blocked || connectivityHost.childCount == 0 ? DisplayStyle.None : DisplayStyle.Flex;
         }
-        if (authHost != null && blocked) authHost.style.display = DisplayStyle.None;
         if (galleryHost != null) galleryHost.style.display = contentDisplay;
         if (selectedAssetActionsHost != null) selectedAssetActionsHost.style.display = contentDisplay;
         if (statusHost != null && blocked) statusHost.style.display = DisplayStyle.None;
@@ -701,25 +686,121 @@ public class MCBEditor : UnityEditor.Editor
         avatarOptionsModule?.OnPlayModeStateChanged(state);
     }
 
-    private void OnProjectChanged()
+    // --- Project and hierarchy changes. Each inspector (inactive docked tabs too) used to rescan the versions folder and
+    // refresh its gallery on every asset refresh, which an avatar build does dozens of times. The shared work now runs once
+    // for all of them, after the refreshes settle and never while Unity compiles, imports, builds or enters play mode;
+    // inspectors not shown catch up when they are shown again. ---
+    private const double ProjectChangeSettleSeconds = 0.75d;
+    private static readonly List<MCBEditor> LiveEditors = new List<MCBEditor>();
+    private static bool projectChangeHooked, projectChangePending, versionsChangedPending;
+    private static double projectChangedAt;
+
+    private static void HookProjectChanges()
     {
-        InvalidateDetectedAvatarFbxCache(true);
-        SmrPathService.InvalidateCache();
-        LoadImportedVersions(true);
-        if (!ShouldDeferBackgroundNetworkRefresh())
+        if (projectChangeHooked) return;
+        projectChangeHooked = true;
+        EditorApplication.projectChanged += ScheduleProjectChange;
+        EditorApplication.hierarchyChanged += OnHierarchyChanged;
+    }
+
+    /// <summary>Asset paths an import changed: imported versions are only scanned again when their folder changed.</summary>
+    internal static void NoteChangedAssets(params string[][] pathGroups)
+    {
+        bool versionsChanged = pathGroups.Any(paths => paths != null && paths.Any(IsInVersionsFolder));
+        if (!versionsChanged) return;
+        // Without an inspector the next one to open scans again.
+        if (LiveEditors.Count == 0) VersionRepository.InvalidateCache();
+        else
         {
-            assetGalleryModule?.OnProjectChanged();
+            versionsChangedPending = true;
+            ScheduleProjectChange();
+        }
+    }
+
+    internal static bool IsInVersionsFolder(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        string folder = MCBUtils.ASSET_VERSIONS_FOLDER;
+        path = path.Replace('\\', '/').TrimEnd('/');
+        return path.Equals(folder, StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase) ||
+               folder.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ScheduleProjectChange()
+    {
+        projectChangedAt = EditorApplication.timeSinceStartup;
+        if (projectChangePending) return;
+        projectChangePending = true;
+        EditorApplication.update += RunSettledProjectChange;
+    }
+
+    private static void RunSettledProjectChange()
+    {
+        if (EditorApplication.timeSinceStartup - projectChangedAt < ProjectChangeSettleSeconds || ShouldDeferBackgroundNetworkRefresh() ||
+            (EditorApplication.isPlayingOrWillChangePlaymode && !EditorApplication.isPlaying))
+        {
+            return;
         }
 
+        EditorApplication.update -= RunSettledProjectChange;
+        projectChangePending = false;
+        bool versionsChanged = versionsChangedPending;
+        versionsChangedPending = false;
+        LiveEditors.RemoveAll(editor => editor == null);
+        if (LiveEditors.Count == 0)
+        {
+            if (versionsChanged) VersionRepository.InvalidateCache();
+            return;
+        }
+
+        SmrPathService.InvalidateCache();
+        SharedDetectedAvatarFbxPathCache.Clear();
+        if (versionsChanged) VersionRepository.Scan(true);
+        foreach (var editor in LiveEditors.ToArray())
+        {
+            editor.InvalidateDetectedAvatarFbxCache();
+            if (versionsChanged) editor.LoadImportedVersions();
+            editor.projectRefreshPending = true;
+        }
+        RefreshPendingEditors();
+    }
+
+    // Shown inspectors refresh now; busy ones once their download, apply or build ends (the gallery must not reset its
+    // selection meanwhile); hidden ones when they are shown again.
+    private static void RefreshPendingEditors()
+    {
+        EditorApplication.update -= RefreshPendingEditors;
+        bool waiting = false;
+        foreach (var editor in LiveEditors.ToArray())
+        {
+            if (editor == null || !editor.projectRefreshPending || !editor.IsShown) continue;
+            if (editor.isDownloading || editor.isApplying || editor.isSubmitting || editor.isDeleting || ShouldDeferBackgroundNetworkRefresh()) waiting = true;
+            else editor.RefreshAfterProjectChange();
+        }
+        if (waiting) EditorApplication.update += RefreshPendingEditors;
+    }
+
+    // An inspector's UI is in a panel while it is shown (not in an inactive docked tab); a creator window shows its own.
+    private bool IsShown => uiToolkitRoot?.panel != null || creatorWindowAsset != null;
+
+    private void RefreshAfterProjectChange()
+    {
+        projectRefreshPending = false;
+        assetGalleryModule?.OnProjectChanged();
         dependencyInstallerModule?.RefreshUIToolkit();
         ApplyDependencyBlockerState();
         Repaint();
     }
 
-    private void OnHierarchyChanged()
+    private static void OnHierarchyChanged()
     {
-        InvalidateDetectedAvatarFbxCache(true);
         SmrPathService.InvalidateCache();
+        SharedDetectedAvatarFbxPathCache.Clear();
+        foreach (var editor in LiveEditors)
+        {
+            if (editor != null) editor.InvalidateDetectedAvatarFbxCache();
+        }
     }
 
     internal bool CanStartBackgroundRefreshes
@@ -830,7 +911,8 @@ public class MCBEditor : UnityEditor.Editor
             return;
         }
 
-        serverVersions = versions;
+        // Every inspector of this selection hears the same list: each keeps its own, which it may clear.
+        serverVersions = new List<CustomBaseVersion>(versions ?? new List<CustomBaseVersion>());
         recommendedVersion = recommended;
         fetchError = null; // Clear any previous errors
         accessDeniedAssetId = null; // Clear special access state on success
@@ -862,7 +944,7 @@ public class MCBEditor : UnityEditor.Editor
         var selectedAsset = GetSelectedAsset();
         if (selectedAsset == null)
         {
-            serverVersions.Clear();
+            serverVersions = new List<CustomBaseVersion>();
             recommendedVersion = null;
             return;
         }
@@ -906,6 +988,18 @@ public class MCBEditor : UnityEditor.Editor
     {
         if (!IsCurrentVersionRequest(request))
         {
+            return;
+        }
+
+        if (error != null && error.StartsWith(NetworkService.AccessDeniedPrefix, StringComparison.Ordinal))
+        {
+            // No access: the version list shows the store link, never versions cached while the member had access.
+            accessDeniedAssetId = error.Substring(NetworkService.AccessDeniedPrefix.Length);
+            serverVersions = new List<CustomBaseVersion>();
+            recommendedVersion = null;
+            fetchError = null;
+            RefreshUiToolkitSections();
+            Repaint();
             return;
         }
 
@@ -1292,9 +1386,17 @@ public class MCBEditor : UnityEditor.Editor
             fetchError = null;
         }
         if (isAuthenticated) MCBPackageVersionService.EnsureCheckStarted(authToken);
-        accountModule?.Refresh();
+        RequestSignedInUserInfo(auth);
         assetGalleryModule?.OnAuthenticationChanged();
         RefreshUiToolkitSections();
+    }
+
+    // The account row is Orbiters Toolkit's; MCB still reads the signed-in creator's details from its user cache (whether
+    // Orbiters trusts them decides the protection settings a new custom base offers).
+    private void RequestSignedInUserInfo(AuthenticationService.AuthData auth)
+    {
+        if (string.IsNullOrEmpty(auth?.token) || !int.TryParse(auth.user, out int userId) || UserService.IsUserInfoAvailable(userId)) return;
+        UserService.RequestUserInfo(userId, auth.token, RefreshUiToolkitSections);
     }
 
     public void ReloadVersionsAndBanners()
@@ -1310,7 +1412,7 @@ public class MCBEditor : UnityEditor.Editor
         
         try
         {
-            accountModule?.Refresh();
+            RequestSignedInUserInfo(AuthenticationService.GetAuth());
         }
         catch (Exception ex)
         {
@@ -1855,5 +1957,11 @@ public class MCBEditor : UnityEditor.Editor
         RefreshUiToolkitSections();
         Repaint();
     }
+}
+/// <summary>Reports which assets an import changed to the MCB inspectors (only the versions folder matters to them).</summary>
+internal sealed class MCBProjectChangePostprocessor : AssetPostprocessor
+{
+    private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths) =>
+        MCBEditor.NoteChangedAssets(importedAssets, deletedAssets, movedAssets, movedFromAssetPaths);
 }
 #endif

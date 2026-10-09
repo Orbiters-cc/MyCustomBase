@@ -86,7 +86,15 @@ public class VersionCustomizationTests
         finally { Undo.RevertAllDownToGroup(group); AssetDatabase.DeleteAsset(path); }
     }
     private T Own<T>(T value) where T : Object { owned.Add(value); return value; }
-    [TearDown] public void Cleanup() { foreach (var obj in owned.AsEnumerable().Reverse()) if (obj != null) Object.DestroyImmediate(obj); owned.Clear(); }
+    private TestUndoSandbox sandbox;
+    [SetUp] public void BeginSandbox() => sandbox = TestUndoSandbox.Begin();
+    // One TearDown: NUnit runs several in no set order, and the sandbox reverts the test's Undo steps after the cleanup.
+    [TearDown] public void Cleanup()
+    {
+        foreach (var obj in owned.AsEnumerable().Reverse()) if (obj != null) Object.DestroyImmediate(obj); owned.Clear();
+        foreach (string path in clips) AssetDatabase.DeleteAsset(path); clips.Clear();
+        sandbox.End();
+    }
 
     [Test] public void TypedEntriesRoundTripWithoutLosingOtherKeysOrSharingMutableState()
     {
@@ -263,7 +271,6 @@ public class VersionCustomizationTests
         return (root, owner, renderer, physics, ears);
     }
     private readonly List<string> clips = new List<string>();
-    [TearDown] public void DeleteClips() { foreach (string path in clips) AssetDatabase.DeleteAsset(path); clips.Clear(); }
 
     [Test] public void TwistSplitsWeightsForBodyAndClothingWithDifferentBoneArraysAndKeepsSources()
     {

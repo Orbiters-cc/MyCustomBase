@@ -66,6 +66,8 @@ public static class MCBAuthoringTool
                 } : MCBAuthoringService.Inspect(MCBAuthoringService.Target(p.target_id)));
             if (active != null) throw new InvalidOperationException("An MCB authoring operation is running: " + active.Id);
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlayingOrWillChangePlaymode) throw new InvalidOperationException("Wait for Unity to be idle in edit mode.");
+            // A creator window may be building or publishing: fail now and keep the publish approval for a retry.
+            if ((p.action == "build" || p.action == "confirm_publish") && VersionOperationGuard.IsBusy) throw new InvalidOperationException(VersionOperationGuard.BusyMessage);
             if (p.action == "import_fbx") return Start(p.action, done => MCBAuthoringService.ImportFbx(p.source_path, p.destination_path, path => done(new { path })));
             var target = MCBAuthoringService.Target(p.target_id);
             switch (p.action)

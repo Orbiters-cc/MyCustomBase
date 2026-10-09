@@ -256,7 +256,9 @@ public partial class BlendShapeLinkService
                && string.Equals(a.fixedBy, b.fixedBy, StringComparison.Ordinal);
     }
 
-    private static MyCustomBase FindCustomBase(GameObject avatarRoot)
+    // The avatar's MCB component, also on a build copy whose editor-only components are gone (by its root's name).
+    // Shared with the bone position offsets, which run in the same build hook.
+    internal static MyCustomBase FindCustomBase(GameObject avatarRoot)
     {
         if (avatarRoot == null) return null;
 

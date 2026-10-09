@@ -318,7 +318,6 @@ internal static class MCBHdiffPatchTrust
 #if UNITY_EDITOR_WIN
     private const string HdiffzSha256 = "11493E1D8947E6DA3CCA4A6C4D03AD55DC973D8766CEB25ECCDCA4811B8C0235";
     private const string HpatchzSha256 = "DBCD3320D0889CA894F1C404097A0B73918E13771A3902BC7F7CB99EAD47400E";
-    private const string HdiffinfoSha256 = "28A2785870938EE45F98D5BBE6CFD0F0689980BCF3FFCE703E777FCBD5F51294";
 
     internal static string EnsureTrustedCopy(string projectPath, string libraryDir, string fileName)
     {
@@ -409,8 +408,6 @@ internal static class MCBHdiffPatchTrust
                 return HdiffzSha256;
             case "hpatchz.dll":
                 return HpatchzSha256;
-            case "hdiffinfo.dll":
-                return HdiffinfoSha256;
             default:
                 return null;
         }
@@ -528,25 +525,15 @@ internal static class MCBHdiffPatchWrapper
         IntPtr diffFileName,
         IntPtr outNewPath);
 
-    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Ansi)]
-    private delegate int HDiffGetInfoNative(
-        IntPtr diffFileName,
-        out ulong oldSize,
-        out ulong newSize,
-        StringBuilder compressType,
-        int compressTypeCap);
-
     private static bool s_dllsLoaded;
     private static IntPtr s_hdiffzHandle = IntPtr.Zero;
     private static IntPtr s_hpatchzHandle = IntPtr.Zero;
-    private static IntPtr s_hdiffinfoHandle = IntPtr.Zero;
     private static RegisterDelegateHdiffzNative s_registerDelegateHdiffz;
     private static RegisterDelegateHdiffzNative s_registerErrorDelegateHdiffz;
     private static HDiffUnityNative s_hdiffUnity;
     private static RegisterDelegateHpatchzNative s_registerDelegateHpatchz;
     private static RegisterErrorDelegateHpatchzNative s_registerErrorDelegateHpatchz;
     private static HPatchUnityNative s_hpatchUnity;
-    private static HDiffGetInfoNative s_hdiffGetInfo;
     private static Action<string> s_hdiffLogCallback;
     private static Action<string> s_hdiffErrorCallback;
     private static Action<string> s_hpatchLogCallback;
@@ -565,12 +552,18 @@ internal static class MCBHdiffPatchWrapper
     private const long InMemoryBudgetBytes = 3L * 1024 * 1024 * 1024;
 #endif
 
+    // CreateDiff always writes single compressed patches ("-SD"): "HDIFFSF20&<compress type>\0", then the new and old sizes
+    // as HDiffPatch packed uints. hdiffinfo.dll's hdiff_get_info only reads the "HDIFF13" compressed layout and returned 3
+    // for every patch MCB wrote, so the header is read here instead.
+    private const string SingleCompressedDiffType = "HDIFFSF20";
+    // HDiffPatch's hpatch_kMaxPluginTypeLength.
+    private const int MaxHeaderStringLength = 259;
+
     public static void EnsureAvailable()
     {
 #if UNITY_EDITOR_WIN
         EnsureDllsLoaded();
         EnsurePatchExportsLoaded();
-        EnsureDiffInfoExportLoaded();
 #else
         throw new PlatformNotSupportedException("HDiff FBX deltas require the Windows Editor native HDiffPatch DLLs.");
 #endif
@@ -648,30 +641,98 @@ internal static class MCBHdiffPatchWrapper
 #endif
     }
 
+    /// <summary>Reads the old and new sizes and the compression type from the header of a patch CreateDiff wrote.</summary>
     public static bool TryGetDiffInfo(string hdiffPath, out ulong oldSize, out ulong newSize, out string compressType)
     {
         oldSize = 0;
         newSize = 0;
         compressType = string.Empty;
-#if UNITY_EDITOR_WIN
-        EnsureDiffInfoExportLoaded();
-
-        var sb = new StringBuilder(260);
-        int result;
-        using (var strings = new NativeUtf8Strings())
-        {
-            result = s_hdiffGetInfo(strings.Add(hdiffPath), out oldSize, out newSize, sb, sb.Capacity);
-        }
-        if (result != 0)
+        if (string.IsNullOrWhiteSpace(hdiffPath) || !File.Exists(hdiffPath))
         {
             return false;
         }
 
-        compressType = sb.ToString();
-        return true;
-#else
+        try
+        {
+            using (var stream = new FileStream(hdiffPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                if (!TryReadHeaderString(stream, (byte)'&', out string diffType) ||
+                    !string.Equals(diffType, SingleCompressedDiffType, StringComparison.Ordinal) ||
+                    !TryReadHeaderString(stream, 0, out string type) ||
+                    !TryReadPackedUInt(stream, out ulong newBytes) ||
+                    !TryReadPackedUInt(stream, out ulong oldBytes))
+                {
+                    return false;
+                }
+
+                oldSize = oldBytes;
+                newSize = newBytes;
+                compressType = type;
+                return true;
+            }
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadHeaderString(Stream stream, byte terminator, out string value)
+    {
+        value = null;
+        var bytes = new System.Collections.Generic.List<byte>();
+        while (bytes.Count <= MaxHeaderStringLength)
+        {
+            int next = stream.ReadByte();
+            if (next < 0)
+            {
+                return false;
+            }
+
+            if (next == terminator)
+            {
+                value = Encoding.ASCII.GetString(bytes.ToArray());
+                return true;
+            }
+
+            bytes.Add((byte)next);
+        }
+
         return false;
-#endif
+    }
+
+    // HDiffPatch's hpatch_unpackUInt: big-endian groups of 7 bits, the high bit of each byte marking that another follows.
+    private static bool TryReadPackedUInt(Stream stream, out ulong value)
+    {
+        value = 0;
+        int next = stream.ReadByte();
+        if (next < 0)
+        {
+            return false;
+        }
+
+        value = (ulong)(next & 0x7f);
+        while ((next & 0x80) != 0)
+        {
+            if ((value >> (64 - 7)) != 0)
+            {
+                return false;
+            }
+
+            next = stream.ReadByte();
+            if (next < 0)
+            {
+                return false;
+            }
+
+            value = (value << 7) | (byte)(next & 0x7f);
+        }
+
+        return true;
     }
 
     public static void FreeDlls()
@@ -691,19 +752,12 @@ internal static class MCBHdiffPatchWrapper
                 s_hpatchzHandle = IntPtr.Zero;
             }
 
-            if (s_hdiffinfoHandle != IntPtr.Zero)
-            {
-                FreeLibrary(s_hdiffinfoHandle);
-                s_hdiffinfoHandle = IntPtr.Zero;
-            }
-
             s_registerDelegateHdiffz = null;
             s_registerErrorDelegateHdiffz = null;
             s_hdiffUnity = null;
             s_registerDelegateHpatchz = null;
             s_registerErrorDelegateHpatchz = null;
             s_hpatchUnity = null;
-            s_hdiffGetInfo = null;
             s_dllsLoaded = false;
         }
         catch (Exception ex)
@@ -718,8 +772,7 @@ internal static class MCBHdiffPatchWrapper
     {
         if (s_dllsLoaded &&
             s_hdiffzHandle != IntPtr.Zero &&
-            s_hpatchzHandle != IntPtr.Zero &&
-            s_hdiffinfoHandle != IntPtr.Zero)
+            s_hpatchzHandle != IntPtr.Zero)
         {
             return;
         }
@@ -728,7 +781,6 @@ internal static class MCBHdiffPatchWrapper
         string libraryDir = Path.Combine(projectPath, "Library", "MCB", "Hdiff");
         string hdiffzPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hdiffz.dll");
         string hpatchzPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hpatchz.dll");
-        string hdiffinfoPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hdiffinfo.dll");
 
         if (s_hdiffzHandle == IntPtr.Zero)
         {
@@ -738,11 +790,6 @@ internal static class MCBHdiffPatchWrapper
         if (s_hpatchzHandle == IntPtr.Zero)
         {
             s_hpatchzHandle = LoadNativeLibrary(hpatchzPath);
-        }
-
-        if (s_hdiffinfoHandle == IntPtr.Zero)
-        {
-            s_hdiffinfoHandle = LoadNativeLibrary(hdiffinfoPath);
         }
 
         BindRuntimeExports();
@@ -798,11 +845,6 @@ internal static class MCBHdiffPatchWrapper
         {
             s_hpatchUnity = GetRequiredExport<HPatchUnityNative>(s_hpatchzHandle, "hpatch_unity");
         }
-
-        if (s_hdiffGetInfo == null)
-        {
-            s_hdiffGetInfo = GetRequiredExport<HDiffGetInfoNative>(s_hdiffinfoHandle, "hdiff_get_info");
-        }
     }
 
     private static T GetRequiredExport<T>(IntPtr moduleHandle, string exportName) where T : class
@@ -829,16 +871,6 @@ internal static class MCBHdiffPatchWrapper
         if (s_registerDelegateHpatchz == null || s_registerErrorDelegateHpatchz == null || s_hpatchUnity == null)
         {
             throw new InvalidOperationException("hpatchz exports are not available.");
-        }
-    }
-
-    private static void EnsureDiffInfoExportLoaded()
-    {
-        EnsureDllsLoaded();
-
-        if (s_hdiffGetInfo == null)
-        {
-            throw new InvalidOperationException("hdiffinfo exports are not available.");
         }
     }
 

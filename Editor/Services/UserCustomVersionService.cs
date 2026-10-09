@@ -11,7 +11,7 @@ public class UserCustomVersionEntry
 {
     public string detectionDate; // e.g. 2025-11-16_2022
     public string appliedUserAviHash; // hash of the currently applied FBX when detected
-    public string ownerId; // from AuthenticationModule.GetAuth()
+    public string ownerId; // the signed-in user (AuthenticationService.GetAuth())
     public string backupFbxPath; // Unity path to the copied custom FBX
     public string appliedAvatarAsset; // Unity path to the avatar asset applied to this FBX
 }

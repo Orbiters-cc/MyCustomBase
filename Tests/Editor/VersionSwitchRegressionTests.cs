@@ -18,16 +18,27 @@ using Object = UnityEngine.Object;
 public sealed class VersionSwitchRegressionTests
 {
     private readonly List<string> tempPaths = new List<string>();
+    private TestUndoSandbox sandbox;
+
+    [SetUp]
+    public void SetUp() => sandbox = TestUndoSandbox.Begin();
 
     [TearDown]
     public void TearDown()
     {
-        foreach (string path in tempPaths)
+        try
         {
-            if (Directory.Exists(path)) Directory.Delete(path, true);
-            else if (File.Exists(path)) File.Delete(path);
+            foreach (string path in tempPaths)
+            {
+                if (Directory.Exists(path)) Directory.Delete(path, true);
+                else if (File.Exists(path)) File.Delete(path);
+            }
         }
-        tempPaths.Clear();
+        finally
+        {
+            tempPaths.Clear();
+            sandbox.End();
+        }
     }
 
     // ---- MCB-01: code in downloaded versions
@@ -116,7 +127,7 @@ public sealed class VersionSwitchRegressionTests
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
             type.GetMethod("Commit").Invoke(snapshot, null);
 
-            Undo.PerformUndo();
+            sandbox.PerformUndo();
             Assert.AreEqual("version A", File.ReadAllText(path));
             Assert.AreEqual(meta, File.ReadAllText(path + ".meta"));
             Undo.PerformRedo();
@@ -154,10 +165,11 @@ public sealed class VersionSwitchRegressionTests
                 type.GetMethod("Commit").Invoke(snapshot, null);
             }
 
-            for (int i = 0; i < 5; i++) Undo.PerformUndo();
+            // Each switch is one Undo step of this test: the sandbox fails rather than undo past them into the user's.
+            for (int i = 0; i < 5; i++) sandbox.PerformUndo();
             Assert.AreEqual("version 1", File.ReadAllText(path));
             LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("only keeps the files of the last 5 switches"));
-            Undo.PerformUndo();
+            sandbox.PerformUndo();
             Assert.AreEqual("version 1", File.ReadAllText(path), "The oldest switch kept no copies: its files stay.");
             Undo.PerformRedo();
             Undo.PerformRedo();
@@ -641,6 +653,8 @@ public sealed class VersionSwitchRegressionTests
         finally
         {
             Undo.RevertAllDownToGroup(setupGroup);
+            // Reverting the deletion brings "Deleted during preparation" back outside its preview scene, into the user's.
+            sandbox.DestroyNewRoots();
             Object.DestroyImmediate(avatar);
             Object.DestroyImmediate(other);
             Object.DestroyImmediate(material);
@@ -653,6 +667,7 @@ public sealed class VersionSwitchRegressionTests
     public void SwitchWithoutOtherEditsRevertsItsWholeRange()
     {
         var scene = EditorSceneManager.NewPreviewScene();
+        Undo.IncrementCurrentGroup();
         int setupGroup = Undo.GetCurrentGroup();
         var avatar = new GameObject("Avatar");
         var child = new GameObject("Body");

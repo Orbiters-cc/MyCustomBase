@@ -1469,12 +1469,7 @@ public partial class AssetGalleryModule
             metadata.ToString(Formatting.None) + "|" +
             GetTextureCreationSignature(createThumbnail) + "|" +
             GetTextureCreationSignature(createBanner));
-        if (string.IsNullOrWhiteSpace(customBaseCreationRequestId) ||
-            !string.Equals(customBaseCreationRequestSignature, requestSignature, StringComparison.Ordinal))
-        {
-            customBaseCreationRequestId = MCBRequestHeaders.CreateIdempotencyKey();
-            customBaseCreationRequestSignature = requestSignature;
-        }
+        ResolveCustomBaseCreationRequestId(requestSignature);
         var form = BuildCustomBaseUploadForm(metadata.ToString(Formatting.None));
         if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized)
         {
@@ -1503,6 +1498,9 @@ public partial class AssetGalleryModule
                         throw new InvalidOperationException("The server did not return a valid asset.");
                     }
 
+                    // A retry of the same request returns the sources of every registered original: bind this scene's.
+                    response.asset.sourceFiles = CustomBaseSourceSetupTransaction.SelectRequestedSources(
+                        response.asset.sourceFiles, sourceFilePayload, supportedOriginalVersions[0].key);
                     using (var localSetup = new CustomBaseSourceSetupTransaction(editor.customBaseTarget))
                     {
                         if (createSceneMode == CreateCustomBaseSceneMode.AlreadyCustomized)
@@ -1896,6 +1894,37 @@ public partial class AssetGalleryModule
         }
     }
 
+    private const string CustomBaseCreationRequestSessionKeyPrefix = "MCB.CustomBaseCreationRequest.";
+
+    // The server deduplicates creations by request id. A domain reload clears this form, so the id of a creation that
+    // was not confirmed yet stays in SessionState, keyed by the form content: submitting the same content again (after a
+    // reload or a lost response) reuses it and receives the existing asset instead of a duplicate.
+    private void ResolveCustomBaseCreationRequestId(string requestSignature)
+    {
+        if (!string.IsNullOrWhiteSpace(customBaseCreationRequestId) &&
+            string.Equals(customBaseCreationRequestSignature, requestSignature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        string sessionKey = CustomBaseCreationRequestSessionKeyPrefix + requestSignature;
+        string persisted = SessionState.GetString(sessionKey, string.Empty);
+        customBaseCreationRequestId = string.IsNullOrWhiteSpace(persisted) ? MCBRequestHeaders.CreateIdempotencyKey() : persisted;
+        customBaseCreationRequestSignature = requestSignature;
+        SessionState.SetString(sessionKey, customBaseCreationRequestId);
+    }
+
+    // Called once the creation is confirmed and set up locally: later submissions are new assets.
+    private void ForgetCustomBaseCreationRequest()
+    {
+        if (!string.IsNullOrEmpty(customBaseCreationRequestSignature))
+        {
+            SessionState.EraseString(CustomBaseCreationRequestSessionKeyPrefix + customBaseCreationRequestSignature);
+        }
+        customBaseCreationRequestId = null;
+        customBaseCreationRequestSignature = null;
+    }
+
     private void ResetCreateForm()
     {
         DisposeOriginalSourceExtractions();
@@ -1911,8 +1940,7 @@ public partial class AssetGalleryModule
         selectedAvatarBaseSourceRevisionId = 0;
         detectedAvatarBaseStatus = null;
         detectedOriginalBaseKeySource = null;
-        customBaseCreationRequestId = null;
-        customBaseCreationRequestSignature = null;
+        ForgetCustomBaseCreationRequest();
         otherAvatarBaseName = "";
         additionalOriginalVersions.Clear();
         pendingDiscordRules.Clear();

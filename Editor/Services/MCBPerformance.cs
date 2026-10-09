@@ -67,12 +67,17 @@ public static partial class MCBPerformance
         return MCBPerformanceModel.Choose(variants, current ? profile : null, MCBCompression.IsSupported);
     }
 
+    // Real transfers kept next to the probe samples. Only the probe renews networkMeasuredUtc, so calibration still refreshes.
+    const int MaxNetworkSamples = 6;
+
+    /// <param name="milliseconds">Network transfer time only: never hashing, caching or extraction.</param>
     public static void RecordDownload(MCBDeliveryDecision decision, long bytes, double milliseconds, bool success)
     {
         if (decision?.codec == null) return;
         if (success && profile != null && bytes > 0 && milliseconds > 0) {
-            profile.network = new List<MCBTimingSample> { new MCBTimingSample { bytes = bytes, milliseconds = milliseconds } };
-            profile.networkMeasuredUtc = DateTime.UtcNow.ToString("O");
+            var samples = (profile.network ?? new List<MCBTimingSample>()).Where(s => s != null).ToList();
+            samples.Add(new MCBTimingSample { bytes = bytes, milliseconds = milliseconds });
+            profile.network = samples.Skip(Math.Max(0, samples.Count - MaxNetworkSamples)).ToList();
             SaveProfile();
         }
         if (ShareMeasurements) reports.Enqueue(new { kind = "decision", schema = 1, clientId, unity = unityVersion,
@@ -92,8 +97,8 @@ public static partial class MCBPerformance
         if (calibration != null && calibration.IsCompleted) {
             if (calibration.Status == TaskStatus.RanToCompletion && calibrationKey == preferenceKey) {
                 var result = calibration.Result;
-                // A foreground download can complete while a cancelled probe is unwinding.
-                if (string.CompareOrdinal(profile?.networkMeasuredUtc, result.networkMeasuredUtc) > 0) {
+                // Keep the transfers recorded while the probe ran unless it measured the network again.
+                if (profile != null && string.CompareOrdinal(profile.networkMeasuredUtc, result.networkMeasuredUtc) >= 0) {
                     result.network = profile.network; result.networkMeasuredUtc = profile.networkMeasuredUtc;
                 }
                 profile = result; SaveProfile();

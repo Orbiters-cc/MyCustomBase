@@ -1935,7 +1935,19 @@ public partial class CreatorModeModule
         return result;
     }
 
-    public IEnumerator BuildNewVersionCoroutine(Action<VersionArtifact> completed)
+    /// <summary>
+    /// The shared build path (creator window, temporary versions and MCP). It holds the process-wide
+    /// VersionOperationGuard unless the caller already does (<paramref name="operation"/>), so a build never runs next to
+    /// another build or a publish.
+    /// </summary>
+    public IEnumerator BuildNewVersionCoroutine(Action<VersionArtifact> completed, VersionOperationGuard.Scope operation = null)
+    {
+        var owned = operation != null && operation.IsHeld ? null : VersionOperationGuard.Acquire("building a version");
+        try { yield return BuildNewVersionCoroutineCore(completed); }
+        finally { owned?.Dispose(); }
+    }
+
+    private IEnumerator BuildNewVersionCoroutineCore(Action<VersionArtifact> completed)
     {
         var logicPrefab = editor.avatarLogicPrefabProp.objectReferenceValue as GameObject;
         bool shouldIncludeCustomVeins = editor.includeCustomVeinsForCreatorProp.boolValue;
@@ -2003,6 +2015,11 @@ public partial class CreatorModeModule
         {
             throw new InvalidOperationException(metadataValidationMessage);
         }
+        // Builds started without the form (MCP) get the same version rule as the form's buttons and the server.
+        VersionPublisher.ValidateNewVersionNumber(newVersionString, selectedParentVersionObject?.version,
+            selectedParentVersionObject != null ? null : VersionRepository.GetCreatorParentVersions(assetId, editor.serverVersions,
+                editor.importedVersions, editor.customBaseTarget.appliedCustomBaseVersion).Select(v => v.version),
+            editor.CompareVersions);
 
         EditorUtility.DisplayProgressBar("Preparing Build", "Creating version package...", 0.2f);
 
@@ -2275,7 +2292,21 @@ public partial class CreatorModeModule
             ComputeFormSignature(),
             // One plain package serves every original; XOR versions are re-encrypted for each selected original.
             protection.xor ? OriginalBaseLibrary.Versions(selectedAsset).Where(v => OriginalBaseLibrary.Selection(selectedAsset).Contains(v.key)).ToArray() : null,
-            protection.xor ? OriginalBaseLibrary.ActiveKey(selectedAsset) : null, editor.customBaseTarget.creatorCustomization);
+            protection.xor ? OriginalBaseLibrary.ActiveKey(selectedAsset) : null, editor.customBaseTarget.creatorCustomization,
+            OriginalModelPaths());
+    }
+
+    // Every original model of the avatar, changed by this version or not: the logic package must not ship them.
+    private List<string> OriginalModelPaths()
+    {
+        var paths = new List<string>();
+        for (int i = 0; i < (editor.baseFbxFilesProp?.arraySize ?? 0); i++)
+        {
+            var model = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue;
+            string path = model != null ? AssetDatabase.GetAssetPath(model) : null;
+            if (!string.IsNullOrWhiteSpace(path)) paths.Add(path);
+        }
+        return paths;
     }
 
     /// <summary>
@@ -2645,6 +2676,14 @@ public partial class CreatorModeModule
 
     private IEnumerator BuildAndApplyLocalVersionCoroutine()
     {
+        // Build and apply hold the process-wide guard together: an MCP build or another avatar's publish waits.
+        if (!VersionOperationGuard.TryAcquire("building and applying a version", out var operation, out string busy))
+        {
+            editor.submitError = busy;
+            editor.warningsModule.AddWarning(busy, MessageType.Warning, "Build not started");
+            RefreshEditorUi();
+            yield break;
+        }
         editor.isSubmitting = true;
         editor.submitError = "";
         editor.warningsModule.Clear();
@@ -2655,7 +2694,7 @@ public partial class CreatorModeModule
 
         try
         {
-            yield return MCBWork.Guard(BuildNewVersionCoroutine(value => builtArtifact = value), ex => buildError = ex);
+            yield return MCBWork.Guard(BuildNewVersionCoroutine(value => builtArtifact = value, operation), ex => buildError = ex);
 
             if (buildError != null)
             {
@@ -2693,6 +2732,7 @@ public partial class CreatorModeModule
         }
         finally
         {
+            operation.Dispose();
             editor.isSubmitting = false;
             EditorUtility.ClearProgressBar();
             editor.Repaint();

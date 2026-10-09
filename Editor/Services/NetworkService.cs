@@ -19,7 +19,6 @@ public enum NetworkRequestType
     AssetImageDownload,
     AssetDiscovery,
     VersionFetch,
-    ModelDownload,
     Upload,
     ConnectionCheck
 }
@@ -35,7 +34,6 @@ public class NetworkService
             case NetworkRequestType.AssetImageDownload: return 10;
             case NetworkRequestType.AssetDiscovery: return 8;
             case NetworkRequestType.VersionFetch: return 5;
-            case NetworkRequestType.ModelDownload: return 180;
             case NetworkRequestType.Upload: return 300;
             case NetworkRequestType.ConnectionCheck: return 3;
             default: return 30;
@@ -72,27 +70,16 @@ public class NetworkService
             req.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
             await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Fetch versions"));
 
-            // Special handling: access denied for asset (backend may return 203 or 204 with JSON { error, assetId })
             long code = req.responseCode;
             string body = null;
             try { body = req.downloadHandler?.text; } catch { /* ignore */ }
 
-            if (code == 203 || code == 204)
+            // A member who does not own the asset gets 403 {"code": "ACCESS_DENIED", "assetId"}: callers show the store link.
+            // Other 403s (a Discord role, ...) keep their server message below.
+            if (code == 403 && TryReadAccessDenied(body, out string deniedAssetId))
             {
                 MCBLogger.LogWarning($"[NetworkService] FetchVersionsAsync access denied: {BuildHttpContext(req, url, body)}");
-                try
-                {
-                    // Try to parse a minimal object with assetId
-                    var payload = JsonConvert.DeserializeObject<AccessDeniedPayload>(body ?? "{}");
-                    if (payload != null && !string.IsNullOrEmpty(payload.assetId))
-                    {
-                        // Encode a recognizable error token so callers can react specifically
-                        return (false, null, $"ACCESS_DENIED:{payload.assetId}");
-                    }
-                }
-                catch { /* ignore parse error and fall through to generic handling */ }
-                // If no assetId, return a generic message
-                return (false, null, "You do not seem to own this MCB. Get it from the Orbiters website and try again.");
+                return (false, null, AccessDeniedPrefix + deniedAssetId);
             }
 
             if (req.result != UnityWebRequest.Result.Success)
@@ -138,8 +125,25 @@ public class NetworkService
         }
     }
 
-    // Minimal payload to read assetId from access denied responses
-    private class AccessDeniedPayload { public string error; public string assetId; public string errorMessage; }
+    /// <summary>Error of a version fetch the member has no access to, followed by the asset id.</summary>
+    public const string AccessDeniedPrefix = "ACCESS_DENIED:";
+
+    // Server error answers: {"error"} or {"errorMessage"}; access denials add "code" and "assetId".
+    private class AccessDeniedPayload { public string error; public string assetId; public string errorMessage; public string code; }
+
+    internal static bool TryReadAccessDenied(string body, out string assetId)
+    {
+        assetId = null;
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        try
+        {
+            var payload = JsonConvert.DeserializeObject<AccessDeniedPayload>(body);
+            if (payload?.code != "ACCESS_DENIED" || string.IsNullOrWhiteSpace(payload.assetId)) return false;
+            assetId = payload.assetId.Trim();
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
 
     private static string BuildHttpContext(UnityWebRequest req, string url, string body)
     {
@@ -174,6 +178,26 @@ public class NetworkService
         return compact.Substring(0, maxLength) + "...";
     }
 
+    // --- Version downloads: no total time limit. An attempt ends when no byte arrives for a while; the next one resumes
+    // with HTTP Range at the bytes already on disk (signed storage honours it), a bounded number of times. ---
+
+    /// <summary>Seconds without a received byte before a download attempt is abandoned and retried.</summary>
+    internal const double DownloadStallSeconds = 60d;
+    /// <summary>Attempts per download: the first one and its retries.</summary>
+    internal const int DownloadAttempts = 4;
+    // The backend signs storage URLs for 300 s: a retry resumes there without asking (and counting at) the backend again.
+    private const double SignedUrlReuseSeconds = 240d;
+    private const int ErrorBodyLimit = 64 * 1024;
+
+    /// <summary>How one attempt ended: the request and the signed storage hop it may redirect to.</summary>
+    internal sealed class TransferAttempt
+    {
+        public long StatusCode, ContentLength = -1, Total = -1;
+        public bool Answered, Redirected, Completed, Stalled, TooLarge, RangeIgnored, RangeMismatch, Encoded;
+        public string Error, FinalUrl, Body;
+        public byte[] Data;
+    }
+
     public async Task<(bool success, string error)> DownloadFileAsync(
         string url,
         string destinationPath,
@@ -181,7 +205,6 @@ public class NetworkService
         Action<ulong> onDownloadedBytes = null,
         string authToken = null)
     {
-        int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
         bool succeeded = false;
         MCBDownloadTempFiles.Track(destinationPath);
         try
@@ -191,153 +214,297 @@ public class NetworkService
             {
                 Directory.CreateDirectory(directory);
             }
+            if (File.Exists(destinationPath)) File.Delete(destinationPath);
 
-            using (var request = await MCBManagedRequest.SendAuthorizedAsync(
-                       target => MCBDownloadTempFiles.Attach(destinationPath, new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
-                       {
-                           downloadHandler = new DownloadHandlerFile(destinationPath),
-                           timeout = timeoutSeconds
-                       }),
-                       url, authToken, MCBRequestPolicy.Backend("Download file"),
-                       running =>
-                       {
-                           onProgress?.Invoke(NormalizeDownloadProgress(running.downloadProgress));
-                           onDownloadedBytes?.Invoke(running.downloadedBytes);
-                       }))
+            string signedUrl = null, error = null;
+            double signedAt = 0;
+            long total = -1;
+            bool answered = false, resumable = true;
+            for (int attempt = 1; ; attempt++)
+            {
+                if (!resumable) SetFileLength(destinationPath, 0);
+                long offset = FileLength(destinationPath);
+                bool direct = signedUrl != null && EditorApplication.timeSinceStartup - signedAt < SignedUrlReuseSeconds;
+                var result = await SendTransferAsync(direct ? signedUrl : url, direct ? null : authToken, target =>
+                {
+                    // Every hop writes at the offset: the body of a redirect answered before it is dropped.
+                    SetFileLength(destinationPath, offset);
+                    return MCBDownloadTempFiles.Attach(destinationPath, new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
+                    {
+                        downloadHandler = new DownloadHandlerFile(destinationPath, offset > 0) { removeFileOnAbort = false }
+                    });
+                }, offset, 0, running =>
+                {
+                    long received = offset + (long)running.downloadedBytes, length = ContentLength(running);
+                    long expected = length >= 0 ? offset + length : total;
+                    onProgress?.Invoke(expected > 0 ? Mathf.Clamp01((float)((double)received / expected)) : NormalizeDownloadProgress(running.downloadProgress));
+                    onDownloadedBytes?.Invoke((ulong)received);
+                });
+                answered |= result.Answered;
+                if (result.Redirected)
+                {
+                    signedUrl = result.FinalUrl;
+                    signedAt = EditorApplication.timeSinceStartup;
+                }
+                if (result.Total > 0) total = result.Total;
+                long code = result.StatusCode;
+                bool storage = direct || result.Redirected;
+                if (result.RangeIgnored || result.RangeMismatch || code == 416 || (offset > 0 && code == 200))
+                {
+                    if (code == 416 && total > 0 && offset == total) { succeeded = true; break; }
+                    // This server cannot resume: start over, at once since nothing was kept.
+                    resumable = false;
+                    error = "The server could not resume the download.";
+                    if (offset > 0) { attempt--; continue; }
+                }
+                else if (result.Completed && (code == 200 || code == 206))
+                {
+                    long received = FileLength(destinationPath);
+                    if (total <= 0 || result.Encoded || received == total) { succeeded = true; break; }
+                    error = $"The download ended early ({received} of {total} bytes).";
+                }
+                else if (code >= 300)
+                {
+                    // The error answer was written after the received bytes: keep its message, then drop it.
+                    string body = ReadErrorBody(destinationPath, offset);
+                    SetFileLength(destinationPath, offset);
+                    error = ServerError(code, result.Error, body);
+                    if (storage && code < 500) signedUrl = null; // an expired signature: ask the backend for a new one
+                    if (!Retryable(code, storage)) break;
+                }
+                else
+                {
+                    error = TransferFailure(result);
+                }
+
+                if (attempt >= DownloadAttempts) break;
+                MCBLogger.LogWarning($"[NetworkService] Download attempt {attempt} failed: {error} Resuming at {FileLength(destinationPath)} bytes, url = {SanitizeUrlForLogs(url)}");
+                await Task.Delay(RetryDelay(attempt));
+            }
+
+            if (succeeded)
             {
                 onProgress?.Invoke(1f);
-                onDownloadedBytes?.Invoke(request.downloadedBytes);
-
-                if (request.result == UnityWebRequest.Result.Success)
-                {
-                    succeeded = true;
-                    return (true, null);
-                }
-
-                if (File.Exists(destinationPath))
-                {
-                    try { File.Delete(destinationPath); } catch { }
-                }
-
-                string errorBody = null;
-                try { errorBody = request.downloadHandler?.text; } catch { }
-
-                string errorMsg = $"Download failed: HTTP {request.responseCode} {request.error}";
-                if (!string.IsNullOrEmpty(errorBody))
-                {
-                    try
-                    {
-                        var errorObj = JsonConvert.DeserializeObject<AccessDeniedPayload>(errorBody);
-                        if (!string.IsNullOrEmpty(errorObj.errorMessage)) errorMsg = errorObj.errorMessage;
-                        else if (!string.IsNullOrEmpty(errorObj.error)) errorMsg = errorObj.error;
-                    }
-                    catch { /* ignore JSON parse error */ }
-                }
-
-                MCBLogger.LogError($"[NetworkService] {errorMsg}, url = {SanitizeUrlForLogs(url)}");
-                return (false, errorMsg);
+                onDownloadedBytes?.Invoke((ulong)FileLength(destinationPath));
+                return (true, null);
             }
+
+            if (!answered) ReportUnreachable(url, "Download file", error);
+            MCBLogger.LogError($"[NetworkService] {error} url = {SanitizeUrlForLogs(url)}");
+            return (false, error);
         }
         catch (Exception ex)
         {
-             MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download file"));
-             MCBLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
-             return (false, $"Download exception: {ex.Message}");
+            MCBLogger.LogError($"[NetworkService] Download exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
+            return (false, $"Download exception: {ex.Message}");
         }
         finally
         {
-            MCBDownloadTempFiles.Finish(destinationPath, succeeded);
-        }
-    }
-
-    public async Task<(bool success, long contentLength, string error)> GetDownloadContentLengthAsync(string url, string authToken = null)
-    {
-        int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
-        try
-        {
-            using (var request = await MCBManagedRequest.SendAuthorizedAsync(
-                       target => new UnityWebRequest(target, "HEAD") { timeout = timeoutSeconds },
-                       url, authToken, MCBRequestPolicy.Backend("Download metadata")))
+            if (!succeeded)
             {
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    string errorMsg = $"Download metadata failed: HTTP {request.responseCode} {request.error}";
-                    MCBLogger.LogWarning($"[NetworkService] {errorMsg}, url = {SanitizeUrlForLogs(url)}");
-                    return (false, -1L, errorMsg);
-                }
-
-                string header = request.GetResponseHeader("Content-Length");
-                if (!long.TryParse(header, out long length) || length < 0L)
-                {
-                    return (false, -1L, "Download metadata did not include a valid Content-Length header.");
-                }
-
-                return (true, length, null);
+                try { if (File.Exists(destinationPath)) File.Delete(destinationPath); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
             }
-        }
-        catch (Exception ex)
-        {
-            MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download metadata"));
-            MCBLogger.LogWarning($"[NetworkService] Download metadata exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
-            return (false, -1L, $"Download metadata exception: {ex.Message}");
+            // A file that could not be deleted stays tracked: it goes before the next reload.
+            MCBDownloadTempFiles.Finish(destinationPath, succeeded || File.Exists(destinationPath));
         }
     }
 
+    /// <param name="maxBytes">Larger answers are refused while they download (0: no limit).</param>
     public async Task<(bool success, byte[] data, string error)> DownloadBytesAsync(
         string url,
         Action<float> onProgress = null,
         Action<ulong> onDownloadedBytes = null,
-        string authToken = null)
+        string authToken = null,
+        long maxBytes = 0)
     {
-        int timeoutSeconds = GetTimeoutSeconds(NetworkRequestType.ModelDownload);
         try
         {
-            using (var request = await MCBManagedRequest.SendAuthorizedAsync(
-                       target => new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
-                       {
-                           downloadHandler = new DownloadHandlerBuffer(),
-                           timeout = timeoutSeconds
-                       },
-                       url, authToken, MCBRequestPolicy.Backend("Download bytes"),
-                       running =>
-                       {
-                           onProgress?.Invoke(NormalizeDownloadProgress(running.downloadProgress));
-                           onDownloadedBytes?.Invoke(running.downloadedBytes);
-                       }))
+            string error = null;
+            bool answered = false;
+            for (int attempt = 1; ; attempt++)
             {
-                onProgress?.Invoke(1f);
-                onDownloadedBytes?.Invoke(request.downloadedBytes);
-
-                if (request.result == UnityWebRequest.Result.Success)
+                var result = await SendTransferAsync(url, authToken, target => new UnityWebRequest(target, UnityWebRequest.kHttpVerbGET)
                 {
-                    return (true, request.downloadHandler.data, null);
+                    downloadHandler = new DownloadHandlerBuffer()
+                }, 0, maxBytes, running =>
+                {
+                    onProgress?.Invoke(NormalizeDownloadProgress(running.downloadProgress));
+                    onDownloadedBytes?.Invoke(running.downloadedBytes);
+                });
+                answered |= result.Answered;
+                if (result.Completed && (maxBytes <= 0 || (result.Data?.Length ?? 0) <= maxBytes))
+                {
+                    byte[] data = result.Data ?? Array.Empty<byte>();
+                    onProgress?.Invoke(1f);
+                    onDownloadedBytes?.Invoke((ulong)data.Length);
+                    return (true, data, null);
                 }
 
-                string errorBody = null;
-                try { errorBody = request.downloadHandler?.text; } catch { }
-
-                string errorMsg = $"Download failed: HTTP {request.responseCode} {request.error}";
-                if (!string.IsNullOrEmpty(errorBody))
+                bool retry = true;
+                if (result.TooLarge || result.Completed)
                 {
-                    try
-                    {
-                        var errorObj = JsonConvert.DeserializeObject<AccessDeniedPayload>(errorBody);
-                        if (!string.IsNullOrEmpty(errorObj.errorMessage)) errorMsg = errorObj.errorMessage;
-                        else if (!string.IsNullOrEmpty(errorObj.error)) errorMsg = errorObj.error;
-                    }
-                    catch { /* ignore JSON parse error */ }
+                    error = $"The server's answer is larger than the {maxBytes / 1024} KB expected.";
+                    retry = false;
+                }
+                else if (result.StatusCode >= 300)
+                {
+                    error = ServerError(result.StatusCode, result.Error, result.Body);
+                    retry = Retryable(result.StatusCode, result.Redirected);
+                }
+                else
+                {
+                    error = TransferFailure(result);
                 }
 
-                MCBLogger.LogError($"[NetworkService] {errorMsg}, url = {SanitizeUrlForLogs(url)}");
-                return (false, null, errorMsg);
+                if (!retry || attempt >= DownloadAttempts)
+                {
+                    if (!answered) ReportUnreachable(url, "Download bytes", error);
+                    MCBLogger.LogError($"[NetworkService] {error} url = {SanitizeUrlForLogs(url)}");
+                    return (false, null, error);
+                }
+                MCBLogger.LogWarning($"[NetworkService] Download attempt {attempt} failed: {error} Retrying, url = {SanitizeUrlForLogs(url)}");
+                await Task.Delay(RetryDelay(attempt));
             }
         }
         catch (Exception ex)
         {
-            MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Download bytes"));
             MCBLogger.LogError($"[NetworkService] Download bytes exception: {ex.Message}, url = {SanitizeUrlForLogs(url)}");
             return (false, null, $"Download exception: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// One attempt with stall detection instead of a whole-request time limit: the request (authorized redirects to signed
+    /// storage are followed without the token) is aborted once no byte arrived for <see cref="DownloadStallSeconds"/>, when
+    /// a resumed (<paramref name="offset"/>) answer restarts the whole file, or when it grows past <paramref name="maxBytes"/>.
+    /// </summary>
+    private static async Task<TransferAttempt> SendTransferAsync(string url, string authToken, Func<string, UnityWebRequest> create,
+        long offset, long maxBytes, Action<UnityWebRequest> progress)
+    {
+        var attempt = new TransferAttempt();
+        UnityWebRequest watched = null;
+        ulong seen = 0;
+        double movedAt = 0;
+        bool aborted = false;
+        int hops = 0;
+        using (var request = await MCBManagedRequest.SendAuthorizedAsync(target =>
+               {
+                   hops++;
+                   attempt.FinalUrl = target;
+                   var hop = create(target);
+                   hop.timeout = 0;
+                   if (offset > 0) hop.SetRequestHeader("Range", "bytes=" + offset + "-");
+                   return hop;
+               }, url, authToken, MCBRequestPolicy.Transfer("Download"), running =>
+               {
+                   double now = EditorApplication.timeSinceStartup;
+                   if (running != watched || running.downloadedBytes != seen)
+                   {
+                       watched = running;
+                       seen = running.downloadedBytes;
+                       movedAt = now;
+                   }
+                   if (aborted) return;
+                   long code = running.responseCode;
+                   bool content = code == 200 || code == 206;
+                   if (content && offset > 0 && code == 200) attempt.RangeIgnored = aborted = true;
+                   else if (content && maxBytes > 0 && ((long)seen > maxBytes || ContentLength(running) > maxBytes)) attempt.TooLarge = aborted = true;
+                   else if (IsStalled(movedAt, now)) attempt.Stalled = aborted = true;
+                   if (aborted) running.Abort();
+                   else if (content) progress?.Invoke(running);
+               }))
+        {
+            attempt.StatusCode = request.responseCode;
+            attempt.Redirected = hops > 1;
+            attempt.Answered = request.responseCode > 0 || attempt.Redirected;
+            attempt.Error = request.error;
+            attempt.Completed = !aborted && request.result == UnityWebRequest.Result.Success;
+            attempt.ContentLength = ContentLength(request);
+            string encoding = request.GetResponseHeader("Content-Encoding");
+            attempt.Encoded = !string.IsNullOrEmpty(encoding) && !string.Equals(encoding, "identity", StringComparison.OrdinalIgnoreCase);
+            if (attempt.StatusCode == 200) attempt.Total = attempt.ContentLength;
+            else if (attempt.StatusCode == 206) attempt.RangeMismatch = !TryParseContentRange(request.GetResponseHeader("Content-Range"), offset, out attempt.Total);
+            if (request.downloadHandler is DownloadHandlerBuffer buffer)
+            {
+                if (attempt.Completed) attempt.Data = buffer.data;
+                else
+                {
+                    try { attempt.Body = buffer.text; } catch (Exception) { /* aborted: no body */ }
+                }
+            }
+        }
+        return attempt;
+    }
+
+    internal static bool IsStalled(double movedAt, double now) => now - movedAt > DownloadStallSeconds;
+
+    /// <summary>"bytes start-end/total": a resumed answer must start exactly at the bytes already on disk.</summary>
+    internal static bool TryParseContentRange(string header, long offset, out long total)
+    {
+        total = -1;
+        var match = Regex.Match(header ?? string.Empty, @"^\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*$", RegexOptions.IgnoreCase);
+        if (!match.Success || !long.TryParse(match.Groups[1].Value, out long start) || start != offset) return false;
+        if (long.TryParse(match.Groups[3].Value, out long size)) total = size;
+        return true;
+    }
+
+    /// <summary>The server's {"errorMessage"} or {"error"} (an update request, a model mismatch, ...), else the HTTP status.</summary>
+    internal static string ServerError(long code, string requestError, string body)
+    {
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try
+            {
+                var payload = JsonConvert.DeserializeObject<AccessDeniedPayload>(body);
+                if (!string.IsNullOrEmpty(payload?.errorMessage)) return payload.errorMessage;
+                if (!string.IsNullOrEmpty(payload?.error)) return payload.error;
+            }
+            catch (Exception) { /* not JSON: storage errors are XML */ }
+        }
+        return $"Download failed: HTTP {code} {requestError}".TrimEnd();
+    }
+
+    /// <summary>The text of an error answer a disk download wrote after the <paramref name="offset"/> bytes it had.</summary>
+    internal static string ReadErrorBody(string path, long offset)
+    {
+        try
+        {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                long length = stream.Length - offset;
+                if (length <= 0 || length > ErrorBodyLimit) return null;
+                stream.Position = offset;
+                var bytes = new byte[length];
+                int read = 0, count;
+                while (read < bytes.Length && (count = stream.Read(bytes, read, bytes.Length - read)) > 0) read += count;
+                return System.Text.Encoding.UTF8.GetString(bytes, 0, read);
+            }
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { return null; }
+    }
+
+    // Server hiccups and dropped connections are retried; a storage 4xx is usually an expired signature a new redirect fixes.
+    private static bool Retryable(long code, bool storage) => code == 0 || code == 408 || code == 429 || code >= 500 || (storage && code >= 400);
+
+    private static TimeSpan RetryDelay(int attempt) => TimeSpan.FromSeconds(1 << Math.Min(attempt - 1, 4));
+
+    private static string TransferFailure(TransferAttempt result) => result.Stalled
+        ? $"The download stopped: no data arrived for {DownloadStallSeconds:0} seconds."
+        : $"The connection was lost ({(string.IsNullOrEmpty(result.Error) ? "no answer" : result.Error)}).";
+
+    // Every attempt failed before any server answered: MCB is offline, as for other backend requests.
+    private static void ReportUnreachable(string url, string context, string error) =>
+        MCBManagedRequest.ReportException(url, new IOException(error ?? "No answer."), MCBRequestPolicy.Backend(context));
+
+    private static long ContentLength(UnityWebRequest request) =>
+        long.TryParse(request.GetResponseHeader("Content-Length"), out long length) && length >= 0 ? length : -1;
+
+    private static long FileLength(string path) => File.Exists(path) ? new FileInfo(path).Length : 0;
+
+    private static void SetFileLength(string path, long length)
+    {
+        using (var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read)) stream.SetLength(length);
     }
 
     private static float NormalizeDownloadProgress(float progress)
@@ -373,6 +540,7 @@ public class NetworkService
     {
         string boundary = "----MCBUpload" + Guid.NewGuid().ToString("N");
         string bodyPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_body_{Guid.NewGuid():N}.tmp");
+        MCBDownloadTempFiles.Track(bodyPath);
 
         try
         {
@@ -383,7 +551,7 @@ public class NetworkService
                 OrbitersTransfer.Part.File("packageFile", zipFilePath, Path.GetFileName(zipFilePath), "application/zip"),
             });
 
-            using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
+            using (var req = MCBDownloadTempFiles.Attach(bodyPath, new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST)))
             {
                 req.uploadHandler = new UploadHandlerFile(bodyPath);
                 req.downloadHandler = new DownloadHandlerBuffer();
@@ -406,7 +574,9 @@ public class NetworkService
                     cancellationToken, UploadStallTimeoutSeconds, upload: true);
 
                 onProgress?.Invoke(1f, req.uploadedBytes);
-                MCBConnectivityMonitor.ReportManagedUnityWebRequest(req, url, MCBRequestPolicy.Backend("Upload version"));
+                // A cancelled or stalled upload does not take MCB offline; one that never reached the server does.
+                MCBConnectivityMonitor.ReportManagedUnityWebRequest(req, url, end == OrbitersTransfer.End.Done
+                    ? MCBRequestPolicy.Backend("Upload version") : MCBRequestPolicy.Transfer("Upload version"));
 
                 if (end == OrbitersTransfer.End.Cancelled)
                 {
@@ -437,6 +607,8 @@ public class NetworkService
         finally
         {
             try { if (File.Exists(bodyPath)) File.Delete(bodyPath); } catch { }
+            // A body that could not be deleted yet stays tracked: it goes before the next reload.
+            MCBDownloadTempFiles.Finish(bodyPath, File.Exists(bodyPath));
         }
     }
 
@@ -573,7 +745,7 @@ public static class MCBDownloadTempFiles
     private const string PendingSessionKey = "MCB.DownloadTempFiles.Pending";
     private static readonly TimeSpan StaleAge = TimeSpan.FromDays(1);
     private static readonly (string prefix, string extension)[] StaleFiles =
-        { ("mcb_dl_", ".zip"), ("mcb_upload_", ".zip"), ("mcb-rekey-", ".fbx"), ("mcb-logic-", ".unitypackage") };
+        { ("mcb_dl_", ".zip"), ("mcb_upload_", ".zip"), ("mcb_upload_body_", ".tmp"), ("mcb-rekey-", ".fbx"), ("mcb-logic-", ".unitypackage") };
     private static readonly string[] StagingFolderPrefixes = { "mcb-mesh-delivery-", "mcb-source-support-" };
     // Tracked files and the request writing each (null once finished): another editor's downloads are never touched.
     private static readonly System.Collections.Generic.Dictionary<string, UnityWebRequest> Tracked =
@@ -610,7 +782,7 @@ public static class MCBDownloadTempFiles
         {
             if (succeeded && IsInTemp(fullPath)) Tracked[fullPath] = null;
             else Tracked.Remove(fullPath);
-            foreach (string gone in Tracked.Where(entry => entry.Value == null && !File.Exists(entry.Key)).Select(entry => entry.Key).ToList())
+            foreach (string gone in Tracked.Where(entry => entry.Value == null && !File.Exists(entry.Key) && !Directory.Exists(entry.Key)).Select(entry => entry.Key).ToList())
                 Tracked.Remove(gone);
         }
     }
@@ -665,8 +837,9 @@ public static class MCBDownloadTempFiles
         }
     }
 
-    // The file or folder, and the download's staging folder in the temp folder when it is in one.
-    private static bool TryDelete(string path)
+    /// <summary>Deletes the file or folder, and the download's staging folder in the temp folder when it is in one.</summary>
+    /// <returns>False when something is still in use; nothing is thrown.</returns>
+    internal static bool TryDelete(string path)
     {
         try
         {

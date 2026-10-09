@@ -1010,8 +1010,9 @@ public class FileManagerService
         bool includeDynamicNormalsBody,
         bool includeDynamicNormalsFlexing,
         IEnumerable<string> additionalAnimationAssetPaths = null,
-        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null)
-    { MCBWork.Drain(PopulateVersionFolderCoroutine(versionFolderUnityPath, modelEntries, logicPrefab, includeCustomVeins, customVeinsTexture, includeDynamicNormalsBody, includeDynamicNormalsFlexing, additionalAnimationAssetPaths, dynamicNormalSelections)); }
+        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null,
+        IEnumerable<string> originalModelPaths = null)
+    { MCBWork.Drain(PopulateVersionFolderCoroutine(versionFolderUnityPath, modelEntries, logicPrefab, includeCustomVeins, customVeinsTexture, includeDynamicNormalsBody, includeDynamicNormalsFlexing, additionalAnimationAssetPaths, dynamicNormalSelections, originalModelPaths)); }
 
     public System.Collections.IEnumerator PopulateVersionFolderCoroutine(
         string versionFolderUnityPath,
@@ -1022,7 +1023,10 @@ public class FileManagerService
         bool includeDynamicNormalsBody,
         bool includeDynamicNormalsFlexing,
         IEnumerable<string> additionalAnimationAssetPaths = null,
-        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null)
+        IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null,
+        // The avatar's original base models (all of them, also those the version leaves unchanged): the logic package
+        // never ships them, what they use, or their base's folder.
+        IEnumerable<string> originalModelPaths = null)
     {
         string newVersionDataPath = versionFolderUnityPath;
         if (string.IsNullOrEmpty(newVersionDataPath))
@@ -1174,7 +1178,8 @@ public class FileManagerService
             }
 
             yield return null;
-            CopyLogicAndExtras(newVersionDataPath, logicPrefab, includeCustomVeins, customVeinsTexture, additionalAnimationAssetPaths);
+            CopyLogicAndExtras(newVersionDataPath, logicPrefab, includeCustomVeins, customVeinsTexture, additionalAnimationAssetPaths,
+                entries, originalModelPaths);
 
             AssetDatabase.Refresh();
             while (EditorApplication.isUpdating || EditorApplication.isCompiling) yield return null;
@@ -1235,18 +1240,18 @@ public class FileManagerService
         GameObject logicPrefab,
         bool includeCustomVeins,
         Texture2D customVeinsTexture,
-        IEnumerable<string> additionalAnimationAssetPaths)
+        IEnumerable<string> additionalAnimationAssetPaths,
+        IEnumerable<ModelFilePackageEntry> modelEntries,
+        IEnumerable<string> originalModelPaths)
     {
-        var exportAssets = new HashSet<string>(StringComparer.Ordinal);
+        var dependencies = new List<string>();
+        string prefabSourcePath = null;
         if (logicPrefab != null)
         {
-            string prefabSourcePath = AssetDatabase.GetAssetPath(logicPrefab);
+            prefabSourcePath = AssetDatabase.GetAssetPath(logicPrefab);
             string prefabDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.prefab");
             AssetDatabase.CopyAsset(prefabSourcePath, prefabDestPath);
-            foreach (string dependency in AssetDatabase.GetDependencies(prefabSourcePath, true))
-            {
-                exportAssets.Add(dependency);
-            }
+            dependencies.AddRange(AssetDatabase.GetDependencies(prefabSourcePath, true));
         }
 
         if (additionalAnimationAssetPaths != null)
@@ -1255,15 +1260,32 @@ public class FileManagerService
             {
                 if (string.IsNullOrWhiteSpace(animationPath)) continue;
                 if (AssetDatabase.LoadAssetAtPath<AnimationClip>(animationPath) == null) continue;
-                exportAssets.Add(animationPath);
+                dependencies.AddRange(AssetDatabase.GetDependencies(animationPath, true));
             }
         }
 
-        if (exportAssets.Count > 0)
+        if (dependencies.Count > 0)
         {
-            string packageUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.unitypackage");
-            string packagePath = Path.GetFullPath(packageUnityPath);
-            AssetDatabase.ExportPackage(exportAssets.ToArray(), packagePath, ExportPackageOptions.Recurse | ExportPackageOptions.IncludeDependencies);
+            var entries = (modelEntries ?? Enumerable.Empty<ModelFilePackageEntry>()).Where(entry => entry != null).ToList();
+            var baseModels = (originalModelPaths ?? Enumerable.Empty<string>())
+                .Concat(entries.SelectMany(entry => new[] { entry.localTargetPath, entry.sourceFbxPath, entry.referenceSourcePath }));
+            var protectedModels = entries.Where(entry => entry.customFbx != null).Select(entry => AssetDatabase.GetAssetPath(entry.customFbx));
+            var exportAssets = SelectLogicPackageAssets(dependencies, prefabSourcePath, baseModels, protectedModels,
+                path => AssetDatabase.GetDependencies(path, true), out var excluded);
+            if (excluded.Count > 0)
+            {
+                MCBLogger.LogWarning($"[FileManager] The logic package leaves out {excluded.Count} file(s) of the original base (its models, what they use and its folder) or the custom models: " +
+                                     string.Join(", ", excluded.Take(25)) + (excluded.Count > 25 ? ", ..." : "") +
+                                     ". Users already have the base; keep files the logic must ship outside the base's folder.");
+            }
+
+            if (exportAssets.Count > 0)
+            {
+                string packageUnityPath = MCBUtils.CombineUnityPath(newVersionDataPath, "mcb logic.unitypackage");
+                string packagePath = Path.GetFullPath(packageUnityPath);
+                // The list is already complete and filtered: IncludeDependencies would add the excluded files back.
+                AssetDatabase.ExportPackage(exportAssets.ToArray(), packagePath, ExportPackageOptions.Default);
+            }
         }
 
         if (includeCustomVeins)
@@ -1292,6 +1314,94 @@ public class FileManagerService
                 throw new IOException($"Failed to copy custom veins normal map to {veinsDestPath}");
         }
     }
+
+    /// <summary>
+    /// The files the logic package may ship: the logic's own dependencies, without the original base or package content.
+    /// Left out are installed packages (Packages/, recorded as version dependencies instead), the original base models
+    /// and every file their import uses (materials, textures, shaders), anything in the base's own folder (the folder
+    /// holding a model and the files it uses, never one holding the logic prefab) and the custom models, which only ship
+    /// as encrypted patches. <paramref name="excludedOriginalContent"/> lists what was left out apart from packages.
+    /// </summary>
+    internal static List<string> SelectLogicPackageAssets(IEnumerable<string> dependencies, string logicPrefabPath,
+        IEnumerable<string> originalModelPaths, IEnumerable<string> protectedModelPaths, Func<string, IEnumerable<string>> dependenciesOf,
+        out List<string> excludedOriginalContent)
+    {
+        string logic = NormalizeAssetPath(logicPrefabPath);
+        var models = (originalModelPaths ?? Enumerable.Empty<string>()).Select(NormalizeAssetPath)
+            .Where(path => path != null)
+            .Select(path => path.EndsWith(OriginalBaseSuffix, StringComparison.OrdinalIgnoreCase) ? path.Substring(0, path.Length - OriginalBaseSuffix.Length) : path)
+            .Where(path => path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var originalFiles = new HashSet<string>(models, StringComparer.OrdinalIgnoreCase);
+        foreach (string path in (protectedModelPaths ?? Enumerable.Empty<string>()).Select(NormalizeAssetPath).Where(path => path != null)) originalFiles.Add(path);
+        var baseFolders = new List<string>();
+        foreach (string model in models)
+        {
+            var used = (dependenciesOf?.Invoke(model) ?? Enumerable.Empty<string>()).Select(NormalizeAssetPath).Where(path => path != null).ToList();
+            foreach (string path in used) originalFiles.Add(path);
+            string folder = OriginalBaseFolder(model, used, logic);
+            if (folder != null) baseFolders.Add(folder);
+        }
+
+        var kept = new List<string>();
+        excludedOriginalContent = new List<string>();
+        foreach (string path in (dependencies ?? Enumerable.Empty<string>()).Select(NormalizeAssetPath).Where(path => path != null)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.Equals(path, logic, StringComparison.OrdinalIgnoreCase)) kept.Add(path);
+            else if (path.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase)) continue;
+            else if (originalFiles.Contains(path) || baseFolders.Any(folder => IsInAssetFolder(path, folder))) excludedOriginalContent.Add(path);
+            else kept.Add(path);
+        }
+        return kept;
+    }
+
+    // The base's own folder: the deepest folder holding the model and the files its import uses inside the same top-level
+    // folder (Assets/Avatars/Base for Assets/Avatars/Base/FBX/Base.fbx using Assets/Avatars/Base/Materials). Never a
+    // folder holding the logic prefab, never a top-level folder of models without files of their own around them.
+    internal static string OriginalBaseFolder(string modelPath, IEnumerable<string> modelDependencies, string logicPrefabPath)
+    {
+        string own = AssetFolder(modelPath);
+        string top = TopAssetFolder(modelPath);
+        if (own == null || top == null) return null;
+        string folder = own;
+        foreach (string dependency in modelDependencies ?? Enumerable.Empty<string>())
+        {
+            if (string.Equals(TopAssetFolder(dependency), top, StringComparison.OrdinalIgnoreCase))
+                folder = CommonAssetFolder(folder, AssetFolder(dependency));
+        }
+        if (logicPrefabPath != null && IsInAssetFolder(logicPrefabPath, folder)) folder = own;
+        return logicPrefabPath != null && IsInAssetFolder(logicPrefabPath, folder) ? null : folder;
+    }
+
+    private static string NormalizeAssetPath(string path) => string.IsNullOrWhiteSpace(path) ? null : path.Trim().Replace('\\', '/');
+
+    private static string AssetFolder(string path)
+    {
+        string normalized = NormalizeAssetPath(path);
+        int slash = normalized?.LastIndexOf('/') ?? -1;
+        return slash > 0 ? normalized.Substring(0, slash) : null;
+    }
+
+    // "Assets/<folder>" for a file at least one folder below Assets/, else null.
+    private static string TopAssetFolder(string path)
+    {
+        var parts = NormalizeAssetPath(path)?.Split('/');
+        return parts != null && parts.Length >= 3 && string.Equals(parts[0], "Assets", StringComparison.OrdinalIgnoreCase) ? parts[0] + "/" + parts[1] : null;
+    }
+
+    private static string CommonAssetFolder(string first, string second)
+    {
+        if (first == null || second == null) return first ?? second;
+        var a = first.Split('/');
+        var b = second.Split('/');
+        int count = 0;
+        while (count < a.Length && count < b.Length && string.Equals(a[count], b[count], StringComparison.OrdinalIgnoreCase)) count++;
+        return string.Join("/", a.Take(count));
+    }
+
+    private static bool IsInAssetFolder(string path, string folder) =>
+        path != null && folder != null && path.StartsWith(folder.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase);
 
     // The first humanoid Avatar among the entries' original models. sourceFbxPath is the *.fbx.originalbase key once a
     // backup exists, which Unity cannot load: the model is the FBX itself while it holds the original, else a temporary

@@ -311,7 +311,8 @@ public partial class AssetGalleryModule
         }
     }
 
-    private void ApplySelectedAssetMediaUpdate(CreatorAssetCreateResponseAsset updatedAsset)
+    // thumbnail/banner: the shots that request uploaded (null, or destroyed when the user left that edit meanwhile).
+    private void ApplySelectedAssetMediaUpdate(CreatorAssetCreateResponseAsset updatedAsset, Texture2D thumbnail, Texture2D banner)
     {
         if (updatedAsset == null || updatedAsset.id <= 0)
         {
@@ -319,13 +320,13 @@ public partial class AssetGalleryModule
         }
 
         Texture2D cachedThumbnail = null;
-        if (editThumbnail != null && !string.IsNullOrWhiteSpace(updatedAsset.thumbnail))
+        if (thumbnail != null && !string.IsNullOrWhiteSpace(updatedAsset.thumbnail))
         {
-            cachedThumbnail = AvatarAssetDiscoveryService.CacheThumbnail(updatedAsset.id, updatedAsset.thumbnail, editThumbnail);
+            cachedThumbnail = AvatarAssetDiscoveryService.CacheThumbnail(updatedAsset.id, updatedAsset.thumbnail, thumbnail);
         }
-        if (editBanner != null && !string.IsNullOrWhiteSpace(updatedAsset.mcbBanner))
+        if (banner != null && !string.IsNullOrWhiteSpace(updatedAsset.mcbBanner))
         {
-            AvatarAssetDiscoveryService.CacheBannerUntilDownloaded(updatedAsset.id, updatedAsset.mcbBanner, editBanner);
+            AvatarAssetDiscoveryService.CacheBannerUntilDownloaded(updatedAsset.id, updatedAsset.mcbBanner, banner);
         }
 
         ApplyAssetMediaFields(SelectedAsset, updatedAsset);

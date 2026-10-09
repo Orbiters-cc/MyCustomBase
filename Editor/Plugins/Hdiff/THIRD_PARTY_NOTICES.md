@@ -4,7 +4,7 @@ My Custom Base (MCB) includes the following third-party software. Their licenses
 
 ## HDiffPatch and libdivsufsort
 
-The native HDiff libraries (`hdiffz.dll`, `hpatchz.dll`, `hdiffinfo.dll`) are built from HDiffPatch, which includes libdivsufsort.
+The native HDiff libraries (`hdiffz.dll`, `hpatchz.dll`) are built from HDiffPatch, which includes libdivsufsort.
 https://github.com/sisong/HDiffPatch
 
 ```

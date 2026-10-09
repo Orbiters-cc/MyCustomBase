@@ -384,8 +384,8 @@ public class AvatarBaseSourceWorkflowTests
     public void UnityPackageExtractionPreservesPathsAndAvoidsFlatNameCollisions()
     {
         string packagePath = CreateUnityPackage(
-            ("aaaaaaaa", "Assets/AvatarA/shared.fbx", new byte[] { 1, 2, 3 }),
-            ("bbbbbbbb", "Assets/AvatarB/shared.fbx", new byte[] { 4, 5, 6 }));
+            ("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Assets/AvatarA/shared.fbx", new byte[] { 1, 2, 3 }),
+            ("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Assets/AvatarB/shared.fbx", new byte[] { 4, 5, 6 }));
         UnityPackageFbxSourceExtractor.ExtractionResult extraction = null;
         try
         {
@@ -396,6 +396,8 @@ public class AvatarBaseSourceWorkflowTests
                 "Assets/AvatarB/shared.fbx"
             }));
             Assert.That(extraction.entries.Select(entry => entry.tempPath).Distinct().Count(), Is.EqualTo(2));
+            Assert.That(extraction.entries.Select(entry => entry.hash), Is.EqualTo(extraction.entries.Select(entry => MCBUtils.CalculateFileHash(entry.tempPath))),
+                "Hashed as it is extracted, the same as hashing the file afterwards");
             Assert.That(Directory.Exists(extraction.extractionRoot), Is.True);
 
             string extractionRoot = extraction.extractionRoot;
@@ -414,8 +416,8 @@ public class AvatarBaseSourceWorkflowTests
     public void UnityPackageExtractionReadsOnlyThePathnameFirstLine()
     {
         string packagePath = CreateUnityPackage(
-            ("dddddddd", "Assets/AvatarC/body.fbx\n00", new byte[] { 7, 8, 9 }),
-            ("eeeeeeee", "Assets/AvatarD/body.fbx\r\n", new byte[] { 1, 2 }));
+            ("dddddddddddddddddddddddddddddddd", "Assets/AvatarC/body.fbx\n00", new byte[] { 7, 8, 9 }),
+            ("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "Assets/AvatarD/body.fbx\r\n", new byte[] { 1, 2 }));
         UnityPackageFbxSourceExtractor.ExtractionResult extraction = null;
         try
         {
@@ -437,7 +439,7 @@ public class AvatarBaseSourceWorkflowTests
     public void UnityPackageExtractionRejectsTraversalAndCleansItsSession()
     {
         string packagePath = CreateUnityPackage(
-            ("cccccccc", "Assets/../../outside.fbx", new byte[] { 1, 2, 3 }));
+            ("cccccccccccccccccccccccccccccccc", "Assets/../../outside.fbx", new byte[] { 1, 2, 3 }));
         string extractionParent = Path.Combine(Path.GetTempPath(), "mcb_source_keys");
         var before = Directory.Exists(extractionParent)
             ? new HashSet<string>(Directory.GetDirectories(extractionParent), StringComparer.OrdinalIgnoreCase)

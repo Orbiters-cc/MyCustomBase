@@ -22,7 +22,7 @@ public partial class AssetGalleryModule
 
         SelectedAsset = asset;
         isEditingSelectedAssetMedia = true;
-        isSavingSelectedAssetMedia = false;
+        selectedAssetMediaEdit++;
         selectedAssetMediaEditError = null;
         ClearTextureField(ref editThumbnail);
         ClearTextureField(ref editBanner);
@@ -41,7 +41,8 @@ public partial class AssetGalleryModule
     private void ResetSelectedAssetMediaEditState(bool destroyPreviewTexture)
     {
         isEditingSelectedAssetMedia = false;
-        isSavingSelectedAssetMedia = false;
+        // Ends this edit: a save still uploading finishes on its own without touching the next edit.
+        selectedAssetMediaEdit++;
         selectedAssetMediaEditError = null;
         ClearTextureField(ref editThumbnail);
         ClearTextureField(ref editBanner);
@@ -227,52 +228,70 @@ public partial class AssetGalleryModule
         }
 
         int assetId = SelectedAsset.id;
-        isSavingSelectedAssetMedia = true;
+        int edit = selectedAssetMediaEdit;
+        savingSelectedAssetMediaEdit = edit;
         selectedAssetMediaEditError = null;
         editor.Repaint();
 
+        // The shots this request uploads; the edit fields may hold another edit's shots by the time it finishes.
+        var thumbnail = editThumbnail;
+        var banner = editBanner;
         var form = new List<IMultipartFormSection>();
-        AddImageToForm(form, "thumbnail", editThumbnail);
-        AddImageToForm(form, "banner", editBanner);
+        AddImageToForm(form, "thumbnail", thumbnail);
+        AddImageToForm(form, "banner", banner);
 
         string url = $"{MCBUtils.getApiUrl()}/assets/{assetId}/media";
-        using (var request = UnityWebRequest.Post(url, form))
+        try
         {
-            MCBRequestHeaders.SetAuthorization(request, editor.authToken);
-
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload);
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Update asset media"));
-
-            if (request.result != UnityWebRequest.Result.Success)
+            using (var request = UnityWebRequest.Post(url, form))
             {
-                selectedAssetMediaEditError = ExtractErrorMessage(request.downloadHandler?.text) ??
-                                              $"Failed to update asset media: HTTP {request.responseCode} {request.error}";
-            }
-            else
-            {
-                try
+                MCBRequestHeaders.SetAuthorization(request, editor.authToken);
+
+                request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload);
+                yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Update asset media"));
+
+                bool currentEdit = edit == selectedAssetMediaEdit;
+                string error = null;
+                if (request.result != UnityWebRequest.Result.Success)
                 {
-                    var response = JsonConvert.DeserializeObject<CreateCustomBaseAssetResponse>(request.downloadHandler.text);
-                    if (response?.asset == null || response.asset.id != assetId)
+                    error = ExtractErrorMessage(request.downloadHandler?.text) ??
+                            $"Failed to update asset media: HTTP {request.responseCode} {request.error}";
+                }
+                else
+                {
+                    try
                     {
-                        throw new InvalidOperationException("The server did not return the updated asset media.");
-                    }
+                        var response = JsonConvert.DeserializeObject<CreateCustomBaseAssetResponse>(request.downloadHandler.text);
+                        if (response?.asset == null || response.asset.id != assetId)
+                        {
+                            throw new InvalidOperationException("The server did not return the updated asset media.");
+                        }
 
-                    ApplySelectedAssetMediaUpdate(response.asset);
-                    ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
-                    selectedAssetBannerFrame = null;
-                    selectedAssetBannerImage = null;
-                    selectedAssetBannerMessage = null;
-                    selectedAssetBannerAssetId = 0;
+                        ApplySelectedAssetMediaUpdate(response.asset, thumbnail, banner);
+                        if (currentEdit)
+                        {
+                            ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
+                            selectedAssetBannerFrame = null;
+                            selectedAssetBannerImage = null;
+                            selectedAssetBannerMessage = null;
+                            selectedAssetBannerAssetId = 0;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        error = $"Failed to parse updated asset media: {ex.Message}";
+                    }
                 }
-                catch (Exception ex)
-                {
-                    selectedAssetMediaEditError = $"Failed to parse updated asset media: {ex.Message}";
-                }
+
+                if (error != null && currentEdit) selectedAssetMediaEditError = error;
+                else if (error != null) editor.warningsModule?.AddWarning(error, MessageType.Warning, "Custom base media not saved");
             }
         }
+        finally
+        {
+            if (savingSelectedAssetMediaEdit == edit) savingSelectedAssetMediaEdit = 0;
+        }
 
-        isSavingSelectedAssetMedia = false;
         editor.RefreshUiToolkitSections();
         editor.Repaint();
     }

@@ -149,7 +149,7 @@ public class AnimationPositionOffsetService
     private static bool TryResolveOffsetState(GameObject avatarRoot, out List<AnimationPositionOffsetEntry> offsets)
     {
         offsets = null;
-        var customBase = FindCustomBase(avatarRoot);
+        var customBase = BlendShapeLinkService.FindCustomBase(avatarRoot);
         if (customBase == null) return false;
 
         if (customBase.appliedCustomBaseVersion != null)
@@ -871,31 +871,6 @@ public class AnimationPositionOffsetService
         if (string.IsNullOrEmpty(path)) return false;
         string normalized = path.Replace("\\", "/");
         return normalized.IndexOf("com.vrcfury.temp", StringComparison.OrdinalIgnoreCase) >= 0;
-    }
-
-    private static MyCustomBase FindCustomBase(GameObject avatarRoot)
-    {
-        if (avatarRoot == null) return null;
-
-        var onRoot = avatarRoot.GetComponent<MyCustomBase>();
-        if (onRoot != null) return onRoot;
-
-        var inChildren = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
-        if (inChildren != null) return inChildren;
-
-        string rootName = avatarRoot.name;
-        if (!string.IsNullOrEmpty(rootName) && rootName.EndsWith("(Clone)", StringComparison.Ordinal))
-        {
-            rootName = rootName.Substring(0, rootName.Length - "(Clone)".Length);
-        }
-
-        var all = Resources.FindObjectsOfTypeAll<MyCustomBase>();
-        return all.FirstOrDefault(x =>
-            x != null &&
-            x.gameObject != null &&
-            x.gameObject.scene.IsValid() &&
-            x.transform.root != null &&
-            string.Equals(x.transform.root.name, rootName, StringComparison.Ordinal));
     }
 
     private static string BuildName(string prefix, string sourceName)

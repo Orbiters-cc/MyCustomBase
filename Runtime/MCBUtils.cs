@@ -33,11 +33,9 @@ public static class MCBUtils
     public const string DEFAULT_AVATAR_NAME = "default avatar.asset";
     public const string CUSTOM_BASE_AVATAR_NAME = "customBase avatar.asset";
 
-    // EditorPrefs key for Dev Environment setting
-    private const string DevEnvironmentPrefKey = "MCB_DevEnvironment";
     private const string ApiSimulationModePrefKey = "MCB_ApiSimulationMode";
     
-    // Dev Environment property with persistent storage
+    // The server Orbiters Toolkit talks to (OrbitersEnvironment): one switch for every Orbiters tool.
     public static bool isDevEnvironment { get => OrbitersEnvironment.IsDevelopment; set => OrbitersEnvironment.IsDevelopment = value; }
 
     public static ApiSimulationMode apiSimulationMode
@@ -62,12 +60,9 @@ public static class MCBUtils
         }
     }
     
-    public const string SERVER_BASE_URL = "orbiters.cc/"; // Update with your server URL
-    public const string API_BASE_URL = "api." + SERVER_BASE_URL; // Update with your server URL
     public const string VERSION_ENDPOINT = "/:assetId/versions";
     public const string MODEL_ENDPOINT = "/:assetId/model";
     public const string AVATAR_ASSET_DISCOVERY_ENDPOINT = "/assets/by-avatar-base";
-    public const string TOKEN_ENDPOINT = "/token"; // Replace with your actual API endpoint
     
     public const string NEW_VERSION_ENDPOINT = "/newVersion";
     public const string CHECK_CONNECTION_ENDPOINT = "/check-connection";

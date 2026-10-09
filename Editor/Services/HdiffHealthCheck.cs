@@ -61,6 +61,7 @@ public static class HdiffHealthCheck
                 if (File.Exists(outputPath)) File.Delete(outputPath);
                 HdiffDiffResult diffResult = MCBHdiffPatchWrapper.CreateDiff(basePath, modifiedPath, hdiffPath, streamOnly: stream);
                 ThrowIf(diffResult != HdiffDiffResult.HDIFF_SUCCESS, "Synthetic " + mode + " HDiff creation failed: " + diffResult);
+                ThrowIf(!MCBHdiffPatchWrapper.TryGetDiffInfo(hdiffPath, out ulong oldSize, out ulong newSize, out _) || oldSize != (ulong)baseBytes.Length || newSize != (ulong)modifiedBytes.Length, "Synthetic " + mode + " HDiff info could not be read.");
 
                 var fileManager = new FileManagerService();
                 File.WriteAllBytes(binPath, fileManager.XorTransform(baseBytes, File.ReadAllBytes(hdiffPath)));

@@ -164,8 +164,8 @@ public class AsyncVersionService
                 }
                 var recommendedVersion = versions.FirstOrDefault(v => v.version == response.recommendedVersion);
 
-                // Cache the results
-                await Task.Run(() => cache.CacheVersions(baseFbxHash, versions, recommendedVersion, authToken, assetId, sourceVersionKey));
+                // The cache copies the versions here (on the caller's thread, before anyone else holds them) and writes on a worker.
+                cache.CacheVersions(baseFbxHash, versions, recommendedVersion, authToken, assetId, sourceVersionKey);
 
                 taskManager.CompleteTask(taskId);
                 
@@ -178,6 +178,9 @@ public class AsyncVersionService
             else
             {
                 var errorMsg = fetchError ?? "Unknown server error";
+                // A member without access must not keep seeing the versions cached while they had it.
+                if (errorMsg.StartsWith(NetworkService.AccessDeniedPrefix, StringComparison.Ordinal))
+                    cache.RemoveCachedVersions(baseFbxHash, authToken, assetId, sourceVersionKey);
                 taskManager.CompleteTask(taskId, true, errorMsg);
                 taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(request, errorMsg));
                 return (new List<CustomBaseVersion>(), null, errorMsg);

@@ -168,6 +168,41 @@ public sealed class CustomBaseSourceSetupTransaction : IDisposable
         }
     }
 
+    /// <summary>
+    /// The server's source files for the requested scene, one per requested file. An idempotent creation retry (and
+    /// linking an existing asset) returns the sources of every registered original, extra originals included, and the
+    /// server may answer with its canonical paths: each requested file is matched by hash, preferring the same path,
+    /// then a file of the requested original (<paramref name="sourceVersionKey"/>), then the earliest record.
+    /// </summary>
+    public static ModelFileData[] SelectRequestedSources(IEnumerable<ModelFileData> returned, IEnumerable<ModelFileData> requested,
+        string sourceVersionKey = null)
+    {
+        var candidates = (returned ?? Enumerable.Empty<ModelFileData>()).Where(file => file != null && !string.IsNullOrWhiteSpace(file.hash)).ToList();
+        var selected = new List<ModelFileData>();
+        foreach (var file in (requested ?? Enumerable.Empty<ModelFileData>()).Where(file => file != null))
+        {
+            var match = candidates
+                .Where(candidate => !selected.Contains(candidate) && string.Equals(candidate.hash, file.hash, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(candidate => string.Equals(AvatarPathOverrideService.NormalizeUnityPath(candidate.path),
+                    AvatarPathOverrideService.NormalizeUnityPath(file.path), StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(candidate => BelongsToSourceVersion(candidate, sourceVersionKey))
+                .ThenBy(candidate => candidate.id)
+                .FirstOrDefault();
+            if (match == null) throw new InvalidOperationException("The server did not return the requested original-source bindings.");
+            selected.Add(match);
+        }
+        if (selected.Count == 0) throw new InvalidOperationException("The server did not return the requested original-source bindings.");
+        return selected.ToArray();
+    }
+
+    private static bool BelongsToSourceVersion(ModelFileData file, string sourceVersionKey)
+    {
+        object key = null;
+        file.metadata?.TryGetValue("sourceVersionKey", out key);
+        string fileKey = key == null ? null : Convert.ToString(key, System.Globalization.CultureInfo.InvariantCulture);
+        return string.IsNullOrEmpty(sourceVersionKey) || string.IsNullOrEmpty(fileKey) || fileKey == sourceVersionKey;
+    }
+
     public void Complete()
     {
         if (rolledBack) throw new InvalidOperationException("Cannot complete a rolled-back source setup transaction.");

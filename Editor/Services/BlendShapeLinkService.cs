@@ -52,15 +52,6 @@ public partial class BlendShapeLinkService
         public List<string> customSliderSelectionNames;
     }
 
-    public void ApplyVersionLinks(GameObject avatarRoot, CustomBaseVersion version, bool useCustomSliderSelection,
-        List<string> customSliderSelectionNames)
-    {
-        if (avatarRoot == null || version == null) return;
-        var planned =
-            BuildVersionPlannedLinks(avatarRoot, version, useCustomSliderSelection, customSliderSelectionNames);
-        BlendShapeLinkEngine.Apply(avatarRoot, planned.Select(x => x.link).ToList(), "version");
-    }
-
     public ConfigResult UpsertFactorLinkConfig(
         GameObject avatarRoot,
         SkinnedMeshRenderer targetRenderer,
