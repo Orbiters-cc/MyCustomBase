@@ -1810,7 +1810,7 @@ public class MCBEditor : UnityEditor.Editor
         return true;
     }
 
-    private void InvalidateDetectedAvatarFbxCache(bool clearSharedCache = false)
+    internal void InvalidateDetectedAvatarFbxCache(bool clearSharedCache = false)
     {
         int rootInstanceId = 0;
         try

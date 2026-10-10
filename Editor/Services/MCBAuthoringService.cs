@@ -52,6 +52,41 @@ public static class MCBAuthoringService
         public void Dispose() { if (owns && Editor != null) UnityEngine.Object.DestroyImmediate(Editor); }
     }
 
+    private const string EnvironmentFile = "mcb-environment.txt";
+    public static string EnvironmentName => MCBUtils.isDevEnvironment ? "development" : "production";
+
+    /// <summary>Which Orbiters server authoring talks to, and whether this environment has a login.</summary>
+    public static object Environment()
+    {
+        var auth = AuthenticationService.GetAuth();
+        return new { environment = EnvironmentName, api = MCBUtils.getApiUrl(""), signedIn = !string.IsNullOrEmpty(auth?.token), user = auth?.user };
+    }
+
+    /// <summary>Switches authoring (and MCB) to the development or production server; each keeps its own login.</summary>
+    public static object SetEnvironment(string environment)
+    {
+        if (environment != "development" && environment != "production") throw new ArgumentException("Choose development or production.");
+        MCBUtils.isDevEnvironment = environment == "development";
+        AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
+        return Environment();
+    }
+
+    // Development and production number assets independently, but local versions live in Assets/MCB/assets/<asset id>:
+    // the asset folder records the environment its versions were built for, and only ever holds one.
+    private static string EnvironmentPath(int assetId) => Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER + "/" + assetId + "/" + EnvironmentFile);
+    private static void RequireEnvironmentFolder(int assetId)
+    {
+        string path = EnvironmentPath(assetId);
+        if (!File.Exists(path)) return;
+        string built = File.ReadAllText(path).Trim();
+        if (built != EnvironmentName)
+            throw new InvalidOperationException("Assets/MCB/assets/" + assetId + " holds versions built for " + built + "; this is " + EnvironmentName
+                + ". Move that asset folder out of Assets/MCB/assets before working on " + EnvironmentName + " asset " + assetId + ".");
+    }
+
+    /// <summary>The signed-in member's token, for authoring requests.</summary>
+    public static string AuthToken() => AuthenticationService.GetAuth()?.token ?? throw new InvalidOperationException("Sign in to MCB first.");
+
     public static MyCustomBase Target(int instanceId)
     {
         var obj = EditorUtility.InstanceIDToObject(instanceId);
@@ -120,6 +155,13 @@ public static class MCBAuthoringService
     public static IEnumerator Build(MyCustomBase owner, Action<VersionArtifact> complete)
     {
         var draft = JsonConvert.DeserializeObject<Draft>(owner.creatorAuthoringDraftJson ?? "null") ?? throw new InvalidOperationException("Configure an authoring draft first.");
+        RequireEnvironmentFolder(draft.asset.id);
+        var built = complete;
+        complete = artifact =>
+        {
+            File.WriteAllText(EnvironmentPath(artifact.Metadata.assetId), EnvironmentName);
+            built(artifact);
+        };
         // One build or publish at a time across MCP and every creator window (each editor only knows its own isSubmitting).
         using var operation = VersionOperationGuard.Acquire("building version " + draft.version);
         using var session = new Session(owner); var editor = session.Editor;
@@ -166,6 +208,7 @@ public static class MCBAuthoringService
 
     public static IEnumerator Publish(MyCustomBase owner, CustomBaseVersion version, Action complete)
     {
+        RequireEnvironmentFolder(version.assetId);
         using var session = new Session(owner);
         bool published = false;
         // The release checkpoint names the published asset: the draft's when it is this version's asset.

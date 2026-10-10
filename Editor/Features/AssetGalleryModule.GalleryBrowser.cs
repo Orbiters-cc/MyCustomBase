@@ -63,6 +63,7 @@ public partial class AssetGalleryModule
 
         var matchingAssets = GetMatchingAssets();
         BuildGalleryToolbarUIToolkit(galleryRoot, matchingAssets);
+        BuildLegacyMigrationUIToolkit(galleryRoot);
 
         if (isLoading)
         {

@@ -240,7 +240,7 @@ public partial class AssetGalleryModule
         AddImageToForm(form, "thumbnail", thumbnail);
         AddImageToForm(form, "banner", banner);
 
-        string url = $"{MCBUtils.getApiUrl()}/assets/{assetId}/media";
+        string url = CustomBaseMediaService.Url(assetId);
         try
         {
             using (var request = UnityWebRequest.Post(url, form))

@@ -13,6 +13,8 @@ using UnityEngine.Rendering;
 /// <summary>What a version is compared with.</summary>
 internal enum CompareReference
 {
+    /// <summary>The version before it in its history, or the original model when it is the first version.</summary>
+    Previous,
     /// <summary>The avatar as it is in the scene now.</summary>
     AvatarNow,
     /// <summary>The avatar with its original model, as with no version applied.</summary>
@@ -37,13 +39,13 @@ internal sealed class MeshSource
     public string[] ShapeNames = new string[0];
     /// <summary>Read from an FBX: blendshape name → signature of its offsets.</summary>
     public Dictionary<string, long> ShapeSignatures;
-    /// <summary>Read from an FBX: the material of each slot (submesh).</summary>
-    public string[] Materials;
+    /// <summary>The material slot name of each submesh (<see cref="MaterialSlotNames"/>); null when unknown.</summary>
+    public string[] Slots;
     public bool FromFile;
 
     public static MeshSource FromFbx(FbxMesh mesh, Matrix4x4 toRoot)
     {
-        var source = new MeshSource { FromFile = true, Materials = mesh.Materials, ShapeSignatures = mesh.Shapes, ShapeNames = mesh.Shapes.Keys.ToArray() };
+        var source = new MeshSource { FromFile = true, Slots = mesh.Materials, ShapeSignatures = mesh.Shapes, ShapeNames = mesh.Shapes.Keys.ToArray() };
         source.Points = new Vector3[mesh.Points.Length];
         for (int i = 0; i < mesh.Points.Length; i++) source.Points[i] = toRoot.MultiplyPoint3x4(mesh.Points[i]);
         source.Triangles = mesh.Triangles;
@@ -135,6 +137,16 @@ internal sealed class MeshSource
         return result;
     }
 
+    /// <summary>Whether both are the same mesh: the same points in the same order, and as many submeshes.</summary>
+    public static bool SameShape(MeshSource a, MeshSource b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a == null || b == null || a.Points.Length != b.Points.Length || a.SubMeshes.Length != b.SubMeshes.Length) return false;
+        for (int i = 0; i < a.Points.Length; i++)
+            if ((a.Points[i] - b.Points[i]).sqrMagnitude > 1e-10f) return false;
+        return true;
+    }
+
     /// <summary>Per drawable vertex, from per point values.</summary>
     public T[] Map<T>(T[] perPoint)
     {
@@ -216,10 +228,11 @@ internal sealed class ContextPart
 }
 
 /// <summary>
-/// The meshes a version would put on the avatar, compared with the avatar now or with its original model. Loading reads
-/// the downloaded version without changing the project: FBX replacements are decoded in memory (HDiff through a temporary
-/// file), advanced meshes decrypted and parsed in memory, the models read with Toolkit's <see cref="FbxReader"/>. Parts are
-/// shown with the avatar's blendshape values and materials, so the comparison is what the creator will see on their avatar.
+/// The meshes a version would put on the avatar, compared with the version before it, with the avatar now or with its
+/// original model. Loading reads the downloaded versions without changing the project: FBX replacements are decoded in
+/// memory (HDiff through a temporary file), advanced meshes decrypted and parsed in memory, the models read with
+/// Toolkit's <see cref="FbxReader"/>. Parts are shown with the avatar's blendshape values and materials, each material on
+/// the submesh of its slot name, so the comparison is what the creator will see on their avatar.
 /// </summary>
 internal sealed class VersionMeshComparison : IDisposable
 {
@@ -237,11 +250,16 @@ internal sealed class VersionMeshComparison : IDisposable
     private bool contextBuilt;
 
     public readonly CustomBaseVersion Version;
+    /// <summary>The version before <see cref="Version"/> in its history; null when it is the first, or when the version
+    /// before could not be read (<see cref="PreviousProblem"/>): the original model is then the previous side.</summary>
+    public CustomBaseVersion PreviousVersion { get; private set; }
+    /// <summary>The version before is the one on the avatar: the avatar now shows its meshes.</summary>
+    public bool PreviousOnAvatar { get; private set; }
+    /// <summary>Why the version before could not be shown, for the creator; null when it could.</summary>
+    public string PreviousProblem { get; private set; }
     public readonly List<ComparedPart> Parts = new List<ComparedPart>();
     public readonly List<ContextPart> Context = new List<ContextPart>();
     public CompareReference Reference { get; private set; }
-    /// <summary>Whether the avatar now differs from its original model (a version is applied).</summary>
-    public bool AvatarHasVersion { get; private set; }
     public Bounds Bounds { get; private set; }
     /// <summary>Where the view turns around: the avatar's hips, or the middle of its meshes when it has none.</summary>
     public Vector3 Pivot { get; private set; }
@@ -256,31 +274,46 @@ internal sealed class VersionMeshComparison : IDisposable
     private sealed class PartSources
     {
         public string Key, Name;
-        public MeshSource Now, Original, After;
+        public MeshSource Now, Original, After, Previous;
         public Material[] NowMaterials = new Material[0];
         public Material[] AfterMaterials = new Material[0];
         public Material[] OriginalMaterials = new Material[0];
-        /// <summary>The renderer's blendshape values, and the version's: the same, with its new blendshapes at their defaults.</summary>
+        public Material[] PreviousMaterials = new Material[0];
+        /// <summary>The renderer's blendshape values, and each version's: the same, with its new blendshapes at their defaults.</summary>
         public Dictionary<string, float> Weights = new Dictionary<string, float>(StringComparer.Ordinal);
         public Dictionary<string, float> AfterWeights = new Dictionary<string, float>(StringComparer.Ordinal);
+        public Dictionary<string, float> PreviousWeights = new Dictionary<string, float>(StringComparer.Ordinal);
+    }
+
+    /// <summary>What one version puts on one model of the avatar.</summary>
+    private sealed class VersionModels
+    {
+        public string SourceHash;
+        public VersionActions.VersionModelPatch Replacement;
+        public readonly List<VersionActions.VersionModelPatch> Advanced = new List<VersionActions.VersionModelPatch>();
+        public byte[] Bytes;
+        /// <summary>The replacement model's meshes; null when the version keeps the original model.</summary>
+        public List<FbxMesh> Meshes;
     }
 
     private sealed class FbxTarget
     {
-        public string Path, OriginalPath, SourceHash;
-        public VersionActions.VersionModelPatch Replacement;
-        public readonly List<VersionActions.VersionModelPatch> Advanced = new List<VersionActions.VersionModelPatch>();
+        public string Path, OriginalPath;
         public List<ModelFileSmrPathData> SmrPaths;
         public Matrix4x4 ToRoot = Matrix4x4.identity;
-        public byte[] AfterBytes;
-        public List<FbxMesh> OriginalMeshes, NowMeshes, AfterMeshes;
+        public List<FbxMesh> OriginalMeshes, NowMeshes;
+        public readonly VersionModels After = new VersionModels(), Previous = new VersionModels();
     }
 
-    public VersionMeshComparison(VersionActions actions, MyCustomBase target, CustomBaseVersion version)
+    /// <param name="previous">The version before <paramref name="version"/> in its history; null for the first version.</param>
+    /// <param name="previousOnAvatar">Whether <paramref name="previous"/> is the version on the avatar now: it is then not read again.</param>
+    public VersionMeshComparison(VersionActions actions, MyCustomBase target, CustomBaseVersion version, CustomBaseVersion previous = null, bool previousOnAvatar = false)
     {
         this.actions = actions;
         this.target = target;
         Version = version;
+        PreviousVersion = previous;
+        PreviousOnAvatar = previous != null && previousOnAvatar;
     }
 
     private void Report(float value, string text)
@@ -294,7 +327,8 @@ internal sealed class VersionMeshComparison : IDisposable
 
     /// <summary>
     /// Loads and compares, stepped by the caller once per editor tick (main thread): the heavy steps run on worker threads
-    /// while it yields. Throws with a message for the creator when the version cannot be read.
+    /// while it yields. Throws with a message for the creator when the version cannot be read; a version before it that
+    /// cannot be read leaves the original model as the previous side (<see cref="PreviousProblem"/>).
     /// </summary>
     public IEnumerator Load(CompareReference reference)
     {
@@ -303,107 +337,185 @@ internal sealed class VersionMeshComparison : IDisposable
         Report(0.02f, "Finding the version's meshes…");
         var patches = actions.ResolveModelPatches(Version);
         if (patches.Count == 0) throw new InvalidOperationException("This version does not change any mesh.");
+        var previousPatches = new List<VersionActions.VersionModelPatch>();
+        // The version on the avatar is not read again: the avatar shows its meshes.
+        if (PreviousVersion != null && !PreviousOnAvatar)
+        {
+            try { previousPatches = actions.ResolveModelPatches(PreviousVersion); }
+            catch (Exception ex) when (ex is IOException || ex is InvalidOperationException || ex is ArgumentException) { DropPrevious(ex.Message); }
+        }
 
         var renderers = root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
         var targets = new List<FbxTarget>();
-        foreach (var group in patches.GroupBy(p => MCBUtils.ToUnityPath(p.TargetFbxPath), StringComparer.OrdinalIgnoreCase))
-        {
-            var first = group.First();
-            // A plain payload is not bound to an original: the avatar's own model is its reference.
-            bool plain = first.OriginalFbxPath == null;
-            var fbx = new FbxTarget
-            {
-                Path = group.Key,
-                OriginalPath = plain ? first.TargetFbxPath : first.OriginalFbxPath,
-                SourceHash = plain ? null : first.Source?.hash,
-                Replacement = group.FirstOrDefault(p => !p.AdvancedMesh),
-                SmrPaths = plain ? new List<ModelFileSmrPathData>() : first.Source?.smrPaths ?? new List<ModelFileSmrPathData>()
-            };
-            fbx.Advanced.AddRange(group.Where(p => p.AdvancedMesh));
-            fbx.ToRoot = FbxToRoot(root, fbx, renderers);
-            targets.Add(fbx);
-        }
+        AddTargets(root, renderers, targets, patches, false);
+        AddTargets(root, renderers, targets, previousPatches, true);
 
         // Advanced meshes an earlier apply cached are read from the cache (main thread); the others are decoded below.
         var cachedPayloads = new Dictionary<VersionActions.VersionModelPatch, NativeMeshPayloadAsset>();
-        foreach (var patch in targets.SelectMany(t => t.Advanced))
+        foreach (var fbx in targets)
         {
-            var cached = NativeMeshPayloadService.FindCachedPayload(Version, patch.Patch);
-            if (cached != null) cachedPayloads[patch] = cached;
+            foreach (var patch in fbx.After.Advanced)
+            {
+                var cached = NativeMeshPayloadService.FindCachedPayload(Version, patch.Patch);
+                if (cached != null) cachedPayloads[patch] = cached;
+            }
+            foreach (var patch in fbx.Previous.Advanced)
+            {
+                var cached = NativeMeshPayloadService.FindCachedPayload(PreviousVersion, patch.Patch);
+                if (cached != null) cachedPayloads[patch] = cached;
+            }
         }
 
         // Every key is checked first: a model that is not this version's original (a version still applied, another base)
         // would decode to garbage, or make the native patcher fail with an unclear error.
         Report(0.05f, "Checking the original models…");
         var originals = new Dictionary<FbxTarget, byte[]>();
+        string previousMismatch = null;
         var check = Task.Run(() =>
         {
             foreach (var fbx in targets)
             {
                 byte[] original = File.ReadAllBytes(fbx.OriginalPath);
-                if (!string.IsNullOrWhiteSpace(fbx.SourceHash) && !string.Equals(Sha256(original), fbx.SourceHash, StringComparison.OrdinalIgnoreCase))
+                string hash = string.IsNullOrWhiteSpace(fbx.After.SourceHash) && string.IsNullOrWhiteSpace(fbx.Previous.SourceHash) ? null : Sha256(original);
+                if (!string.IsNullOrWhiteSpace(fbx.After.SourceHash) && !string.Equals(hash, fbx.After.SourceHash, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException($"The original model '{Path.GetFileName(fbx.Path)}' is not the one this version was made for, so its meshes cannot be shown. Reset the avatar to its original model, then try again.");
+                if (!string.IsNullOrWhiteSpace(fbx.Previous.SourceHash) && !string.Equals(hash, fbx.Previous.SourceHash, StringComparison.OrdinalIgnoreCase))
+                    previousMismatch = $"Version {PreviousVersion.version} was made for another original model, so this compares with the original.";
                 lock (originals) originals[fbx] = original;
             }
         });
         while (!check.IsCompleted) yield return null;
         if (check.IsFaulted) throw check.Exception.GetBaseException();
+        if (previousMismatch != null) DropPrevious(previousMismatch, targets);
 
         // HDiff runs its native patcher on the main thread; XOR replacements decode on a worker below.
-        foreach (var fbx in targets.Where(t => t.Replacement != null && t.Replacement.Hdiff))
+        foreach (var fbx in targets.ToList())
         {
-            Report(0.08f, "Unpacking the version…");
-            yield return null;
-            fbx.AfterBytes = DecodeHdiff(fbx.Replacement);
+            if (fbx.After.Replacement != null && fbx.After.Replacement.Hdiff)
+            {
+                Report(0.08f, "Unpacking the version…");
+                yield return null;
+                fbx.After.Bytes = DecodeHdiff(fbx.After.Replacement);
+            }
+            if (fbx.Previous.Replacement != null && fbx.Previous.Replacement.Hdiff)
+            {
+                Report(0.1f, $"Unpacking version {PreviousVersion.version}…");
+                yield return null;
+                try { fbx.Previous.Bytes = DecodeHdiff(fbx.Previous.Replacement); }
+                catch (Exception ex) when (ex is IOException || ex is InvalidOperationException || ex is InvalidDataException) { DropPrevious($"Version {PreviousVersion.version} could not be unpacked, so this compares with the original.", targets); }
+            }
         }
 
         Report(0.12f, "Reading the models…");
         var prepared = new Dictionary<VersionActions.VersionModelPatch, NativeMeshPayloadService.PreparedPayloadAssetData>();
+        Exception previousUnreadable = null;
         var read = Task.Run(() =>
         {
             int done = 0, total = Math.Max(1, targets.Count);
+            const FbxReadOptions options = FbxReadOptions.Render | FbxReadOptions.ShapeOffsets;
             foreach (var fbx in targets)
             {
                 byte[] original = originals[fbx];
-                if (fbx.Replacement != null && !fbx.Replacement.Hdiff)
-                    fbx.AfterBytes = MCBXor.Transform(original, File.ReadAllBytes(fbx.Replacement.BinPath));
-                string expectedOutput = fbx.Replacement?.Patch?.outputHash;
-                if (fbx.AfterBytes != null && !string.IsNullOrWhiteSpace(expectedOutput) && !string.Equals(Sha256(fbx.AfterBytes), expectedOutput.Trim(), StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"The version's model '{Path.GetFileName(fbx.Path)}' did not decode to the file the creator published. Download this version again, then try again.");
-                Report(0.2f + 0.2f * done / total, "Reading the models…");
-
-                const FbxReadOptions options = FbxReadOptions.Render | FbxReadOptions.ShapeOffsets;
                 var parseOriginal = Task.Run(() => FbxReader.Read(original, options));
-                var parseAfter = fbx.AfterBytes != null ? Task.Run(() => FbxReader.Read(fbx.AfterBytes, options)) : null;
                 // The model the avatar has now: the original itself while no replacement is applied.
                 byte[] now = string.Equals(Path.GetFullPath(fbx.Path), Path.GetFullPath(fbx.OriginalPath), StringComparison.OrdinalIgnoreCase) ? original : File.ReadAllBytes(fbx.Path);
                 var parseNow = now == original || now.AsSpan().SequenceEqual(original) ? null : Task.Run(() => FbxReader.Read(now, options));
-                fbx.OriginalMeshes = parseOriginal.Result;
-                fbx.AfterMeshes = parseAfter?.Result;
-                fbx.NowMeshes = parseNow?.Result ?? fbx.OriginalMeshes;
-                if (fbx.AfterBytes != null && fbx.AfterMeshes.Count == 0)
-                    throw new InvalidDataException($"The version's model '{Path.GetFileName(fbx.Path)}' could not be read.");
-
-                foreach (var patch in fbx.Advanced.Where(p => !cachedPayloads.ContainsKey(p)))
+                Report(0.2f + 0.2f * done / total, "Reading the models…");
+                ReadModels(fbx.After, fbx.Path, original, options, cachedPayloads, prepared);
+                if (previousUnreadable == null)
                 {
-                    Report(0.4f + 0.2f * done / total, "Unpacking the advanced meshes…");
-                    prepared[patch] = NativeMeshPayloadService.ReadPayloadForPreview(patch.Patch, patch.BinPath, patch.OriginalFbxPath);
+                    // The version before is only a reference: when it cannot be read, the original takes its place.
+                    try { ReadModels(fbx.Previous, fbx.Path, original, options, cachedPayloads, prepared); }
+                    catch (Exception ex) when (!(ex is OutOfMemoryException)) { previousUnreadable = ex; }
                 }
+                fbx.OriginalMeshes = parseOriginal.Result;
+                fbx.NowMeshes = parseNow?.Result ?? fbx.OriginalMeshes;
                 done++;
             }
         });
         while (!read.IsCompleted) yield return null;
         originals.Clear();
         if (read.IsFaulted) throw read.Exception.GetBaseException();
+        if (previousUnreadable != null)
+        {
+            MCBLogger.LogWarning($"[MCB] Version {PreviousVersion.version} could not be read for the comparison: {previousUnreadable.Message}");
+            DropPrevious($"Version {PreviousVersion.version} could not be read, so this compares with the original.", targets);
+        }
 
         Report(0.62f, "Matching the avatar's meshes…");
         yield return null;
         Gather(root, targets, cachedPayloads, prepared);
         hips = FindHips(root);
-        AvatarHasVersion = sources.Any(s => s.Now != s.Original);
 
         var compare = Run(reference);
         while (compare.MoveNext()) yield return compare.Current;
+    }
+
+    // Groups a version's patches by the avatar model they replace.
+    private static void AddTargets(Transform root, SkinnedMeshRenderer[] renderers, List<FbxTarget> targets, List<VersionActions.VersionModelPatch> patches, bool previous)
+    {
+        foreach (var group in patches.GroupBy(p => MCBUtils.ToUnityPath(p.TargetFbxPath), StringComparer.OrdinalIgnoreCase))
+        {
+            var first = group.First();
+            // A plain payload is not bound to an original: the avatar's own model is its reference.
+            bool plain = first.OriginalFbxPath == null;
+            var fbx = targets.FirstOrDefault(t => string.Equals(t.Path, group.Key, StringComparison.OrdinalIgnoreCase));
+            if (fbx == null)
+            {
+                fbx = new FbxTarget
+                {
+                    Path = group.Key,
+                    OriginalPath = plain ? first.TargetFbxPath : first.OriginalFbxPath,
+                    SmrPaths = plain ? new List<ModelFileSmrPathData>() : first.Source?.smrPaths ?? new List<ModelFileSmrPathData>()
+                };
+                fbx.ToRoot = FbxToRoot(root, fbx, renderers);
+                targets.Add(fbx);
+            }
+            var models = previous ? fbx.Previous : fbx.After;
+            models.SourceHash = plain ? null : first.Source?.hash;
+            models.Replacement = group.FirstOrDefault(p => !p.AdvancedMesh);
+            models.Advanced.AddRange(group.Where(p => p.AdvancedMesh));
+        }
+    }
+
+    // Worker thread: a version's replacement model decoded (XOR) and read, and its advanced meshes not cached unpacked.
+    private static void ReadModels(VersionModels models, string path, byte[] original, FbxReadOptions options,
+        Dictionary<VersionActions.VersionModelPatch, NativeMeshPayloadAsset> cachedPayloads,
+        Dictionary<VersionActions.VersionModelPatch, NativeMeshPayloadService.PreparedPayloadAssetData> prepared)
+    {
+        if (models.Replacement != null && !models.Replacement.Hdiff)
+            models.Bytes = MCBXor.Transform(original, File.ReadAllBytes(models.Replacement.BinPath));
+        string expectedOutput = models.Replacement?.Patch?.outputHash;
+        if (models.Bytes != null && !string.IsNullOrWhiteSpace(expectedOutput) && !string.Equals(Sha256(models.Bytes), expectedOutput.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"The version's model '{Path.GetFileName(path)}' did not decode to the file the creator published. Download this version again, then try again.");
+        if (models.Bytes != null)
+        {
+            models.Meshes = FbxReader.Read(models.Bytes, options);
+            if (models.Meshes.Count == 0) throw new InvalidDataException($"The version's model '{Path.GetFileName(path)}' could not be read.");
+        }
+        foreach (var patch in models.Advanced.Where(p => !cachedPayloads.ContainsKey(p)))
+        {
+            var data = NativeMeshPayloadService.ReadPayloadForPreview(patch.Patch, patch.BinPath, patch.OriginalFbxPath);
+            lock (prepared) prepared[patch] = data;
+        }
+    }
+
+    // The version before cannot be shown: the original model takes its place.
+    private void DropPrevious(string problem, List<FbxTarget> targets = null)
+    {
+        PreviousProblem = problem;
+        PreviousVersion = null;
+        PreviousOnAvatar = false;
+        if (targets == null) return;
+        foreach (var fbx in targets)
+        {
+            fbx.Previous.Replacement = null;
+            fbx.Previous.Advanced.Clear();
+            fbx.Previous.Bytes = null;
+            fbx.Previous.Meshes = null;
+        }
+        // Models only the version before replaced are not compared any more.
+        targets.RemoveAll(fbx => fbx.After.Replacement == null && fbx.After.Advanced.Count == 0);
     }
 
     /// <summary>Compares with another reference; the models are already read.</summary>
@@ -411,7 +523,9 @@ internal sealed class VersionMeshComparison : IDisposable
     {
         Ready = false;
         Reference = reference;
-        Report(0.7f, reference == CompareReference.Original ? "Comparing with the original…" : "Comparing with your avatar…");
+        Report(0.7f, reference == CompareReference.AvatarNow ? "Comparing with your avatar…"
+            : reference == CompareReference.Previous && PreviousVersion != null ? $"Comparing with version {PreviousVersion.version}…"
+            : "Comparing with the original…");
         var work = Task.Run(() => Compare(reference));
         while (!work.IsCompleted) yield return null;
         if (work.IsFaulted) throw work.Exception.GetBaseException();
@@ -432,6 +546,30 @@ internal sealed class VersionMeshComparison : IDisposable
         Report(1f, "Ready");
         Ready = true;
     }
+
+    /// <summary>
+    /// Whether comparing with <paramref name="reference"/> shows something of its own (after loading): the version before
+    /// always; the original only when there is a version before that differs from it; the avatar now only when it shows
+    /// other meshes than this version and than the other references offered.
+    /// </summary>
+    public bool Offers(CompareReference reference)
+    {
+        switch (reference)
+        {
+            case CompareReference.Previous:
+                return true;
+            case CompareReference.Original:
+                return PreviousVersion != null && !Same(s => s.Previous, s => s.Original);
+            default:
+                return !Same(s => s.Now, s => s.After) && !Same(s => s.Now, s => PreviousSide(s)) &&
+                       !(Offers(CompareReference.Original) && Same(s => s.Now, s => s.Original));
+        }
+    }
+
+    private bool Same(Func<PartSources, MeshSource> a, Func<PartSources, MeshSource> b) => sources.All(s => MeshSource.SameShape(a(s), b(s)));
+
+    // The previous side: the version before, or the original model when there is none.
+    private MeshSource PreviousSide(PartSources source) => PreviousVersion != null ? source.Previous : source.Original;
 
     // Where the FBX's root is in the avatar: found from a renderer the FBX's meshes are on, and scaled like its import.
     private static Matrix4x4 FbxToRoot(Transform root, FbxTarget fbx, SkinnedMeshRenderer[] renderers)
@@ -487,7 +625,18 @@ internal sealed class VersionMeshComparison : IDisposable
         }
     }
 
-    // Main thread: pairs each mesh of the version with the avatar's renderer, and reads what only the scene has (the
+    // Blendshapes new to the avatar start at the value the creator set for them.
+    private static Dictionary<string, float> Defaults(CustomBaseVersion version)
+    {
+        var defaults = new Dictionary<string, float>(StringComparer.Ordinal);
+        foreach (var entry in version?.customBlendshapes ?? new CustomBlendshapeEntry[0])
+            if (entry != null && !string.IsNullOrWhiteSpace(entry.name) &&
+                float.TryParse(entry.defaultValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float value))
+                defaults[entry.name] = value;
+        return defaults;
+    }
+
+    // Main thread: pairs each mesh of the versions with the avatar's renderer, and reads what only the scene has (the
     // renderer's current mesh when it is not the FBX's, its materials and blendshape values).
     private void Gather(Transform root, List<FbxTarget> targets,
         Dictionary<VersionActions.VersionModelPatch, NativeMeshPayloadAsset> cachedPayloads,
@@ -496,12 +645,12 @@ internal sealed class VersionMeshComparison : IDisposable
         sources.Clear();
         var byKey = new Dictionary<string, PartSources>(StringComparer.Ordinal);
         var rendererOf = new Dictionary<string, SkinnedMeshRenderer>(StringComparer.Ordinal);
-        // Blendshapes new to the avatar start at the value the creator set for them.
-        var defaults = new Dictionary<string, float>(StringComparer.Ordinal);
-        foreach (var entry in Version.customBlendshapes ?? new CustomBlendshapeEntry[0])
-            if (entry != null && !string.IsNullOrWhiteSpace(entry.name) &&
-                float.TryParse(entry.defaultValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float value))
-                defaults[entry.name] = value;
+        // The original model's own slot names of each renderer's mesh, for a version's mesh that keeps the original's slots.
+        var modelSlots = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var afterDefaults = Defaults(Version);
+        var previousDefaults = Defaults(PreviousVersion);
+        var afterLayout = VersionCustomization.Read(Version?.extraCustomization).rendererLayout;
+        var previousLayout = VersionCustomization.Read(PreviousVersion?.extraCustomization).rendererLayout;
 
         PartSources Part(string key, string name)
         {
@@ -511,6 +660,14 @@ internal sealed class VersionMeshComparison : IDisposable
                 sources.Add(part);
             }
             return part;
+        }
+
+        Dictionary<string, float> WithDefaults(Dictionary<string, float> weights, Dictionary<string, float> defaults, Mesh mesh)
+        {
+            var result = new Dictionary<string, float>(weights, StringComparer.Ordinal);
+            foreach (var pair in defaults)
+                if (Math.Abs(pair.Value) > 0.01f && (mesh == null || mesh.GetBlendShapeIndex(pair.Key) < 0)) result[pair.Key] = pair.Value;
+            return result;
         }
 
         void ReadRenderer(string key, SkinnedMeshRenderer renderer)
@@ -524,70 +681,86 @@ internal sealed class VersionMeshComparison : IDisposable
                 float weight = renderer.GetBlendShapeWeight(i);
                 if (Mathf.Abs(weight) > 0.01f) part.Weights[mesh.GetBlendShapeName(i)] = weight;
             }
-            part.AfterWeights = new Dictionary<string, float>(part.Weights, StringComparer.Ordinal);
-            foreach (var pair in defaults)
-                if (Math.Abs(pair.Value) > 0.01f && (mesh == null || mesh.GetBlendShapeIndex(pair.Key) < 0)) part.AfterWeights[pair.Key] = pair.Value;
+            part.AfterWeights = WithDefaults(part.Weights, afterDefaults, mesh);
+            part.PreviousWeights = WithDefaults(part.Weights, previousDefaults, mesh);
         }
 
         // Unity meshes are read with only the blendshapes that are on.
-        ICollection<string> Shapes(string key) => byKey[key].Weights.Keys.Union(byKey[key].AfterWeights.Keys).ToList();
+        ICollection<string> Shapes(string key) => byKey[key].Weights.Keys.Union(byKey[key].AfterWeights.Keys).Union(byKey[key].PreviousWeights.Keys).ToList();
+
+        // A version's advanced meshes, by the renderer they go on.
+        HashSet<string> ReadPayloads(VersionModels models, RendererLayoutConfiguration layout, bool previous)
+        {
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            void Add(SkinnedMeshRenderer renderer, string avatarPath, Func<string, Matrix4x4, MeshSource> read, Vector3 position, Quaternion rotation, Vector3 scale)
+            {
+                string key = renderer != null ? KeyOf(root, renderer.transform) : avatarPath;
+                keys.Add(key);
+                var part = Part(key, renderer != null ? renderer.name : System.IO.Path.GetFileName(avatarPath));
+                ReadRenderer(key, renderer);
+                var toRoot = PreviewParentMatrix(root, renderer, avatarPath) * Matrix4x4.TRS(position, rotation, scale);
+                var mesh = read(key, toRoot);
+                // A layout names the slot of each submesh; without one the mesh keeps the original's slots.
+                mesh.Slots = LayoutSlots(layout, key, mesh.SubMeshes.Length);
+                if (previous) part.Previous = mesh; else part.After = mesh;
+            }
+            foreach (var patch in models.Advanced)
+            {
+                if (cachedPayloads.TryGetValue(patch, out var cached))
+                {
+                    foreach (var record in cached.renderers.Where(r => r?.mesh != null))
+                        Add(NativeMeshPayloadService.ResolveAvatarRenderer(root, record), record.avatarPath,
+                            (key, toRoot) => MeshSource.FromMesh(record.mesh, toRoot, Shapes(key)), record.localPosition, record.localRotation, record.localScale);
+                }
+                else if (prepared.TryGetValue(patch, out var data))
+                {
+                    foreach (var record in data.renderers.Where(r => r?.mesh != null))
+                        Add(NativeMeshPayloadService.ResolveAvatarRenderer(root, new NativeMeshPayloadRenderer { avatarPath = record.avatarPath }), record.avatarPath,
+                            (key, toRoot) => MeshSource.FromPrepared(record.mesh, toRoot), record.localPosition, record.localRotation, record.localScale);
+                }
+            }
+            return keys;
+        }
 
         foreach (var fbx in targets)
         {
             // Every mesh of the FBX, by its path in the file.
             var paths = new List<string>();
-            foreach (var list in new[] { fbx.OriginalMeshes, fbx.NowMeshes, fbx.AfterMeshes })
+            foreach (var list in new[] { fbx.OriginalMeshes, fbx.NowMeshes, fbx.After.Meshes, fbx.Previous.Meshes })
                 foreach (var mesh in list ?? new List<FbxMesh>())
                     if (!paths.Contains(mesh.Path)) paths.Add(mesh.Path);
 
-            var payloadKeys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var patch in fbx.Advanced)
-            {
-                if (cachedPayloads.TryGetValue(patch, out var cached))
-                {
-                    foreach (var record in cached.renderers.Where(r => r?.mesh != null))
-                    {
-                        var renderer = NativeMeshPayloadService.ResolveAvatarRenderer(root, record);
-                        string key = renderer != null ? KeyOf(root, renderer.transform) : record.avatarPath;
-                        payloadKeys.Add(key);
-                        var part = Part(key, renderer != null ? renderer.name : System.IO.Path.GetFileName(record.avatarPath));
-                        ReadRenderer(key, renderer);
-                        var toRoot = PreviewParentMatrix(root, renderer, record.avatarPath) * Matrix4x4.TRS(record.localPosition, record.localRotation, record.localScale);
-                        part.After = MeshSource.FromMesh(record.mesh, toRoot, Shapes(key));
-                    }
-                }
-                else if (prepared.TryGetValue(patch, out var data))
-                {
-                    foreach (var record in data.renderers.Where(r => r?.mesh != null))
-                    {
-                        var renderer = NativeMeshPayloadService.ResolveAvatarRenderer(root, new NativeMeshPayloadRenderer { avatarPath = record.avatarPath });
-                        string key = renderer != null ? KeyOf(root, renderer.transform) : record.avatarPath;
-                        payloadKeys.Add(key);
-                        var part = Part(key, renderer != null ? renderer.name : System.IO.Path.GetFileName(record.avatarPath));
-                        ReadRenderer(key, renderer);
-                        var toRoot = PreviewParentMatrix(root, renderer, record.avatarPath) * Matrix4x4.TRS(record.localPosition, record.localRotation, record.localScale);
-                        part.After = MeshSource.FromPrepared(record.mesh, toRoot);
-                    }
-                }
-            }
+            var afterKeys = ReadPayloads(fbx.After, afterLayout, false);
+            var previousKeys = ReadPayloads(fbx.Previous, previousLayout, true);
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>(fbx.Path);
 
             foreach (string path in paths)
             {
                 var renderer = FindRenderer(root, fbx, path);
                 var inOriginal = fbx.OriginalMeshes.FirstOrDefault(m => m.Path == path);
                 var inNow = fbx.NowMeshes.FirstOrDefault(m => m.Path == path);
-                var inAfter = fbx.AfterMeshes != null ? fbx.AfterMeshes.FirstOrDefault(m => m.Path == path) : inOriginal;
+                var inAfter = fbx.After.Meshes != null ? fbx.After.Meshes.FirstOrDefault(m => m.Path == path) : inOriginal;
+                var inPrevious = fbx.Previous.Meshes != null ? fbx.Previous.Meshes.FirstOrDefault(m => m.Path == path) : inOriginal;
                 // A mesh the creator removed from their avatar stays removed whatever the version: nothing to show.
                 if (renderer == null && (inNow != null || inOriginal != null)) continue;
-                if (inNow == null && inOriginal == null && inAfter == null) continue;
+                if (inNow == null && inOriginal == null && inAfter == null && inPrevious == null) continue;
 
                 string key = renderer != null ? KeyOf(root, renderer.transform) : path;
-                var part = Part(key, renderer != null ? renderer.name : inAfter.Name);
+                var part = Part(key, renderer != null ? renderer.name : (inAfter ?? inPrevious).Name);
                 ReadRenderer(key, renderer);
                 if (renderer == null)
-                    foreach (var pair in defaults) if (Math.Abs(pair.Value) > 0.01f) part.AfterWeights[pair.Key] = pair.Value;
+                {
+                    part.AfterWeights = WithDefaults(part.Weights, afterDefaults, null);
+                    part.PreviousWeights = WithDefaults(part.Weights, previousDefaults, null);
+                }
+                if (renderer != null && !modelSlots.ContainsKey(key) && model != null)
+                {
+                    var own = model.transform.Find(path)?.GetComponent<SkinnedMeshRenderer>();
+                    if (own != null && own.sharedMesh != null) modelSlots[key] = MaterialSlotNames.FromModel(own.sharedMesh);
+                }
                 if (inOriginal != null) part.Original = MeshSource.FromFbx(inOriginal, fbx.ToRoot);
-                if (!payloadKeys.Contains(key) && inAfter != null) part.After = inAfter == inOriginal ? part.Original : MeshSource.FromFbx(inAfter, fbx.ToRoot);
+                if (!afterKeys.Contains(key) && inAfter != null) part.After = inAfter == inOriginal ? part.Original : MeshSource.FromFbx(inAfter, fbx.ToRoot);
+                if (!previousKeys.Contains(key) && inPrevious != null) part.Previous = inPrevious == inOriginal ? part.Original : MeshSource.FromFbx(inPrevious, fbx.ToRoot);
                 // The avatar shows this FBX's mesh unless another mesh (an advanced version) is on its renderer.
                 bool showsFbx = renderer == null || renderer.sharedMesh == null ||
                                 string.Equals(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), fbx.Path, StringComparison.OrdinalIgnoreCase);
@@ -595,7 +768,7 @@ internal sealed class VersionMeshComparison : IDisposable
             }
 
             // Renderers an advanced version puts a mesh on that are not in the FBX.
-            foreach (string key in payloadKeys)
+            foreach (string key in afterKeys.Union(previousKeys))
             {
                 var part = byKey[key];
                 if (part.Original == null && fbx.OriginalMeshes.Count > 0 && rendererOf.TryGetValue(key, out var renderer))
@@ -606,30 +779,85 @@ internal sealed class VersionMeshComparison : IDisposable
             }
         }
 
-        // Renderers whose current mesh is not read from a file (an advanced version applied): the scene's mesh.
         foreach (var part in sources)
         {
             if (!rendererOf.TryGetValue(part.Key, out var renderer)) continue;
             var materials = renderer.sharedMaterials;
-            part.NowMaterials = part.OriginalMaterials = part.AfterMaterials = materials;
-            if (part.Now == null && renderer.sharedMesh != null)
+            // Renderers whose current mesh is not read from a file (an advanced version applied): the scene's mesh.
+            bool sceneMesh = part.Now == null && renderer.sharedMesh != null;
+            if (sceneMesh)
             {
                 var toRoot = root.worldToLocalMatrix * renderer.transform.localToWorldMatrix;
                 part.Now = MeshSource.FromMesh(renderer.sharedMesh, toRoot, part.Weights.Keys.ToList());
             }
-            // Slots of a file are matched by material name when both know them, as Unity's importer does.
-            if (part.Now?.Materials != null)
-            {
-                part.AfterMaterials = MatchMaterials(part.Now.Materials, materials, part.After?.Materials);
-                part.OriginalMaterials = MatchMaterials(part.Now.Materials, materials, part.Original?.Materials);
-            }
-            // A version's renderer layout recorded the original renderer's own materials in its slot order.
-            var original = target.nativeRendererOriginalStates.FirstOrDefault(state => state.renderer == renderer);
-            if (original?.materials != null && original.materials.Length > 0) part.OriginalMaterials = original.materials;
+            modelSlots.TryGetValue(part.Key, out var ownSlots);
+            string[] currentSlots = CurrentSlots(renderer, part.Key, ownSlots);
+            if (part.Now != null && sceneMesh) part.Now.Slots = currentSlots;
+            // A version's mesh without a layout keeps the original model's slots.
+            foreach (var mesh in new[] { part.After, part.Previous })
+                if (mesh != null && mesh.Slots == null && ownSlots != null && ownSlots.Length == mesh.SubMeshes.Length) mesh.Slots = ownSlots;
+
+            // Every side wears the avatar's own material of each slot name: what the avatar has now first (the creator's
+            // edits), then what the original pieces had before a version's layout, then the versions' bundled fallbacks.
+            var bySlot = new Dictionary<string, Material>(StringComparer.OrdinalIgnoreCase);
+            MaterialSlotNames.Collect(bySlot, currentSlots, materials);
+            foreach (var state in target.nativeRendererOriginalStates.Where(s => s != null && s.renderer == renderer))
+                MaterialSlotNames.Collect(bySlot, state.slots, state.materials);
+            foreach (var state in target.nativeRendererOriginalStates.Where(s => s != null && s.renderer != renderer))
+                MaterialSlotNames.Collect(bySlot, state.slots, state.materials);
+            CollectFallbacks(bySlot, afterLayout);
+            CollectFallbacks(bySlot, previousLayout);
+
+            part.NowMaterials = sceneMesh ? materials : MaterialSlotNames.Assign(part.Now?.Slots, bySlot, materials);
+            part.AfterMaterials = MaterialSlotNames.Assign(part.After?.Slots, bySlot, materials);
+            part.PreviousMaterials = MaterialSlotNames.Assign(part.Previous?.Slots, bySlot, materials);
+            part.OriginalMaterials = MaterialSlotNames.Assign(part.Original?.Slots, bySlot, materials);
             // Custom veins are the applied version's, painted on the avatar's materials: not the original's,
             // and not a version's that has none.
             part.OriginalMaterials = WithoutVeins(part.OriginalMaterials);
             if (!ExtraCustomizationUtils.HasFlag(Version.extraCustomization, "customVeins")) part.AfterMaterials = WithoutVeins(part.AfterMaterials);
+            if (PreviousVersion == null || !ExtraCustomizationUtils.HasFlag(PreviousVersion.extraCustomization, "customVeins")) part.PreviousMaterials = WithoutVeins(part.PreviousMaterials);
+        }
+
+        // The version on the avatar is the version before: the avatar now shows it.
+        if (PreviousOnAvatar)
+        {
+            foreach (var part in sources)
+            {
+                part.Previous = part.Now;
+                part.PreviousMaterials = part.NowMaterials;
+                part.PreviousWeights = part.Weights;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The slot names of the mesh a renderer shows now: a model declares its own; a version's mesh has the slots its layout
+    /// named, else the original model's (<paramref name="modelSlots"/>); else the names of its materials.
+    /// </summary>
+    private string[] CurrentSlots(SkinnedMeshRenderer renderer, string key, string[] modelSlots)
+    {
+        var mesh = renderer.sharedMesh;
+        if (mesh == null) return Array.Empty<string>();
+        var declared = MaterialSlotNames.FromModel(mesh);
+        if (declared != null && declared.Length == mesh.subMeshCount && declared.Any(n => !string.IsNullOrEmpty(n))) return MaterialSlotNames.Of(renderer);
+        return LayoutSlots(target.appliedCustomization?.rendererLayout, key, mesh.subMeshCount)
+               ?? (modelSlots != null && modelSlots.Length == mesh.subMeshCount ? modelSlots : MaterialSlotNames.Of(renderer));
+    }
+
+    // The slot names a layout gives the renderer at the avatar path, when it names one per submesh.
+    private static string[] LayoutSlots(RendererLayoutConfiguration layout, string key, int subMeshCount)
+    {
+        var entry = layout?.renderers?.FirstOrDefault(r => r != null && !string.IsNullOrEmpty(r.path) && (key == r.path || key.EndsWith("/" + r.path, StringComparison.Ordinal)));
+        return entry?.slots != null && entry.slots.Count == subMeshCount ? entry.slots.ToArray() : null;
+    }
+
+    private static void CollectFallbacks(Dictionary<string, Material> bySlot, RendererLayoutConfiguration layout)
+    {
+        foreach (var fallback in layout?.fallbacks ?? new List<SlotMaterial>())
+        {
+            var material = fallback != null ? AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(fallback.material)) : null;
+            if (material != null) MaterialSlotNames.Collect(bySlot, new[] { fallback.slot }, new[] { material });
         }
     }
 
@@ -643,18 +871,6 @@ internal sealed class VersionMeshComparison : IDisposable
         {
             result[i] = MaterialService.WithoutVersionVeins(materials[i]);
             if (result[i] != materials[i]) previewMaterials.Add(result[i]);
-        }
-        return result;
-    }
-
-    private static Material[] MatchMaterials(string[] slots, Material[] materials, string[] wanted)
-    {
-        if (wanted == null) return materials;
-        var result = new Material[wanted.Length];
-        for (int i = 0; i < wanted.Length; i++)
-        {
-            int slot = Array.IndexOf(slots, wanted[i]);
-            result[i] = slot >= 0 && slot < materials.Length ? materials[slot] : i < materials.Length ? materials[i] : null;
         }
         return result;
     }
@@ -690,10 +906,13 @@ internal sealed class VersionMeshComparison : IDisposable
     private List<ComparedPart> Compare(CompareReference reference)
     {
         var parts = new List<ComparedPart>();
-        var weightsOf = new Dictionary<ComparedPart, PartSources>();
+        var beforeWeights = new Dictionary<ComparedPart, Dictionary<string, float>>();
+        var afterWeights = new Dictionary<ComparedPart, Dictionary<string, float>>();
         foreach (var source in sources)
         {
-            var before = reference == CompareReference.Original ? source.Original : source.Now;
+            // The previous side is the original model when this version is the first one.
+            bool previous = reference == CompareReference.Previous && PreviousVersion != null;
+            var before = reference == CompareReference.AvatarNow ? source.Now : previous ? source.Previous : source.Original;
             if (before == null && source.After == null) continue;
             var part = new ComparedPart
             {
@@ -701,11 +920,12 @@ internal sealed class VersionMeshComparison : IDisposable
                 Name = source.Name,
                 Before = before,
                 After = source.After,
-                BeforeMaterials = reference == CompareReference.Original ? source.OriginalMaterials : source.NowMaterials,
+                BeforeMaterials = reference == CompareReference.AvatarNow ? source.NowMaterials : previous ? source.PreviousMaterials : source.OriginalMaterials,
                 AfterMaterials = source.AfterMaterials
             };
             parts.Add(part);
-            weightsOf[part] = source;
+            beforeWeights[part] = previous ? source.PreviousWeights : source.Weights;
+            afterWeights[part] = source.AfterWeights;
         }
 
         var weighted = new Dictionary<ComparedPart, (Vector3[] before, Vector3[] after)>();
@@ -713,8 +933,8 @@ internal sealed class VersionMeshComparison : IDisposable
         var bounds = new Bounds();
         foreach (var part in parts)
         {
-            var b = part.Before?.Weighted(weightsOf[part].Weights);
-            var a = part.After?.Weighted(weightsOf[part].AfterWeights);
+            var b = part.Before?.Weighted(beforeWeights[part]);
+            var a = part.After?.Weighted(afterWeights[part]);
             weighted[part] = (b, a);
             foreach (var points in new[] { b, a })
             {

@@ -72,29 +72,7 @@ public static class DiscordAccessService
         (await SendAsync<JObject>("PUT", "/" + assetId + "/protection", token, new { xor = protection.xor, discordRole = protection.discordRole }, "Save protection"))
             ["protection"]?.ToObject<VersionProtection>() ?? throw new IOException("The server returned no protection.");
 
-    private static async Task<T> SendAsync<T>(string method, string path, string token, object body, string context)
-    {
-        string url = MCBUtils.getApiUrl() + path;
-        using (var request = new UnityWebRequest(url, method))
-        {
-            MCBRequestHeaders.SetAuthorization(request, token);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            if (body != null)
-            {
-                request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(body)));
-                request.SetRequestHeader("Content-Type", "application/json");
-            }
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.UserInfo);
-            await MCBManagedRequest.SendUnityWebRequestAsync(request, url, MCBRequestPolicy.Backend(context));
-            string text = request.downloadHandler?.text;
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                string message = null;
-                try { message = JObject.Parse(text ?? "{}")["error"]?.ToString(); } catch (JsonException) { }
-                throw new IOException(string.IsNullOrWhiteSpace(message) ? context + " failed (HTTP " + request.responseCode + ")." : message);
-            }
-            return JsonConvert.DeserializeObject<T>(text);
-        }
-    }
+    private static Task<T> SendAsync<T>(string method, string path, string token, object body, string context) =>
+        MCBJsonRequest.SendAsync<T>(method, MCBUtils.getApiUrl() + path, token, body, context);
 }
 #endif

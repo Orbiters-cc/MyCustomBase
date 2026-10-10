@@ -161,6 +161,17 @@ public class VRCFuryService
         _toggleType.GetField("defaultSliderValue")?.SetValue(toggleFeature, GetCurrentSliderValue(avatarRoot, sliderEntry.name));
         _toggleType.GetField("useGlobalParam")?.SetValue(toggleFeature, true);
         _toggleType.GetField("globalParam")?.SetValue(toggleFeature, GetSliderGlobalParamName(sliderEntry.name));
+        // Orbiters' default icon for a slider: a white gauge.
+        if (_guidTextureType == null) _guidTextureType = FindType("VF.Model.GuidTexture2d");
+        var iconField = _toggleType.GetField("icon");
+        if (_guidTextureType != null && iconField != null)
+        {
+            var guidTex = System.Activator.CreateInstance(_guidTextureType);
+            _guidTextureType.GetField("objRef", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy)
+                ?.SetValue(guidTex, Orbiters.Toolkit.Editor.VRChat.OrbitersMenuIcons.Slider);
+            iconField.SetValue(toggleFeature, guidTex);
+            _toggleType.GetField("enableIcon")?.SetValue(toggleFeature, true);
+        }
 
         var state = System.Activator.CreateInstance(_stateType);
         var actionsField = _stateType.GetField("actions");
@@ -266,28 +277,94 @@ public class VRCFuryService
     /// </summary>
     public bool AddFullController(GameObject host, RuntimeAnimatorController controller)
     {
+        if (AddFullController(host, new FullControllerSpec { Controller = controller, AllNonsyncedAreGlobal = true }) != null) return true;
+        Debug.LogWarning("[MCB] VRCFury was not found: the XMuscles controller is generated but not merged into the avatar.");
+        return false;
+    }
+
+    /// <summary>What a Full Controller merges: an FX controller, an optional menu (under <see cref="MenuPrefix"/>) and
+    /// parameters, parameter names kept as they are, and animation paths rewritten for objects that moved.</summary>
+    public sealed class FullControllerSpec
+    {
+        public RuntimeAnimatorController Controller;
+        public ScriptableObject Menu, Parameters;
+        public string MenuPrefix = "";
+        public bool AllNonsyncedAreGlobal;
+        public List<string> GlobalParams = new List<string>();
+        public List<KeyValuePair<string, string>> PathRewrites = new List<KeyValuePair<string, string>>();
+    }
+
+    /// <summary>A VRCFury Full Controller on <paramref name="host"/>, with Undo; null when VRCFury is missing.</summary>
+    public Component AddFullController(GameObject host, FullControllerSpec spec)
+    {
         if (_vrcFuryType == null) _vrcFuryType = FindType("VF.Model.VRCFury");
         var featureType = FindType("VF.Model.Feature.FullController");
-        var entryType = FindType("VF.Model.Feature.FullController+ControllerEntry");
-        var guidType = FindType("VF.Model.GuidController");
-        if (_vrcFuryType == null || featureType == null || entryType == null || guidType == null)
-        {
-            Debug.LogWarning("[MCB] VRCFury was not found: the XMuscles controller is generated but not merged into the avatar.");
-            return false;
-        }
-
+        if (_vrcFuryType == null || featureType == null) return null;
         var feature = System.Activator.CreateInstance(featureType, true);
-        var entry = System.Activator.CreateInstance(entryType, true);
-        var guid = System.Activator.CreateInstance(guidType, true);
-        guidType.GetField("objRef", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy)?.SetValue(guid, controller);
-        guidType.GetField("id", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy)?.SetValue(guid, string.Empty);
-        entryType.GetField("controller")?.SetValue(entry, guid);
-        if (featureType.GetField("controllers")?.GetValue(feature) is System.Collections.IList controllers) controllers.Add(entry);
-        featureType.GetField("allNonsyncedAreGlobal")?.SetValue(feature, true);
+        void Add(string list, string entryName, string guidName, string field, Object asset, string prefix = null)
+        {
+            var entryType = FindType("VF.Model.Feature.FullController+" + entryName);
+            var guidType = FindType("VF.Model.Guid" + guidName);
+            var entry = System.Activator.CreateInstance(entryType, true);
+            var guid = System.Activator.CreateInstance(guidType, true);
+            guidType.GetField("objRef", PublicInstance)?.SetValue(guid, asset);
+            guidType.GetField("id", PublicInstance)?.SetValue(guid, string.Empty);
+            entryType.GetField(field).SetValue(entry, guid);
+            if (prefix != null) entryType.GetField("prefix").SetValue(entry, prefix);
+            ((System.Collections.IList)featureType.GetField(list).GetValue(feature)).Add(entry);
+        }
+        if (spec.Controller != null) Add("controllers", "ControllerEntry", "Controller", "controller", spec.Controller);
+        if (spec.Menu != null) Add("menus", "MenuEntry", "Menu", "menu", spec.Menu, spec.MenuPrefix ?? "");
+        if (spec.Parameters != null) Add("prms", "ParamsEntry", "Params", "parameters", spec.Parameters);
+        featureType.GetField("allNonsyncedAreGlobal").SetValue(feature, spec.AllNonsyncedAreGlobal);
+        var globals = (List<string>)featureType.GetField("globalParams").GetValue(feature);
+        globals.AddRange(spec.GlobalParams.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct());
+        var rewriteType = FindType("VF.Model.Feature.FullController+BindingRewrite");
+        var rewrites = (System.Collections.IList)featureType.GetField("rewriteBindings").GetValue(feature);
+        foreach (var pair in spec.PathRewrites)
+        {
+            var rewrite = System.Activator.CreateInstance(rewriteType, true);
+            rewriteType.GetField("from").SetValue(rewrite, pair.Key);
+            rewriteType.GetField("to").SetValue(rewrite, pair.Value);
+            rewrites.Add(rewrite);
+        }
+        return AddFeature(host, feature);
+    }
+
+    /// <summary>
+    /// A VRCFury Armature Link from <paramref name="host"/> to the avatar object at <paramref name="targetPath"/> (from the
+    /// avatar root), with Undo; null when VRCFury is missing. Not recursive and not aligned: the host keeps its pose, so
+    /// place it on the target first.
+    /// </summary>
+    public Component AddArmatureLink(GameObject host, string targetPath)
+    {
+        var featureType = FindType("VF.Model.Feature.ArmatureLink");
+        var linkType = FindType("VF.Model.Feature.ArmatureLink+LinkTo");
+        if (featureType == null || linkType == null) return null;
+        var feature = System.Activator.CreateInstance(featureType, true);
+        featureType.GetField("propBone").SetValue(feature, host);
+        var links = (System.Collections.IList)featureType.GetField("linkTo").GetValue(feature);
+        links.Clear();
+        var link = System.Activator.CreateInstance(linkType, true);
+        linkType.GetField("useBone").SetValue(link, false);
+        linkType.GetField("useObj").SetValue(link, false);
+        linkType.GetField("offset").SetValue(link, targetPath);
+        links.Add(link);
+        foreach (string field in new[] { "recursive", "alignPosition", "alignRotation", "alignScale" }) featureType.GetField(field).SetValue(feature, false);
+        return AddFeature(host, feature);
+    }
+
+    private const System.Reflection.BindingFlags PublicInstance =
+        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy;
+
+    private Component AddFeature(GameObject host, object feature)
+    {
+        if (_vrcFuryType == null) _vrcFuryType = FindType("VF.Model.VRCFury");
+        if (_vrcFuryType == null) return null;
         var component = Undo.AddComponent(host, _vrcFuryType);
         _vrcFuryType.GetField("content").SetValue(component, feature);
         EditorUtility.SetDirty(component);
-        return true;
+        return component;
     }
 
     private System.Type FindType(string fullName)

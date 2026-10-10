@@ -272,6 +272,14 @@ requests and responses never contain a token.
 | `preview_publish` | Validate and fingerprint an artifact; return its files and a confirmation code. |
 | `confirm_publish` | Publish the unchanged artifact after explicit user approval of the preview. |
 | `status` | Poll the job ID of a pending operation. |
+| `build_logic` | From a reference avatar prefab (its transforms and contacts) and an FX controller, write a logic prefab: each contact keeps its place and follows its bone through a `Target Bones` proxy that a VRCFury Armature Link merges into the avatar's bone (single-source Parent Constraints become proxies too); a Full Controller merges the FX (menu, parameters, global parameters, path rewrites). `pruneAgainst` removes clip bindings that resolve nowhere (run it on extracted copies). |
+| `prepare_custom_model` | Keep the custom FBX renderers whose paths the original base has (`renames` for others), without materials and with every shape at 0. |
+| `validate` | Build a hidden clone of the applied avatar with VRCFury and MCB's build steps; report proxies that did not merge into bones, contact parameters missing from the built controllers, unresolved animation paths and the SDK performance figures. |
+| `update_listing` | Owner: turn a listing into a custom base (wizard installation, `custom_base` template) with an optional new name, description and avatar base (`avatarBaseId`, or `avatarBaseName` to find or create one). |
+| `set_media` | Owner: upload the asset's gallery thumbnail and/or banner from PNG or JPEG files (`thumbnailPath`, `bannerPath`), as the photoshoot panel does. |
+| `set_legacy_releases` | Owner: register releases distributed before MCB: `{ label, customModelHashes, cleanup: { objects, layers, parameters, rendererMap } }`. |
+| `find_legacy` / `migrate_legacy` | Recognise an avatar built from a legacy release (server `identify` answers `kind: "legacy"`) and migrate it in one Undo step: renderers from the legacy model use the original base model again (bones remapped, blendshape weights kept by name), the release's objects are removed, and copies of the FX controller, expression parameters and menus without its layers and parameters replace the originals. MCB's gallery offers the same as a **Migrate avatar** notice. |
+| `set_environment` | `{ environment: "development" \| "production" }`; `inspect` reports the current one. Each environment keeps its own login. `Assets/MCB/assets/<asset id>` records the environment its versions were built for (`mcb-environment.txt`) and refuses builds and publications from the other one, since asset ids differ between environments. |
 
 `build` always uses the saved draft, even when an open creator form loaded another
 version meanwhile. Builds follow the protection of the draft's asset. A trusted
@@ -284,6 +292,11 @@ same job after a client timeout. A Unity domain reload clears in-memory jobs, so
 inspect local artifacts before retrying. Confirmation codes expire after 15 minutes,
 are single-use, and are invalidated when the artifact changes. Obtain human approval
 before `confirm_publish`.
+
+Material slots are matched by name. A model imported without materials (Material Creation Mode: None, e.g.
+Novabeast) still names its slots from the FBX file: `MaterialSlotNames` reads them and matches each submesh to the
+file slot with the same triangle count, because Unity orders submeshes differently from the file (and from one
+re-export of a base to the next).
 
 Typed `extraCustomization` entries are `modes` (`categories` with `exclusive`;
 `options` with `category`, `default`, `blendshapes`, `gameObjects` and `animations`

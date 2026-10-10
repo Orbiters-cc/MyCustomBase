@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using Orbiters.Toolkit.Editor;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -39,9 +40,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
     private float split = 0.5f, shownSplit = 0.5f;
     private double lastTick, pulseStart = -10;
 
-    // Orbit: the shown values glide to the targets.
-    private float yaw = 180f, pitch = 6f, distance = 3f, targetYaw = 180f, targetPitch = 6f, targetDistance = 3f;
-    private Vector3 pivot, targetPivot;
+    // Orbit: the shown values glide to the targets (the Orbiters tools' shared preview camera).
+    private readonly OrbitCamera orbit = new OrbitCamera { FieldOfView = FieldOfView };
     private Bounds frame = new Bounds(Vector3.up, Vector3.one);
     // What the camera turns around when nothing is focused: the hips when the avatar has them.
     private Vector3 home = Vector3.up;
@@ -122,17 +122,17 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         if (comparison == null) { dirty = true; return; }
         frame = comparison.Bounds;
         home = comparison.Pivot;
-        targetPivot = home;
-        targetYaw = 180f;
-        targetPitch = 6f;
-        targetDistance = FitFrame();
+        orbit.TargetPivot = home;
+        orbit.TargetYaw = 180f;
+        orbit.TargetPitch = 6f;
+        orbit.TargetDistance = FitFrame();
         if (intro)
         {
             // From a little further, turned a quarter, so the avatar swings round to face the viewer.
-            yaw = 128f;
-            pitch = 16f;
-            distance = targetDistance * 1.5f;
-            pivot = targetPivot + Vector3.up * frame.extents.y * 0.2f;
+            orbit.Yaw = 128f;
+            orbit.Pitch = 16f;
+            orbit.Distance = orbit.TargetDistance * 1.5f;
+            orbit.Pivot = orbit.TargetPivot + Vector3.up * frame.extents.y * 0.2f;
         }
         Pulse();
         dirty = true;
@@ -178,21 +178,21 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         focused = part;
         if (part == null)
         {
-            targetPivot = home;
-            targetDistance = FitFrame();
+            orbit.TargetPivot = home;
+            orbit.TargetDistance = FitFrame();
         }
         else
         {
             var bounds = part.Focus;
             // Never so close that the change loses its surroundings.
             bounds.Expand(Mathf.Max(frame.size.magnitude * 0.06f, 0.02f));
-            targetPivot = bounds.center;
-            targetDistance = Mathf.Max(Fit(bounds), FitFrame() * 0.18f);
+            orbit.TargetPivot = bounds.center;
+            orbit.TargetDistance = Mathf.Max(orbit.Fit(bounds), FitFrame() * 0.18f);
             // Face the change: from the side it is on.
             Vector3 direction = bounds.center - home;
             direction.y = 0f;
             if (direction.sqrMagnitude > frame.extents.x * frame.extents.x * 0.05f)
-                targetYaw = Mathf.Atan2(-direction.x, -direction.z) * Mathf.Rad2Deg + 360f * Mathf.Round((targetYaw - Mathf.Atan2(-direction.x, -direction.z) * Mathf.Rad2Deg) / 360f);
+                orbit.TargetYaw = Mathf.Atan2(-direction.x, -direction.z) * Mathf.Rad2Deg + 360f * Mathf.Round((orbit.TargetYaw - Mathf.Atan2(-direction.x, -direction.z) * Mathf.Rad2Deg) / 360f);
         }
         Pulse();
         dirty = true;
@@ -201,10 +201,10 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
     public void ResetView()
     {
         focused = null;
-        targetPivot = home;
-        targetDistance = FitFrame();
-        targetPitch = 6f;
-        targetYaw = 180f + 360f * Mathf.Round((targetYaw - 180f) / 360f);
+        orbit.TargetPivot = home;
+        orbit.TargetDistance = FitFrame();
+        orbit.TargetPitch = 6f;
+        orbit.TargetYaw = 180f + 360f * Mathf.Round((orbit.TargetYaw - 180f) / 360f);
         dirty = true;
     }
 
@@ -216,13 +216,7 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         var around = frame;
         around.Encapsulate(2f * home - frame.min);
         around.Encapsulate(2f * home - frame.max);
-        return Fit(around);
-    }
-
-    private static float Fit(Bounds bounds)
-    {
-        float radius = Mathf.Max(bounds.extents.magnitude, 0.01f);
-        return radius / Mathf.Sin(FieldOfView * 0.5f * Mathf.Deg2Rad) * 0.9f;
+        return orbit.Fit(around);
     }
 
     // ---- Input -------------------------------------------------------------------------------------
@@ -254,17 +248,9 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
             PlacePanes();
         }
         else if (dragPans)
-        {
-            float perPixel = 2f * distance * Mathf.Tan(FieldOfView * 0.5f * Mathf.Deg2Rad) / Mathf.Max(1f, contentRect.height);
-            var rotation = Quaternion.Euler(pitch, yaw, 0f);
-            targetPivot += (rotation * Vector3.left * delta.x + rotation * Vector3.up * delta.y) * perPixel;
-            pivot = targetPivot;
-        }
+            orbit.Pan(delta, contentRect.height);
         else
-        {
-            targetYaw += delta.x * 0.45f;
-            targetPitch = Mathf.Clamp(targetPitch + delta.y * 0.3f, -75f, 75f);
-        }
+            orbit.Turn(delta);
         dirty = true;
         evt.StopPropagation();
     }
@@ -288,7 +274,7 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
     {
         if (comparison == null) return;
         float fit = FitFrame();
-        targetDistance = Mathf.Clamp(targetDistance * Mathf.Exp(evt.delta.y * 0.06f), fit * 0.06f, fit * 3f);
+        orbit.Zoom(evt.delta.y, fit * 0.06f, fit * 3f);
         dirty = true;
         evt.StopPropagation();
         evt.PreventDefault();
@@ -351,27 +337,14 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         lastTick = now;
         if (panel == null || comparison == null || !comparison.Ready) return;
 
-        if (turntable && dragPointer < 0) targetYaw += dt * 18f;
-        float k = 1f - Mathf.Exp(-dt * 9f);
-        bool moving = false;
-        yaw = Glide(yaw, targetYaw, k, 0.01f, ref moving);
-        pitch = Glide(pitch, targetPitch, k, 0.01f, ref moving);
-        distance = Glide(distance, targetDistance, k, targetDistance * 0.0005f, ref moving);
-        if ((pivot - targetPivot).sqrMagnitude > frame.size.sqrMagnitude * 1e-8f) { pivot = Vector3.Lerp(pivot, targetPivot, k); moving = true; }
-        else pivot = targetPivot;
+        if (turntable && dragPointer < 0) orbit.TargetYaw += dt * 18f;
+        bool moving = orbit.Glide(dt, frame.size.magnitude * 1e-4f);
 
         bool pulsing = now - pulseStart < PulseSeconds && look == CompareLook.Changes;
         if (moving || pulsing || dirty) Render(now);
     }
 
     private const float PulseSeconds = 2.4f;
-
-    private static float Glide(float value, float target, float k, float epsilon, ref bool moving)
-    {
-        if (Mathf.Abs(target - value) <= epsilon) return target;
-        moving = true;
-        return Mathf.Lerp(value, target, k);
-    }
 
     private void Render(double now)
     {
@@ -385,8 +358,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         float scale = EditorGUIUtility.pixelsPerPoint;
         int height = Mathf.Clamp(Mathf.RoundToInt(rect.height * scale), 8, 2048);
         int width = Mathf.Clamp(Mathf.RoundToInt((side ? (rect.width - Gap) * 0.5f : rect.width) * scale), 8, 2048);
-        EnsureTexture(ref beforeTexture, width, height, "MCB Compare Before");
-        EnsureTexture(ref afterTexture, width, height, "MCB Compare After");
+        OffscreenPreview.EnsureTexture(ref beforeTexture, width, height, "MCB Compare Before");
+        OffscreenPreview.EnsureTexture(ref afterTexture, width, height, "MCB Compare After");
 
         float t = (float)(now - pulseStart) / PulseSeconds;
         float pulse = t < 1f ? Mathf.Sin(t * Mathf.PI * 3f) * Mathf.Sin(t * Mathf.PI) * 0.5f + 0.5f * (1f - t) : 0f;
@@ -400,16 +373,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
 
     private void Draw(RenderTexture texture, bool before, bool ghostBefore, float pulse)
     {
-        var camera = preview.camera;
-        camera.targetTexture = texture;
-        camera.aspect = (float)texture.width / texture.height;
-        camera.fieldOfView = FieldOfView;
-        var rotation = Quaternion.Euler(pitch, yaw, 0f);
-        camera.transform.rotation = rotation;
-        camera.transform.position = pivot - rotation * Vector3.forward * distance;
-        float reach = frame.size.magnitude;
-        camera.nearClipPlane = Mathf.Max(0.001f, distance * 0.02f);
-        camera.farClipPlane = distance + reach * 4f;
+        var rotation = orbit.Rotation;
+        orbit.Apply(preview.camera, (float)texture.width / texture.height, frame.size.magnitude);
         preview.lights[0].intensity = 1.05f;
         preview.lights[0].color = new Color(1f, 0.97f, 0.93f);
         preview.lights[0].transform.rotation = rotation * Quaternion.Euler(28f, -32f, 0f);
@@ -466,17 +431,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
             }
         }
 
-        try
-        {
-            preview.Render(true, false);
-        }
-        finally
-        {
-            // Render switches the editor's lighting settings to the preview scene and only EndPreview switches them back,
-            // which a texture shown by UI Toolkit never calls: left switched, the Scene view reads settings that are gone.
-            Unsupported.RestoreOverrideLightingSettings();
-            camera.targetTexture = null;
-        }
+        // Gives the editor its lighting settings back after the render.
+        OffscreenPreview.Render(preview, texture);
     }
 
     private static readonly int HeatId = Shader.PropertyToID("_Heat"), PulseId = Shader.PropertyToID("_Pulse"), DimId = Shader.PropertyToID("_Dim");
@@ -510,19 +466,6 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         return material;
     }
 
-    private static void EnsureTexture(ref RenderTexture texture, int width, int height, string name)
-    {
-        if (texture != null && texture.width == width && texture.height == height && texture.IsCreated()) return;
-        if (texture != null) { texture.Release(); UnityEngine.Object.DestroyImmediate(texture); }
-        texture = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB)
-        {
-            name = name,
-            antiAliasing = Mathf.Max(1, QualitySettings.antiAliasing > 1 ? QualitySettings.antiAliasing : 4),
-            hideFlags = HideFlags.HideAndDontSave
-        };
-        texture.Create();
-    }
-
     public void Dispose()
     {
         ticker?.Pause();
@@ -531,9 +474,8 @@ internal sealed class VersionCompareStage : VisualElement, IDisposable
         clay = ghost = unchanged = backdrop = floor = null;
         if (quad != null) UnityEngine.Object.DestroyImmediate(quad);
         quad = null;
-        foreach (var texture in new[] { beforeTexture, afterTexture })
-            if (texture != null) { texture.Release(); UnityEngine.Object.DestroyImmediate(texture); }
-        beforeTexture = afterTexture = null;
+        OffscreenPreview.Release(ref beforeTexture);
+        OffscreenPreview.Release(ref afterTexture);
     }
 }
 

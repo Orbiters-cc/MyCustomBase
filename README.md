@@ -1,5 +1,9 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.6 — 2026-10-10
+
+- The sliders MCB adds to the menu get Orbiters' gauge icon (`OrbitersMenuIcons.Slider`, from Orbiters Toolkit).
+
 ## 1.12.5 — 2026-10-09
 
 - The account row and its sign-in buttons are Orbiters Toolkit's (`OrbitersAccountElement`), as in My Avatar: MCB's own
@@ -149,11 +153,16 @@ avatar turning in 3D, before and after the version, so creators see what it does
 - **Slider** wipes between before and after with a handle, **Side by side** turns both together, **Overlay** shows the
   version with its former shape as an x-ray ghost. Holding Space shows the before side.
 - **Changes** makes the surface that moves glow, from amber (a little) to magenta (the most); **Clay** shows the shape
-  alone; **Textured** uses the avatar's own materials. The clothes button adds the avatar's other renderers.
-- It compares with **your avatar now**, or with the **original** model while a version is applied. Parts are shown with
-  the renderer's blendshape values, and the version's new blendshapes at the value the creator chose.
+  alone; **Textured** uses the avatar's own materials, each on the submesh of its slot name (`MaterialSlotNames`), whatever
+  submesh order each model has. The clothes button adds the avatar's other renderers.
+- It compares the version with **the version before it** in its history (the parent its creator chose, else the highest
+  published version below it for the same original), or with the **original** base for its first version. **Original**
+  and **your avatar now** are offered too only when they show other meshes: the avatar now when it has another version or
+  customization. Parts are shown with the renderer's blendshape values, and each version's new blendshapes at the value
+  its creator chose.
 - The list of meshes that change flies the camera to each change; blendshapes added, reshaped or removed are listed.
-- **Apply** goes through the usual confirmation. A version that is not downloaded is downloaded first.
+- **Apply** goes through the usual confirmation. The versions it reads are downloaded first when needed; when the
+  version before cannot be downloaded or read, the original takes its place and the window says why.
 
 Reading changes nothing in the project: FBX replacements are decoded in memory (HDiff through a temporary file in
 `Library/MCB/HdiffTemp`), advanced meshes are decrypted and parsed in memory (or read from the cache an earlier apply

@@ -11,12 +11,12 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
-[McpForUnityTool("mcb_authoring", Description = "Create and configure MCB custom bases, import FBX, build and apply local versions. inspect lists scene target IDs and data. configure accepts MCBAuthoringService.Draft; create_base accepts Registration. Build/apply/reset/import return pending jobs. Protection belongs to the asset: a trusted creator sets it with create_base (registration.protection) or set_asset_protection {assetId, protection:{xor, discordRole}}; with xor false, builds are one unencrypted package for every original. set_mode switches a version mode (genre, dog ears) on the applied avatar. Publication requires preview_publish followed by explicit human approval of its immutable artifact and confirm_publish with the returned code. Never infer approval from build/apply. Tokens are read from MCB's existing login and never returned.", RequiresPolling = true, PollAction = "status", MaxPollSeconds = 120)]
+[McpForUnityTool("mcb_authoring", Description = "Create and configure MCB custom bases, import FBX, build and apply local versions. inspect lists scene target IDs and data. configure accepts MCBAuthoringService.Draft; create_base accepts Registration. build_logic (MCBLogicPrefabService.LogicSpec) converts a reference avatar's contacts and an FX controller into a logic prefab (Target Bones proxies with VRCFury Armature Links, Full Controller, optional clip pruning); prepare_custom_model (CustomModelSpec) keeps the custom FBX renderers the original has, without materials and with shapes at 0. update_listing {assetId, name?, description?, avatarBaseId? | avatarBaseName?} turns an owned listing into a custom base. set_media {assetId, thumbnailPath?, bannerPath?} uploads its gallery thumbnail/banner (PNG or JPEG files). set_legacy_releases {assetId, legacyReleases:[{label, customModelHashes, cleanup:{objects, layers, parameters, rendererMap}}]} registers releases distributed before MCB; find_legacy / migrate_legacy (target_id, optional data.hash) recognise and migrate an avatar built from one (renderers back to the original base, cleanup on copies, one Undo step). set_environment {environment: development|production} switches the Orbiters server (inspect shows it; each keeps its own login; an Assets/MCB/assets/<id> folder only holds one environment's versions). validate (target_id) builds a hidden clone of the applied avatar with VRCFury and reports unlinked proxies, contact parameters missing from the built controllers, unresolved animation paths and performance. Build/apply/reset/import return pending jobs. Protection belongs to the asset: a trusted creator sets it with create_base (registration.protection) or set_asset_protection {assetId, protection:{xor, discordRole}}; with xor false, builds are one unencrypted package for every original. set_mode switches a version mode (genre, dog ears) on the applied avatar. Publication requires preview_publish followed by explicit human approval of its immutable artifact and confirm_publish with the returned code. Never infer approval from build/apply. Tokens are read from MCB's existing login and never returned.", RequiresPolling = true, PollAction = "status", MaxPollSeconds = 120)]
 public static class MCBAuthoringTool
 {
     public sealed class Parameters
     {
-        [ToolParameter("inspect, configure, create_base, import_fbx, build, apply, reset, set_mode, set_asset_protection, preview_publish, confirm_publish, status")] public string action { get; set; }
+        [ToolParameter("inspect, configure, create_base, import_fbx, build_logic, prepare_custom_model, update_listing, set_media, set_legacy_releases, find_legacy, migrate_legacy, validate, set_environment, build, apply, reset, set_mode, set_asset_protection, preview_publish, confirm_publish, status")] public string action { get; set; }
         [ToolParameter("Scene MyCustomBase component or GameObject ID", Required = false)] public int target_id { get; set; }
         [ToolParameter("Typed draft, registration, or version identity; inspect describes current data", Required = false)] public object data { get; set; }
         [ToolParameter("FBX source on disk for import_fbx", Required = false)] public string source_path { get; set; }
@@ -60,6 +60,7 @@ public static class MCBAuthoringTool
             if (p.action == "inspect")
                 return new SuccessResponse("MCB authoring state.", p.target_id == 0 ? (object)new
                 {
+                    environment = MCBAuthoringService.Environment(),
                     targets = Resources.FindObjectsOfTypeAll<MyCustomBase>().Where(o => o.gameObject.scene.IsValid()).Select(o => new { target_id = o.GetInstanceID(), avatar = o.transform.root.name }).ToArray(),
                     versions = VersionRepository.Scan().unsubmitted.Concat(VersionRepository.Scan().imported).Select(v => new { v.assetId, v.version, v.defaultAviVersion, v.sourceVersionKey, v.isUnsubmitted }).ToArray(),
                     draftSchema = JObject.FromObject(new MCBAuthoringService.Draft()), registrationSchema = JObject.FromObject(new MCBAuthoringService.Registration())
@@ -69,6 +70,33 @@ public static class MCBAuthoringTool
             // A creator window may be building or publishing: fail now and keep the publish approval for a retry.
             if ((p.action == "build" || p.action == "confirm_publish") && VersionOperationGuard.IsBusy) throw new InvalidOperationException(VersionOperationGuard.BusyMessage);
             if (p.action == "import_fbx") return Start(p.action, done => MCBAuthoringService.ImportFbx(p.source_path, p.destination_path, path => done(new { path })));
+            if (p.action == "build_logic")
+                return new SuccessResponse("Logic prefab saved.", MCBLogicPrefabService.BuildLogic(data?.ToObject<MCBLogicPrefabService.LogicSpec>()));
+            if (p.action == "prepare_custom_model")
+                return new SuccessResponse("Custom model saved.", MCBLogicPrefabService.PrepareCustomModel(data?.ToObject<MCBLogicPrefabService.CustomModelSpec>()));
+            if (p.action == "update_listing")
+                return Start(p.action, done => Await(() => LegacyMigrationService.UpdateListingAsync(Token(), AssetId(data), data), done));
+            if (p.action == "set_media")
+                return Start(p.action, done => Await(() => CustomBaseMediaService.UploadAsync(Token(), AssetId(data), data.Value<string>("thumbnailPath"), data.Value<string>("bannerPath")), done,
+                    result => new { thumbnail = result["asset"]?["thumbnail"], banner = result["asset"]?["mcbBanner"] }));
+            if (p.action == "set_legacy_releases")
+                return Start(p.action, done => Await(() => LegacyMigrationService.SaveReleasesAsync(Token(), AssetId(data),
+                    data["legacyReleases"]?.ToObject<LegacyMigrationService.Release[]>() ?? throw new ArgumentException("Provide legacyReleases.")), done));
+            if (p.action == "set_environment")
+                return new SuccessResponse("Environment switched.", MCBAuthoringService.SetEnvironment(data?.Value<string>("environment")));
+            if (p.action == "validate")
+                return Start(p.action, done => Validate(MCBAuthoringService.Target(p.target_id), done));
+            if (p.action == "find_legacy" || p.action == "migrate_legacy")
+            {
+                var avatar = AvatarPaths.Root(MCBAuthoringService.Target(p.target_id));
+                return Start(p.action, done => Await(() => LegacyMigrationService.FindAsync(avatar, Token()), done, matches =>
+                {
+                    if (p.action == "find_legacy") return matches.Select(m => new { m.hash, m.assetId, m.assetName, release = m.legacyRelease.label, m.legacyModelPath, m.originals }).ToArray();
+                    var match = matches.FirstOrDefault(m => data?.Value<string>("hash") == null || m.hash == data.Value<string>("hash"))
+                        ?? throw new InvalidOperationException("This avatar uses no legacy release.");
+                    return LegacyMigrationService.Migrate(avatar, matches.Where(m => m.assetId == match.assetId && m.legacyRelease.label == match.legacyRelease.label).ToList());
+                }));
+            }
             var target = MCBAuthoringService.Target(p.target_id);
             switch (p.action)
             {
@@ -114,6 +142,18 @@ public static class MCBAuthoringTool
         if (matches.Length != 1) throw new InvalidOperationException("Version identity must select exactly one local artifact; inspect lists available versions.");
         return matches[0];
     }
+    private static string Token() => MCBAuthoringService.AuthToken();
+    private static int AssetId(JObject data) => data?.Value<int?>("assetId") is int id && id > 0 ? id : throw new ArgumentException("Provide assetId.");
+    private static IEnumerator Await<T>(Func<System.Threading.Tasks.Task<T>> start, Action<object> done, Func<T, object> shape = null)
+    {
+        var task = start();
+        while (!task.IsCompleted) yield return null;
+        var result = task.GetAwaiter().GetResult();
+        done(shape == null ? (object)result : shape(result));
+    }
+    // One frame later, so the pending answer reaches the client before the VRCFury build holds the editor.
+    private static IEnumerator Validate(MyCustomBase target, Action<object> done)
+    { yield return null; done(MCBVersionValidation.Run(target)); }
     private static IEnumerator Apply(MyCustomBase target, CustomBaseVersion version, Action<object> done)
     { yield return MCBAuthoringService.Apply(target, version); done(new { applied = version.version, version.assetId }); }
     private static IEnumerator Reset(MyCustomBase target, Action<object> done)

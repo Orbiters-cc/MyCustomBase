@@ -99,6 +99,23 @@ public class NativeRendererLayoutTests
     }
 
     [Test]
+    public void SlotMaterialsFollowTheirNamesWhateverTheSubmeshOrder()
+    {
+        // The avatar's renderer in Unity's submesh order; the original FBX's slots in the file's order (Novabeast V1.0).
+        var m = Materials(6);
+        var bySlot = new Dictionary<string, Material>(StringComparer.OrdinalIgnoreCase);
+        MaterialSlotNames.Collect(bySlot, new[] { "body", "eyes", "blush", "fluff", "visor", "lens" }, m);
+        MaterialSlotNames.Collect(bySlot, new[] { "Body.001", "horns" }, new[] { m[5], m[4] });
+        Assert.That(MaterialSlotNames.Assign(new[] { "body", "fluff", "eyes", "visor", "lens", "blush" }, bySlot, m),
+            Is.EqualTo(new[] { m[0], m[3], m[1], m[4], m[5], m[2] }));
+        // The first material collected for a name wins; a name not collected keeps the material at its index.
+        Assert.That(bySlot["body"], Is.SameAs(m[0]));
+        Assert.That(bySlot["horns"], Is.SameAs(m[4]));
+        Assert.That(MaterialSlotNames.Assign(new[] { "BODY", "wings", "" }, bySlot, m), Is.EqualTo(new[] { m[0], m[1], m[2] }));
+        Assert.That(MaterialSlotNames.Assign(null, bySlot, m), Is.EqualTo(m));
+    }
+
+    [Test]
     public void LayoutValidationRejectsAmbiguousMappings()
     {
         var layout = Layout(("Body", new[] { "BodyMatt" }), ("Body", new[] { "MiscMatt" }));

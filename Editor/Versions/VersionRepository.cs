@@ -257,6 +257,27 @@ public static class VersionRepository
             .Where(v => !v.isUnsubmitted && !string.IsNullOrWhiteSpace(v.version)).ToList();
     }
 
+    /// <summary>
+    /// The version before <paramref name="version"/> in its history, among <paramref name="versions"/>: the parent its
+    /// creator chose, else the highest published version below it, of the same custom base and the same original. Null
+    /// when it is the first version: its history starts at the original base. Local drafts are never history.
+    /// </summary>
+    public static CustomBaseVersion PreviousInHistory(CustomBaseVersion version, IEnumerable<CustomBaseVersion> versions, Comparison<string> compareVersions)
+    {
+        if (version == null || string.IsNullOrWhiteSpace(version.version) || compareVersions == null) return null;
+        var history = (versions ?? Enumerable.Empty<CustomBaseVersion>())
+            .Where(v => v != null && !v.isUnsubmitted && !v.Equals(version) && v.assetId == version.assetId && !string.IsNullOrWhiteSpace(v.version) &&
+                        (string.IsNullOrEmpty(v.sourceVersionKey) || string.IsNullOrEmpty(version.sourceVersionKey)
+                            ? string.IsNullOrEmpty(v.defaultAviVersion) || string.IsNullOrEmpty(version.defaultAviVersion) || v.defaultAviVersion == version.defaultAviVersion
+                            : v.sourceVersionKey == version.sourceVersionKey))
+            .ToList();
+        string parent = version.parentVersion?.Trim();
+        var chosen = string.IsNullOrEmpty(parent) ? null : history.FirstOrDefault(v => v.version.Trim() == parent);
+        if (chosen != null) return chosen;
+        return history.Where(v => compareVersions(v.version, version.version) < 0)
+            .Aggregate((CustomBaseVersion)null, (best, v) => best == null || compareVersions(v.version, best.version) > 0 ? v : best);
+    }
+
     // ------------------------------------------------------------------ artifact access
 
     public static VersionArtifact GetArtifact(CustomBaseVersion version)

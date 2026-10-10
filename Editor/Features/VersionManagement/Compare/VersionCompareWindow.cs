@@ -9,9 +9,10 @@ using UnityEngine;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// What a version changes on the avatar's meshes, before applying it: the avatar turning in 3D with the changes glowing,
-/// in clay or with the creator's own materials, compared with how it is now or with its original model. Opened from the
-/// "See differences" button of a version that ships meshes; downloads the version first when needed.
+/// What a version changes on the avatar's meshes: the avatar turning in 3D with the changes glowing, in clay or with the
+/// creator's own materials. The version is compared with the one before it in its history (the original base for its
+/// first version), and also, when they show something else, with the original or with the avatar as it is now. Opened
+/// from the "See differences" button of a version that ships meshes; downloads the versions it reads first when needed.
 /// </summary>
 internal sealed class VersionCompareWindow : EditorWindow
 {
@@ -34,10 +35,16 @@ internal sealed class VersionCompareWindow : EditorWindow
     [NonSerialized] private MCBEditor editor;
     [NonSerialized] private MyCustomBase target;
     [NonSerialized] private CustomBaseVersion version;
+    // The version before it in its history; null for its first version, compared with the original base.
+    [NonSerialized] private CustomBaseVersion previous;
+    [NonSerialized] private bool previousOnAvatar;
+    [NonSerialized] private string originalName, downloadProblem;
     [NonSerialized] private VersionMeshComparison comparison;
     [NonSerialized] private IEnumerator loading;
-    [NonSerialized] private bool downloadRequested, firstShow;
-    [NonSerialized] private CompareReference reference = CompareReference.AvatarNow;
+    [NonSerialized] private CustomBaseVersion requested;
+    [NonSerialized] private bool firstShow;
+    [NonSerialized] private CompareReference reference = CompareReference.Previous;
+    [NonSerialized] private List<CompareReference> referenceOptions = new List<CompareReference>();
 
     private VersionCompareStage stage;
     private VisualElement overlay, spinner, progressFill, side, legend, legendKinds, toolbar, layoutBar, retry;
@@ -86,13 +93,28 @@ internal sealed class VersionCompareWindow : EditorWindow
         editor = owner;
         target = owner.customBaseTarget;
         version = shown;
-        reference = CompareReference.AvatarNow;
-        downloadRequested = false;
+        // What this version changed: compared with the version before it, or with the original base for its first version.
+        previous = VersionRepository.PreviousInHistory(shown, owner.GetAllVersions(), owner.CompareVersions);
+        previousOnAvatar = previous != null && owner.versionModule?.actions != null && owner.versionModule.actions.IsVersionCurrentlyApplied(previous);
+        originalName = OriginalName(owner, shown);
+        reference = CompareReference.Previous;
+        requested = null;
+        downloadProblem = null;
         firstShow = true;
         titleContent = new GUIContent($"{shown.version} differences");
         Build();
-        if (MCBUtils.IsVersionDownloaded(version)) StartLoading();
+        if (MissingDownload() == null) StartLoading();
         else RequestDownload();
+    }
+
+    // The original's name as the creator labelled it ("Novabeast V1.0"), else the base avatar's name.
+    private static string OriginalName(MCBEditor owner, CustomBaseVersion shown)
+    {
+        var asset = owner.GetSelectedAsset();
+        string label = string.IsNullOrEmpty(shown.sourceVersionKey) ? null
+            : OriginalBaseLibrary.Versions(asset).FirstOrDefault(v => v != null && v.key == shown.sourceVersionKey)?.label;
+        if (string.IsNullOrWhiteSpace(label)) label = asset?.avatarBase?.name;
+        return string.IsNullOrWhiteSpace(label) ? null : label.Trim();
     }
 
     private VersionActions Actions => LiveEditor()?.versionModule?.actions;
@@ -264,8 +286,8 @@ internal sealed class VersionCompareWindow : EditorWindow
         card.Add(overlayDetail);
         retry = CreateButton("Try again", () =>
         {
-            if (MCBUtils.IsVersionDownloaded(version)) StartLoading();
-            else { downloadRequested = false; RequestDownload(); }
+            if (MissingDownload() == null) StartLoading();
+            else { requested = null; RequestDownload(); }
         }, "mcb-cmp__pill");
         retry.style.display = DisplayStyle.None;
         card.Add(retry);
@@ -274,19 +296,44 @@ internal sealed class VersionCompareWindow : EditorWindow
 
     // ---- Flow: download, load, show -------------------------------------------------------------
 
+    // This version, then the one before it unless the avatar shows it: both are read from their downloads.
+    private CustomBaseVersion MissingDownload()
+    {
+        if (!MCBUtils.IsVersionDownloaded(version)) return version;
+        if (previous != null && !previousOnAvatar && !MCBUtils.IsVersionDownloaded(previous)) return previous;
+        return null;
+    }
+
     private void RequestDownload()
     {
-        if (version.isUnsubmitted || version.localArtifactSourceVersionKey != null)
+        var missing = MissingDownload();
+        if (missing == null) { StartLoading(); return; }
+        if (missing.isUnsubmitted || missing.localArtifactSourceVersionKey != null)
         {
-            Fail("This local build is incomplete. Rebuild it in the creator form, then open the differences again.");
+            if (missing == version) Fail("This local build is incomplete. Rebuild it in the creator form, then open the differences again.");
+            else { DropPrevious($"Version {missing.version} is not downloaded, so this compares with the original."); StartLoading(); }
             return;
         }
         var live = LiveEditor();
         if (live == null) { Fail("Select your avatar in the scene, then open the differences again."); return; }
-        SetOverlay("Downloading the version…", 0f, "It is needed to show its meshes, and to apply it later.");
+        SetOverlay(DownloadStep(missing), 0f, DownloadDetail(missing));
         if (live.isDownloading) return;
-        downloadRequested = true;
-        live.versionModule.actions.StartVersionDownload(version, false);
+        requested = missing;
+        live.versionModule.actions.StartVersionDownload(missing, false);
+    }
+
+    private string DownloadStep(CustomBaseVersion download) => download == version ? "Downloading the version…" : $"Downloading version {download.version}…";
+
+    private string DownloadDetail(CustomBaseVersion download) => download == version
+        ? "It is needed to show its meshes, and to apply it later."
+        : "The version before this one, to show what changed since.";
+
+    // The version before cannot be read: the original base takes its place.
+    private void DropPrevious(string problem)
+    {
+        downloadProblem = problem;
+        previous = null;
+        previousOnAvatar = false;
     }
 
     private void StartLoading()
@@ -294,7 +341,7 @@ internal sealed class VersionCompareWindow : EditorWindow
         var actions = Actions;
         if (actions == null || target == null) { Fail("Select your avatar in the scene, then open the differences again."); return; }
         comparison?.Dispose();
-        comparison = new VersionMeshComparison(actions, target, version);
+        comparison = new VersionMeshComparison(actions, target, version, previous, previousOnAvatar);
         loading = comparison.Load(reference);
         SetOverlay("Reading the version…", 0f, null);
         subtitle.text = "Reading the version…";
@@ -328,16 +375,21 @@ internal sealed class VersionCompareWindow : EditorWindow
 
         if (comparison == null && overlay.style.display != DisplayStyle.None && retry.style.display == DisplayStyle.None)
         {
+            var missing = MissingDownload();
+            if (missing == null) { StartLoading(); return; }
             var live = LiveEditor();
-            if (MCBUtils.IsVersionDownloaded(version)) { StartLoading(); return; }
             if (live == null) return;
             if (live.isDownloading)
             {
                 float progress = live.versionModule.actions.DownloadProgress;
-                SetOverlay(downloadRequested ? $"Downloading the version… {Mathf.RoundToInt(progress * 100f)}%" : "Waiting for another download…", downloadRequested ? progress : 0f,
-                    "It is needed to show its meshes, and to apply it later.");
+                bool ours = requested == missing;
+                SetOverlay(ours ? $"{DownloadStep(missing)} {Mathf.RoundToInt(progress * 100f)}%" : "Waiting for another download…", ours ? progress : 0f, DownloadDetail(missing));
             }
-            else if (downloadRequested) Fail("The download did not finish. Check your connection, then try again.");
+            else if (requested == missing)
+            {
+                if (missing == version) Fail("The download did not finish. Check your connection, then try again.");
+                else DropPrevious($"Version {missing.version} could not be downloaded, so this compares with the original.");
+            }
             else RequestDownload();
         }
 
@@ -392,11 +444,52 @@ internal sealed class VersionCompareWindow : EditorWindow
 
     // ---- Presenting -------------------------------------------------------------------------------
 
-    private string BeforeName => reference == CompareReference.Original ? "Original" : "Your avatar now";
+    // The version before as the comparison read it: the original takes its place when that version cannot be read.
+    private CustomBaseVersion ShownPrevious => comparison != null ? comparison.PreviousVersion : previous;
+
+    private string PreviousProblem => comparison?.PreviousProblem ?? downloadProblem;
+
+    // "Original Novabeast V1.0", or the creator's own label when it already says so ("Original base").
+    private string OriginalTag => originalName == null ? "Original"
+        : originalName.StartsWith("Original", StringComparison.OrdinalIgnoreCase) ? originalName : $"Original {originalName}";
+
+    private string OriginalPhrase => "the " + char.ToLowerInvariant(OriginalTag[0]) + OriginalTag.Substring(1);
+
+    private string BeforeName(CompareReference value) =>
+        value == CompareReference.AvatarNow ? "Your avatar now"
+        : value == CompareReference.Previous && ShownPrevious != null ? $"Version {ShownPrevious.version}"
+        : OriginalTag;
+
+    // What the version is compared with, inside a sentence.
+    private string Against(CompareReference value) =>
+        value == CompareReference.AvatarNow ? "your avatar now"
+        : value == CompareReference.Previous && ShownPrevious != null ? $"version {ShownPrevious.version}"
+        : OriginalPhrase;
+
+    private string OptionLabel(CompareReference value) =>
+        value == CompareReference.AvatarNow ? "Your avatar"
+        : value == CompareReference.Previous && ShownPrevious != null ? $"v{ShownPrevious.version}"
+        : "Original";
+
+    private string OptionTip(CompareReference value) =>
+        value == CompareReference.AvatarNow ? "Your avatar as it is in your scene now."
+        : value == CompareReference.Previous && ShownPrevious != null ? $"Version {ShownPrevious.version}, the version before this one."
+        : $"The avatar with {OriginalPhrase}, as with no version applied.";
+
+    private string Explain(CompareReference value)
+    {
+        if (value == CompareReference.AvatarNow) return "Your avatar as it is in your scene now.";
+        if (value == CompareReference.Previous && ShownPrevious != null)
+            return $"Version {ShownPrevious.version}, the version before this one{(comparison != null && comparison.PreviousOnAvatar ? ", as it is on your avatar now" : string.Empty)}.";
+        string original = char.ToUpperInvariant(OriginalPhrase[0]) + OriginalPhrase.Substring(1);
+        return value == CompareReference.Previous && PreviousProblem == null
+            ? $"{original}: version {version.version} is the first one."
+            : $"{original}, as with no version applied.";
+    }
 
     private void RefreshLabels()
     {
-        stage.BeforeLabel = BeforeName;
+        stage.BeforeLabel = BeforeName(reference);
         stage.AfterLabel = $"Version {version.version}";
     }
 
@@ -404,7 +497,7 @@ internal sealed class VersionCompareWindow : EditorWindow
     {
         var changed = comparison.Parts.Where(p => p.Changed).ToList();
         var reshaped = changed.Where(p => p.Change == PartChange.Reshaped || p.Change == PartChange.Added || p.Change == PartChange.Removed).ToList();
-        string against = reference == CompareReference.Original ? "the original model" : "your avatar now";
+        string against = Against(reference);
         if (reshaped.Count == 0)
         {
             subtitle.text = changed.Count == 0
@@ -452,36 +545,35 @@ internal sealed class VersionCompareWindow : EditorWindow
         sideScroll.Clear();
         partRows.Clear();
 
-        // Compared with: the avatar now, or its original model (only different while a version is applied).
+        // Compared with: the version before (the original for the first version), and only the other references that show
+        // something else: the original when it is not the previous side, the avatar now when it has other meshes.
         var compareCard = Card("Compared with");
-        if (comparison.AvatarHasVersion)
+        referenceOptions = new[] { CompareReference.Previous, CompareReference.Original, CompareReference.AvatarNow }
+            .Where(option => option == reference || comparison.Offers(option)).ToList();
+        referenceControl = null;
+        if (referenceOptions.Count > 1)
         {
-            referenceControl = new SegmentedControl(new[]
-            {
-                new SegmentedControl.Option("Your avatar now", null, "The avatar as it is in your scene."),
-                new SegmentedControl.Option("Original", null, "The avatar with its original model, as with no version applied.")
-            }, index => SwitchReference((CompareReference)index));
-            referenceControl.SetIndex((int)reference);
+            var options = referenceOptions;
+            referenceControl = new SegmentedControl(options.Select(option => new SegmentedControl.Option(OptionLabel(option), null, OptionTip(option))),
+                index => SwitchReference(options[index]));
+            referenceControl.SetIndex(options.IndexOf(reference));
             compareCard.Add(referenceControl);
         }
-        else
-        {
-            compareCard.Add(Caption("Your avatar, which has its original model."));
-        }
-        if (IsApplied()) compareCard.Add(Caption("This version is the one on your avatar: compare it with the original to see what it changes."));
+        compareCard.Add(Caption(Explain(reference)));
+        if (PreviousProblem != null) compareCard.Add(Caption(PreviousProblem));
 
         var changed = comparison.Parts.Where(p => p.Changed).ToList();
         var same = comparison.Parts.Where(p => !p.Changed).ToList();
         var partsCard = Card(changed.Count == 0 ? "Nothing changes shape" : Count(changed.Count, "mesh changes", "meshes change"));
         if (changed.Count == 0)
         {
-            partsCard.Add(Caption("This version keeps the same meshes. It may still change settings, materials or blendshape defaults."));
-            // The applied version may already have what this one changes: the original shows it.
-            if (comparison.AvatarHasVersion && reference == CompareReference.AvatarNow)
+            partsCard.Add(Caption($"Same meshes as {Against(reference)}. This version may still change settings, materials or blendshape defaults."));
+            // What this version changes may already be in what it is compared with: the original shows it.
+            if (reference != CompareReference.Original && referenceOptions.Contains(CompareReference.Original))
             {
                 var original = CreateButton("Compare with the original instead", () =>
                 {
-                    referenceControl?.SetIndex((int)CompareReference.Original);
+                    referenceControl?.SetIndex(referenceOptions.IndexOf(CompareReference.Original));
                     SwitchReference(CompareReference.Original);
                 }, "mcb-cmp__pill");
                 original.AddToClassList("mcb-cmp__pill--inline");

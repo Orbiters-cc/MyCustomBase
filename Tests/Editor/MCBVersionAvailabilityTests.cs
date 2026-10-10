@@ -5,6 +5,26 @@ using NUnit.Framework;
 public class MCBVersionAvailabilityTests
 {
     [Test]
+    public void PreviousVersionIsTheChosenParentElseTheHighestPublishedOneBelowForTheSameOriginal()
+    {
+        string key = new string('a', 64);
+        CustomBaseVersion V(string number, string source = null, bool draft = false, string parent = null, int asset = 9) => new CustomBaseVersion
+            { assetId = asset, version = number, defaultAviVersion = "1.0.0", sourceVersionKey = source ?? key, isUnsubmitted = draft, parentVersion = parent };
+        Comparison<string> compare = (a, b) => new Version(a).CompareTo(new Version(b));
+        var v100 = V("1.0.0");
+        var v110 = V("1.1.0");
+        var v120 = V("1.2.0");
+        var history = new[] { v120, V("1.1.5", draft: true), v110, V("1.1.9", new string('b', 64)), V("1.1.8", asset: 3), v100 };
+        Assert.That(VersionRepository.PreviousInHistory(v120, history, compare), Is.SameAs(v110));
+        Assert.That(VersionRepository.PreviousInHistory(v110, history, compare), Is.SameAs(v100));
+        // The first version's history starts at the original base.
+        Assert.That(VersionRepository.PreviousInHistory(v100, history, compare), Is.Null);
+        Assert.That(VersionRepository.PreviousInHistory(V("1.3.0", parent: "1.0.0"), history, compare), Is.SameAs(v100));
+        Assert.That(VersionRepository.PreviousInHistory(V("1.3.0", parent: "0.9.0"), history, compare), Is.SameAs(v120));
+        Assert.That(VersionRepository.PreviousInHistory(V("2.0.0", draft: true), history, compare), Is.SameAs(v120));
+    }
+
+    [Test]
     public void BundledOriginalIsVisibleForItsOwnSourceAndResolvesSharedArtifactFolder()
     {
         var artifact = new CustomBaseVersion { assetId = 7, version = "5.0.0", defaultAviVersion = "1.0.0",
