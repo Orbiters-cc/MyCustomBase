@@ -35,8 +35,8 @@ public static class OriginalBaseVariantBuilder
             patch.metadata["sourcePath"] = newSource.path; patch.metadata["sourceHash"] = newSource.hash;
             patch.metadata["sourceVersionKey"] = result.key;
             var codecs = MCBVersionDelivery.GetVariants(originalPatch);
-            // Keep variant names bounded: the version folder already contains the source key.
-            string VariantPath(string path) => Hash(System.Text.Encoding.UTF8.GetBytes(result.key + "|" + PayloadName(path))) + Path.GetExtension(path);
+            // Keep variant names short: the version folder already contains the source key (MCBUtils.PathHash).
+            string VariantPath(string path) => MCBUtils.PathHash(Hash(System.Text.Encoding.UTF8.GetBytes(result.key + "|" + PayloadName(path)))) + Path.GetExtension(path);
             if (codecs.Length > 0)
             {
                 // Archive delivery stores the chosen codec under the primary payload path.

@@ -366,9 +366,10 @@ public static class AvatarPathOverrideService
         {
             foreach (var backup in backups)
             {
-                string suffix = ".restore-" + Guid.NewGuid().ToString("N");
-                backup.rollbackPath = backup.targetFullPath + suffix + ".rollback";
-                backup.replacementPath = backup.targetFullPath + suffix + ".replacement";
+                // Hidden from Unity ("~"): the refresh below runs while they still exist.
+                string staging = Orbiters.Toolkit.Storage.SafePaths.Sibling(backup.targetFullPath, "restore");
+                backup.rollbackPath = staging + ".rollback~";
+                backup.replacementPath = staging + ".replacement~";
                 staged.Add(backup);
                 File.Copy(backup.targetFullPath, backup.rollbackPath, false);
                 File.Copy(backup.backupFullPath, backup.replacementPath, false);

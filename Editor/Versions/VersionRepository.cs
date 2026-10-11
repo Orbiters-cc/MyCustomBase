@@ -174,7 +174,8 @@ public static class VersionRepository
                         else
                         {
                             version.isImported = true;
-                            result.imported.AddRange(LocalSourceViews(version));
+                            // Another original's view only when this folder holds its files: a download carries its own original's.
+                            result.imported.AddRange(LocalSourceViews(version).Where(view => view == version || VersionStorage.IsComplete(folderFullPath, view)));
                         }
                     }
                     catch (Exception ex)
@@ -240,10 +241,25 @@ public static class VersionRepository
                 // rather than one identical row for every bundled original-source view.
                 if (string.IsNullOrEmpty(sourceVersionKey) && version.localArtifactSourceVersionKey != null) continue;
                 if (!string.IsNullOrEmpty(sourceVersionKey) && !string.IsNullOrEmpty(version.sourceVersionKey) && version.sourceVersionKey != sourceVersionKey) continue;
-                merged[version] = version;
+                // A remote entry whose original is held by another original's local artifact (a creator's build, or a saved
+                // version of it) keeps reading its files there instead of downloading them again.
+                merged[version] = merged.TryGetValue(version, out var local) && local.localArtifactSourceVersionKey != null &&
+                                  version.localArtifactSourceVersionKey == null && !version.isUnsubmitted
+                    ? InLocalArtifact(version, local.localArtifactSourceVersionKey)
+                    : version;
             }
         }
         return merged.Values.ToList();
+    }
+
+    /// <summary>A copy of <paramref name="version"/> read from another original's local artifact, or from its own folder when null.</summary>
+    internal static CustomBaseVersion InLocalArtifact(CustomBaseVersion version, string artifactSourceVersionKey)
+    {
+        var copy = JsonConvert.DeserializeObject<CustomBaseVersion>(JsonConvert.SerializeObject(version));
+        copy.localArtifactSourceVersionKey = artifactSourceVersionKey;
+        copy.isUnsubmitted = version.isUnsubmitted;
+        copy.isImported = version.isImported;
+        return copy;
     }
 
     /// <summary>Published parent candidates also remain available from saved/applied metadata.</summary>

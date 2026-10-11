@@ -33,6 +33,15 @@ public static class MCBUtils
     public const string DEFAULT_AVATAR_NAME = "default avatar.asset";
     public const string CUSTOM_BASE_AVATAR_NAME = "customBase avatar.asset";
 
+    /// <summary>
+    /// Hashes in MCB's local file and folder names are cut to this many hex digits: buyers' projects must hold every path
+    /// under Windows' limit (SafePaths.MaxPathLength), and 64 bits keep names unique where they share a folder.
+    /// </summary>
+    public const int PathHashLength = 16;
+
+    public static string PathHash(string hash) =>
+        string.IsNullOrEmpty(hash) || hash.Length <= PathHashLength ? hash : hash.Substring(0, PathHashLength);
+
     private const string ApiSimulationModePrefKey = "MCB_ApiSimulationMode";
     
     // The server Orbiters Toolkit talks to (OrbitersEnvironment): one switch for every Orbiters tool.
@@ -208,7 +217,7 @@ public static class MCBUtils
         VersionStorage.ValidateLabel(customBaseVersion, nameof(customBaseVersion));
         VersionStorage.ValidateLabel(defaultFbxVersion, nameof(defaultFbxVersion));
         string relative = $"{assetId}/versions/u{customBaseVersion}d{defaultFbxVersion}" +
-            (string.IsNullOrEmpty(sourceVersionKey) ? "" : "-source-" + sourceVersionKey);
+            (string.IsNullOrEmpty(sourceVersionKey) ? "" : "-" + PathHash(sourceVersionKey));
         VersionStorage.RejectLinks(Path.GetFullPath("Assets"), Path.GetFullPath(ASSET_VERSIONS_FOLDER));
         VersionStorage.ContainedPath(ASSET_VERSIONS_FOLDER, relative);
         return ASSET_VERSIONS_FOLDER + "/" + relative;

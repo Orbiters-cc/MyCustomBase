@@ -1,5 +1,36 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.7 — 2026-10-11
+
+- Fix **Extraction failed: Could not find a part of the path** when downloading a version into a project at an ordinary
+  path (about 40 characters, e.g. `D:\VRChat Stuff\Unity Projects\Ultinova`): the download's staging folder added a
+  42-character suffix to an already long version folder, past the 259 characters Unity can use on Windows. Staging
+  and replaced folders now add 18 characters at most (Orbiters Toolkit 0.3.21).
+- Hashes in MCB's local names are cut to 16 hex digits (`MCBUtils.PathHash`): version folders
+  (`u1.0.0d1.0.0-60281cc859dc167a`, was `u1.0.0d1.0.0-source-<64 digits>`), generated advanced meshes and their humanoid
+  Avatars, refit caches, and the files a build makes for its other originals. Ultinova's longest version file now
+  needs 128 characters past the project folder instead of 188. Nothing is migrated: a version downloaded with an
+  earlier MCB is downloaded again when applied (an avatar using it offers **Download and Update** to the same version
+  once), saved versions exported before are not recognised, and refits saved for versions that are not applied are
+  not found again.
+- Before downloading, MCB checks that the version's files fit at the project's location; if not, it says how many
+  characters shorter the project's folder path must be instead of failing after the download.
+- A saved version exported from a creator's build of several originals installs offline for each of them. The
+  server's entry used to win over the local copy of a non-primary original and pointed at that original's own folder,
+  so MCB downloaded it again. A published version whose local build no longer holds the original now downloads the
+  original's own copy instead of reporting "This local build is incomplete".
+- Exporting a saved version keeps the version folder's own `version.json`. It was rewritten with the row's metadata:
+  exporting one original's view of a creator's build replaced the build's metadata, hid the build from MCB and made the
+  package unrecognisable on import.
+- Applying or resetting no longer logs "Shader … is not supported" errors for avatars whose shader MCB never puts veins
+  on (lilToon, a missing shader): there is nothing of MCB's to remove there.
+- Advanced versions use the avatar's own copy of their original as the pose source when it sits at another path (a
+  moved or renamed package folder). For another original (Novabeast V1.2 under a version built on V1.0) the payload's
+  own skeleton stays the pose, now an information line instead of two warnings on every apply.
+- Restoring pre-MCB backups stages its copies under hidden names (`~`), so Unity no longer imports them, and leaves
+  stray `.meta` files, during the restore's refresh. The original-base backup's temporary copy has a short name too.
+- Requires Orbiters Toolkit 0.3.21.
+
 ## 1.12.6 — 2026-10-10
 
 - The sliders MCB adds to the menu get Orbiters' gauge icon (`OrbitersMenuIcons.Slider`, from Orbiters Toolkit).

@@ -1423,6 +1423,13 @@ public static partial class NativeMeshPayloadService
         return result;
     }
 
+    private static bool IsModelWithHash(string modelPath, string hash)
+    {
+        if (string.IsNullOrEmpty(modelPath) || string.IsNullOrEmpty(hash)) return false;
+        string fullPath = Path.GetFullPath(MCBUtils.ToUnityPath(modelPath));
+        return File.Exists(fullPath) && string.Equals(MCBUtils.CalculateFileHash(fullPath), hash, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Transform ResolveSourcePoseRoot(string sourceFbxPath)
     {
         string sourceUnityPath = StripOriginalSuffix(MCBUtils.ToUnityPath(sourceFbxPath));
@@ -2845,9 +2852,16 @@ public static partial class NativeMeshPayloadService
         ApplyPayloadStructuralBoneTransforms(avatarRoot, payload);
         // Plain payloads name no source model: their absolute custom skeleton is the authoring pose.
         Transform sourceRoot = ResolveSourcePoseRoot(payload.sourceFbxPath);
+        // The payload names the creator's model path. A buyer's copy of that same original may live elsewhere (a moved or
+        // renamed package folder): the avatar's own base model is then the source.
+        if (sourceRoot == null && !string.IsNullOrEmpty(payload.sourceFbxPath) && IsModelWithHash(basePoseFbxPath, payload.sourceFbxHash))
+        {
+            sourceRoot = ResolveSourcePoseRoot(basePoseFbxPath);
+        }
+        // Another original (a different release of the base) keeps the payload's own skeleton, which its meshes are bound to.
         if (sourceRoot == null && !string.IsNullOrEmpty(payload.sourceFbxPath))
         {
-            MCBLogger.LogWarning($"[NativeMeshPayload] Could not resolve source pose root '{payload.sourceFbxPath}'. Falling back to structural native mesh pose as the authoring base.");
+            MCBLogger.Log($"[NativeMeshPayload] This avatar's original is not '{payload.sourceFbxPath}': the payload's own skeleton is the authoring pose.");
         }
 
         int applied = 0;
@@ -2883,7 +2897,8 @@ public static partial class NativeMeshPayloadService
             }
             else
             {
-                MCBLogger.LogWarning($"[NativeMeshPayload] Could not resolve authoring base transform '{poseBone.path}'.");
+                // The payload's skeleton holds bones only: a renderer's own transform keeps its place without a source model.
+                if (sourceRoot != null) MCBLogger.LogWarning($"[NativeMeshPayload] Could not resolve authoring base transform '{poseBone.path}'.");
                 continue;
             }
 
@@ -3346,7 +3361,7 @@ public static partial class NativeMeshPayloadService
     {
         if (payloadHash.StartsWith("raw:", StringComparison.Ordinal))
             return MCBUtils.CombineUnityPath(GeneratedFolder, version.assetId.ToString(),
-                "shared-" + SanitizeFileName(Application.unityVersion), payloadHash.Substring(4) + ".asset");
+                "shared-" + SanitizeFileName(Application.unityVersion), MCBUtils.PathHash(payloadHash.Substring(4)) + ".asset");
         string sourceName = "nativeMesh";
         if (patchFile?.metadata != null &&
             patchFile.metadata.TryGetValue("sourcePath", out object sourcePathValue) &&
@@ -3363,7 +3378,7 @@ public static partial class NativeMeshPayloadService
             GeneratedFolder,
             version.assetId.ToString(),
             SanitizeFileName(version.version));
-        string file = $"{SanitizeFileName(sourceName)}_{payloadHash}.asset";
+        string file = $"{SanitizeFileName(sourceName)}_{MCBUtils.PathHash(payloadHash)}.asset";
         return MCBUtils.CombineUnityPath(folder, file);
     }
 

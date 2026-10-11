@@ -101,10 +101,10 @@ public class MCBVersionAvailabilityTests
     }
 
     private static string OldSharedPath(int assetId, char hash) =>
-        "Assets/MCB/generated/advancedMeshPayloads/" + assetId + "/shared-2021.3.0f1/" + new string(hash, 64) + ".asset";
+        "Assets/MCB/generated/advancedMeshPayloads/" + assetId + "/shared-2021.3.0f1/" + new string(hash, MCBUtils.PathHashLength) + ".asset";
 
     private static string SharedPath(char hash) =>
-        "Assets/MCB/generated/advancedMeshPayloads/14/shared-" + UnityEngine.Application.unityVersion + "/" + new string(hash, 64) + ".asset";
+        "Assets/MCB/generated/advancedMeshPayloads/14/shared-" + UnityEngine.Application.unityVersion + "/" + new string(hash, MCBUtils.PathHashLength) + ".asset";
 
     private static CustomBaseVersion SharedVersion(string version, params char[] hashes) => new CustomBaseVersion
     {
@@ -158,6 +158,55 @@ public class MCBVersionAvailabilityTests
         Assert.That(offline[0], Is.SameAs(downloaded));
         var draft = new CustomBaseVersion { assetId = 14, version = "0.5.1", defaultAviVersion = "1.0.0", isUnsubmitted = true };
         Assert.That(VersionRepository.MergeAvailableVersions(14, remote, new[] { downloaded }, new[] { draft })[0], Is.SameAs(draft));
+    }
+
+    private static CustomBaseVersion TwoOriginalArtifact(int assetId) => new CustomBaseVersion
+    {
+        assetId = assetId, version = "5.0.0", defaultAviVersion = "1.0.0", sourceVersionKey = new string('a', 64), isImported = true,
+        originalBaseVersions = new[] { new OriginalBaseVersionData { key = new string('b', 64),
+            sourceFiles = new[] { new ModelFileData { path = "Body.fbx", hash = new string('c', 64) } },
+            versionFiles = new[] { new ModelFileData { path = "mapped.bin" } } } }
+    };
+
+    [Test]
+    public void RemoteOriginalKeepsReadingItsFilesFromAnotherOriginalsLocalArtifact()
+    {
+        var artifact = TwoOriginalArtifact(7);
+        var remote = new CustomBaseVersion { id = 9, assetId = 7, version = "5.0.0", defaultAviVersion = "1.0.0", sourceVersionKey = new string('b', 64) };
+        var views = System.Linq.Enumerable.ToArray(VersionRepository.LocalSourceViews(artifact));
+        var merged = VersionRepository.MergeAvailableVersions(7, new[] { remote }, views, null, remote.sourceVersionKey);
+        Assert.That(merged, Has.Count.EqualTo(1));
+        Assert.That(merged[0].id, Is.EqualTo(9), "Remote metadata wins over the local view.");
+        Assert.That(MCBUtils.GetVersionDataPath(merged[0]), Is.EqualTo(MCBUtils.GetVersionDataPath(artifact)));
+        Assert.That(remote.localArtifactSourceVersionKey, Is.Null, "The server list entry itself is left unchanged.");
+    }
+
+    [Test]
+    public void SavingOneOriginalsViewExportsTheArtifactMetadataUnchanged()
+    {
+        var artifact = TwoOriginalArtifact(999991);
+        string folder = MCBUtils.GetVersionDataPath(artifact);
+        string package = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mcb-export-" + Guid.NewGuid().ToString("N") + ".unitypackage");
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetFullPath(folder));
+            VersionRepository.SaveVersionJson(folder, artifact);
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(System.IO.Path.GetFullPath(folder), "mapped.bin"), new byte[] { 1, 2, 3 });
+            UnityEditor.AssetDatabase.Refresh(UnityEditor.ImportAssetOptions.ForceSynchronousImport);
+            string before = System.IO.File.ReadAllText(System.IO.Path.Combine(folder, "version.json"));
+            var view = System.Linq.Enumerable.Last(VersionRepository.LocalSourceViews(artifact));
+            Assert.That(view.sourceVersionKey, Is.EqualTo(new string('b', 64)));
+
+            new FileManagerService().ExportOfflineVersionPackage(view, package);
+
+            Assert.That(System.IO.File.ReadAllText(System.IO.Path.Combine(folder, "version.json")), Is.EqualTo(before));
+            Assert.That(System.IO.File.Exists(package), Is.True);
+        }
+        finally
+        {
+            UnityEditor.AssetDatabase.DeleteAsset(MCBUtils.ASSET_VERSIONS_FOLDER + "/999991");
+            if (System.IO.File.Exists(package)) System.IO.File.Delete(package);
+        }
     }
 }
 #endif

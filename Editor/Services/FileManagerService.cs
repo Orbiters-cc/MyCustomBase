@@ -96,7 +96,7 @@ public class FileManagerService
     {
         if (string.IsNullOrWhiteSpace(expectedHash)) throw new ArgumentNullException(nameof(expectedHash));
         // Ends in "~": Unity never imports it, even when a refresh runs during the copy.
-        string pendingPath = destinationPath + ".pending-" + Guid.NewGuid().ToString("N") + "~";
+        string pendingPath = Orbiters.Toolkit.Storage.SafePaths.Sibling(destinationPath, "pending") + "~";
         try
         {
             File.Copy(sourcePath, pendingPath, false);
@@ -965,14 +965,17 @@ public class FileManagerService
 
         string versionJsonUnityPath = MCBUtils.CombineUnityPath(versionFolderUnityPath, "version.json");
         string versionJsonFullPath = Path.GetFullPath(versionJsonUnityPath);
+        // The folder's own version.json describes everything it holds (every original of a creator's build); the version
+        // given may be one original's view of it. It is kept as is, and only a folder without one gets the given metadata.
         bool versionJsonExisted = File.Exists(versionJsonFullPath);
-        string metadataJson = JsonConvert.SerializeObject(version, Formatting.Indented, new StringEnumConverter());
 
         try
         {
-            MCBUtils.EnsureDirectoryExists(versionJsonUnityPath);
-            File.WriteAllText(versionJsonFullPath, metadataJson);
-            AssetDatabase.ImportAsset(versionJsonUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            if (!versionJsonExisted)
+            {
+                File.WriteAllText(versionJsonFullPath, JsonConvert.SerializeObject(version, Formatting.Indented, new StringEnumConverter()));
+                AssetDatabase.ImportAsset(versionJsonUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            }
 
             AssetDatabase.ExportPackage(
                 new[] { versionFolderUnityPath },
@@ -981,14 +984,7 @@ public class FileManagerService
         }
         finally
         {
-            if (!versionJsonExisted)
-            {
-                AssetDatabase.DeleteAsset(versionJsonUnityPath);
-            }
-            else
-            {
-                AssetDatabase.ImportAsset(versionJsonUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-            }
+            if (!versionJsonExisted) AssetDatabase.DeleteAsset(versionJsonUnityPath);
         }
     }
     

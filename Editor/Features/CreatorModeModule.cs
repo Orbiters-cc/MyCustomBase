@@ -2621,7 +2621,7 @@ public partial class CreatorModeModule
         }
     }
 
-    // The full storage identity: builds for an original-base source live in their own "-source-<key>" folder.
+    // The full storage identity: builds for an original-base source live in their own "-<key>" folder.
     internal static string FormatPendingBuildKey(CustomBaseVersion version) =>
         $"{version.assetId}|{version.version}|{version.defaultAviVersion}|{version.sourceVersionKey}";
 

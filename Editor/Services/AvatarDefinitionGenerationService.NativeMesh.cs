@@ -113,7 +113,7 @@ public static partial class AvatarDefinitionGenerationService
         // second application reuse the same definition instead of applying a delta again.
         var description = mapping.humanDescription;
         description.skeleton = Array.Empty<SkeletonBone>();
-        string key = Hash128.Compute("native-humanoid-2|" + JsonUtility.ToJson(description)).ToString();
+        string key = MCBUtils.PathHash(Hash128.Compute("native-humanoid-2|" + JsonUtility.ToJson(description)).ToString());
         string payloadPath = AssetDatabase.GetAssetPath(payload);
         string path = string.IsNullOrEmpty(payloadPath) ? null :
             Path.ChangeExtension(payloadPath, null) + ".humanoid-" + key + ".asset";

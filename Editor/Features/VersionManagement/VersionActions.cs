@@ -279,13 +279,16 @@ public class VersionActions
     {
         if (version.isUnsubmitted || version.localArtifactSourceVersionKey != null)
         {
-            if (MCBUtils.IsVersionDownloaded(version))
+            bool local = MCBUtils.IsVersionDownloaded(version);
+            if (local || version.isUnsubmitted)
             {
-                if (applyAfter) yield return ApplyOrResetCoroutine(version, false);
+                if (!local) editor.warningsModule.AddWarning("This local build is incomplete. Rebuild it in the creator form before previewing or applying it.", MessageType.Error, "Local version unavailable");
+                else if (applyAfter) yield return ApplyOrResetCoroutine(version, false);
+                editor.RefreshUiToolkitSections();
+                yield break;
             }
-            else editor.warningsModule.AddWarning("This local build is incomplete. Rebuild it in the creator form before previewing or applying it.", MessageType.Error, "Local version unavailable");
-            editor.RefreshUiToolkitSections();
-            yield break;
+            // A published version whose local artifact no longer holds this original: download the original's own copy.
+            version = VersionRepository.InLocalArtifact(version, null);
         }
         MCBPerformance.PauseForeground();
         if (editor.isDownloading) yield break;
@@ -307,7 +310,25 @@ public class VersionActions
             editor.Repaint();
             yield break;
         }
-        
+
+        // Before downloading anything: the version's files (and the .meta files shipped with them) must fit Windows' path
+        // limit at this project's location.
+        string pathTooLong = null;
+        try
+        {
+            Orbiters.Toolkit.Editor.Storage.SafeArchive.RequireRoom(MCBUtils.GetVersionDataPath(version),
+                (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => file != null).SelectMany(file => new[] { file.path, file.path + ".meta" }));
+        }
+        catch (PathTooLongException ex) { pathTooLong = ex.Message; }
+        if (pathTooLong != null)
+        {
+            editor.isDownloading = false;
+            if (applyAfter) FinishApplyProgress(false);
+            editor.warningsModule.AddWarning(pathTooLong, MessageType.Error, "Project path too long");
+            editor.RefreshUiToolkitSections();
+            yield break;
+        }
+
         // Inspector initialization may first detect a garment before the selected
         // asset's source mapping is loaded. Never use that stale UI hash to download.
         string requestedSourcePath = GetCurrentFBXPath();

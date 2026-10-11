@@ -412,21 +412,10 @@ public class MaterialService
     {
         if (smr == null) return false;
 
+        // Every apply and reset clears veins: a renderer without a material, or with a shader MCB never sets veins on (lilToon,
+        // a missing shader), simply has none of MCB's to remove. A detail normal the user or another tool set is not MCB's either.
         var material = smr.sharedMaterial;
-        if (material == null)
-        {
-            MCBLogger.LogError($"[MaterialService] SkinnedMeshRenderer '{GetRendererLabel(smr)}' has no material assigned");
-            return false;
-        }
-
-        if (!IsShaderSupported(material.shader.name))
-        {
-            MCBLogger.LogError($"[MaterialService] Shader '{material.shader.name}' is not supported");
-            return false;
-        }
-
-        // A detail normal the user or another tool set is not MCB's to remove.
-        if (!HasVersionVeins(material))
+        if (material == null || !IsShaderSupported(material.shader.name) || !HasVersionVeins(material))
         {
             return false;
         }
