@@ -192,6 +192,12 @@
     flex-shrink: 0;
 }
 
+.mcb-creator__compact-button.mcb-creator-parent__fill-button {
+    width: auto;
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
 .mcb-creator-option {
     padding: 12px 14px;
 }

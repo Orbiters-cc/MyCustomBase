@@ -2,6 +2,7 @@
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 
@@ -55,10 +56,14 @@ public sealed class MCBCreatorWindow : EditorWindow
 
     internal void DetachAndClose()
     {
-        // Inspector/domain reloads must not destroy the window's saved context.
+        // Inspector/domain reloads must not destroy the window's saved context. The editor stays referenced: the
+        // window's OnDisable destroys it. Dropping it here (its OnDisable can run first during a reload) leaked one
+        // live editor, background services included, per reload.
         module = null;
-        sourceEditor = null;
     }
+
+    // Names the editors creator windows create, so ones a reload left without a window can be found and destroyed.
+    private const string OwnedEditorName = "MCB Creator Window Editor";
 
     private void CreateGUI()
     {
@@ -72,7 +77,9 @@ public sealed class MCBCreatorWindow : EditorWindow
         if (disposing || avatar == null || string.IsNullOrEmpty(assetJson)) return;
         if (sourceEditor == null)
         {
+            DestroyOrphanedEditors();
             sourceEditor = (MCBEditor)UnityEditor.Editor.CreateEditor(avatar, typeof(MCBEditor));
+            sourceEditor.name = OwnedEditorName;
             sourceEditor.SetCreatorWindowAsset(JsonConvert.DeserializeObject<AvatarDiscoveredAsset>(assetJson));
             sourceEditor.serializedObject.Update();
             sourceEditor.isCreatorModeProp.boolValue = true;
@@ -81,6 +88,14 @@ public sealed class MCBCreatorWindow : EditorWindow
             module.LoadWindowDraft(draftJson);
         }
         BuildUI();
+    }
+
+    // Editors an earlier creator window created but no open window holds any more (a domain reload drops the reference).
+    private static void DestroyOrphanedEditors()
+    {
+        var held = new HashSet<MCBEditor>(Resources.FindObjectsOfTypeAll<MCBCreatorWindow>().Select(w => w.sourceEditor).Where(e => e != null));
+        foreach (var orphan in Resources.FindObjectsOfTypeAll<MCBEditor>().Where(e => e.name == OwnedEditorName && !held.Contains(e) && !e.isSubmitting))
+            DestroyImmediate(orphan);
     }
 
     private void Update()

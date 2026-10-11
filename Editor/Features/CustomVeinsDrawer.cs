@@ -72,8 +72,7 @@ public partial class CustomVeinsDrawer
         }
 
         // Construct the path to the veins normal map using the utility method
-        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion);
-        string veinsNormalPath = System.IO.Path.Combine(versionFolder, "veins normal.png").Replace("\\", "/");
+        string veinsNormalPath = MCBUtils.GetVersionVeinsTexturePath(appliedVersion);
 
         MCBLogger.Log($"[CustomVeinsDrawer] Applying custom veins from: {veinsNormalPath}");
 

@@ -1624,7 +1624,7 @@ public partial class CreatorModeModule
         {
             textureProp.objectReferenceValue = newTexture;
             string selectedPath = AssetDatabase.GetAssetPath(newTexture);
-            string parentPath = GetVeinsTexturePathForVersion(selectedParentVersionObject);
+            string parentPath = MCBUtils.GetVersionVeinsTexturePath(selectedParentVersionObject);
             autoAssignedVeinsTexturePath = (!string.IsNullOrEmpty(selectedPath) && selectedPath == parentPath) ? selectedPath : null;
         }
     }
@@ -1704,14 +1704,6 @@ public partial class CreatorModeModule
         importer.SaveAndReimport();
     }
 
-    private static string GetVeinsTexturePathForVersion(CustomBaseVersion version)
-    {
-        if (version == null) return null;
-        string folder = MCBUtils.GetVersionDataPath(version);
-        if (string.IsNullOrEmpty(folder)) return null;
-        return Path.Combine(folder, "veins normal.png").Replace("\\", "/");
-    }
-
     private bool ParentSupportsCustomVeins(CustomBaseVersion version)
     {
         return ExtraCustomizationUtils.HasFlag(version?.extraCustomization, CustomVeinsKey);
@@ -1744,7 +1736,7 @@ public partial class CreatorModeModule
                 includeProp.boolValue = true;
             }
 
-            string parentTexturePath = GetVeinsTexturePathForVersion(newParent);
+            string parentTexturePath = MCBUtils.GetVersionVeinsTexturePath(newParent);
             if (!string.IsNullOrEmpty(parentTexturePath))
             {
                 Texture2D parentTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(parentTexturePath);
@@ -2419,115 +2411,187 @@ public partial class CreatorModeModule
             newVersionMinor = parsedVersion.Minor;
             newVersionPatch = parsedVersion.Build;
 
-            SyncModelFileBuildEntryCount();
-            var versionFilesBySourcePath = new Dictionary<string, ModelFileData>(StringComparer.OrdinalIgnoreCase);
-            foreach (var versionFile in ver.versionFiles ?? Array.Empty<ModelFileData>())
-            {
-                string sourcePath = GetMetadataString(versionFile, "sourcePath");
-                if (string.IsNullOrWhiteSpace(sourcePath))
-                {
-                    continue;
-                }
-
-                string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
-                versionFilesBySourcePath[normalizedSourcePath] = versionFile;
-                var sourceFile = ver.sourceFiles?.FirstOrDefault(file =>
-                    file != null &&
-                    (versionFile.sourceModelFileId.HasValue && file.id == versionFile.sourceModelFileId.Value ||
-                     string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase)));
-                string localTargetPath = AvatarPathOverrideService.ResolveLocalTargetPath(
-                    editor.customBaseTarget,
-                    sourceFile,
-                    updateStoredPathFromGuid: false);
-                if (!string.IsNullOrWhiteSpace(localTargetPath))
-                {
-                    versionFilesBySourcePath[MCBUtils.ToUnityPath(localTargetPath)] = versionFile;
-                }
-            }
-
-            for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
-            {
-                var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
-                var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-                string sourcePath = sourceFbx != null ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(sourceFbx)) : null;
-                ModelFileData versionFile = null;
-                if (!string.IsNullOrWhiteSpace(sourcePath))
-                {
-                    versionFilesBySourcePath.TryGetValue(sourcePath, out versionFile);
-                }
-
-                string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
-                string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
-                if (!string.IsNullOrWhiteSpace(customAvatarPath))
-                {
-                    customAvatarPath = MCBUtils.GetVersionAvatarPath(ver, Path.GetFileName(customAvatarPath));
-                }
-                var restoredCustomFbx = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
-                entryProp.FindPropertyRelative("customFbx").objectReferenceValue = restoredCustomFbx;
-                var externalCustomFbxPath = entryProp.FindPropertyRelative("externalCustomFbxPath");
-                if (externalCustomFbxPath != null)
-                {
-                    externalCustomFbxPath.stringValue = restoredCustomFbx == null && !string.IsNullOrWhiteSpace(customFbxPath)
-                        ? customFbxPath
-                        : "";
-                }
-                entryProp.FindPropertyRelative("customBaseAvatar").objectReferenceValue = AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath);
-            }
-            if (editor.useAdvancedMeshReplacementForCreatorProp != null)
-            {
-                editor.useAdvancedMeshReplacementForCreatorProp.boolValue = NativeMeshPayloadService.VersionUsesAdvancedMesh(ver);
-            }
-            editor.avatarLogicPrefabProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(ver.logicPrefabPath);
-
-            editor.customBlendshapesForCreatorProp.ClearArray();
-            if (ver.customBlendshapes != null)
-            {
-                for (int i = 0; i < ver.customBlendshapes.Length; i++)
-                {
-                    editor.customBlendshapesForCreatorProp.InsertArrayElementAtIndex(i);
-                    var element = editor.customBlendshapesForCreatorProp.GetArrayElementAtIndex(i);
-                    element.FindPropertyRelative("name").stringValue = ver.customBlendshapes[i].name;
-                    element.FindPropertyRelative("defaultValue").stringValue = ver.customBlendshapes[i].defaultValue;
-                    element.FindPropertyRelative("isSlider").boolValue = ver.customBlendshapes[i].isSlider;
-                    element.FindPropertyRelative("isSliderDefault").boolValue = ver.customBlendshapes[i].isSliderDefault;
-                    CopyCorrectivesToSerialized(element, ver.customBlendshapes[i].correctiveBlendshapes);
-                }
-            }
-
-            bool includeCustomVeins = ver.includeCustomVeins ?? ExtraCustomizationUtils.HasFlag(ver.extraCustomization, CustomVeinsKey);
-            editor.includeCustomVeinsForCreatorProp.boolValue = includeCustomVeins;
-
-            if (!string.IsNullOrEmpty(ver.customVeinsTexturePath))
-            {
-                editor.customVeinsNormalMapProp.objectReferenceValue = AssetDatabase.LoadAssetAtPath<Texture2D>(ver.customVeinsTexturePath);
-            }
-            else
-            {
-                editor.customVeinsNormalMapProp.objectReferenceValue = null;
-            }
-
-            string assignedPath = AssetDatabase.GetAssetPath(editor.customVeinsNormalMapProp.objectReferenceValue);
-            string parentPath = GetVeinsTexturePathForVersion(selectedParentVersionObject);
-            autoAssignedVeinsTexturePath = (!string.IsNullOrEmpty(assignedPath) && assignedPath == parentPath) ? assignedPath : null;
-            lastParentVersionForVeins = selectedParentVersionObject;
-
-            if (editor.includeSuggestRealisticForCreatorProp != null && editor.suggestRealisticMeshPathsForCreatorProp != null)
-            {
-                var suggestRealisticPaths = ExtraCustomizationUtils.GetStringList(ver.extraCustomization, SuggestRealisticKey);
-                editor.includeSuggestRealisticForCreatorProp.boolValue = suggestRealisticPaths.Count > 0;
-                SetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp, suggestRealisticPaths);
-            }
-
-            editor.serializedObject.ApplyModifiedProperties();
-            editor.customBaseTarget.creatorCustomization = VersionCustomization.Read(ver.extraCustomization);
-            EditorUtility.SetDirty(editor.customBaseTarget);
-            editor.serializedObject.Update();
-            editor.Repaint();
+            ApplyVersionContentToForm(ver, fillFromParent: false);
         }
         finally
         {
             isRestoringFromVersionState = false;
         }
+    }
+
+    /// <summary>
+    /// Fills the new-version form with the parent's content (model files, avatars, logic, blendshapes, options),
+    /// keeping this version's number, scope, title, changelog and parent. A file field is only ever set, never cleared:
+    /// published versions do not carry the creator's local files, so those come from the parent's downloaded version
+    /// folder when there is one, and otherwise the field keeps what it has.
+    /// </summary>
+    private void FillFormFromParent(CustomBaseVersion parent)
+    {
+        if (parent == null) return;
+        unfilledParentFields.Clear();
+        isRestoringFromVersionState = true;
+        try
+        {
+            ApplyVersionContentToForm(parent, fillFromParent: true);
+        }
+        finally
+        {
+            isRestoringFromVersionState = false;
+        }
+        ClearAllCorrectiveSearchFields();
+        var unfilled = unfilledParentFields.Distinct().ToList();
+        bool fbxUnfilled = unfilled.Remove(CustomFbxFieldName);
+        var note = new List<string>();
+        if (unfilled.Count > 0)
+            note.Add(MCBUtils.IsVersionDownloaded(parent)
+                ? $"{parent.version} has no {JoinFieldNames(unfilled)}: those fields keep what they had."
+                : $"Download {parent.version} to also fill the {JoinFieldNames(unfilled)}: until then those fields keep what they had.");
+        if (fbxUnfilled)
+            note.Add($"{parent.version} does not record its custom FBX on this computer: the custom FBX field keeps what it had.");
+        parentFillNote = note.Count == 0 ? null : string.Join(" ", note);
+        parentFillNoteVersion = parent;
+    }
+
+    private const string CustomFbxFieldName = "custom FBX";
+    private readonly List<string> unfilledParentFields = new List<string>();
+    private string parentFillNote;
+    private CustomBaseVersion parentFillNoteVersion;
+
+    private static string JoinFieldNames(IReadOnlyList<string> names) => names.Count == 1 ? names[0]
+        : string.Join(", ", names.Take(names.Count - 1)) + " and " + names[names.Count - 1];
+
+    private void ApplyVersionContentToForm(CustomBaseVersion ver, bool fillFromParent)
+    {
+        SyncModelFileBuildEntryCount();
+        var versionFilesBySourcePath = new Dictionary<string, ModelFileData>(StringComparer.OrdinalIgnoreCase);
+        foreach (var versionFile in ver.versionFiles ?? Array.Empty<ModelFileData>())
+        {
+            string sourcePath = GetMetadataString(versionFile, "sourcePath");
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                continue;
+            }
+
+            string normalizedSourcePath = MCBUtils.ToUnityPath(sourcePath);
+            versionFilesBySourcePath[normalizedSourcePath] = versionFile;
+            var sourceFile = ver.sourceFiles?.FirstOrDefault(file =>
+                file != null &&
+                (versionFile.sourceModelFileId.HasValue && file.id == versionFile.sourceModelFileId.Value ||
+                 string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase)));
+            string localTargetPath = AvatarPathOverrideService.ResolveLocalTargetPath(
+                editor.customBaseTarget,
+                sourceFile,
+                updateStoredPathFromGuid: false);
+            if (!string.IsNullOrWhiteSpace(localTargetPath))
+            {
+                versionFilesBySourcePath[MCBUtils.ToUnityPath(localTargetPath)] = versionFile;
+            }
+        }
+
+        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        {
+            var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            string sourcePath = sourceFbx != null ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(sourceFbx)) : null;
+            ModelFileData versionFile = null;
+            if (!string.IsNullOrWhiteSpace(sourcePath))
+            {
+                versionFilesBySourcePath.TryGetValue(sourcePath, out versionFile);
+            }
+
+            string customFbxPath = GetMetadataString(versionFile, "customFbxPath");
+            string customAvatarPath = GetMetadataString(versionFile, "customAvatarPath");
+            if (!string.IsNullOrWhiteSpace(customAvatarPath))
+            {
+                customAvatarPath = MCBUtils.GetVersionAvatarPath(ver, Path.GetFileName(customAvatarPath));
+            }
+            else if (fillFromParent && editor.modelFileBuildEntriesProp.arraySize == 1)
+            {
+                customAvatarPath = MCBUtils.GetCustomBaseAvatarPath(ver);
+            }
+            var restoredCustomFbx = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
+            bool externalFbx = restoredCustomFbx == null && !string.IsNullOrWhiteSpace(customFbxPath);
+            if (fillFromParent && restoredCustomFbx == null && !(externalFbx && File.Exists(customFbxPath)))
+            {
+                unfilledParentFields.Add(CustomFbxFieldName);
+            }
+            else
+            {
+                entryProp.FindPropertyRelative("customFbx").objectReferenceValue = restoredCustomFbx;
+                var externalCustomFbxPath = entryProp.FindPropertyRelative("externalCustomFbxPath");
+                if (externalCustomFbxPath != null)
+                {
+                    externalCustomFbxPath.stringValue = externalFbx ? customFbxPath : "";
+                }
+            }
+            if (!AssignFormAsset(entryProp.FindPropertyRelative("customBaseAvatar"), AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath), fillFromParent))
+                unfilledParentFields.Add("custom avatar");
+        }
+        if (editor.useAdvancedMeshReplacementForCreatorProp != null)
+        {
+            editor.useAdvancedMeshReplacementForCreatorProp.boolValue = NativeMeshPayloadService.VersionUsesAdvancedMesh(ver);
+        }
+        if (editor.useHdiffFbxDeltaForCreatorProp != null)
+        {
+            editor.useHdiffFbxDeltaForCreatorProp.boolValue = (ver.versionFiles ?? Array.Empty<ModelFileData>())
+                .Any(file => !string.IsNullOrWhiteSpace(GetMetadataString(file, HdiffService.DeltaFormatMetadataKey)));
+        }
+        string logicPrefabPath = !string.IsNullOrWhiteSpace(ver.logicPrefabPath) || !fillFromParent
+            ? ver.logicPrefabPath
+            : MCBUtils.GetLogicPrefabPath(MCBUtils.GetVersionDataPath(ver));
+        if (!AssignFormAsset(editor.avatarLogicPrefabProp, AssetDatabase.LoadAssetAtPath<GameObject>(logicPrefabPath), fillFromParent))
+            unfilledParentFields.Add("logic prefab");
+
+        editor.customBlendshapesForCreatorProp.ClearArray();
+        if (ver.customBlendshapes != null)
+        {
+            for (int i = 0; i < ver.customBlendshapes.Length; i++)
+            {
+                editor.customBlendshapesForCreatorProp.InsertArrayElementAtIndex(i);
+                var element = editor.customBlendshapesForCreatorProp.GetArrayElementAtIndex(i);
+                element.FindPropertyRelative("name").stringValue = ver.customBlendshapes[i].name;
+                element.FindPropertyRelative("defaultValue").stringValue = ver.customBlendshapes[i].defaultValue;
+                element.FindPropertyRelative("isSlider").boolValue = ver.customBlendshapes[i].isSlider;
+                element.FindPropertyRelative("isSliderDefault").boolValue = ver.customBlendshapes[i].isSliderDefault;
+                CopyCorrectivesToSerialized(element, ver.customBlendshapes[i].correctiveBlendshapes);
+            }
+        }
+
+        bool includeCustomVeins = ver.includeCustomVeins ?? ExtraCustomizationUtils.HasFlag(ver.extraCustomization, CustomVeinsKey);
+        editor.includeCustomVeinsForCreatorProp.boolValue = includeCustomVeins;
+
+        string veinsTexturePath = !string.IsNullOrEmpty(ver.customVeinsTexturePath) || !fillFromParent || !includeCustomVeins
+            ? ver.customVeinsTexturePath
+            : MCBUtils.GetVersionVeinsTexturePath(ver);
+        if (!AssignFormAsset(editor.customVeinsNormalMapProp, AssetDatabase.LoadAssetAtPath<Texture2D>(veinsTexturePath), fillFromParent) && includeCustomVeins)
+            unfilledParentFields.Add("veins texture");
+
+        string assignedPath = AssetDatabase.GetAssetPath(editor.customVeinsNormalMapProp.objectReferenceValue);
+        string parentPath = MCBUtils.GetVersionVeinsTexturePath(selectedParentVersionObject);
+        autoAssignedVeinsTexturePath = (!string.IsNullOrEmpty(assignedPath) && assignedPath == parentPath) ? assignedPath : null;
+        lastParentVersionForVeins = selectedParentVersionObject;
+
+        if (editor.includeSuggestRealisticForCreatorProp != null && editor.suggestRealisticMeshPathsForCreatorProp != null)
+        {
+            var suggestRealisticPaths = ExtraCustomizationUtils.GetStringList(ver.extraCustomization, SuggestRealisticKey);
+            editor.includeSuggestRealisticForCreatorProp.boolValue = suggestRealisticPaths.Count > 0;
+            SetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp, suggestRealisticPaths);
+        }
+
+        editor.serializedObject.ApplyModifiedProperties();
+        editor.customBaseTarget.creatorCustomization = VersionCustomization.Read(ver.extraCustomization);
+        EditorUtility.SetDirty(editor.customBaseTarget);
+        editor.serializedObject.Update();
+        editor.Repaint();
+    }
+
+    // Filling from a parent only sets fields it can resolve; restoring a saved build sets each field to what the build had.
+    // Returns whether the field was set.
+    private static bool AssignFormAsset(SerializedProperty prop, UnityEngine.Object asset, bool fillFromParent)
+    {
+        if (asset == null && fillFromParent) return false;
+        prop.objectReferenceValue = asset;
+        return true;
     }
 
     private static string GetMetadataString(ModelFileData file, string key)

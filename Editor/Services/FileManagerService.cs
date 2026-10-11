@@ -1300,7 +1300,7 @@ public class FileManagerService
             if (!sourceTexturePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Custom veins normal map must be provided as a PNG texture.");
 
-            string veinsDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, "veins normal.png");
+            string veinsDestPath = MCBUtils.CombineUnityPath(newVersionDataPath, MCBUtils.VEINS_TEXTURE_NAME);
             if (AssetDatabase.LoadAssetAtPath<Texture2D>(veinsDestPath) != null)
             {
                 AssetDatabase.DeleteAsset(veinsDestPath);

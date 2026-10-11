@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -132,10 +133,45 @@ public class MaterialService
         return copy;
     }
 
-    /// <summary>Whether the material carries custom veins from an MCB version folder.</summary>
+    /// <summary>Whether the material carries custom veins from an MCB version folder, or a copy of them.</summary>
     public static bool HasVersionVeins(Material material) => material != null && DetailNormalTextureProperties.Any(property =>
-        material.HasProperty(property) && material.GetTexture(property) != null
-        && MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(material.GetTexture(property))).StartsWith(MCBUtils.ASSETS_BASE_FOLDER + "/", StringComparison.OrdinalIgnoreCase));
+        material.HasProperty(property) && IsVersionVeinsTexture(material.GetTexture(property)));
+
+    /// <summary>
+    /// A version's veins texture, or a byte-identical copy of one: other tools (My Avatar's texture optimization) copy
+    /// textures into their own folders, and the copy is still the version's veins.
+    /// </summary>
+    public static bool IsVersionVeinsTexture(Texture texture)
+    {
+        if (texture == null) return false;
+        string path = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(texture));
+        if (string.IsNullOrEmpty(path)) return false;
+        if (path.StartsWith(MCBUtils.ASSETS_BASE_FOLDER + "/", StringComparison.OrdinalIgnoreCase)) return true;
+        var file = new FileInfo(Path.GetFullPath(path));
+        if (!file.Exists) return false;
+        string versions = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
+        if (!Directory.Exists(versions)) return false;
+        var sameSize = Directory.EnumerateFiles(versions, MCBUtils.VEINS_TEXTURE_NAME, SearchOption.AllDirectories)
+            .Select(veins => new FileInfo(veins)).Where(veins => veins.Length == file.Length).ToList();
+        if (sameSize.Count == 0) return false;
+        string hash = FileHash(file);
+        return sameSize.Any(veins => FileHash(veins) == hash);
+    }
+
+    private static readonly Dictionary<string, (long length, DateTime written, string hash)> fileHashes =
+        new Dictionary<string, (long, DateTime, string)>(StringComparer.OrdinalIgnoreCase);
+
+    private static string FileHash(FileInfo file)
+    {
+        if (fileHashes.TryGetValue(file.FullName, out var cached) && cached.length == file.Length && cached.written == file.LastWriteTimeUtc)
+            return cached.hash;
+        string hash;
+        using (var sha = MCBHashing.CreateSha256())
+        using (var stream = file.OpenRead())
+            hash = Convert.ToBase64String(sha.ComputeHash(stream));
+        fileHashes[file.FullName] = (file.Length, file.LastWriteTimeUtc, hash);
+        return hash;
+    }
 
     /// <summary>
     /// Removes a version's custom veins from every material of the avatar's renderers, whichever slot holds it: the

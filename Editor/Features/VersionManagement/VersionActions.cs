@@ -422,8 +422,9 @@ public class VersionActions
         if (!setupSucceeded)
         {
             editor.warningsModule.AddWarning("Failed to start download task", MessageType.Error, "Download failed");
-            if (applyAfter) FinishApplyProgress(false);
             editor.isDownloading = false;
+            if (applyAfter) FinishApplyProgress(false);
+            else editor.RefreshUiToolkitSections();
             editor.Repaint();
             yield break;
         }
@@ -592,7 +593,9 @@ public class VersionActions
                 Directory.Delete(tempExtractPath, true);
             
             editor.isDownloading = false;
-            if (!applyAfter)
+            // A failed download-and-apply rebuilt the panel while the download still counted as running: rebuild it
+            // again, or its buttons stay disabled. A successful one goes on applying and refreshes when that ends.
+            if (!applyAfter || !extractionSucceeded)
             {
                 editor.RefreshUiToolkitSections();
             }
@@ -1463,8 +1466,7 @@ public class VersionActions
             if (hasCustomVeins)
             {
                 // Apply custom veins
-                string versionFolder = MCBUtils.GetVersionDataPath(version);
-                string veinsNormalPath = MCBUtils.CombineUnityPath(versionFolder, "veins normal.png");
+                string veinsNormalPath = MCBUtils.GetVersionVeinsTexturePath(version);
                 string veinsNormalAbsolutePath = Path.GetFullPath(veinsNormalPath);
 
                 if (File.Exists(veinsNormalAbsolutePath))
@@ -3734,6 +3736,7 @@ public class VersionActions
 
         bool unknown = false;
         bool comparedAny = false;
+        bool changesAny = false;
         foreach (var sourceFile in version.sourceFiles)
         {
             if (sourceFile == null || string.IsNullOrWhiteSpace(sourceFile.path))
@@ -3758,9 +3761,11 @@ public class VersionActions
             }
 
             comparedAny = true;
+            changesAny |= !expectedHash.Equals(sourceFile.hash, StringComparison.OrdinalIgnoreCase);
         }
 
-        return comparedAny && !unknown ? true : (bool?)null;
+        // A release whose models all equal their originals cannot be told apart from the untouched base.
+        return comparedAny && !unknown && changesAny ? true : (bool?)null;
     }
 
     private Dictionary<string, string> GetCurrentTargetHashes(string currentFileHash)
@@ -3808,6 +3813,14 @@ public class VersionActions
         if (!string.IsNullOrWhiteSpace(patchFile?.outputHash))
         {
             return patchFile.outputHash;
+        }
+
+        // Releases published before per-model patch files changed only their first model, whose result is appliedCustomAviHash.
+        bool listsPatches = version.versionFiles?.Any(file => file != null && string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase)) == true;
+        if (!listsPatches && !string.IsNullOrWhiteSpace(version.appliedCustomAviHash) &&
+            ReferenceEquals(sourceFile, version.sourceFiles?.FirstOrDefault(file => file != null && !string.IsNullOrWhiteSpace(file.path))))
+        {
+            return version.appliedCustomAviHash;
         }
 
         return sourceFile.hash;

@@ -590,6 +590,24 @@ public sealed class VersionSwitchRegressionTests
         Assert.AreSame(b, Select(new[] { a, b }, hashes, v => v == b));
     }
 
+    [Test]
+    public void UntouchedOriginalMatchesNoReleaseWithoutPatchFiles()
+    {
+        // Releases published before per-model patch files list only their sources; their FBX result is appliedCustomAviHash.
+        CustomBaseVersion Legacy(string name, string output) => new CustomBaseVersion
+        {
+            version = name, defaultAviVersion = "1", appliedCustomAviHash = output, versionFiles = new ModelFileData[0],
+            sourceFiles = new[] { new ModelFileData { id = 1, path = "Assets/Body.fbx", hash = "body-original" } }
+        };
+        var a = Legacy("A", "body-a");
+        var b = Legacy("B", "body-b");
+        var hashes = new Dictionary<string, string> { { "Assets/Body.fbx", "body-original" } };
+
+        Assert.IsNull(Select(new[] { a, b }, hashes, _ => false));
+        hashes["Assets/Body.fbx"] = "body-b";
+        Assert.AreSame(b, Select(new[] { a, b }, hashes, _ => false));
+    }
+
     // ---- MCB-11: reset needs every original
 
     [Test]

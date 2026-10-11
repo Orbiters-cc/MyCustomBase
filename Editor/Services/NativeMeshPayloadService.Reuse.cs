@@ -113,10 +113,15 @@ public static partial class NativeMeshPayloadService
         long bytes = 0; int assets = 0, files = 0;
         // Searching every project asset for references is slow: only when something may be deleted.
         if (candidates.Count == 0) return new GeneratedPayloadStorageInfo(0, 0, 0);
+        // Only a file saved after a payload existed can reference it, and every file on a chain of references to it was
+        // saved after it too: the direct references of those files are enough. Mesh assets reference nothing and are the
+        // largest files to parse (generated fits reach 100 MB). Scanning the whole project took minutes.
+        DateTime oldest = candidates.Select(OldestWriteUtc).Min();
+        DateTime since = oldest == DateTime.MinValue ? oldest : oldest - TimeSpan.FromSeconds(2);
         var owners = AssetDatabase.GetAllAssetPaths().Where(p =>
             p.StartsWith("Assets/", StringComparison.Ordinal) && !p.StartsWith(GeneratedFolder + "/", StringComparison.Ordinal)
-            && (p.EndsWith(".unity") || p.EndsWith(".prefab") || p.EndsWith(".asset"))).ToArray();
-        var retained = new HashSet<string>(AssetDatabase.GetDependencies(owners, true), StringComparer.Ordinal);
+            && (p.EndsWith(".unity") || p.EndsWith(".prefab") || p.EndsWith(".asset")) && File.GetLastWriteTimeUtc(p) >= since && AssetDatabase.GetMainAssetTypeAtPath(p) != typeof(Mesh)).ToArray();
+        var retained = new HashSet<string>(owners.Length == 0 ? Array.Empty<string>() : AssetDatabase.GetDependencies(owners, false), StringComparer.Ordinal);
         foreach (string path in candidates) {
             if (retained.Contains(path)) continue;
             long size = File.Exists(path) ? new FileInfo(path).Length : 0;
@@ -125,6 +130,14 @@ public static partial class NativeMeshPayloadService
             if (AssetDatabase.DeleteAsset(path)) { bytes += size; assets++; files += hasMeta ? 2 : 1; }
         }
         return new GeneratedPayloadStorageInfo(bytes, assets, files);
+    }
+
+    // When a generated asset first existed: its own or its .meta file's oldest creation or write time.
+    static DateTime OldestWriteUtc(string path)
+    {
+        var times = new[] { path, path + ".meta" }.Where(File.Exists)
+            .SelectMany(file => new[] { File.GetCreationTimeUtc(file), File.GetLastWriteTimeUtc(file) }).ToList();
+        return times.Count == 0 ? DateTime.MinValue : times.Min();
     }
 
     // Generated assets open objects (unsaved avatars included) or a version switch Undo/Redo still use.

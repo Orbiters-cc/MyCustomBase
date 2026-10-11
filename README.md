@@ -1,5 +1,27 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.8 — 2026-10-11
+
+- **Fill from Parent** next to the creator form's Parent Version: fills the new version with the parent's model files,
+  avatars, logic prefab, blendshapes and correctives, custom veins, dynamic normals, suggest realistic, advanced mesh,
+  HDiff and customization options. The version number, scope, title and changelog stay. A field is only ever set, never
+  cleared: published versions do not carry the creator's local files, so the logic prefab, avatar and veins texture
+  come from the parent's downloaded version folder, and a note under the dropdown names what could not be filled.
+- An original base no longer shows as one of the releases published before per-model patch files (UltiPaw 1.0.0 to
+  1.0.6): their expected model hash was the original's, so every untouched original "matched" one and showed it as
+  installed after a reset.
+- Resetting or switching away from an advanced version took minutes (174 s on a large project): the cleanup of its
+  generated meshes searched every scene, prefab and asset of the project, recursively, for references. It now reads
+  only the files saved since those meshes were created, skips mesh assets, and follows direct references.
+- Custom veins are removed on reset and on switching to a version without them when the material holds a copy of the
+  veins texture, such as the one My Avatar's texture optimization makes in its own folder. Veins are recognised by
+  content, not only by their location under `Assets/MCB`.
+- After a failed **Download and Apply** (for instance a version whose files are missing on the server), the version
+  buttons were rebuilt while the download still counted as running and stayed greyed out. They are usable again.
+- The creator window no longer leaks its MCB editor on every script reload. Each leaked editor stayed alive with its
+  version fetches, hashing and event subscriptions; editors left by earlier reloads are destroyed when the window
+  reopens.
+
 ## 1.12.7 — 2026-10-11
 
 - Fix **Extraction failed: Could not find a part of the path** when downloading a version into a project at an ordinary

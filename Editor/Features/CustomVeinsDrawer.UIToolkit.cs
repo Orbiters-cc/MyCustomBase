@@ -150,8 +150,7 @@ public partial class CustomVeinsDrawer
             return;
         }
 
-        string versionFolder = MCBUtils.GetVersionDataPath(appliedVersion);
-        string veinsNormalPath = System.IO.Path.Combine(versionFolder, "veins normal.png").Replace("\\", "/");
+        string veinsNormalPath = MCBUtils.GetVersionVeinsTexturePath(appliedVersion);
         Texture2D veinsTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(veinsNormalPath);
 
         var preview = new VisualElement();

@@ -260,7 +260,21 @@ public partial class CreatorModeModule
             });
         });
         row.Add(parentDropdown);
+
+        var fillButton = CreateTextButton(
+            "Fill from Parent",
+            "Fill this form with the parent version's model files, avatars, logic, blendshapes and options. The version number, title and changelog are kept.",
+            () => ApplyCreatorChange(() => FillFormFromParent(selectedParentVersionObject), true, true));
+        fillButton.AddToClassList("mcb-creator__compact-button");
+        fillButton.AddToClassList("mcb-creator-parent__fill-button");
+        fillButton.SetEnabled(selectedParentVersionObject != null);
+        row.Add(fillButton);
+
         root.Add(row);
+        if (parentFillNote != null && Equals(parentFillNoteVersion, selectedParentVersionObject))
+        {
+            root.Add(CreateHelpBox(parentFillNote, HelpBoxMessageType.Info));
+        }
         HandleParentVersionChanged(selectedParentVersionObject);
     }
 
@@ -454,7 +468,7 @@ public partial class CreatorModeModule
                 Texture2D newTexture = evt.newValue as Texture2D;
                 textureProp.objectReferenceValue = newTexture;
                 string selectedPath = AssetDatabase.GetAssetPath(newTexture);
-                string parentPath = GetVeinsTexturePathForVersion(selectedParentVersionObject);
+                string parentPath = MCBUtils.GetVersionVeinsTexturePath(selectedParentVersionObject);
                 autoAssignedVeinsTexturePath = !string.IsNullOrEmpty(selectedPath) && selectedPath == parentPath ? selectedPath : null;
             });
         textureField.AddToClassList("mcb-creator__texture-field");

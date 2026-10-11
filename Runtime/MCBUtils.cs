@@ -31,6 +31,8 @@ public static class MCBUtils
     public const string USER_VERSIONS_DIR = ASSETS_BASE_FOLDER + "/userVersions";
     public const string USER_VERSIONS_FILE = ASSETS_BASE_FOLDER + "/userVersions.json";
     public const string DEFAULT_AVATAR_NAME = "default avatar.asset";
+    /// <summary>A version's custom veins normal map, in its version folder.</summary>
+    public const string VEINS_TEXTURE_NAME = "veins normal.png";
     public const string CUSTOM_BASE_AVATAR_NAME = "customBase avatar.asset";
 
     /// <summary>
@@ -250,6 +252,12 @@ public static class MCBUtils
         string dataPath = GetVersionDataPath(version);
         if (dataPath == null) return null;
         return Path.Combine(dataPath, relativeAvatarPath).Replace("\\", "/");
+    }
+
+    public static string GetVersionVeinsTexturePath(CustomBaseVersion version)
+    {
+        string dataPath = GetVersionDataPath(version);
+        return dataPath == null ? null : CombineUnityPath(dataPath, VEINS_TEXTURE_NAME);
     }
 
     public static string GetDefaultAvatarPath(CustomBaseVersion version)
