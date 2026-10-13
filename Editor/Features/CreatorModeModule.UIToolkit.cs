@@ -264,14 +264,19 @@ public partial class CreatorModeModule
         var fillButton = CreateTextButton(
             "Fill from Parent",
             "Fill this form with the parent version's model files, avatars, logic, blendshapes and options. The version number, title and changelog are kept.",
-            () => ApplyCreatorChange(() => FillFormFromParent(selectedParentVersionObject), true, true));
+            () =>
+            {
+                var parent = selectedParentVersionObject;
+                if (ConfirmFillFromParent(parent)) ApplyCreatorChange(() => FillFormFromParent(parent), true, true);
+            });
         fillButton.AddToClassList("mcb-creator__compact-button");
         fillButton.AddToClassList("mcb-creator-parent__fill-button");
         fillButton.SetEnabled(selectedParentVersionObject != null);
         row.Add(fillButton);
 
         root.Add(row);
-        if (parentFillNote != null && Equals(parentFillNoteVersion, selectedParentVersionObject))
+        string parentFillNote = ParentFillNote();
+        if (parentFillNote != null)
         {
             root.Add(CreateHelpBox(parentFillNote, HelpBoxMessageType.Info));
         }

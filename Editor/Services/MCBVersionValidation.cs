@@ -8,6 +8,7 @@ using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Orbiters.Toolkit.Editor.VRChat;
 using VRC.Dynamics;
 using VRC.SDK3.Dynamics.Contact.Components;
 
@@ -82,26 +83,18 @@ public static class MCBVersionValidation
         }
     }
 
-    // VRCFury's own upload/test entry point, without the SDK (nothing uploaded). Its path caches are warmed first, as the
-    // upload's first preprocessor does, and Write Defaults are left as they are: a broken mix would otherwise open
-    // VRCFury's modal question in the middle of a check.
+    // VRCFury's own upload/test entry point, without the SDK (nothing uploaded), on an avatar VRCFury builds at upload. Its
+    // path caches are warmed first, as the upload's first preprocessor does, and Write Defaults are left as they are
+    // (Orbiters Toolkit's VrcFury.LeaveWriteDefaults): a broken mix would otherwise open VRCFury's modal question in the
+    // middle of a check.
     private static void RunVrcFury(GameObject clone)
     {
-        Type Find(string name) => AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(name)).FirstOrDefault(t => t != null);
-        var builder = Find("VF.Builder.VRCFuryBuilder") ?? throw new InvalidOperationException("VRCFury is required to validate a version.");
-        var paths = Find("VF.Hooks.OriginalPathsHook");
+        var builder = VrcFury.Find("VF.Builder.VRCFuryBuilder") ?? throw new InvalidOperationException("VRCFury is required to validate a version.");
+        if (!VrcFury.Builds(clone)) return; // as at upload: VRCFury leaves an avatar without its components alone
+        var paths = VrcFury.Find("VF.Hooks.OriginalPathsHook");
         if (paths != null) ((VRC.SDKBase.Editor.BuildPipeline.IVRCSDKPreprocessAvatarCallback)Activator.CreateInstance(paths, true)).OnPreprocessAvatar(clone);
-        var fixType = Find("VF.Model.Feature.FixWriteDefaults");
-        var vrcFury = Find("VF.Model.VRCFury");
-        if (fixType != null && vrcFury != null && !clone.GetComponentsInChildren(vrcFury, true)
-                .Any(c => vrcFury.GetField("content").GetValue(c)?.GetType() == fixType))
-        {
-            var feature = Activator.CreateInstance(fixType, true);
-            var mode = fixType.GetField("mode");
-            mode.SetValue(feature, Enum.Parse(mode.FieldType, "Disabled"));
-            vrcFury.GetField("content").SetValue(clone.AddComponent(vrcFury), feature);
-        }
-        var wrapper = Find("VF.Utils.VFGameObject");
+        VrcFury.LeaveWriteDefaults(clone);
+        var wrapper = VrcFury.Find("VF.Utils.VFGameObject");
         var convert = wrapper.GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Single(m => m.Name == "op_Implicit" && m.ReturnType == wrapper && m.GetParameters()[0].ParameterType == typeof(GameObject));
         try { builder.GetMethod("RunMain", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new[] { convert.Invoke(null, new object[] { clone }) }); }

@@ -257,6 +257,23 @@ public class MCBOriginalBaseSupportTests
         }
         finally { UnityEngine.Object.DestroyImmediate(root); UnityEngine.Object.DestroyImmediate(clip); UnityEngine.Object.DestroyImmediate(mesh); }
     }
+    // The server creates an avatar base for an unknown name only with the project paths of its FBX files: a listing that
+    // names a base without an id or paths sends the avatar's original models; an id, or paths given, go unchanged.
+    [Test]
+    public void ListingRequestNamesANewBaseWithTheAvatarsOriginalModels()
+    {
+        var originals = new[] { "Assets/Base/Body.fbx", "Assets/Base/Tail.FBX", "Assets/Base/Body.fbx", "Packages/x/Hat.fbx", "Assets/Base/Body.fbx.originalbase", null };
+        var named = Newtonsoft.Json.Linq.JObject.Parse("{\"assetId\": 5, \"avatarBaseName\": \"Novabeast\"}");
+        var request = LegacyMigrationService.ListingRequest(named, originals);
+        Assert.That(request["avatarBasePaths"].ToObject<string[]>(), Is.EqualTo(new[] { "Assets/Base/Body.fbx", "Assets/Base/Tail.FBX" }));
+        Assert.That(named["avatarBasePaths"], Is.Null, "The caller's data is left as it was.");
+
+        var byId = Newtonsoft.Json.Linq.JObject.Parse("{\"avatarBaseId\": 3, \"avatarBaseName\": \"Novabeast\"}");
+        Assert.That(LegacyMigrationService.ListingRequest(byId, originals)["avatarBasePaths"], Is.Null);
+        var given = Newtonsoft.Json.Linq.JObject.Parse("{\"avatarBaseName\": \"Novabeast\", \"avatarBasePaths\": [\"Assets/Other/Base.fbx\"]}");
+        Assert.That(LegacyMigrationService.ListingRequest(given, originals)["avatarBasePaths"].ToObject<string[]>(), Is.EqualTo(new[] { "Assets/Other/Base.fbx" }));
+        Assert.That(LegacyMigrationService.ListingRequest(named, null)["avatarBasePaths"], Is.Null, "Without a target the server says what is missing.");
+    }
     [Test]
     public void BoundsEncloseSkinnedVerticesWithRotatedRootBone()
     {

@@ -870,6 +870,60 @@ public class FileManagerService
     private static bool ProjectHasAsset(string path) =>
         !string.IsNullOrEmpty(path) && (AssetDatabase.IsValidFolder(path) || AssetDatabase.GetMainAssetTypeAtPath(path) != null);
 
+    /// <summary>
+    /// A stored version's logic prefab as this project has it, to fill a new version's form: the prefab its logic package
+    /// carries, where the package's import put it (found by GUID, so also after a move), else the version folder's copy
+    /// once every file the package carries is in the project. Null when the version is not downloaded or has no logic
+    /// prefab; <paramref name="needsImport"/> is set when its logic package is not imported yet (applying it imports it).
+    /// </summary>
+    internal static string VersionLogicPrefabPath(CustomBaseVersion version, out bool needsImport)
+    {
+        needsImport = false;
+        try
+        {
+            if (!MCBUtils.IsVersionDownloaded(version)) return null;
+            string copy = MCBUtils.GetLogicPrefabPath(MCBUtils.GetVersionDataPath(version));
+            string package = MCBUtils.GetLogicPackagePath(version);
+            if (package == null) return copy;
+            string packagePath = Path.GetFullPath(package);
+            var index = Orbiters.Toolkit.Editor.UnityPackageIndex.Read(packagePath,
+                maxExpandedBytes: VersionArchiveBudget.DefaultMaxTotalBytes, maxEntries: VersionArchiveBudget.DefaultMaxEntries);
+            var prefabs = index.Entries.Where(entry => IsLogicPackageImportPath(entry.Path) &&
+                entry.Path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)).ToList();
+            var logic = prefabs.Count == 1 ? prefabs[0]
+                : prefabs.FirstOrDefault(entry => string.Equals(entry.Path, version.logicPrefabPath, StringComparison.Ordinal));
+            string imported = logic == null ? null : AssetDatabase.GUIDToAssetPath(logic.Guid);
+            if (!string.IsNullOrEmpty(imported) && AssetDatabase.LoadAssetAtPath<GameObject>(imported) != null) return imported;
+            if (LogicPackageImportEntries(packagePath, index).Count == 0) return copy;
+            needsImport = copy != null || prefabs.Count > 0;
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException || ex is InvalidDataException || ex is UnauthorizedAccessException || ex is ArgumentException)
+        {
+            MCBLogger.LogWarning($"[FileManager] Could not read the logic package of version {version?.version}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The custom avatar a version folder holds for the model at <paramref name="sourceModelPath"/>, when the version's
+    /// metadata names none for it: builds save it as "&lt;number&gt;_&lt;model name&gt; avatar.asset". With a single model,
+    /// the folder's custom avatar.
+    /// </summary>
+    internal static string VersionModelAvatarPath(string versionFolderUnityPath, string sourceModelPath, int modelCount)
+    {
+        if (string.IsNullOrEmpty(versionFolderUnityPath) || !Directory.Exists(Path.GetFullPath(versionFolderUnityPath))) return null;
+        var avatars = Directory.GetFiles(Path.GetFullPath(versionFolderUnityPath), "*avatar.asset", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .Where(name => !string.Equals(name, MCBUtils.DEFAULT_AVATAR_NAME, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
+        string suffix = "_" + SanitizeFileName(Path.GetFileNameWithoutExtension(sourceModelPath ?? "")) + " avatar.asset";
+        var named = string.IsNullOrWhiteSpace(sourceModelPath) ? new List<string>()
+            : avatars.Where(name => name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)).ToList();
+        string file = named.Count == 1 ? named[0] : modelCount == 1 ? avatars.FirstOrDefault() : null;
+        return file == null ? null : MCBUtils.CombineUnityPath(versionFolderUnityPath, file);
+    }
+
     // The logic package of every stored version.
     private static IEnumerable<string> StoredLogicPackages()
     {
@@ -963,31 +1017,60 @@ public class FileManagerService
         if (!Directory.Exists(versionFolderFullPath))
             throw new DirectoryNotFoundException($"Version folder not found: {versionFolderFullPath}");
 
+        ExportVersionFolder(versionFolderUnityPath, version, outputUnityPackagePath);
+    }
+
+    /// <summary>
+    /// Exports a version folder as a .unitypackage. The folder's own version.json describes everything it holds (every
+    /// original of a creator's build; the version given may be one original's view of it), and only a folder without one
+    /// gets the given metadata, for the export. The package's copies of version.json and manifest.json leave out the
+    /// paths of the creator's own files (VersionRepository.ExportableVersionJson / ExportableManifestJson); the folder's
+    /// files are never rewritten.
+    /// </summary>
+    internal static void ExportVersionFolder(string versionFolderUnityPath, CustomBaseVersion version, string outputUnityPackagePath)
+    {
         string versionJsonUnityPath = MCBUtils.CombineUnityPath(versionFolderUnityPath, "version.json");
         string versionJsonFullPath = Path.GetFullPath(versionJsonUnityPath);
-        // The folder's own version.json describes everything it holds (every original of a creator's build); the version
-        // given may be one original's view of it. It is kept as is, and only a folder without one gets the given metadata.
         bool versionJsonExisted = File.Exists(versionJsonFullPath);
-
+        string exported = Path.Combine(Path.GetTempPath(), "mcb-export-" + Guid.NewGuid().ToString("N") + ".unitypackage");
+        bool written = false;
         try
         {
             if (!versionJsonExisted)
             {
-                File.WriteAllText(versionJsonFullPath, JsonConvert.SerializeObject(version, Formatting.Indented, new StringEnumConverter()));
+                File.WriteAllText(versionJsonFullPath, VersionRepository.ExportableVersionJson(
+                    JsonConvert.SerializeObject(version, Formatting.Indented, new StringEnumConverter())), new UTF8Encoding(false));
                 AssetDatabase.ImportAsset(versionJsonUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
             }
 
-            AssetDatabase.ExportPackage(
-                new[] { versionFolderUnityPath },
-                outputUnityPackagePath,
-                ExportPackageOptions.Recurse);
+            AssetDatabase.ExportPackage(new[] { versionFolderUnityPath }, exported, ExportPackageOptions.Recurse);
+
+            var replaced = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            void Sanitize(string unityPath, Func<string, string> exportable)
+            {
+                string guid = AssetDatabase.AssetPathToGUID(unityPath);
+                string fullPath = Path.GetFullPath(unityPath);
+                if (!string.IsNullOrEmpty(guid) && File.Exists(fullPath))
+                    replaced[guid] = new UTF8Encoding(false).GetBytes(exportable(File.ReadAllText(fullPath)));
+            }
+            Sanitize(versionJsonUnityPath, VersionRepository.ExportableVersionJson);
+            Sanitize(MCBUtils.CombineUnityPath(versionFolderUnityPath, VersionManifest.FileName), VersionRepository.ExportableManifestJson);
+            written = true;
+            Orbiters.Toolkit.Editor.UnityPackageFiles.ReplaceAssets(exported, outputUnityPackagePath, replaced);
+        }
+        catch when (written)
+        {
+            // A half-written package is no package.
+            if (File.Exists(outputUnityPackagePath)) File.Delete(outputUnityPackagePath);
+            throw;
         }
         finally
         {
             if (!versionJsonExisted) AssetDatabase.DeleteAsset(versionJsonUnityPath);
+            if (File.Exists(exported)) File.Delete(exported);
         }
     }
-    
+
     /// <summary>
     /// Populates an (already created) version folder with every build output: default
     /// avatar, XOR / native-mesh-payload .bin patches, generated avatar assets, logic

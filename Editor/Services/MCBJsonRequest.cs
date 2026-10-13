@@ -25,12 +25,18 @@ public static class MCBJsonRequest
             string text = request.downloadHandler?.text;
             if (request.result != UnityWebRequest.Result.Success)
             {
-                string message = null;
-                try { message = JObject.Parse(text ?? "{}")["error"]?.ToString(); } catch (JsonException) { }
+                string message = ServerError(text);
                 throw new IOException(string.IsNullOrWhiteSpace(message) ? context + " failed (HTTP " + request.responseCode + ")." : message);
             }
             return JsonConvert.DeserializeObject<T>(text);
         }
+    }
+
+    /// <summary>The "error" message of a refused request's JSON body, or null.</summary>
+    public static string ServerError(string body)
+    {
+        try { return JObject.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body)["error"]?.ToString(); }
+        catch (JsonException) { return null; }
     }
 }
 #endif

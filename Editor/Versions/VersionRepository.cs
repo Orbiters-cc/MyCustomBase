@@ -231,31 +231,47 @@ public static class VersionRepository
         IEnumerable<CustomBaseVersion> server, IEnumerable<CustomBaseVersion> imported,
         IEnumerable<CustomBaseVersion> unsubmitted, string sourceVersionKey = null)
     {
+        bool Listed(CustomBaseVersion version) =>
+            version != null && assetId > 0 && version.assetId == assetId &&
+            // A nonmatching gallery entry has no chosen original. Show the artifact once,
+            // rather than one identical row for every bundled original-source view.
+            !(string.IsNullOrEmpty(sourceVersionKey) && version.localArtifactSourceVersionKey != null) &&
+            (string.IsNullOrEmpty(sourceVersionKey) || string.IsNullOrEmpty(version.sourceVersionKey) || version.sourceVersionKey == sourceVersionKey);
+
         var merged = new Dictionary<CustomBaseVersion, CustomBaseVersion>();
-        foreach (var source in new[] { imported, server, unsubmitted })
+        // The version's own downloaded folder wins over another original's artifact holding it too, and among artifacts
+        // the same one always wins: the scan order never decides which folder a version reads from.
+        foreach (var version in (imported ?? Enumerable.Empty<CustomBaseVersion>()).Where(Listed))
+            if (!merged.TryGetValue(version, out var kept) || ReadsBefore(version, kept)) merged[version] = version;
+        foreach (var version in (server ?? Enumerable.Empty<CustomBaseVersion>()).Where(Listed))
         {
-            foreach (var version in source ?? Enumerable.Empty<CustomBaseVersion>())
-            {
-                if (version == null || assetId <= 0 || version.assetId != assetId) continue;
-                // A nonmatching gallery entry has no chosen original. Show the artifact once,
-                // rather than one identical row for every bundled original-source view.
-                if (string.IsNullOrEmpty(sourceVersionKey) && version.localArtifactSourceVersionKey != null) continue;
-                if (!string.IsNullOrEmpty(sourceVersionKey) && !string.IsNullOrEmpty(version.sourceVersionKey) && version.sourceVersionKey != sourceVersionKey) continue;
-                // A remote entry whose original is held by another original's local artifact (a creator's build, or a saved
-                // version of it) keeps reading its files there instead of downloading them again.
-                merged[version] = merged.TryGetValue(version, out var local) && local.localArtifactSourceVersionKey != null &&
-                                  version.localArtifactSourceVersionKey == null && !version.isUnsubmitted
-                    ? InLocalArtifact(version, local.localArtifactSourceVersionKey)
-                    : version;
-            }
+            // A remote entry whose original is held only by another original's local artifact (a creator's build, or a
+            // saved version of it) keeps reading its files there instead of downloading them again.
+            merged[version] = merged.TryGetValue(version, out var local) && local.localArtifactSourceVersionKey != null &&
+                              version.localArtifactSourceVersionKey == null && !version.isUnsubmitted
+                ? InLocalArtifact(version, local.localArtifactSourceVersionKey)
+                : version;
         }
+        foreach (var version in (unsubmitted ?? Enumerable.Empty<CustomBaseVersion>()).Where(Listed))
+            merged[version] = version;
         return merged.Values.ToList();
     }
+
+    // Whether a local copy is read before another one of the same version: its own folder first, then by artifact.
+    private static bool ReadsBefore(CustomBaseVersion candidate, CustomBaseVersion kept) =>
+        kept.localArtifactSourceVersionKey != null && (candidate.localArtifactSourceVersionKey == null ||
+            string.CompareOrdinal(candidate.localArtifactSourceVersionKey, kept.localArtifactSourceVersionKey) < 0);
+
+    // One copy per entry and folder: the version list is merged again on every rebuild of the window.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CustomBaseVersion, Dictionary<string, CustomBaseVersion>> artifactCopies =
+        new System.Runtime.CompilerServices.ConditionalWeakTable<CustomBaseVersion, Dictionary<string, CustomBaseVersion>>();
 
     /// <summary>A copy of <paramref name="version"/> read from another original's local artifact, or from its own folder when null.</summary>
     internal static CustomBaseVersion InLocalArtifact(CustomBaseVersion version, string artifactSourceVersionKey)
     {
-        var copy = JsonConvert.DeserializeObject<CustomBaseVersion>(JsonConvert.SerializeObject(version));
+        var copies = artifactCopies.GetValue(version, _ => new Dictionary<string, CustomBaseVersion>(StringComparer.Ordinal));
+        if (!copies.TryGetValue(artifactSourceVersionKey ?? "", out var copy))
+            copies[artifactSourceVersionKey ?? ""] = copy = JsonConvert.DeserializeObject<CustomBaseVersion>(JsonConvert.SerializeObject(version));
         copy.localArtifactSourceVersionKey = artifactSourceVersionKey;
         copy.isUnsubmitted = version.isUnsubmitted;
         copy.isImported = version.isImported;
@@ -553,6 +569,56 @@ public static class VersionRepository
         InvalidateCache();
     }
 
+    // The creator's own files a local build remembers to fill the form again: paths of this computer, never shipped.
+    private static readonly string[] LocalSourceFields = { "customFbxPath", "customBaseAvatarPath", "logicPrefabPath", "customVeinsTexturePath" };
+
+    /// <summary>
+    /// A version.json as it may leave this computer (an exported saved version): without the paths of the creator's own
+    /// files, and without model metadata naming a file outside the project (a custom FBX picked from disk, whose absolute
+    /// path holds the user's folder names). Everything else is kept as written.
+    /// </summary>
+    internal static string ExportableVersionJson(string json)
+    {
+        var root = ParseKeepingValues(json);
+        foreach (string field in LocalSourceFields) root.Remove(field);
+        foreach (var metadata in root.Descendants().OfType<Newtonsoft.Json.Linq.JProperty>()
+                     .Where(property => property.Name == "metadata").Select(property => property.Value)
+                     .OfType<Newtonsoft.Json.Linq.JObject>().ToList())
+        {
+            foreach (var property in metadata.Properties().Where(property => property.Value.Type == Newtonsoft.Json.Linq.JTokenType.String &&
+                         IsMachinePath(property.Value.ToString())).ToList())
+                property.Remove();
+        }
+        return root.ToString(Formatting.Indented);
+    }
+
+    /// <summary>
+    /// A manifest.json as it may leave this computer: without the build inputs named by a path outside the project (a custom
+    /// FBX picked from disk). Outputs and everything else are kept as written.
+    /// </summary>
+    internal static string ExportableManifestJson(string json)
+    {
+        var root = ParseKeepingValues(json);
+        if (root["inputs"] is Newtonsoft.Json.Linq.JArray inputs)
+            foreach (var input in inputs.OfType<Newtonsoft.Json.Linq.JObject>().Where(input =>
+                         input["path"]?.Type == Newtonsoft.Json.Linq.JTokenType.String && IsMachinePath(input.Value<string>("path"))).ToList())
+                input.Remove();
+        return root.ToString(Formatting.Indented);
+    }
+
+    // Dates and numbers stay as written.
+    private static Newtonsoft.Json.Linq.JObject ParseKeepingValues(string json)
+    {
+        using (var reader = new JsonTextReader(new StringReader(json)) { DateParseHandling = DateParseHandling.None, FloatParseHandling = FloatParseHandling.Decimal })
+            return Newtonsoft.Json.Linq.JObject.Load(reader);
+    }
+
+    private static bool IsMachinePath(string value)
+    {
+        try { return value.Length > 1 && Path.IsPathRooted(value); }
+        catch (ArgumentException) { return false; }
+    }
+
     public static CustomBaseVersion LoadVersionJson(string folderUnityPath)
     {
         try
@@ -626,15 +692,8 @@ public static class VersionRepository
         int deletedFolders = 0;
         var errors = new List<string>();
 
-        try
-        {
-            var deleted = NativeMeshPayloadService.DeleteAllGeneratedPayloads();
-            freedBytes += deleted.TotalBytes;
-        }
-        catch (Exception ex)
-        {
-            errors.Add("generated advanced meshes: " + ex.Message);
-        }
+        // Generated meshes nothing uses go to the Recycle Bin in the background (finding what the project uses can take a while).
+        _ = NativeMeshPayloadService.QueueUnusedPayloadCleanup();
 
         try
         {
@@ -692,7 +751,7 @@ public static class VersionRepository
         {
         }
 
-        string summary = $"Freed {DiskUtils.FormatBytes(freedBytes)} ({deletedFolders} version folder(s) + generated advanced mesh caches). " +
+        string summary = $"Freed {DiskUtils.FormatBytes(freedBytes)} ({deletedFolders} version folder(s); unused generated advanced meshes follow in the background). " +
                          $"Remaining free space: {DiskUtils.FormatBytes(Math.Max(0, DiskUtils.GetFreeBytesForProjectDrive()))}.";
         if (errors.Count > 0)
         {
@@ -751,7 +810,8 @@ public static class VersionRepository
             var projectAssets = AssetDatabase.GetAllAssetPaths()
                 .Where(path => path.StartsWith("Assets/", StringComparison.Ordinal) && !IsVersionAsset(path) && !AssetDatabase.IsValidFolder(path))
                 .ToArray();
-            used.UnionWith(AssetDatabase.GetDependencies(projectAssets, true).Where(IsVersionAsset));
+            // Through Orbiters Toolkit's cache of each file's references: only files changed since the last search are read.
+            used.UnionWith(Orbiters.Toolkit.Editor.ProjectReferences.Reachable(projectAssets, NativeMeshPayloadService.IsGeneratedAsset).Where(IsVersionAsset));
 
             EditorUtility.DisplayProgressBar(progressTitle, "Checking model Avatars...", 0.6f);
             foreach (string guid in AssetDatabase.FindAssets("t:Model", new[] { "Assets" }))

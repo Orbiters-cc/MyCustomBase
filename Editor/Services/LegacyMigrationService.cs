@@ -56,6 +56,26 @@ public static class LegacyMigrationService
     public static Task<JObject> UpdateListingAsync(string token, int assetId, JObject listing) =>
         MCBJsonRequest.SendAsync<JObject>("PUT", MCBUtils.getApiUrl() + "/custom-bases/" + assetId + "/listing", token, listing, "Update custom base listing");
 
+    /// <summary>
+    /// The listing request for <paramref name="listing"/>. The server only creates an avatar base for a name no base has
+    /// with what recognises its projects: the project paths of its FBX files ("avatarBasePaths"), or the source files the
+    /// custom base uploaded. A base named without an id or paths before any upload gets <paramref name="originalModels"/>
+    /// (the avatar's original models); the server ignores them when the base exists.
+    /// </summary>
+    public static JObject ListingRequest(JObject listing, IEnumerable<string> originalModels)
+    {
+        var request = (JObject)(listing ?? new JObject()).DeepClone();
+        bool namedOnly = !string.IsNullOrWhiteSpace(request.Value<string>("avatarBaseName")) &&
+                         (request["avatarBaseId"] == null || request["avatarBaseId"].Type == JTokenType.Null) &&
+                         (request["avatarBasePaths"] == null || request["avatarBasePaths"].Type == JTokenType.Null);
+        if (!namedOnly) return request;
+        var paths = (originalModels ?? Enumerable.Empty<string>())
+            .Where(path => path != null && path.StartsWith("Assets/", StringComparison.Ordinal) && path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(32).ToArray();
+        if (paths.Length > 0) request["avatarBasePaths"] = new JArray(paths.Cast<object>().ToArray());
+        return request;
+    }
+
     /// <summary>Owner: replaces the asset's legacy releases.</summary>
     public static async Task<Release[]> SaveReleasesAsync(string token, int assetId, Release[] releases) =>
         (await MCBJsonRequest.SendAsync<JObject>("PUT", MCBUtils.getApiUrl() + "/custom-bases/" + assetId + "/legacy-releases", token,

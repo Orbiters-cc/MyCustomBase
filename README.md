@@ -1,5 +1,29 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.9 — 2026-10-13
+
+- Cleaning up generated meshes after a reset or a version switch no longer trusts file dates (a checkout writes files in
+  any order): it follows every scene, prefab and asset of the project to what it uses, through controllers and the
+  animations they play, keeps each file's references in Library so the next cleanup reads only what changed, runs in
+  the background with Unity's progress bar (Cancel stops it) and moves unused meshes to the Recycle Bin. A mesh an open
+  animation swaps in, and one that comes back after being missing, are kept.
+- The version buttons can no longer stay disabled: a path too long for Windows, an unusable folder or a locked FBX when
+  a download starts says why and ends the apply, and so does a local build that isn't complete.
+- Removing copied veins only takes MCB's own copies (in the version folders, or the texture MCB recorded when it applied
+  veins): a creator's own veins stay.
+- An exported version no longer carries your computer's paths (in `version.json` and the build manifest), and exporting
+  no longer rewrites the version folder's files.
+- **Fill from Parent** finds the parent's avatar for each model file, takes the logic prefab from the logic package as
+  imported, keeps the blendshapes when the parent has none, asks before replacing what the form holds, and its note
+  updates once the parent is downloaded.
+- MCP `update_listing` sends the avatar's original FBX paths when it names a new base, and base registration errors
+  show the server's message.
+- Version validation builds with Orbiters Toolkit's shared VRCFury settings and, as an upload does, skips VRCFury on
+  avatars without VRCFury components.
+- The Magic Sync Prod/Dev buttons are gone from Advanced settings (the website no longer makes those tokens): sign in
+  with Discord or Telegram.
+- Needs Orbiters Toolkit 0.3.22.
+
 ## 1.12.8 — 2026-10-11
 
 - **Fill from Parent** next to the creator form's Parent Version: fills the new version with the parent's model files,

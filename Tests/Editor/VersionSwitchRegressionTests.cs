@@ -10,6 +10,7 @@ using System.Text;
 using NUnit.Framework;
 using Orbiters.Toolkit.Editor;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -217,7 +218,7 @@ public sealed class VersionSwitchRegressionTests
     [Test]
     public void VeinsRemovalKeepsTheMaterialsOwnNormalMaps()
     {
-        string folder = MCBUtils.ASSETS_BASE_FOLDER + "/VeinsTest_" + Guid();
+        string folder = "Assets/MCB_VeinsTest_" + Guid();
         string veinsPath = folder + "/veins normal.png";
         var avatar = new GameObject("Avatar");
         var material = new Material(Shader.Find("Standard"));
@@ -225,7 +226,7 @@ public sealed class VersionSwitchRegressionTests
         var userDetail = new Texture2D(2, 2);
         try
         {
-            CreateAssetFolder(folder);
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
             File.WriteAllBytes(veinsPath, normal.EncodeToPNG());
             AssetDatabase.ImportAsset(veinsPath, ImportAssetOptions.ForceSynchronousImport);
             material.SetTexture("_BumpMap", normal);
@@ -271,31 +272,272 @@ public sealed class VersionSwitchRegressionTests
         Assert.Throws<InvalidOperationException>(() => NativeMeshPayloadService.RequireOriginalModelImported(model));
     }
 
-    // Deleting a version's generated meshes keeps what an avatar still uses and removes the rest, humanoid Avatars too.
+    // Deleting generated meshes keeps what an open avatar still uses and removes the rest, humanoid Avatars too.
     [Test]
-    public void DeletingVersionPayloadsKeepsWhatAnAvatarUses()
+    public void DeletingGeneratedMeshesKeepsWhatAnOpenAvatarUses()
     {
-        var version = new CustomBaseVersion { assetId = 999990, version = "cleanup-test" };
-        string assetFolder = "Assets/MCB/generated/advancedMeshPayloads/999990";
-        string folder = assetFolder + "/cleanup-test";
+        string folder = "Assets/MCB_CleanupTest_" + Guid();
         var avatar = new GameObject("Avatar");
         try
         {
-            CreateAssetFolder(folder);
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
             var used = AvatarBuilder.BuildGenericAvatar(avatar, "");
             var unused = AvatarBuilder.BuildGenericAvatar(avatar, "");
             AssetDatabase.CreateAsset(used, folder + "/payload.humanoid-used.asset");
             AssetDatabase.CreateAsset(unused, folder + "/payload.humanoid-unused.asset");
             avatar.AddComponent<Animator>().avatar = used;
 
-            NativeMeshPayloadService.DeleteGeneratedPayloadsForVersion(version);
+            // No saved file uses either: what keeps one is the open avatar (saved references are the next tests').
+            NativeMeshPayloadService.DeleteUnreferencedGeneratedAssets(folder, Array.Empty<string>());
             Assert.That(AssetDatabase.LoadAssetAtPath<Avatar>(folder + "/payload.humanoid-used.asset"), Is.Not.Null);
             Assert.That(File.Exists(folder + "/payload.humanoid-unused.asset"), Is.False);
         }
         finally
         {
             Object.DestroyImmediate(avatar);
-            AssetDatabase.DeleteAsset(assetFolder);
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
+    // A generated mesh, a prefab using it through its controller's animation, and an unused Avatar beside the mesh.
+    private sealed class CleanupFixture : IDisposable
+    {
+        public readonly string Root = "Assets/MCB_CleanupTest_" + Guid();
+        public string Generated => Root + "/generated";
+        public string Payload => Generated + "/payload.asset";
+        public string Unused => Generated + "/payload.humanoid-unused.asset";
+        public string Clip => Root + "/swap.anim";
+        public string Prefab => Root + "/Prop.prefab";
+        public readonly AnimationClip ClipAsset;
+        public readonly EditorCurveBinding Binding = EditorCurveBinding.PPtrCurve("Body", typeof(SkinnedMeshRenderer), "m_Mesh");
+        private readonly UnityEngine.SceneManagement.Scene scene = EditorSceneManager.NewPreviewScene();
+
+        public CleanupFixture()
+        {
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(Root));
+            AssetDatabase.CreateFolder(Root, "generated");
+            var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
+            var mesh = new Mesh { name = "Body" };
+            AssetDatabase.CreateAsset(payload, Payload);
+            AssetDatabase.AddObjectToAsset(mesh, payload);
+            payload.renderers.Add(new NativeMeshPayloadRenderer { mesh = mesh });
+            EditorUtility.SetDirty(payload);
+            AssetDatabase.SaveAssetIfDirty(payload);
+            var avatarObject = new GameObject("Avatar");
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(avatarObject, scene);
+            AssetDatabase.CreateAsset(AvatarBuilder.BuildGenericAvatar(avatarObject, ""), Unused);
+
+            // prefab -> controller -> animation swapping in the generated mesh
+            ClipAsset = new AnimationClip();
+            AnimationUtility.SetObjectReferenceCurve(ClipAsset, Binding, new[] { new ObjectReferenceKeyframe { time = 0, value = mesh } });
+            AssetDatabase.CreateAsset(ClipAsset, Clip);
+            var controller = AnimatorController.CreateAnimatorControllerAtPathWithClip(Root + "/swap.controller", ClipAsset);
+            var prop = new GameObject("Prop");
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(prop, scene);
+            prop.AddComponent<Animator>().runtimeAnimatorController = controller;
+            PrefabUtility.SaveAsPrefabAsset(prop, Prefab);
+            // The controller's state and its clip are written to disk only when saved: the search reads saved files.
+            AssetDatabase.SaveAssetIfDirty(controller);
+            AssetDatabase.SaveAssetIfDirty(ClipAsset);
+        }
+
+        public void Dispose()
+        {
+            EditorSceneManager.ClosePreviewScene(scene);
+            AssetDatabase.DeleteAsset(Root);
+        }
+    }
+
+    // A generated mesh a saved prefab uses through its controller's animation stays, whatever the files' write times (a
+    // checkout writes files in path order, older than the meshes made since); once nothing uses it, the next cleanup
+    // deletes it: the cached references of a changed file are read again.
+    [Test]
+    public void CleanupKeepsGeneratedMeshesSavedFilesUseThroughOtherFiles()
+    {
+        string store = Path.Combine(Path.GetTempPath(), "mcb-switch-test-" + Guid() + ".json");
+        tempPaths.Add(store);
+        using (var fixture = new CleanupFixture())
+        using (ProjectReferences.UseCacheFile(store))
+        {
+            var checkedOut = DateTime.UtcNow.AddDays(-2);
+            foreach (string path in new[] { fixture.Prefab, fixture.Root + "/swap.controller", fixture.Clip })
+            {
+                File.SetLastWriteTimeUtc(path, checkedOut);
+                File.SetLastWriteTimeUtc(path + ".meta", checkedOut);
+            }
+
+            NativeMeshPayloadService.DeleteUnreferencedGeneratedAssets(fixture.Generated, new[] { fixture.Prefab });
+            Assert.That(File.Exists(fixture.Payload), Is.True, "The prefab uses the mesh through its controller's animation.");
+            Assert.That(File.Exists(fixture.Unused), Is.False);
+
+            AnimationUtility.SetObjectReferenceCurve(fixture.ClipAsset, fixture.Binding, null);
+            EditorUtility.SetDirty(fixture.ClipAsset);
+            AssetDatabase.SaveAssetIfDirty(fixture.ClipAsset);
+            AssetDatabase.ImportAsset(fixture.Clip, ImportAssetOptions.ForceSynchronousImport);
+            NativeMeshPayloadService.DeleteUnreferencedGeneratedAssets(fixture.Generated, new[] { fixture.Prefab });
+            Assert.That(File.Exists(fixture.Payload), Is.False, "Nothing uses the mesh any more.");
+            Assert.That(File.Exists(store), Is.True, "The references are kept for the next cleanup.");
+        }
+    }
+
+    // A file read while a mesh it uses was missing (deleted, not checked out yet) keeps that mesh once it is back, without
+    // the file changing.
+    [Test]
+    public void CleanupKeepsAMeshThatCameBackForAFileReadWhileItWasMissing()
+    {
+        string store = Path.Combine(Path.GetTempPath(), "mcb-switch-test-" + Guid() + ".json");
+        string aside = TempFolder();
+        tempPaths.Add(store);
+        using (var fixture = new CleanupFixture())
+        using (ProjectReferences.UseCacheFile(store))
+        {
+            File.Copy(fixture.Payload, Path.Combine(aside, "payload.asset"));
+            File.Copy(fixture.Payload + ".meta", Path.Combine(aside, "payload.asset.meta"));
+            AssetDatabase.DeleteAsset(fixture.Payload);
+            Assert.That(ProjectReferences.Reachable(new[] { fixture.Prefab }), Does.Contain(fixture.Clip).And.Not.Contain(fixture.Payload));
+
+            File.Copy(Path.Combine(aside, "payload.asset"), fixture.Payload);
+            File.Copy(Path.Combine(aside, "payload.asset.meta"), fixture.Payload + ".meta");
+            AssetDatabase.ImportAsset(fixture.Payload, ImportAssetOptions.ForceSynchronousImport);
+            Assert.That(ProjectReferences.Reachable(new[] { fixture.Prefab }), Does.Contain(fixture.Payload));
+            NativeMeshPayloadService.DeleteUnreferencedGeneratedAssets(fixture.Generated, new[] { fixture.Prefab });
+            Assert.That(File.Exists(fixture.Payload), Is.True);
+        }
+    }
+
+    // After a version switch the cleanup runs in the background, a slice per editor tick, with the same answer.
+    [UnityTest]
+    public IEnumerator BackgroundCleanupKeepsWhatSavedFilesUse()
+    {
+        string store = Path.Combine(Path.GetTempPath(), "mcb-switch-test-" + Guid() + ".json");
+        tempPaths.Add(store);
+        using (var fixture = new CleanupFixture())
+        using (ProjectReferences.UseCacheFile(store))
+        {
+            var cleanup = NativeMeshPayloadService.DeleteUnreferencedGeneratedAssetsAsync(fixture.Generated, new[] { fixture.Prefab });
+            for (int frame = 0; !cleanup.IsCompleted && frame < 600; frame++) yield return null;
+            Assert.That(cleanup.IsCompleted, Is.True, "The cleanup ends.");
+            Assert.That(cleanup.Result.AssetCount, Is.EqualTo(1));
+            Assert.That(File.Exists(fixture.Payload), Is.True);
+            Assert.That(File.Exists(fixture.Unused), Is.False);
+        }
+    }
+
+    // The files whose references keep generated meshes: the project's scenes, prefabs and assets, not generated ones.
+    [Test]
+    public void CleanupReferenceRootsAreSavedProjectFilesOutsideTheGeneratedFolder()
+    {
+        string scratch = "Assets/MCB_CleanupRoots_" + Guid();
+        try
+        {
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(scratch));
+            AssetDatabase.CreateAsset(new AnimationClip(), scratch + "/clip.anim");
+            AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<NativeMeshPayloadAsset>(), scratch + "/kept.asset");
+            var roots = NativeMeshPayloadService.ReferenceRoots().ToList();
+            Assert.That(roots, Does.Contain(scratch + "/kept.asset"));
+            Assert.That(roots, Does.Not.Contain(scratch + "/clip.anim"), "Animations count when a scene, prefab or asset uses them.");
+            Assert.That(roots.Where(NativeMeshPayloadService.IsGeneratedAsset), Is.Empty);
+            Assert.That(NativeMeshPayloadService.IsGeneratedAsset("Assets/MCB/generated/advancedMeshPayloads/14/shared-x/a.asset"), Is.True);
+        }
+        finally
+        {
+            AssetDatabase.DeleteAsset(scratch);
+        }
+    }
+
+    // ---- Download pre-check: a version that cannot be stored here stops before anything downloads, with the reason
+
+    [Test]
+    public void DownloadBlockerExplainsWhyAVersionCannotBeStoredHere()
+    {
+        CustomBaseVersion Version(string number = "1.0.0", string key = null, string file = "01_Body.bin") => new CustomBaseVersion
+            { assetId = 14, version = number, defaultAviVersion = "1.0.0", sourceVersionKey = key, versionFiles = new[] { new ModelFileData { path = file } } };
+
+        Assert.That(VersionActions.DownloadBlocker(Version(), out string title), Is.Null);
+        Assert.That(title, Is.Null);
+
+        Assert.That(VersionActions.DownloadBlocker(Version("1.0/../x"), out title), Does.Contain("cannot be stored"), "A label that is no folder name.");
+        Assert.That(title, Is.EqualTo("Download failed"));
+        Assert.That(VersionActions.DownloadBlocker(Version(key: "not-a-key"), out title), Does.Contain("cannot be stored"), "An original key that is no hash.");
+        Assert.That(VersionActions.DownloadBlocker(new CustomBaseVersion(), out title), Does.Contain("cannot be stored"), "No version folder at all.");
+        Assert.That(title, Is.EqualTo("Download failed"));
+
+        if (Path.DirectorySeparatorChar != '\\') return; // Windows' path limit
+        Assert.That(VersionActions.DownloadBlocker(Version(file: new string('a', 300) + ".bin"), out title), Is.Not.Null);
+        Assert.That(title, Is.EqualTo("Project path too long"));
+    }
+
+    // ---- Fill from Parent: a model the parent's metadata does not match finds its avatar by the model's name
+
+    [Test]
+    public void ParentModelAvatarIsFoundByTheModelsName()
+    {
+        string folder = TempFolder();
+        foreach (string name in new[] { "01_Body avatar.asset", "02_Tail avatar.asset", MCBUtils.DEFAULT_AVATAR_NAME })
+            File.WriteAllText(Path.Combine(folder, name), "avatar");
+
+        Assert.That(Path.GetFileName(FileManagerService.VersionModelAvatarPath(folder, "Assets/Base/Tail.fbx", 2)), Is.EqualTo("02_Tail avatar.asset"));
+        Assert.That(FileManagerService.VersionModelAvatarPath(folder, "Assets/Base/Ears.fbx", 2), Is.Null, "Another model's avatar is never guessed.");
+        Assert.That(FileManagerService.VersionModelAvatarPath(Path.Combine(folder, "missing"), "Assets/Base/Tail.fbx", 2), Is.Null);
+        File.Delete(Path.Combine(folder, "02_Tail avatar.asset"));
+        Assert.That(Path.GetFileName(FileManagerService.VersionModelAvatarPath(folder, "Assets/Base/Renamed.fbx", 1)), Is.EqualTo("01_Body avatar.asset"),
+            "A single model's avatar is the folder's.");
+    }
+
+    // Veins removal tells MCB's veins from a creator's own texture with the same bytes: only a copy of the veins MCB set on
+    // that material (My Avatar's texture optimization copies textures into its own folder) is removed.
+    [Test]
+    public void VeinsRemovalRemovesCopiesOfMcbsVeinsOnlyNotTheCreatorsOwnTexture()
+    {
+        string scratch = "Assets/MCB_VeinsCopies_" + Guid();
+        string veinsPath = scratch + "/" + MCBUtils.VEINS_TEXTURE_NAME;
+        var avatar = new GameObject("Avatar");
+        var own = new Material(Shader.Find("Standard"));
+        var applied = new Material(Shader.Find("Standard"));
+        var pixels = new Texture2D(2, 2);
+        try
+        {
+            byte[] png = pixels.EncodeToPNG();
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(scratch));
+            foreach (string path in new[] { veinsPath, scratch + "/own veins.png", scratch + "/optimized copy.png" })
+            {
+                File.WriteAllBytes(path, png);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            }
+            SkinnedMeshRenderer Renderer(string name, Material material)
+            {
+                var renderer = new GameObject(name).AddComponent<SkinnedMeshRenderer>();
+                renderer.transform.SetParent(avatar.transform);
+                renderer.sharedMaterial = material;
+                return renderer;
+            }
+            var ownRenderer = Renderer("Own", own);
+            var appliedRenderer = Renderer("Applied", applied);
+            var service = new MaterialService(avatar.transform);
+
+            var ownVeins = AssetDatabase.LoadAssetAtPath<Texture2D>(scratch + "/own veins.png");
+            own.SetTexture("_DetailNormalMap", ownVeins);
+            Assert.That(service.RemoveDetailNormalMap(ownRenderer, false), Is.False, "The creator's own texture is not MCB's, even with the same bytes.");
+            Assert.That(own.GetTexture("_DetailNormalMap"), Is.SameAs(ownVeins));
+
+            Assert.That(service.SetDetailNormalMap(appliedRenderer, veinsPath, false), Is.True);
+            applied.SetTexture("_DetailNormalMap", AssetDatabase.LoadAssetAtPath<Texture2D>(scratch + "/optimized copy.png"));
+            Assert.That(MaterialService.HasVersionVeins(applied), Is.True, "A copy of the veins MCB set is still MCB's.");
+            Assert.That(service.RemoveVersionVeins(), Is.True);
+            Assert.That(applied.GetTexture("_DetailNormalMap"), Is.Null);
+            Assert.That(own.GetTexture("_DetailNormalMap"), Is.SameAs(ownVeins));
+
+            // Removed veins are forgotten: the same copy set again by hand is the user's.
+            applied.SetTexture("_DetailNormalMap", AssetDatabase.LoadAssetAtPath<Texture2D>(scratch + "/optimized copy.png"));
+            Assert.That(MaterialService.HasVersionVeins(applied), Is.False);
+        }
+        finally
+        {
+            Object.DestroyImmediate(avatar);
+            Object.DestroyImmediate(own);
+            Object.DestroyImmediate(applied);
+            Object.DestroyImmediate(pixels);
+            AssetDatabase.DeleteAsset(scratch);
         }
     }
 

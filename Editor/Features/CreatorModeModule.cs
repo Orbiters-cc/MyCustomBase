@@ -2423,12 +2423,12 @@ public partial class CreatorModeModule
     /// Fills the new-version form with the parent's content (model files, avatars, logic, blendshapes, options),
     /// keeping this version's number, scope, title, changelog and parent. A file field is only ever set, never cleared:
     /// published versions do not carry the creator's local files, so those come from the parent's downloaded version
-    /// folder when there is one, and otherwise the field keeps what it has.
+    /// folder when there is one, and otherwise the field keeps what it has. Blendshapes stay when the parent has none.
     /// </summary>
     private void FillFormFromParent(CustomBaseVersion parent)
     {
         if (parent == null) return;
-        unfilledParentFields.Clear();
+        parentFill = new ParentFill { version = parent, downloadedWhenFilled = MCBUtils.IsVersionDownloaded(parent) };
         isRestoringFromVersionState = true;
         try
         {
@@ -2439,23 +2439,74 @@ public partial class CreatorModeModule
             isRestoringFromVersionState = false;
         }
         ClearAllCorrectiveSearchFields();
-        var unfilled = unfilledParentFields.Distinct().ToList();
-        bool fbxUnfilled = unfilled.Remove(CustomFbxFieldName);
-        var note = new List<string>();
-        if (unfilled.Count > 0)
-            note.Add(MCBUtils.IsVersionDownloaded(parent)
-                ? $"{parent.version} has no {JoinFieldNames(unfilled)}: those fields keep what they had."
-                : $"Download {parent.version} to also fill the {JoinFieldNames(unfilled)}: until then those fields keep what they had.");
-        if (fbxUnfilled)
-            note.Add($"{parent.version} does not record its custom FBX on this computer: the custom FBX field keeps what it had.");
-        parentFillNote = note.Count == 0 ? null : string.Join(" ", note);
-        parentFillNoteVersion = parent;
     }
 
-    private const string CustomFbxFieldName = "custom FBX";
-    private readonly List<string> unfilledParentFields = new List<string>();
-    private string parentFillNote;
-    private CustomBaseVersion parentFillNoteVersion;
+    // Filling replaces what the form holds: asked first, as Build and Publish are, unless the form holds nothing of its own.
+    private bool ConfirmFillFromParent(CustomBaseVersion parent) =>
+        parent != null && (!CreatorFormHasOwnContent() || EditorUtility.DisplayDialog("Fill from Parent",
+            $"Fill this form with {parent.version}'s content?\n\nIts model files, avatars, logic prefab, blendshapes and options replace " +
+            $"what the form has; fields {parent.version} cannot fill keep what they have. The version number, scope, title and changelog stay.",
+            "Fill", "Cancel"));
+
+    // Model files, avatars, logic prefab, blendshapes or a veins texture the creator chose (not the parent's veins the
+    // form picked by itself).
+    private bool CreatorFormHasOwnContent()
+    {
+        editor.serializedObject.Update();
+        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        {
+            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            if (entry.FindPropertyRelative("customFbx")?.objectReferenceValue != null ||
+                entry.FindPropertyRelative("customBaseAvatar")?.objectReferenceValue != null ||
+                !string.IsNullOrWhiteSpace(entry.FindPropertyRelative("externalCustomFbxPath")?.stringValue))
+                return true;
+        }
+        string veins = AssetDatabase.GetAssetPath(editor.customVeinsNormalMapProp.objectReferenceValue);
+        return editor.avatarLogicPrefabProp.objectReferenceValue != null || editor.customBlendshapesForCreatorProp.arraySize > 0 ||
+               (!string.IsNullOrEmpty(veins) && veins != autoAssignedVeinsTexturePath);
+    }
+
+    // What the last Fill from Parent could not fill, and why: the note under the Parent Version dropdown.
+    private sealed class ParentFill
+    {
+        public CustomBaseVersion version;
+        public bool downloadedWhenFilled;
+        // Files that come from the parent's downloaded version folder.
+        public readonly List<string> fromFolder = new List<string>();
+        // Content the parent itself does not have.
+        public readonly List<string> missing = new List<string>();
+        public bool customFbx, logicNeedsImport;
+    }
+
+    private ParentFill parentFill;
+
+    /// <summary>
+    /// The note under the Parent Version dropdown, written each time it shows: a parent downloaded since the fill says
+    /// that filling again completes the form, instead of still asking for the download.
+    /// </summary>
+    private string ParentFillNote()
+    {
+        var fill = parentFill;
+        if (fill == null || !Equals(fill.version, selectedParentVersionObject)) return null;
+        string parent = fill.version.version;
+        var note = new List<string>();
+        if (fill.fromFolder.Count > 0)
+        {
+            string fields = JoinFieldNames(fill.fromFolder.Distinct().ToList());
+            note.Add(!MCBUtils.IsVersionDownloaded(fill.version)
+                ? $"Download {parent} to also fill the {fields}: until then those fields keep what they had."
+                : fill.downloadedWhenFilled
+                    ? $"{parent} has no {fields}: those fields keep what they had."
+                    : $"{parent} is downloaded now: press Fill from Parent again to also fill the {fields}.");
+        }
+        if (fill.missing.Count > 0)
+            note.Add($"{parent} has no {JoinFieldNames(fill.missing.Distinct().ToList())}: the form keeps its own.");
+        if (fill.logicNeedsImport)
+            note.Add($"{parent}'s logic prefab comes with its logic package, which this project has not imported yet: apply {parent} once, then press Fill from Parent again.");
+        if (fill.customFbx)
+            note.Add($"{parent} does not record its custom FBX on this computer: the custom FBX field keeps what it had.");
+        return note.Count == 0 ? null : string.Join(" ", note);
+    }
 
     private static string JoinFieldNames(IReadOnlyList<string> names) => names.Count == 1 ? names[0]
         : string.Join(", ", names.Take(names.Count - 1)) + " and " + names[names.Count - 1];
@@ -2505,15 +2556,17 @@ public partial class CreatorModeModule
             {
                 customAvatarPath = MCBUtils.GetVersionAvatarPath(ver, Path.GetFileName(customAvatarPath));
             }
-            else if (fillFromParent && editor.modelFileBuildEntriesProp.arraySize == 1)
+            else if (fillFromParent && (versionFile == null || editor.modelFileBuildEntriesProp.arraySize == 1))
             {
-                customAvatarPath = MCBUtils.GetCustomBaseAvatarPath(ver);
+                // A model the parent's metadata does not match (its original moved): its avatar by the model's name.
+                customAvatarPath = FileManagerService.VersionModelAvatarPath(MCBUtils.GetVersionDataPath(ver), sourcePath,
+                    editor.modelFileBuildEntriesProp.arraySize);
             }
             var restoredCustomFbx = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
             bool externalFbx = restoredCustomFbx == null && !string.IsNullOrWhiteSpace(customFbxPath);
             if (fillFromParent && restoredCustomFbx == null && !(externalFbx && File.Exists(customFbxPath)))
             {
-                unfilledParentFields.Add(CustomFbxFieldName);
+                parentFill.customFbx = true;
             }
             else
             {
@@ -2525,7 +2578,7 @@ public partial class CreatorModeModule
                 }
             }
             if (!AssignFormAsset(entryProp.FindPropertyRelative("customBaseAvatar"), AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath), fillFromParent))
-                unfilledParentFields.Add("custom avatar");
+                parentFill.fromFolder.Add("custom avatar");
         }
         if (editor.useAdvancedMeshReplacementForCreatorProp != null)
         {
@@ -2536,16 +2589,28 @@ public partial class CreatorModeModule
             editor.useHdiffFbxDeltaForCreatorProp.boolValue = (ver.versionFiles ?? Array.Empty<ModelFileData>())
                 .Any(file => !string.IsNullOrWhiteSpace(GetMetadataString(file, HdiffService.DeltaFormatMetadataKey)));
         }
-        string logicPrefabPath = !string.IsNullOrWhiteSpace(ver.logicPrefabPath) || !fillFromParent
-            ? ver.logicPrefabPath
-            : MCBUtils.GetLogicPrefabPath(MCBUtils.GetVersionDataPath(ver));
-        if (!AssignFormAsset(editor.avatarLogicPrefabProp, AssetDatabase.LoadAssetAtPath<GameObject>(logicPrefabPath), fillFromParent))
-            unfilledParentFields.Add("logic prefab");
-
-        editor.customBlendshapesForCreatorProp.ClearArray();
-        if (ver.customBlendshapes != null)
+        string logicPrefabPath = ver.logicPrefabPath;
+        bool logicNeedsImport = false;
+        // A published parent names the creator's prefab, which this project may not have (or has elsewhere): the prefab its
+        // logic package carries, as this project has it.
+        if (fillFromParent && (string.IsNullOrWhiteSpace(logicPrefabPath) || AssetDatabase.LoadAssetAtPath<GameObject>(logicPrefabPath) == null))
+            logicPrefabPath = FileManagerService.VersionLogicPrefabPath(ver, out logicNeedsImport);
+        var logicPrefab = string.IsNullOrWhiteSpace(logicPrefabPath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(logicPrefabPath);
+        if (!AssignFormAsset(editor.avatarLogicPrefabProp, logicPrefab, fillFromParent))
         {
-            for (int i = 0; i < ver.customBlendshapes.Length; i++)
+            if (logicNeedsImport) parentFill.logicNeedsImport = true;
+            else parentFill.fromFolder.Add("logic prefab");
+        }
+
+        if (fillFromParent && (ver.customBlendshapes == null || ver.customBlendshapes.Length == 0))
+        {
+            // Never cleared: the form keeps the blendshapes it has.
+            if (editor.customBlendshapesForCreatorProp.arraySize > 0) parentFill.missing.Add("blendshapes");
+        }
+        else
+        {
+            editor.customBlendshapesForCreatorProp.ClearArray();
+            for (int i = 0; i < (ver.customBlendshapes?.Length ?? 0); i++)
             {
                 editor.customBlendshapesForCreatorProp.InsertArrayElementAtIndex(i);
                 var element = editor.customBlendshapesForCreatorProp.GetArrayElementAtIndex(i);
@@ -2560,11 +2625,13 @@ public partial class CreatorModeModule
         bool includeCustomVeins = ver.includeCustomVeins ?? ExtraCustomizationUtils.HasFlag(ver.extraCustomization, CustomVeinsKey);
         editor.includeCustomVeinsForCreatorProp.boolValue = includeCustomVeins;
 
-        string veinsTexturePath = !string.IsNullOrEmpty(ver.customVeinsTexturePath) || !fillFromParent || !includeCustomVeins
-            ? ver.customVeinsTexturePath
-            : MCBUtils.GetVersionVeinsTexturePath(ver);
+        string veinsTexturePath = ver.customVeinsTexturePath;
+        // As for the logic prefab: the creator's texture when this project has it, else the parent folder's copy.
+        if (fillFromParent && includeCustomVeins &&
+            (string.IsNullOrEmpty(veinsTexturePath) || AssetDatabase.LoadAssetAtPath<Texture2D>(veinsTexturePath) == null))
+            veinsTexturePath = MCBUtils.GetVersionVeinsTexturePath(ver);
         if (!AssignFormAsset(editor.customVeinsNormalMapProp, AssetDatabase.LoadAssetAtPath<Texture2D>(veinsTexturePath), fillFromParent) && includeCustomVeins)
-            unfilledParentFields.Add("veins texture");
+            parentFill.fromFolder.Add("veins texture");
 
         string assignedPath = AssetDatabase.GetAssetPath(editor.customVeinsNormalMapProp.objectReferenceValue);
         string parentPath = MCBUtils.GetVersionVeinsTexturePath(selectedParentVersionObject);

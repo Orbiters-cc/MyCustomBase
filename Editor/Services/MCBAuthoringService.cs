@@ -94,6 +94,10 @@ public static class MCBAuthoringService
         if (owner == null || EditorUtility.IsPersistent(owner)) throw new ArgumentException("Choose a scene MyCustomBase component or its GameObject from inspect.");
         return owner;
     }
+    /// <summary>The project paths of the avatar's original base models.</summary>
+    public static List<string> OriginalModelPaths(MyCustomBase owner) =>
+        (owner?.baseFbxFiles ?? new List<GameObject>()).Where(model => model != null).Select(AssetDatabase.GetAssetPath)
+            .Where(path => !string.IsNullOrEmpty(path)).ToList();
     public static object Inspect(MyCustomBase owner) => new
     {
         instanceId = owner.GetInstanceID(), avatar = AvatarPaths.Root(owner).name,
@@ -324,7 +328,8 @@ public static class MCBAuthoringService
         else metadata["otherAvatarBaseName"] = registration.avatarBaseName.Trim();
         using var request = CustomBaseRegistration.Request(CustomBaseRegistration.Form(metadata.ToString(Formatting.None)), session.Editor.authToken, registration.requestId);
         yield return MCBManagedRequest.SendUnityWebRequest(request, CustomBaseRegistration.Url, MCBRequestPolicy.Backend("Create custom base"));
-        if (request.result != UnityWebRequest.Result.Success) throw new InvalidOperationException("Registration failed: HTTP " + request.responseCode + " " + request.error);
+        if (request.result != UnityWebRequest.Result.Success)
+            throw new InvalidOperationException("Registration failed: " + (MCBJsonRequest.ServerError(request.downloadHandler?.text) ?? "HTTP " + request.responseCode + " " + request.error));
         var result = JsonConvert.DeserializeObject<CreateCustomBaseAssetResponse>(request.downloadHandler.text)?.asset;
         if (result == null || result.id <= 0) throw new InvalidOperationException("Registration returned no asset.");
         // An idempotent retry can return all registered original versions. Bind only the requested scene's originals.

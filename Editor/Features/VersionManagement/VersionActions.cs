@@ -277,13 +277,27 @@ public class VersionActions
     
     private IEnumerator DownloadVersionCoroutine(CustomBaseVersion version, bool applyAfter)
     {
+        // A Download and Apply started the apply progress (StartVersionDownload): every way out before the apply runs ends
+        // it, or the version buttons stay disabled until the next reload.
+        void EndUnstarted()
+        {
+            if (applyAfter) FinishApplyProgress(false);
+            else editor.RefreshUiToolkitSections();
+            editor.Repaint();
+        }
+
         if (version.isUnsubmitted || version.localArtifactSourceVersionKey != null)
         {
             bool local = MCBUtils.IsVersionDownloaded(version);
             if (local || version.isUnsubmitted)
             {
-                if (!local) editor.warningsModule.AddWarning("This local build is incomplete. Rebuild it in the creator form before previewing or applying it.", MessageType.Error, "Local version unavailable");
-                else if (applyAfter) yield return ApplyOrResetCoroutine(version, false);
+                if (!local)
+                {
+                    editor.warningsModule.AddWarning("This local build is incomplete. Rebuild it in the creator form before previewing or applying it.", MessageType.Error, "Local version unavailable");
+                    EndUnstarted();
+                    yield break;
+                }
+                if (applyAfter) yield return ApplyOrResetCoroutine(version, false);
                 editor.RefreshUiToolkitSections();
                 yield break;
             }
@@ -292,43 +306,53 @@ public class VersionActions
         }
         MCBPerformance.PauseForeground();
         if (editor.isDownloading) yield break;
+        editor.warningsModule.Clear();
+
+        // Before downloading anything, and before the download counts as running.
+        string blocked = DownloadBlocker(version, out string blockedTitle);
+        if (blocked != null)
+        {
+            editor.warningsModule.AddWarning(blocked, MessageType.Error, blockedTitle);
+            EndUnstarted();
+            yield break;
+        }
+
+        var selectedAsset = editor.GetSelectedAsset();
+        if (selectedAsset == null)
+        {
+            MCBLogger.LogWarning("[VersionActions] Download aborted because no asset is selected in the gallery.");
+            EndUnstarted();
+            yield break;
+        }
+
         editor.isDownloading = true;
         DownloadProgress = 0f;
         if (applyAfter)
         {
             BeginApplyProgress("Downloading version...", 0.02f);
         }
-        editor.warningsModule.Clear();
         editor.Repaint();
 
-        var selectedAsset = editor.GetSelectedAsset();
-        if (selectedAsset == null)
-        {
-            MCBLogger.LogWarning("[VersionActions] Download aborted because no asset is selected in the gallery.");
-            editor.isDownloading = false;
-            if (applyAfter) FinishApplyProgress(false);
-            editor.Repaint();
-            yield break;
-        }
-
-        // Before downloading anything: the version's files (and the .meta files shipped with them) must fit Windows' path
-        // limit at this project's location.
-        string pathTooLong = null;
+        // Every way the download ends on its own clears isDownloading. One that throws (a locked FBX while hashing or
+        // preloading it) still ends it here, or the version buttons stay disabled until the next reload.
+        var download = DownloadStartedVersionCoroutine(version, applyAfter, selectedAsset);
         try
         {
-            Orbiters.Toolkit.Editor.Storage.SafeArchive.RequireRoom(MCBUtils.GetVersionDataPath(version),
-                (version.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => file != null).SelectMany(file => new[] { file.path, file.path + ".meta" }));
+            while (download.MoveNext()) yield return download.Current;
         }
-        catch (PathTooLongException ex) { pathTooLong = ex.Message; }
-        if (pathTooLong != null)
+        finally
         {
-            editor.isDownloading = false;
-            if (applyAfter) FinishApplyProgress(false);
-            editor.warningsModule.AddWarning(pathTooLong, MessageType.Error, "Project path too long");
-            editor.RefreshUiToolkitSections();
-            yield break;
+            if (editor.isDownloading)
+            {
+                editor.isDownloading = false;
+                editor.warningsModule.AddWarning($"Version {version.version} could not be downloaded. See the Console for details.", MessageType.Error, "Download failed");
+                EndUnstarted();
+            }
         }
+    }
 
+    private IEnumerator DownloadStartedVersionCoroutine(CustomBaseVersion version, bool applyAfter, AvatarDiscoveredAsset selectedAsset)
+    {
         // Inspector initialization may first detect a garment before the selected
         // asset's source mapping is loaded. Never use that stale UI hash to download.
         string requestedSourcePath = GetCurrentFBXPath();
@@ -625,6 +649,35 @@ public class VersionActions
         }
     }
 
+    /// <summary>
+    /// Why <paramref name="version"/> cannot be downloaded into this project, or null: its files (and the .meta files
+    /// shipped with them) must fit Windows' path limit at this project's location, and its labels, original and file paths
+    /// must make paths inside its version folder. <paramref name="title"/> heads the warning.
+    /// </summary>
+    internal static string DownloadBlocker(CustomBaseVersion version, out string title)
+    {
+        title = null;
+        try
+        {
+            Orbiters.Toolkit.Editor.Storage.SafeArchive.RequireRoom(MCBUtils.GetVersionDataPath(version),
+                (version?.versionFiles ?? Array.Empty<ModelFileData>()).Where(file => file != null).SelectMany(file => new[] { file.path, file.path + ".meta" }));
+            return null;
+        }
+        catch (PathTooLongException ex)
+        {
+            title = "Project path too long";
+            return ex.Message;
+        }
+        // A label or file path the server sent that is no valid path here, or a versions folder reached through a link.
+        catch (Exception ex) when (ex is ArgumentException || ex is IOException || ex is InvalidDataException ||
+                                   ex is UnauthorizedAccessException || ex is NotSupportedException)
+        {
+            title = "Download failed";
+            return (string.IsNullOrWhiteSpace(version?.version) ? "This version" : "Version " + version.version) +
+                   " cannot be stored in this project: " + ex.Message;
+        }
+    }
+
     // Runs on the downloaded archive before anything is extracted under Assets/.
     private bool CanUseInMemoryVersionPackage(long zipSizeBytes, out string decision)
     {
@@ -880,22 +933,8 @@ public class VersionActions
 
         if (deleted)
         {
-            try
-            {
-                var deletedPayloads = NativeMeshPayloadService.DeleteGeneratedPayloadsForVersion(version);
-                if (deletedPayloads.HasContent)
-                {
-                    MCBLogger.Log(
-                        $"[VersionActions] Deleted generated advanced mesh cache for assetId={version.assetId} version={version.version}: {deletedPayloads.AssetCount} assets, {deletedPayloads.FormattedSize}.");
-                }
-            }
-            catch (Exception e)
-            {
-                editor.warningsModule.AddWarning(
-                    $"Deleted version files, but failed to delete generated advanced meshes: {e.Message}",
-                    MessageType.Error,
-                    "Advanced mesh deletion failed");
-            }
+            // The version's generated meshes nothing uses follow in the background.
+            _ = NativeMeshPayloadService.QueueUnusedPayloadCleanup(version);
 
             if (version.isUnsubmitted)
             {
@@ -1649,16 +1688,9 @@ public class VersionActions
         CommitActiveTransition();
         if (previousVersion != null && (isReset || !string.Equals($"{previousVersion.assetId}:{previousVersion.version}", $"{version?.assetId}:{version?.version}", StringComparison.Ordinal)))
         {
-            try
-            {
-                var deletedPayloads = NativeMeshPayloadService.DeleteUnreferencedPayloadsOfVersion(previousVersion);
-                if (deletedPayloads.HasContent)
-                    MCBLogger.Log($"[VersionActions] Deleted {deletedPayloads.AssetCount} generated advanced mesh assets of version {previousVersion.version} nothing uses any more ({deletedPayloads.FormattedSize}).");
-            }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidOperationException)
-            {
-                MCBLogger.LogWarning($"[VersionActions] Could not delete unused generated advanced meshes of version {previousVersion.version}: {ex.Message}");
-            }
+            // In the background: finding what the project still uses can read every scene and prefab once (it reports
+            // and logs what it moved to the Recycle Bin).
+            _ = NativeMeshPayloadService.QueueUnusedPayloadCleanup(previousVersion);
         }
         if (!finalize) return; // A saved-custom transition will commit or restore its encompassing snapshot.
         MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash and applied state.");

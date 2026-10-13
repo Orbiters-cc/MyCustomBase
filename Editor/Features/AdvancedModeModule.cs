@@ -158,7 +158,7 @@ public class AdvancedModeModule
         {
             EditorGUI.indentLevel++;
                 
-                // Dev Environment checkbox + Magic Sync per environment
+                // Dev Environment checkbox
                 bool currentDevEnvironment = MCBUtils.isDevEnvironment;
                 bool newDevEnvironment = EditorGUILayout.Toggle("Dev Environment", currentDevEnvironment);
                 
@@ -175,38 +175,6 @@ public class AdvancedModeModule
                     MCBEditor.IsDevModeWarningEnabled = newDevModeWarning;
                     editor.Repaint();
                 }
-
-                // Magic Sync buttons for each environment
-                EditorGUILayout.BeginHorizontal();
-                GUILayout.Space(EditorGUI.indentLevel * 15);
-                if (GUILayout.Button("Magic Sync Prod", GUILayout.Width(140)))
-                {
-                    AuthenticationService.RegisterAuthForEnv(false).ContinueWith(task =>
-                    {
-                        UnityEditor.EditorApplication.delayCall += () =>
-                        {
-                            if (!MCBUtils.isDevEnvironment)
-                            {
-                                editor.CheckAuthentication();
-                            }
-                        };
-                    });
-                }
-
-                if (GUILayout.Button("Magic Sync Dev", GUILayout.Width(140)))
-                {
-                    AuthenticationService.RegisterAuthForEnv(true).ContinueWith(task =>
-                    {
-                        UnityEditor.EditorApplication.delayCall += () =>
-                        {
-                            if (MCBUtils.isDevEnvironment)
-                            {
-                                editor.CheckAuthentication();
-                            }
-                        };
-                    });
-                }
-                EditorGUILayout.EndHorizontal();
 
                 // Refresh account state button
                 EditorGUILayout.BeginHorizontal();  
@@ -266,7 +234,7 @@ public class AdvancedModeModule
                     "Off uses the real API.\n" +
                     "Transport Failure points requests to https://127.0.0.1:1.\n" +
                     "SSL Failure points requests to https://wrong.host.badssl.com.\n" +
-                    "Turn this back to Off before using Magic Sync normally.",
+                    "Turn this back to Off when you are done.",
                     MessageType.None);
 
                 DrawConnectionMockControls();
@@ -672,26 +640,7 @@ public class AdvancedModeModule
 
                 if (confirmed)
                 {
-                    try
-                    {
-                        var deleted = NativeMeshPayloadService.DeleteAllGeneratedPayloads();
-                        AssetDatabase.Refresh();
-                        generatedAdvancedMeshStorageInfo = NativeMeshPayloadService.GetGeneratedPayloadStorageInfo();
-                        generatedAdvancedMeshStorageInfoCheckedAt = EditorApplication.timeSinceStartup;
-                        generatedAdvancedMeshStatus = $"Deleted {FormatCount(deleted.AssetCount, "generated advanced mesh asset")} ({deleted.FormattedSize}).";
-                        generatedAdvancedMeshStatusType = MessageType.Info;
-                        MCBLogger.Log("[AdvancedMode] " + generatedAdvancedMeshStatus);
-                    }
-                    catch (System.Exception ex)
-                    {
-                        generatedAdvancedMeshStorageInfo = null;
-                        generatedAdvancedMeshStorageInfoCheckedAt = -1d;
-                        generatedAdvancedMeshStatus = "Failed to delete generated advanced meshes. See Console for details.";
-                        generatedAdvancedMeshStatusType = MessageType.Error;
-                        Debug.LogError("[AdvancedMode] Failed to delete generated advanced meshes: " + ex);
-                    }
-
-                    editor.Repaint();
+                    DeleteUnusedGeneratedMeshes();
                 }
             }
             EditorGUILayout.EndHorizontal();
@@ -701,6 +650,23 @@ public class AdvancedModeModule
         {
             EditorGUILayout.HelpBox(generatedAdvancedMeshStatus, generatedAdvancedMeshStatusType);
         }
+    }
+
+    // In the background: finding what the project still uses can read every scene and prefab once.
+    private async void DeleteUnusedGeneratedMeshes()
+    {
+        generatedAdvancedMeshStatus = "Moving unused generated meshes to the Recycle Bin (progress at the bottom right of the editor)...";
+        generatedAdvancedMeshStatusType = MessageType.Info;
+        editor.Repaint();
+        var deleted = await NativeMeshPayloadService.QueueUnusedPayloadCleanup();
+        generatedAdvancedMeshStorageInfo = NativeMeshPayloadService.GetGeneratedPayloadStorageInfo();
+        generatedAdvancedMeshStorageInfoCheckedAt = EditorApplication.timeSinceStartup;
+        generatedAdvancedMeshStatus = deleted == null
+            ? "Unused generated meshes were kept: the cleanup was cancelled or failed (see the Console)."
+            : $"Moved {FormatCount(deleted.AssetCount, "generated advanced mesh asset")} ({deleted.FormattedSize}) to the Recycle Bin.";
+        generatedAdvancedMeshStatusType = deleted == null ? MessageType.Warning : MessageType.Info;
+        MCBLogger.Log("[AdvancedMode] " + generatedAdvancedMeshStatus);
+        if (editor != null) editor.Repaint();
     }
 
     private NativeMeshPayloadService.GeneratedPayloadStorageInfo GetGeneratedAdvancedMeshStorageInfo(bool forceRefresh)

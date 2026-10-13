@@ -78,6 +78,8 @@ public class MaterialService
     // Material tag listing the keywords ("kw:") and toggles ("prop:") MCB switched on for custom veins: only those are
     // switched off again when the veins are removed.
     internal const string EnabledDetailFeaturesTag = "MCBDetailNormalFeatures";
+    // Material tag with the content hash of the veins texture MCB set: a copy of that texture is still MCB's veins.
+    internal const string AppliedVeinsTag = "MCBAppliedVeins";
 
     private static readonly string[] DetailNormalStrengthProperties =
     {
@@ -135,42 +137,50 @@ public class MaterialService
 
     /// <summary>Whether the material carries custom veins from an MCB version folder, or a copy of them.</summary>
     public static bool HasVersionVeins(Material material) => material != null && DetailNormalTextureProperties.Any(property =>
-        material.HasProperty(property) && IsVersionVeinsTexture(material.GetTexture(property)));
+        material.HasProperty(property) && IsVersionVeinsTexture(material, material.GetTexture(property)));
 
     /// <summary>
-    /// A version's veins texture, or a byte-identical copy of one: other tools (My Avatar's texture optimization) copy
-    /// textures into their own folders, and the copy is still the version's veins.
+    /// A version's veins texture: one in MCB's version folders, or a byte-identical copy of the veins MCB put on this material (other
+    /// tools, such as My Avatar's texture optimization, copy textures into their own folders and keep the material's tags).
+    /// A creator's own texture MCB never put on the material is not, even when a version ships the same bytes.
     /// </summary>
-    public static bool IsVersionVeinsTexture(Texture texture)
+    private static bool IsVersionVeinsTexture(Material material, Texture texture)
     {
         if (texture == null) return false;
         string path = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(texture));
         if (string.IsNullOrEmpty(path)) return false;
-        if (path.StartsWith(MCBUtils.ASSETS_BASE_FOLDER + "/", StringComparison.OrdinalIgnoreCase)) return true;
-        var file = new FileInfo(Path.GetFullPath(path));
-        if (!file.Exists) return false;
-        string versions = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
-        if (!Directory.Exists(versions)) return false;
-        var sameSize = Directory.EnumerateFiles(versions, MCBUtils.VEINS_TEXTURE_NAME, SearchOption.AllDirectories)
-            .Select(veins => new FileInfo(veins)).Where(veins => veins.Length == file.Length).ToList();
-        if (sameSize.Count == 0) return false;
-        string hash = FileHash(file);
-        return sameSize.Any(veins => FileHash(veins) == hash);
+        // A downloaded or built version's own veins; anything else (a creator's source veins, also under Assets/MCB) only
+        // when it is what MCB set on this material.
+        if (path.StartsWith(MCBUtils.ASSET_VERSIONS_FOLDER + "/", StringComparison.OrdinalIgnoreCase)) return true;
+        string applied = material.GetTag(AppliedVeinsTag, false, string.Empty);
+        return applied.Length > 0 && FileHash(path) == applied;
     }
 
     private static readonly Dictionary<string, (long length, DateTime written, string hash)> fileHashes =
         new Dictionary<string, (long, DateTime, string)>(StringComparer.OrdinalIgnoreCase);
 
-    private static string FileHash(FileInfo file)
+    // SHA-256 of a file, cached while it keeps its size and write time; null when it cannot be read (veins are then not
+    // recognised by content, and apply or reset goes on).
+    private static string FileHash(string unityPath)
     {
-        if (fileHashes.TryGetValue(file.FullName, out var cached) && cached.length == file.Length && cached.written == file.LastWriteTimeUtc)
-            return cached.hash;
-        string hash;
-        using (var sha = MCBHashing.CreateSha256())
-        using (var stream = file.OpenRead())
-            hash = Convert.ToBase64String(sha.ComputeHash(stream));
-        fileHashes[file.FullName] = (file.Length, file.LastWriteTimeUtc, hash);
-        return hash;
+        try
+        {
+            var file = new FileInfo(Path.GetFullPath(unityPath));
+            if (!file.Exists) return null;
+            if (fileHashes.TryGetValue(file.FullName, out var cached) && cached.length == file.Length && cached.written == file.LastWriteTimeUtc)
+                return cached.hash;
+            string hash;
+            using (var sha = MCBHashing.CreateSha256())
+            using (var stream = file.OpenRead())
+                hash = Convert.ToBase64String(sha.ComputeHash(stream));
+            fileHashes[file.FullName] = (file.Length, file.LastWriteTimeUtc, hash);
+            return hash;
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is NotSupportedException)
+        {
+            MCBLogger.LogWarning($"[MaterialService] Could not read '{unityPath}' to compare it with custom veins: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>
@@ -385,6 +395,7 @@ public class MaterialService
             return false;
         }
         EnableDetailNormalFeatures(material);
+        material.SetOverrideTag(AppliedVeinsTag, FileHash(filePath) ?? "");
         FinalizeMaterialEdit(smr, material);
         if (saveImmediately)
         {
@@ -650,7 +661,7 @@ public class MaterialService
 
     /// <summary>
     /// Switches off what <see cref="EnableDetailNormalFeatures"/> switched on, and nothing else: keywords the material
-    /// already used stay, and so do the main normal map's while it has one.
+    /// already used stay, and so do the main normal map's while it has one. The material no longer records MCB's veins.
     /// </summary>
     private void DisableDetailNormalFeatures(Material material)
     {
@@ -676,6 +687,7 @@ public class MaterialService
             }
         }
         material.SetOverrideTag(EnabledDetailFeaturesTag, "");
+        material.SetOverrideTag(AppliedVeinsTag, "");
     }
 
     private static IEnumerable<string> ReadEnabledDetailFeatures(Material material) =>

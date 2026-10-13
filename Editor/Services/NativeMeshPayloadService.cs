@@ -1142,15 +1142,13 @@ public static partial class NativeMeshPayloadService
         return GetGeneratedPayloadStorageInfo(GeneratedFolder);
     }
 
-    /// <summary>Deletes the version's generated payloads that nothing uses; meshes an avatar still shows are kept.</summary>
+    /// <summary>
+    /// Moves the version's generated payloads that nothing uses to the Recycle Bin at once (health checks); meshes an
+    /// avatar still shows are kept. Editor actions use <see cref="QueueUnusedPayloadCleanup(CustomBaseVersion)"/>.
+    /// </summary>
     public static GeneratedPayloadStorageInfo DeleteGeneratedPayloadsForVersion(CustomBaseVersion version)
     {
         return DeleteUnreferencedPayloadsOfVersion(version);
-    }
-
-    public static GeneratedPayloadStorageInfo DeleteAllGeneratedPayloads()
-    {
-        return DeleteUnreferencedGeneratedPayloads();
     }
 
     /// <summary>Names of the original bones a payload's renderers bind to: an avatar needs them all to use a plain payload.
