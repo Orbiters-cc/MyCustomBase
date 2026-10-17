@@ -12,7 +12,6 @@ public partial class VersionManagementModule
     public void AttachUIToolkit(VisualElement root)
     {
         versionRoot = root;
-        RefreshUIToolkit();
 
         versionRefreshSchedule?.Pause();
         versionRefreshSchedule = versionRoot?.schedule.Execute(() =>

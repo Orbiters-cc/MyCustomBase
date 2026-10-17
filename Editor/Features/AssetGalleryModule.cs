@@ -287,7 +287,6 @@ public partial class AssetGalleryModule
         this.galleryRoot = galleryRoot;
         this.selectedAssetActionsRoot = selectedAssetActionsRoot;
         this.commentsRoot = commentsRoot;
-        RefreshUIToolkit();
     }
 
     public void DetachUIToolkit()

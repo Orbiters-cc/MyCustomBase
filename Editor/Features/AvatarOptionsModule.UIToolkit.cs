@@ -14,7 +14,6 @@ public partial class AvatarOptionsModule
     public void AttachUIToolkit(VisualElement root)
     {
         avatarOptionsRoot = root;
-        RefreshUIToolkit();
 
         avatarOptionsRefreshSchedule?.Pause();
         avatarOptionsRefreshSchedule = avatarOptionsRoot?.schedule.Execute(() =>

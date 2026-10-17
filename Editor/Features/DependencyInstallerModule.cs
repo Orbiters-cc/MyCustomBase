@@ -38,7 +38,6 @@ public class DependencyInstallerModule
     public void AttachUIToolkit(VisualElement root)
     {
         dependencyRoot = root;
-        RefreshUIToolkit();
     }
 
     public void DetachUIToolkit()

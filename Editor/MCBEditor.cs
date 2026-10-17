@@ -317,6 +317,7 @@ public class MCBEditor : UnityEditor.Editor
         creatorModule?.AttachUIToolkit(creatorHost);
         versionModule?.AttachUIToolkit(versionHost);
         avatarOptionsModule?.AttachUIToolkit(avatarOptionsHost);
+        // The modules only take their hosts: everything is built once, here (each used to build itself on attach, then again).
         RefreshUiToolkitSections();
         OrderUiToolkitLayers();
         dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(3000);
