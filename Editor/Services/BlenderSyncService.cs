@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Orbiters.Toolkit.Editor.Meshes;
 using Orbiters.Toolkit.Editor.Processes;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -1521,6 +1522,8 @@ public static class BlenderSyncService
                 .ToList();
             MuscleCorrectiveStore.Apply(session.customBase, manifest.xmuscle, exportedMeshes);
         }
+        // What other tools made from these meshes (My Avatar's Substance Painter project) can be made again.
+        AvatarMeshEdits.NotifyApplied(MCBReFitIntegration.Root(session.customBase));
     }
 
     /// <summary>Reads a Blender export manifest; throws unless it is an export of <see cref="ProtocolVersion"/>.</summary>
