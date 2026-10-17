@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using Orbiters.Toolkit.Editor.Processes;
 using UnityEditor;
 using UnityEngine;
 
@@ -196,97 +197,22 @@ public static class BlenderInstallService
 
     private static IEnumerable<string> GetWindowsCandidates()
     {
-        var roots = new[]
-        {
-            Environment.GetEnvironmentVariable("ProgramW6432"),
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-        };
-
-        foreach (string root in roots.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string root in InstalledApps.ProgramRoots())
         {
             string foundation = Path.Combine(root, "Blender Foundation");
-            foreach (string directory in SafeGetDirectories(foundation).OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
+            foreach (string directory in InstalledApps.Directories(foundation).OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
             {
                 yield return Path.Combine(directory, "blender.exe");
-                foreach (string child in SafeGetDirectories(directory).OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
+                foreach (string child in InstalledApps.Directories(directory).OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
                 {
                     yield return Path.Combine(child, "blender.exe");
                 }
             }
-
-            string steamCommon = Path.Combine(root, "Steam", "steamapps", "common");
-            foreach (string blenderDirectory in SafeGetDirectories(steamCommon).Where(path => Path.GetFileName(path).IndexOf("Blender", StringComparison.OrdinalIgnoreCase) >= 0))
-            {
-                yield return Path.Combine(blenderDirectory, "blender.exe");
-            }
         }
 
-        foreach (string steamRoot in GetSteamLibraryRoots())
+        foreach (string blenderDirectory in InstalledApps.SteamApps("Blender"))
         {
-            string common = Path.Combine(steamRoot, "steamapps", "common");
-            foreach (string blenderDirectory in SafeGetDirectories(common).Where(path => Path.GetFileName(path).IndexOf("Blender", StringComparison.OrdinalIgnoreCase) >= 0))
-            {
-                yield return Path.Combine(blenderDirectory, "blender.exe");
-            }
-        }
-    }
-
-    private static IEnumerable<string> GetSteamLibraryRoots()
-    {
-        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string baseRoot in new[]
-                 {
-                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
-                 })
-        {
-            if (string.IsNullOrWhiteSpace(baseRoot)) continue;
-            string steamRoot = Path.Combine(baseRoot, "Steam");
-            if (Directory.Exists(steamRoot))
-            {
-                roots.Add(steamRoot);
-            }
-        }
-
-        foreach (string root in roots.ToList())
-        {
-            string libraryFoldersPath = Path.Combine(root, "steamapps", "libraryfolders.vdf");
-            if (!File.Exists(libraryFoldersPath)) continue;
-            try
-            {
-                foreach (string line in File.ReadAllLines(libraryFoldersPath))
-                {
-                    int pathIndex = line.IndexOf("\"path\"", StringComparison.OrdinalIgnoreCase);
-                    if (pathIndex < 0) continue;
-                    string[] parts = line.Split('"');
-                    if (parts.Length < 4) continue;
-                    string path = parts[3].Replace("\\\\", "\\");
-                    if (Directory.Exists(path))
-                    {
-                        roots.Add(path);
-                    }
-                }
-            }
-            catch
-            {
-                // Steam library discovery is best-effort.
-            }
-        }
-
-        return roots;
-    }
-
-    private static IEnumerable<string> SafeGetDirectories(string path)
-    {
-        try
-        {
-            return Directory.Exists(path) ? Directory.GetDirectories(path) : Array.Empty<string>();
-        }
-        catch
-        {
-            return Array.Empty<string>();
+            yield return Path.Combine(blenderDirectory, "blender.exe");
         }
     }
 

@@ -52,8 +52,8 @@ internal static class BlenderLiveProtocol
 {
     public const uint Magic = 0x4C42434D;
     public const byte Version = 1;
-    public const int HeaderBytes = 12;
-    public const int MaxTokenBytes = 256;
+    public const int HeaderBytes = Orbiters.Toolkit.Editor.LiveLink.LiveLinkFormat.HeaderBytes;
+    public const int MaxTokenBytes = Orbiters.Toolkit.Editor.LiveLink.LiveLinkFormat.MaxTokenBytes;
     // A million vertices with their 12 bytes, and room for the mesh id.
     public const int MaxPayloadBytes = 16 * 1024 * 1024;
 
@@ -81,25 +81,11 @@ internal static class BlenderLiveProtocol
         public string Json;
     }
 
-    public static byte[] Encode(FrameType type, string token, byte[] payload)
-    {
-        byte[] tokenBytes = Encoding.UTF8.GetBytes(token ?? string.Empty);
-        payload ??= Array.Empty<byte>();
-        if (tokenBytes.Length > MaxTokenBytes) throw new ArgumentException("The token is too long.");
-        if (payload.Length > MaxPayloadBytes) throw new ArgumentException("The frame is too big.");
-        using (var stream = new MemoryStream(HeaderBytes + tokenBytes.Length + payload.Length))
-        using (var writer = new BinaryWriter(stream))
-        {
-            writer.Write(Magic);
-            writer.Write(Version);
-            writer.Write((byte)type);
-            writer.Write((ushort)tokenBytes.Length);
-            writer.Write(payload.Length);
-            writer.Write(tokenBytes);
-            writer.Write(payload);
-            return stream.ToArray();
-        }
-    }
+    // The frame layout is Toolkit's live link format, under this protocol's magic and version.
+    internal static readonly Orbiters.Toolkit.Editor.LiveLink.LiveLinkFormat Format =
+        new Orbiters.Toolkit.Editor.LiveLink.LiveLinkFormat(Magic, Version, MaxPayloadBytes, type => Enum.IsDefined(typeof(FrameType), type));
+
+    public static byte[] Encode(FrameType type, string token, byte[] payload) => Format.Encode((byte)type, token, payload);
 
     public static byte[] MeshPayload(string meshId, float[] positions)
     {
@@ -131,14 +117,9 @@ internal static class BlenderLiveProtocol
     /// <summary>Reads the 12-byte header: false when it is not a frame of this protocol (or announces too much).</summary>
     public static bool TryReadHeader(byte[] header, out FrameType type, out int tokenLength, out int payloadLength)
     {
-        type = 0;
-        tokenLength = payloadLength = 0;
-        if (header == null || header.Length < HeaderBytes) return false;
-        if (BitConverter.ToUInt32(header, 0) != Magic || header[4] != Version) return false;
-        type = (FrameType)header[5];
-        tokenLength = BitConverter.ToUInt16(header, 6);
-        payloadLength = BitConverter.ToInt32(header, 8);
-        return Enum.IsDefined(typeof(FrameType), type) && tokenLength <= MaxTokenBytes && payloadLength >= 0 && payloadLength <= MaxPayloadBytes;
+        bool valid = Format.TryReadHeader(header, out byte raw, out tokenLength, out payloadLength);
+        type = (FrameType)raw;
+        return valid;
     }
 
     /// <summary>Decodes a frame's payload by its type; false (with a reason) when it does not hold together.</summary>
@@ -183,13 +164,6 @@ internal static class BlenderLiveProtocol
     }
 
     /// <summary>Compares tokens in constant time (a wrong token never tells how much of it was right).</summary>
-    public static bool SameToken(string a, string b)
-    {
-        if (a == null || b == null) return false;
-        int difference = a.Length ^ b.Length;
-        for (int i = 0; i < Math.Max(a.Length, b.Length); i++)
-            difference |= (i < a.Length ? a[i] : 0) ^ (i < b.Length ? b[i] : 0);
-        return difference == 0;
-    }
+    public static bool SameToken(string a, string b) => Orbiters.Toolkit.Editor.LiveLink.LiveLinkFormat.SameToken(a, b);
 }
 #endif
