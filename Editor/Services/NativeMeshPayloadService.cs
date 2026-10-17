@@ -1623,6 +1623,20 @@ public static partial class NativeMeshPayloadService
         return payload;
     }
 
+    // Turns Read/Write on in the model's import settings (the payload reads the vertices) and imports it again: the mesh
+    // object stays the same one. Only a mesh that isn't an imported model's stays unreadable.
+    private static void MakeReadable(Mesh mesh)
+    {
+        string path = AssetDatabase.GetAssetPath(mesh);
+        if (AssetImporter.GetAtPath(path) is ModelImporter importer && !importer.isReadable)
+        {
+            MCBLogger.Log($"[NativeMeshPayload] Enabling Read/Write on {path} to read {mesh.name}.");
+            importer.isReadable = true;
+            importer.SaveAndReimport();
+        }
+        if (!mesh.isReadable) throw new InvalidOperationException("The mesh " + mesh.name + " can't be read" + (string.IsNullOrEmpty(path) ? "" : " (" + path + ")") + ": enable Read/Write on its model.");
+    }
+
     private static void WriteMesh(BinaryWriter writer, Mesh mesh, string meshName, NativeMeshPayloadBuildMetrics metrics,
         Dictionary<(string shape, int frame), DynamicNormals.NormalFrame> normalFrames = null)
     { MCBWork.Drain(WriteMeshCoroutine(writer, mesh, meshName, metrics, normalFrames)); }
@@ -1635,7 +1649,7 @@ public static partial class NativeMeshPayloadService
             throw new InvalidOperationException("Native mesh payload cannot serialize a null mesh.");
         }
 
-        if (!mesh.isReadable) throw new InvalidOperationException("Enable Read/Write on the custom model: " + mesh.name);
+        if (!mesh.isReadable) MakeReadable(mesh);
         {
             var vertices = mesh.vertices;
             writer.Write(string.IsNullOrWhiteSpace(meshName) ? mesh.name : meshName);
