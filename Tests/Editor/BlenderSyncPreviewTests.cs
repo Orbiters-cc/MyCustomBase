@@ -2,19 +2,21 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 
+// The Blender link's preview of a Blender export: the Toolkit's Blender fixture is the avatar's base model, and edited
+// copies of it are the exports.
 public class BlenderSyncPreviewTests
 {
+    private const string Fixture = "Packages/orbiters.toolkit/Tests/Editor/Fixtures/BlenderSkinned.fbx";
     private string folder;
-    private string sourcePath;
-    private string originalFileContents;
-    private GameObject source;
+    private string exportsFolder;
+    private byte[] fixtureBytes;
     private GameObject avatar;
-    private Mesh sourceMesh;
     private Mesh originalMesh;
 
     [SetUp]
@@ -22,93 +24,99 @@ public class BlenderSyncPreviewTests
     {
         folder = "Assets/MCB_BlenderPreviewTest_" + Guid.NewGuid().ToString("N");
         AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
-        sourcePath = folder + "/Source.prefab";
-        source = BuildRig("Export", 2f, out sourceMesh);
-        avatar = BuildRig("Avatar", 1f, out originalMesh);
-        PrefabUtility.SaveAsPrefabAsset(avatar, sourcePath);
-        originalFileContents = File.ReadAllText(sourcePath);
+        exportsFolder = Path.Combine(Path.GetTempPath(), "MCB_BlenderPreviewTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(exportsFolder);
+        fixtureBytes = File.ReadAllBytes(Path.GetFullPath(Fixture));
+        avatar = UnityEngine.Object.Instantiate(AssetDatabase.LoadAssetAtPath<GameObject>(Fixture));
+        avatar.hideFlags = HideFlags.HideAndDontSave;
+        originalMesh = Body().sharedMesh;
     }
 
     [TearDown]
     public void TearDown()
     {
-        UnityEngine.Object.DestroyImmediate(source);
         UnityEngine.Object.DestroyImmediate(avatar);
-        UnityEngine.Object.DestroyImmediate(sourceMesh);
-        UnityEngine.Object.DestroyImmediate(originalMesh);
         AssetDatabase.DeleteAsset(folder);
+        Directory.Delete(exportsFolder, true);
     }
 
-    private static GameObject BuildRig(string name, float height, out Mesh mesh)
+    private SkinnedMeshRenderer Body() => avatar.transform.Find("Body").GetComponent<SkinnedMeshRenderer>();
+
+    // The fixture with its first point raised in the file's space.
+    private string Export(string name, float lift)
     {
-        var root = new GameObject(name);
-        var bone = new GameObject("Hips");
-        bone.transform.SetParent(root.transform, false);
-        var body = new GameObject("Body");
-        body.transform.SetParent(root.transform, false);
-        mesh = new Mesh { name = "Body" };
-        mesh.vertices = new[] { Vector3.zero, Vector3.right, Vector3.up * height };
-        mesh.triangles = new[] { 0, 1, 2 };
-        mesh.boneWeights = new[] {
-            new BoneWeight { boneIndex0 = 0, weight0 = 1 },
-            new BoneWeight { boneIndex0 = 0, weight0 = 1 },
-            new BoneWeight { boneIndex0 = 0, weight0 = 1 }
-        };
-        mesh.bindposes = new[] { Matrix4x4.identity };
-        mesh.RecalculateNormals();
-        mesh.RecalculateBounds();
-        var renderer = body.AddComponent<SkinnedMeshRenderer>();
-        renderer.sharedMesh = mesh;
-        renderer.bones = new[] { bone.transform };
-        renderer.rootBone = bone.transform;
-        return root;
+        var document = Orbiters.Toolkit.Editor.Meshes.FbxDocument.Read(fixtureBytes);
+        var geometry = document.Objects().Values.Single(o => o.Name == "Geometry" && o.Class == "Mesh" && o.ObjectName == "Body");
+        ((double[])geometry.Child("Vertices").Properties[0])[1] += lift;
+        string path = Path.Combine(exportsFolder, name + ".fbx");
+        File.WriteAllBytes(path, document.Write());
+        return path;
     }
 
-    private List<ModelFileSmrPathData> Mappings(string path = "Body") => new List<ModelFileSmrPathData> {
-        new ModelFileSmrPathData { avatarPath = path, fbxMeshPath = "Body", meshName = "Body", rendererName = "Body" }
+    private static List<ModelFileSmrPathData> Mappings() => new List<ModelFileSmrPathData> {
+        new ModelFileSmrPathData { avatarPath = "Body", fbxMeshPath = "Body", meshName = "Body", rendererName = "Body" }
     };
 
-    [Test]
-    public void PreviewAppliesEditedGeometryAndSurvivesDeletingImportedModel()
+    private NativeMeshPayloadAsset Apply(string export, IEnumerable<MeshBlendshapeSelection> dynamicNormals = null) =>
+        NativeMeshPayloadService.ApplyBlenderExportPreview(avatar.transform, export, Fixture, Mappings(), folder, dynamicNormals, null);
+
+    private static Vector3[] ReadBody(string export)
     {
-        var payload = NativeMeshPayloadService.ApplyModelPreview(avatar.transform, source, sourcePath, Mappings(), folder);
-        var body = avatar.GetComponentInChildren<SkinnedMeshRenderer>();
-        Assert.AreEqual(2f, body.sharedMesh.vertices[2].y);
-        Assert.AreSame(avatar.transform.Find("Hips"), body.bones[0]);
+        var model = Orbiters.Toolkit.Editor.Meshes.FbxModel.Load(export);
+        try { return model.transform.Find("Body").GetComponent<SkinnedMeshRenderer>().sharedMesh.vertices; }
+        finally { Orbiters.Toolkit.Editor.Meshes.FbxModel.Release(model); }
+    }
+
+    [Test]
+    public void PreviewShowsTheExportOnTheAvatarsBones()
+    {
+        string export = Export("raised", 0.1f);
+        var payload = Apply(export);
+        var body = Body();
+        Assert.That(body.sharedMesh.vertices, Is.EqualTo(ReadBody(export)), "The export's vertices, read straight from its file.");
+        Assert.That(body.sharedMesh.vertices, Is.Not.EqualTo(ReadBody(Path.GetFullPath(Fixture))));
         Assert.IsTrue(AssetDatabase.Contains(body.sharedMesh));
-        Assert.AreNotSame(sourceMesh, body.sharedMesh);
-        UnityEngine.Object.DestroyImmediate(source);
-        source = null;
-        UnityEngine.Object.DestroyImmediate(sourceMesh);
-        sourceMesh = null;
-        Assert.AreEqual(2f, body.sharedMesh.vertices[2].y);
         Assert.AreSame(payload.renderers[0].mesh, body.sharedMesh);
-        Assert.AreEqual(originalFileContents, File.ReadAllText(sourcePath));
+        Assert.AreSame(avatar.transform.Find("Armature/Hips"), body.rootBone);
+        foreach (var bone in body.bones) Assert.That(bone.IsChildOf(avatar.transform), Is.True, bone.name);
+        Assert.That(body.sharedMesh.blendShapeCount, Is.EqualTo(originalMesh.blendShapeCount));
+        Assert.That(File.ReadAllBytes(Path.GetFullPath(Fixture)), Is.EqualTo(fixtureBytes), "The base model is untouched.");
     }
 
     [Test]
     public void RepeatedPreviewReusesUnchangedPayloadAndRetainsEarlierMeshAfterAnotherEdit()
     {
-        var first = NativeMeshPayloadService.ApplyModelPreview(avatar.transform, source, sourcePath, Mappings(), folder);
-        var repeated = NativeMeshPayloadService.ApplyModelPreview(avatar.transform, source, sourcePath, Mappings(), folder);
+        string export = Export("raised", 0.1f);
+        var first = Apply(export);
+        var repeated = Apply(export);
         Assert.AreSame(first, repeated);
-        var vertices = sourceMesh.vertices;
-        vertices[2].y = 3f;
-        sourceMesh.vertices = vertices;
-        sourceMesh.RecalculateBounds();
-        var next = NativeMeshPayloadService.ApplyModelPreview(avatar.transform, source, sourcePath, Mappings(), folder);
+        var firstVertices = first.renderers[0].mesh.vertices;
+        var next = Apply(Export("raised more", 0.2f));
         Assert.AreNotSame(first, next);
-        Assert.AreEqual(2f, first.renderers[0].mesh.vertices[2].y);
-        Assert.AreEqual(3f, avatar.GetComponentInChildren<SkinnedMeshRenderer>().sharedMesh.vertices[2].y);
+        Assert.That(first.renderers[0].mesh.vertices, Is.EqualTo(firstVertices), "The earlier preview stays as it was (Undo).");
+        Assert.AreSame(next.renderers[0].mesh, Body().sharedMesh);
+    }
+
+    [Test]
+    public void DynamicNormalBlendshapesGetTheirNormalsBakedAndTheOthersNone()
+    {
+        var payload = Apply(Export("raised", 0.1f), new[] { new MeshBlendshapeSelection { mesh = "Body", names = new List<string> { "Orbit muscles" } } });
+        var mesh = payload.renderers[0].mesh;
+        var deltas = new Vector3[mesh.vertexCount];
+        var normals = new Vector3[mesh.vertexCount];
+        mesh.GetBlendShapeFrameVertices(mesh.GetBlendShapeIndex("Orbit muscles"), 0, deltas, normals, null);
+        Assert.That(normals.Any(n => n.sqrMagnitude > 1e-8f), Is.True, "Baked normals on the selected blendshape.");
+        mesh.GetBlendShapeFrameVertices(mesh.GetBlendShapeIndex("Flex arm"), 0, deltas, normals, null);
+        Assert.That(deltas.Any(d => d.sqrMagnitude > 1e-8f), Is.True);
+        Assert.That(normals.All(n => n == Vector3.zero), Is.True, "Positions only on the others, as a version's payload.");
     }
 
     [Test]
     public void MissingBoneFailsWithoutChangingAvatarMesh()
     {
-        UnityEngine.Object.DestroyImmediate(avatar.transform.Find("Hips").gameObject);
-        Assert.Throws<InvalidOperationException>(() => NativeMeshPayloadService.ApplyModelPreview(
-            avatar.transform, source, sourcePath, Mappings(), folder));
-        Assert.AreSame(originalMesh, avatar.GetComponentInChildren<SkinnedMeshRenderer>().sharedMesh);
+        UnityEngine.Object.DestroyImmediate(avatar.transform.Find("Armature/Hips/LeftUpperLeg").gameObject);
+        Assert.Throws<InvalidOperationException>(() => Apply(Export("raised", 0.1f)));
+        Assert.AreSame(originalMesh, Body().sharedMesh);
     }
 
     [Test]
@@ -116,7 +124,7 @@ public class BlenderSyncPreviewTests
     {
         var type = typeof(BlenderSyncService).GetNestedType("ActiveSession", BindingFlags.NonPublic);
         var session = Activator.CreateInstance(type, true);
-        string heartbeat = sourcePath + ".heartbeat";
+        string heartbeat = Path.Combine(exportsFolder, "heartbeat.json");
         type.GetField("heartbeatPath").SetValue(session, heartbeat);
         var update = typeof(BlenderSyncService).GetMethod("UpdateConnectionState", BindingFlags.Static | BindingFlags.NonPublic);
         try

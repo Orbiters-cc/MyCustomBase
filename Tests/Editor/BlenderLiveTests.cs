@@ -45,6 +45,21 @@ public class BlenderLiveTests
         Assert.That(frame.VertexCount, Is.EqualTo(2));
         Assert.That(frame.Positions, Is.EqualTo(positions));
 
+        Assert.That(frame.ShapeKey, Is.Empty, "Positions without a key are the base shape's.");
+
+        // Positions of a shape key end with its name.
+        byte[] key = System.Text.Encoding.UTF8.GetBytes("Orbit muscles");
+        var keyed = new BlenderLiveProtocol.Frame
+        {
+            Type = BlenderLiveProtocol.FrameType.Positions,
+            Payload = frame.Payload.Concat(BitConverter.GetBytes((ushort)key.Length)).Concat(key).ToArray()
+        };
+        Assert.That(BlenderLiveProtocol.TryDecodePayload(keyed, out error), Is.True, error);
+        Assert.That(keyed.ShapeKey, Is.EqualTo("Orbit muscles"));
+        Assert.That(keyed.Positions, Is.EqualTo(positions));
+        keyed.Payload = keyed.Payload.Concat(new byte[] { 1 }).ToArray();
+        Assert.That(BlenderLiveProtocol.TryDecodePayload(keyed, out error), Is.False, "Bytes after the key are refused.");
+
         frame.Payload = frame.Payload.Take(frame.Payload.Length - 4).ToArray();
         Assert.That(BlenderLiveProtocol.TryDecodePayload(frame, out error), Is.False, "A truncated payload is refused.");
         var bad = (byte[])data.Clone();
@@ -107,6 +122,7 @@ public class BlenderLiveTests
         var go = new GameObject("BlenderLivePreviewTest");
         var mesh = new Mesh { vertices = UnitySplitQuad(v => v), triangles = new[] { 0, 1, 2, 3, 4, 5 } };
         mesh.RecalculateNormals();
+        mesh.AddBlendShapeFrame("Orbit muscles", 100, Enumerable.Repeat(new Vector3(0, 0.1f, 0), mesh.vertexCount).ToArray(), null, null);
         try
         {
             var renderer = go.AddComponent<SkinnedMeshRenderer>();
@@ -124,6 +140,15 @@ public class BlenderLiveTests
                 "The two copies of a split vertex share one normal.");
             Assert.That(preview.Apply(new float[] { 1, 2, 3 }), Is.False, "Another vertex count is refused.");
 
+            // A shape key's positions already hold that key: the blendshape of that name comes off them (shown once).
+            var shown = renderer.sharedMesh.vertices;
+            Assert.That(preview.Apply(moved, "Orbit muscles"), Is.True);
+            var keyed = renderer.sharedMesh.vertices;
+            for (int i = 0; i < keyed.Length; i++)
+                Assert.That(Vector3.Distance(keyed[i], shown[i] - new Vector3(0, 0.1f, 0)), Is.LessThan(1e-5f));
+            Assert.That(preview.Apply(moved, "Not a blendshape"), Is.True);
+            Assert.That(renderer.sharedMesh.vertices[2], Is.EqualTo(shown[2]), "An unknown key takes nothing off.");
+
             preview.Revert();
             Assert.That(renderer.sharedMesh, Is.SameAs(mesh));
             Assert.That(preview.Active, Is.False);
@@ -132,6 +157,36 @@ public class BlenderLiveTests
         {
             UnityEngine.Object.DestroyImmediate(go);
             UnityEngine.Object.DestroyImmediate(mesh);
+        }
+    }
+
+    [Test]
+    public void ARendererLeftOnAGoneLiveMeshGetsItsOriginalBack()
+    {
+        var go = new GameObject("BlenderLiveMeshGuardTest");
+        var original = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
+        var live = UnityEngine.Object.Instantiate(original);
+        live.hideFlags = HideFlags.HideAndDontSave;
+        try
+        {
+            var renderer = go.AddComponent<SkinnedMeshRenderer>();
+            BlenderLiveMeshGuard.Shown(live, original);
+            renderer.sharedMesh = live;
+            Assert.That(BlenderLiveMeshGuard.Repair(), Is.EqualTo(0), "A live mesh a preview shows stays.");
+            Assert.That(BlenderLiveMeshGuard.OriginalOf(live), Is.SameAs(original));
+
+            // The preview ended, then (as an Undo would) the renderer got the destroyed live mesh back.
+            BlenderLiveMeshGuard.Released(live);
+            UnityEngine.Object.DestroyImmediate(live);
+            Assert.That(renderer.sharedMesh == null, Is.True);
+            LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("BlenderLiveMeshGuardTest"));
+            Assert.That(BlenderLiveMeshGuard.Repair(), Is.EqualTo(1));
+            Assert.That(renderer.sharedMesh, Is.SameAs(original));
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(go);
+            if (live) UnityEngine.Object.DestroyImmediate(live);
         }
     }
 

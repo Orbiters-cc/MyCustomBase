@@ -59,18 +59,47 @@ public class DynamicNormalsService
     {
         if (editor.customBaseTarget == null) return;
         var root = AvatarPaths.Root(editor.customBaseTarget);
+        var selection = FlagSelection(root, includeBody, includeFlexing);
+        if (selection != null) Apply(new[] { selection });
+    }
+
+    // The older versions' flags: the Body's blendshapes named after muscles (body) or flexing.
+    private static MeshBlendshapeSelection FlagSelection(Transform root, bool includeBody, bool includeFlexing)
+    {
         var body = MeshFinder.FindMeshPrioritizingRoot(root, "Body");
-        if (body?.sharedMesh == null) return;
+        if (body?.sharedMesh == null) return null;
         var names = Enumerable.Range(0, body.sharedMesh.blendShapeCount).Select(body.sharedMesh.GetBlendShapeName)
             .Where(n => (includeBody && n.IndexOf("muscle", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 || (includeFlexing && n.IndexOf("flex", System.StringComparison.OrdinalIgnoreCase) >= 0)).ToList();
-        Apply(new[] { new MeshBlendshapeSelection { mesh = AnimationUtility.CalculateTransformPath(body.transform, root), names = names } });
+        return new MeshBlendshapeSelection { mesh = AnimationUtility.CalculateTransformPath(body.transform, root), names = names };
     }
 
-    private Dictionary<string, Vector3> LegSeparation(SkinnedMeshRenderer renderer)
+    /// <summary>
+    /// The blendshapes whose normals the avatar recalculates: the creator's selection, else the applied customization's,
+    /// else the applied version's (its selection, or its body/flexing flags).
+    /// </summary>
+    public static List<MeshBlendshapeSelection> Selections(MyCustomBase target)
+    {
+        if (target.creatorCustomization?.dynamicNormalBlendshapes?.Count > 0) return target.creatorCustomization.dynamicNormalBlendshapes;
+        if (target.appliedCustomization?.dynamicNormalBlendshapes?.Count > 0) return target.appliedCustomization.dynamicNormalBlendshapes;
+        var extra = target.appliedCustomBaseVersion?.extraCustomization;
+        var versionSelection = VersionCustomization.Read(extra).dynamicNormalBlendshapes;
+        if (versionSelection.Count > 0) return versionSelection;
+        bool body = ExtraCustomizationUtils.HasFlag(extra, "dynamicNormalBody"), flexing = ExtraCustomizationUtils.HasFlag(extra, "dynamicNormalFlexing");
+        var flagged = body || flexing ? FlagSelection(AvatarPaths.Root(target), body, flexing) : null;
+        return flagged != null ? new List<MeshBlendshapeSelection> { flagged } : new List<MeshBlendshapeSelection>();
+    }
+
+    private Dictionary<string, Vector3> LegSeparation(SkinnedMeshRenderer renderer) => LegSeparation(editor.customBaseTarget, renderer);
+
+    /// <summary>
+    /// The legs moved apart (by bone name) while normals are computed, when the avatar asks for it: surfaces a blendshape
+    /// presses together (inner thighs, crotch) don't mix.
+    /// </summary>
+    internal static Dictionary<string, Vector3> LegSeparation(MyCustomBase target, SkinnedMeshRenderer renderer)
     {
         var result = new Dictionary<string, Vector3>(System.StringComparer.OrdinalIgnoreCase);
-        if (!editor.customBaseTarget.useAPoseForDynamicNormals) return result;
+        if (!target.useAPoseForDynamicNormals) return result;
         foreach (var bone in renderer.bones.Where(b => b != null))
         {
             if (!Orbiters.Toolkit.Armature.BoneNames.TryInferHumanoid(bone.name, out var humanoid)) continue;

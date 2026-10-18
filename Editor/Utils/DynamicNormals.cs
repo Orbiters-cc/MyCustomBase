@@ -173,13 +173,14 @@ namespace MCBEditorUtils
             public Vector3[] tangents;
         }
 
+        /// <param name="boneTranslations">Bones moved (by name) while the normals are computed, such as the legs apart.</param>
         internal static Dictionary<(string shape, int frame), NormalFrame> CaptureNormalFrames(
-            SkinnedMeshRenderer renderer, IEnumerable<string> selectedShapes)
+            SkinnedMeshRenderer renderer, IEnumerable<string> selectedShapes, Dictionary<string, Vector3> boneTranslations = null)
         {
             var result = new Dictionary<(string, int), NormalFrame>();
             var names = Enumerable.Range(0, renderer.sharedMesh.blendShapeCount)
                 .Select(renderer.sharedMesh.GetBlendShapeName).ToList();
-            RecalculateNormalsOf(renderer, names, selectedShapes.ToList(), new List<string>(), null, null, false,
+            RecalculateNormalsOf(renderer, names, selectedShapes.ToList(), new List<string>(), null, boneTranslations, false,
                 (name, frame, normals, tangents) => result.Add((name, frame), new NormalFrame
                 {
                     normals = (Vector3[])normals.Clone(), tangents = (Vector3[])tangents.Clone()
@@ -388,7 +389,7 @@ namespace MCBEditorUtils
                         newMesh = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
                         MCBLogger.Log($"[DynamicNormals] Saved dynamic normals mesh as asset at: {assetPath}");
                     }
-                    else
+                    else if (saveAsAsset)
                     {
                         Debug.LogWarning($"[DynamicNormals] Could not save mesh as asset (original mesh has no asset path). Mesh will be in-memory only.");
                     }

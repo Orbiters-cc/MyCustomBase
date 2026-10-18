@@ -33,6 +33,8 @@ internal sealed class BlenderLiveSession : IDisposable
         public string mapFailureKey;
         public BlenderLivePreview preview;
         public bool topologyChanged;
+        // The avatar's mesh isn't Blender's (not the same vertices at the same places): an export is needed to match them.
+        public bool differs;
         public bool live;
         public string message = "Waiting for an edit in Blender";
         public string sentStatus;
@@ -59,8 +61,8 @@ internal sealed class BlenderLiveSession : IDisposable
     public bool Connected => channel.Connected;
     public bool Committing => commitStartedAt >= 0;
     public bool HasLiveMeshes => meshes.Values.Any(mesh => mesh.preview != null && mesh.preview.Active);
-    /// <summary>A mesh changed in Blender in a way only a commit (FBX export) can show.</summary>
-    public bool NeedsCommit => meshes.Values.Any(mesh => mesh.topologyChanged);
+    /// <summary>A mesh changed in Blender in a way only a commit (FBX export) can show, or the avatar's differs from Blender's.</summary>
+    public bool NeedsCommit => meshes.Values.Any(mesh => mesh.topologyChanged || mesh.differs);
     /// <summary>Each streamed mesh: whether it is live in Unity, and why not.</summary>
     public IEnumerable<(string meshId, bool live, string message)> MeshStates =>
         meshes.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => (pair.Key, pair.Value.live, pair.Value.message));
@@ -74,6 +76,18 @@ internal sealed class BlenderLiveSession : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Tells Blender an image was painted for a slot of a renderer it streams (as one of its meshes); false when it streams
+    /// none for that renderer or is not connected.
+    /// </summary>
+    public bool SendTexture(Renderer renderer, int slot, string map, string path)
+    {
+        string meshId = meshes.Keys.FirstOrDefault(id => resolveRenderer(id) == renderer);
+        if (meshId == null) return false;
+        string json = JsonConvert.SerializeObject(new { meshId, slot, channel = map, path });
+        return channel.Send(BlenderLiveProtocol.FrameType.Texture, System.Text.Encoding.UTF8.GetBytes(json));
+    }
+
     /// <summary>The avatar's own meshes again; the next edit in Blender shows live again.</summary>
     public void Revert()
     {
@@ -81,7 +95,9 @@ internal sealed class BlenderLiveSession : IDisposable
         {
             var mesh = pair.Value;
             if (mesh.preview == null) continue;
+            var root = mesh.preview.Renderer ? mesh.preview.Renderer.transform.root : null;
             mesh.preview.Revert();
+            Orbiters.Toolkit.Editor.Meshes.AvatarMeshEdits.NotifyPreviewed(root);
             mesh.preview = null;
             mesh.latest = null;
             SetStatus(pair.Key, mesh, false, "Reverted in Unity; the next edit in Blender shows live again");
@@ -150,7 +166,7 @@ internal sealed class BlenderLiveSession : IDisposable
                 OnRest(frame.MeshId, frame.Positions);
                 break;
             case BlenderLiveProtocol.FrameType.Positions:
-                OnPositions(frame.MeshId, frame.Positions);
+                OnPositions(frame.MeshId, frame.Positions, frame.ShapeKey);
                 break;
             case BlenderLiveProtocol.FrameType.Topology:
                 OnTopology(frame.MeshId, frame.VertexCount);
@@ -179,6 +195,7 @@ internal sealed class BlenderLiveSession : IDisposable
         }
         mesh.rest = rest;
         mesh.topologyChanged = false;
+        mesh.differs = false;
         mesh.map = null;
         mesh.mapMesh = null;
         mesh.mapFailureKey = null;
@@ -186,7 +203,7 @@ internal sealed class BlenderLiveSession : IDisposable
             SetStatus(meshId, mesh, false, "Ready; the next edit in Blender shows live");
     }
 
-    private void OnPositions(string meshId, float[] positions)
+    private void OnPositions(string meshId, float[] positions, string shapeKey)
     {
         var mesh = Get(meshId);
         if (mesh.topologyChanged) return;
@@ -203,13 +220,16 @@ internal sealed class BlenderLiveSession : IDisposable
             mesh.preview?.Revert();
             mesh.preview = new BlenderLivePreview(renderer, mesh.map);
         }
-        if (!mesh.preview.Apply(positions))
+        if (!mesh.preview.Apply(positions, shapeKey))
         {
+            mesh.differs = true;
             SetStatus(meshId, mesh, false, $"Blender sent {positions.Length / 3} vertices, the mesh has {mesh.map.BlenderVertexCount}: Commit to update");
             return;
         }
         mesh.latest = positions;
         SetStatus(meshId, mesh, true, "Live");
+        // What else follows the avatar's meshes (a Painter project) may show the edit too.
+        Orbiters.Toolkit.Editor.Meshes.AvatarMeshEdits.NotifyPreviewed(renderer.transform.root);
     }
 
     private void OnTopology(string meshId, int vertexCount)
@@ -245,12 +265,14 @@ internal sealed class BlenderLiveSession : IDisposable
         if (map == null)
         {
             mesh.mapFailureKey = key;
+            mesh.differs = true;
             SetStatus(meshId, mesh, false, "Not live: " + error + ". Commit to update");
             return false;
         }
         mesh.map = map;
         mesh.mapMesh = current;
         mesh.mapFailureKey = null;
+        mesh.differs = false;
         return true;
     }
 
@@ -258,7 +280,8 @@ internal sealed class BlenderLiveSession : IDisposable
     {
         mesh.live = live;
         mesh.message = message;
-        string status = JsonConvert.SerializeObject(new { meshId, live, message });
+        // "differs": Blender's next save exports this mesh even though it wasn't edited there since it opened.
+        string status = JsonConvert.SerializeObject(new { meshId, live, message, differs = mesh.differs });
         if (status == mesh.sentStatus) return;
         if (channel.Send(BlenderLiveProtocol.FrameType.Status, System.Text.Encoding.UTF8.GetBytes(status))) mesh.sentStatus = status;
     }

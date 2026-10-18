@@ -232,6 +232,14 @@ public static class BlenderSyncService
     private static void InitializePollingOnLoad()
     {
         EnsurePolling();
+        Orbiters.Toolkit.Editor.Textures.AvatarTextureEdits.Changed += ForwardPainted;
+    }
+
+    // What another tool painted on the avatar (My Avatar's Substance 3D Painter link) also shows in Blender.
+    private static void ForwardPainted(Orbiters.Toolkit.Editor.Textures.AvatarTextureEdits.Painted painted)
+    {
+        foreach (var session in ActiveSessions)
+            session?.live?.SendTexture(painted.Renderer, painted.Slot, painted.Channel, painted.Path);
     }
 
     public static void DrawCreatorModeSection(MCBEditor editor)
@@ -836,7 +844,25 @@ public static class BlenderSyncService
                 return;
             }
 
-            projectInfo = BlenderProjectService.CreateProjectInfo(editor);
+            // The project made from the meshes the avatar shows now: another version's project (or one made before projects
+            // were bound) is never reopened for them.
+            var avatarRoot = editor.customBaseTarget.transform.root;
+            var targetUnityPaths = targetFbxPaths.Select(MCBUtils.ToUnityPath).ToList();
+            var discovered = SmrPathService.CollectSmrPathsByFbx(avatarRoot, targetFbxPaths);
+            var sources = TargetRenderers(avatarRoot, targetUnityPaths, path => TargetSmrPaths(editor.GetSelectedAsset(), path, discovered, null));
+            projectInfo = BlenderProjectService.ProjectFor(editor, BlenderSourceFbx.FingerprintOf(avatarRoot, sources));
+            // Blender has the project open already (its title holds the file): that one comes forward, nothing is
+            // prepared again over the file it has open.
+            using (var open = AppWindows.FindShowing(Path.GetFileNameWithoutExtension(blenderPath), Path.GetFullPath(projectInfo.projectAbsolutePath)))
+            {
+                if (open != null)
+                {
+                    AppWindows.BringToFront(open);
+                    SetStatus($"Blender already has the project open:\n{projectInfo.projectUnityPath}", MessageType.Info);
+                    try { InternalEditorUtility.RepaintAllViews(); } catch { }
+                    return;
+                }
+            }
             if (!TryBeginProjectPreparation(projectInfo.projectAbsolutePath))
             {
                 SetStatus($"Blender project is already being prepared:\n{projectInfo.projectUnityPath}", MessageType.Info);
@@ -848,6 +874,7 @@ public static class BlenderSyncService
             BlenderProjectService.EnsureProjectFolders(projectInfo);
 
             var result = CreateSyncSession(editor, targetFbxPaths, projectInfo);
+            UseShownMeshes(result, avatarRoot, sources, projectInfo);
             RegisterActiveSession(result.activeSession);
             EditorGUIUtility.systemCopyBuffer = result.payloadJson;
 
@@ -894,15 +921,7 @@ public static class BlenderSyncService
         var targetFiles = targetFbxPaths.Select(path =>
         {
             string unityPath = MCBUtils.ToUnityPath(path);
-            var discoveredEntries = smrPathsByFbx.TryGetValue(unityPath, out var entries)
-                ? entries
-                : new List<ModelFileSmrPathData>();
-            var serverEntries = GetSelectedAssetSmrPaths(selectedAsset, unityPath);
-            // Preview meshes no longer point at the original FBX. Keep the established
-            // mapping when reconnecting so another export still targets those renderers.
-            var previousEntries = existing?.targetFbxFiles.FirstOrDefault(file => file != null &&
-                string.Equals(MCBUtils.ToUnityPath(file.unityPath), unityPath, StringComparison.OrdinalIgnoreCase))?.smrPaths;
-            var mergedEntries = MergeSmrPaths(discoveredEntries, previousEntries, serverEntries);
+            var mergedEntries = TargetSmrPaths(selectedAsset, unityPath, smrPathsByFbx, existing);
             return new TargetFbxInfo
             {
                 unityPath = unityPath,
@@ -1069,6 +1088,37 @@ public static class BlenderSyncService
         return slash >= 0 ? path.Substring(slash + 1) : path;
     }
 
+    /// <summary>
+    /// Blender starts from what the avatar shows: a target whose renderers show another mesh than the FBX's own (an
+    /// applied version) is imported from a copy of the FBX holding those meshes, written once in the project's source
+    /// folder (a project is bound to these meshes, so the copy stays right for it).
+    /// </summary>
+    private static void UseShownMeshes(SyncSessionBuildResult result, Transform avatarRoot,
+        List<(string Target, List<(SkinnedMeshRenderer Renderer, string FbxMesh)> Renderers)> sources, BlenderProjectInfo projectInfo)
+    {
+        var targets = result.payload["targetFbxFiles"] as JArray;
+        foreach (var (target, renderers) in sources)
+        {
+            if (renderers.Count == 0 || BlenderSourceFbx.ShowsTarget(target, renderers)) continue;
+            string file = Path.Combine(BlenderProjectService.SourceFolder(projectInfo.projectAbsolutePath), Path.GetFileName(target));
+            if (!File.Exists(file))
+            {
+                try
+                {
+                    EditorUtility.DisplayProgressBar("Modify with Blender", "Writing the meshes the avatar shows for Blender: " + Path.GetFileName(target), 0.5f);
+                    BlenderSourceFbx.Write(avatarRoot, target, renderers, file);
+                }
+                finally { EditorUtility.ClearProgressBar(); }
+                MCBLogger.Log($"[BlenderSync] Blender starts {Path.GetFileName(target)} from the meshes the avatar shows: {file}");
+            }
+            foreach (var entry in targets?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
+                if (string.Equals(MCBUtils.ToUnityPath((string)entry["unityPath"]), target, StringComparison.OrdinalIgnoreCase)) entry["absolutePath"] = file;
+            foreach (var info in result.activeSession.targetFbxFiles)
+                if (string.Equals(MCBUtils.ToUnityPath(info.unityPath), target, StringComparison.OrdinalIgnoreCase)) info.absolutePath = file;
+        }
+        result.payloadJson = result.payload.ToString(Formatting.Indented);
+    }
+
     private static void WriteBlenderLaunchConfig(SyncSessionBuildResult result, string launchConfigPath)
     {
         var launchPayload = new
@@ -1181,7 +1231,8 @@ public static class BlenderSyncService
             UseShellExecute = false,
             CreateNoWindow = false
         };
-        Process.Start(startInfo);
+        // The project was prepared in the background meanwhile: Blender's window would open behind Unity.
+        AppWindows.BringToFrontOnceShown(Process.Start(startInfo));
     }
 
     private static string QuoteArgument(string value)
@@ -1522,6 +1573,14 @@ public static class BlenderSyncService
                 .ToList();
             MuscleCorrectiveStore.Apply(session.customBase, manifest.xmuscle, exportedMeshes);
         }
+        // The project the export came from also stands for what the avatar shows now: Modify with Blender opens it again.
+        if (!string.IsNullOrEmpty(session.blenderProjectAbsolutePath))
+        {
+            var avatarRoot = session.customBase.transform.root;
+            var shown = TargetRenderers(avatarRoot, session.targetFbxFiles.Select(t => MCBUtils.ToUnityPath(t.unityPath)),
+                path => session.targetFbxFiles.FirstOrDefault(t => string.Equals(MCBUtils.ToUnityPath(t.unityPath), path, StringComparison.OrdinalIgnoreCase))?.smrPaths);
+            BlenderProjectService.Bind(session.blenderProjectAbsolutePath, BlenderSourceFbx.FingerprintOf(avatarRoot, shown));
+        }
         // What other tools made from these meshes (My Avatar's Substance Painter project) can be made again.
         AvatarMeshEdits.NotifyApplied(MCBReFitIntegration.Root(session.customBase));
     }
@@ -1728,20 +1787,15 @@ public static class BlenderSyncService
         return mappings;
     }
 
+    // The export read straight from Blender's FBX, with the avatar's dynamic normals baked in (as a version's payload has them).
     private static void ApplyAdvancedMeshPreview(ActiveSession session, string externalFbxPath, string targetFbxPath, List<ModelFileSmrPathData> mappings)
     {
-        string temporaryPath = null;
-        try
-        {
-            var imported = NativeMeshPayloadService.ImportExternalFbxForPayload(externalFbxPath, out temporaryPath);
-            NativeMeshPayloadService.ApplyModelPreview(session.customBase.transform.root, imported,
-                MCBUtils.ToUnityPath(targetFbxPath), mappings,
-                MCBUtils.CombineUnityPath(MCBUtils.ASSETS_BASE_FOLDER, "generated", "blenderPreviews", session.sessionId));
-        }
-        finally
-        {
-            NativeMeshPayloadService.DeleteTemporaryImportedFbx(temporaryPath);
-        }
+        var target = session.customBase;
+        NativeMeshPayloadService.ApplyBlenderExportPreview(target.transform.root, externalFbxPath,
+            MCBUtils.ToUnityPath(targetFbxPath), mappings,
+            MCBUtils.CombineUnityPath(MCBUtils.ASSETS_BASE_FOLDER, "generated", "blenderPreviews", session.sessionId),
+            target.useDynamicNormals ? DynamicNormalsService.Selections(target) : null,
+            renderer => DynamicNormalsService.LegSeparation(target, renderer));
     }
 
     private static void DrawBlenderConnectionState(MCBEditor editor)
@@ -2496,6 +2550,23 @@ public static class BlenderSyncService
             MCBLogger.LogWarning("[BlenderSync] Failed to scan a waiting Blender export: " + ex.Message);
         }
     }
+
+    // The avatar's renderers a target FBX's meshes show on: found in the scene, from the asset's records, and kept from the
+    // session when reconnecting (preview meshes no longer point at the original FBX, so another export still targets them).
+    private static List<ModelFileSmrPathData> TargetSmrPaths(AvatarDiscoveredAsset selectedAsset, string unityPath,
+        Dictionary<string, List<ModelFileSmrPathData>> discovered, ActiveSession existing)
+    {
+        var discoveredEntries = discovered.TryGetValue(unityPath, out var entries) ? entries : new List<ModelFileSmrPathData>();
+        var serverEntries = GetSelectedAssetSmrPaths(selectedAsset, unityPath);
+        var previousEntries = existing?.targetFbxFiles.FirstOrDefault(file => file != null &&
+            string.Equals(MCBUtils.ToUnityPath(file.unityPath), unityPath, StringComparison.OrdinalIgnoreCase))?.smrPaths;
+        return MergeSmrPaths(discoveredEntries, previousEntries, serverEntries);
+    }
+
+    // Each target with the renderers it shows on.
+    private static List<(string Target, List<(SkinnedMeshRenderer Renderer, string FbxMesh)> Renderers)> TargetRenderers(Transform avatarRoot,
+        IEnumerable<string> targetUnityPaths, Func<string, List<ModelFileSmrPathData>> smrPaths) =>
+        targetUnityPaths.Select(path => (path, BlenderSourceFbx.Renderers(avatarRoot, smrPaths(path)))).ToList();
 
     private static List<ModelFileSmrPathData> GetSelectedAssetSmrPaths(AvatarDiscoveredAsset selectedAsset, string unityPath)
     {

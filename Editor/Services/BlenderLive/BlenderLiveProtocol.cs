@@ -26,26 +26,31 @@ using System.Text;
 /// <list type="bullet">
 /// <item>Hello (Blender to Unity, first frame): UTF-8 JSON <c>{"sessionId","blender","addon"}</c>.</item>
 /// <item>Rest and Positions (Blender to Unity): mesh id (u16 length + UTF-8), u32 vertex count, then count × 3 float32
-/// positions.
+/// positions; Positions may end with the shape key they are (u16 length + UTF-8, absent or empty for the base shape).
 ///   <para>Mesh id: the renderer Blender knows the mesh as (its <c>mcb_target_renderer_name</c>, set when Unity opened the
 ///   project), else its object name, which is the FBX node name. Unity looks it up in the session's renderer mapping by
 ///   renderer name, FBX node name, then mesh name.</para>
 ///   <para>Positions: the mesh's own local coordinates, which is what MCB's FBX export writes (no modifiers, no
 ///   space-transform baking). Unity's import of that FBX holds them as (-x, y, z); the vertex map finds this from the
 ///   Rest positions, so Blender never converts. The positions are those of the layer being edited: the active shape key
-///   while it is edited (Edit or Sculpt mode on a key other than the reference one), else the base shape. Shape key
-///   values are ignored: Unity's blendshapes apply on top as they are.</para>
+///   while it is edited (Edit or Sculpt mode on a key other than the reference one), named after them, else the base
+///   shape. Unity's blendshapes apply on top as they are: positions of a key are the base plus that key, so Unity takes
+///   its blendshape of that name off them first (else the key would show twice).</para>
 ///   <para>Rest: the positions Unity's mesh was made from, as of Blender's last export of the mesh or, before any, as
 ///   when Blender connected. Sent for every target mesh after Hello and again after each export. Positions: about 200 ms
 ///   after the last edit, only when they changed; after a (re)connection also when they differ from the rest.</para></item>
 /// <item>Topology (Blender to Unity): mesh id, u32 the new vertex count, sent once when the vertex count differs from the
 /// rest. Blender sends no Positions for that mesh until its next Rest; Unity shows "Commit to update".</item>
-/// <item>Status (Unity to Blender): UTF-8 JSON <c>{"meshId","live":true|false,"message"}</c>, when a mesh's state
-/// changes.</item>
+/// <item>Status (Unity to Blender): UTF-8 JSON <c>{"meshId","live":true|false,"message","differs":true|false}</c>, when
+/// a mesh's state changes. "differs": the avatar's mesh isn't Blender's (its vertices aren't at Blender's places), so
+/// Blender's next export takes it even if it wasn't edited since the file opened.</item>
 /// <item>Commit (Unity to Blender): empty. Blender runs its usual export (as "Sync with Unity") of the meshes edited since
 /// their rest, all target meshes when none was, then sends their Rest. Unity takes the live meshes off before applying
 /// the export.</item>
 /// <item>Bye (either way): empty; the connection closes.</item>
+/// <item>Texture (Unity to Blender): UTF-8 JSON <c>{"meshId","slot","channel","path"}</c>, an image painted for a material
+/// slot of that mesh (Substance 3D Painter's, live or saved; channels basecolor, normal, roughness, metallic, emissive,
+/// ambientocclusion). Blender loads the newest of each channel into that slot's material.</item>
 /// </list>
 /// </summary>
 internal static class BlenderLiveProtocol
@@ -65,7 +70,8 @@ internal static class BlenderLiveProtocol
         Topology = 4,
         Status = 5,
         Commit = 6,
-        Bye = 7
+        Bye = 7,
+        Texture = 8
     }
 
     internal sealed class Frame
@@ -77,6 +83,8 @@ internal static class BlenderLiveProtocol
         public string MeshId = string.Empty;
         public int VertexCount;
         public float[] Positions;
+        // Positions: the shape key they are, or empty for the base shape.
+        public string ShapeKey = string.Empty;
         // Hello and Status:
         public string Json;
     }
@@ -145,11 +153,19 @@ internal static class BlenderLiveProtocol
                         if (frame.VertexCount < 0) throw new InvalidDataException("negative vertex count");
                         if (frame.Type == FrameType.Topology) return true;
                         long expected = 2 + idLength + 4 + (long)frame.VertexCount * 12;
-                        if (expected != frame.Payload.Length) throw new InvalidDataException("expected " + expected + " bytes, got " + frame.Payload.Length);
+                        if (frame.Payload.Length < expected) throw new InvalidDataException("expected " + expected + " bytes, got " + frame.Payload.Length);
                         var positions = new float[frame.VertexCount * 3];
                         Buffer.BlockCopy(frame.Payload, 2 + idLength + 4, positions, 0, positions.Length * 4);
                         if (!BitConverter.IsLittleEndian) throw new InvalidDataException("big-endian editors are not supported");
                         frame.Positions = positions;
+                        if (frame.Type == FrameType.Positions && frame.Payload.Length > expected)
+                        {
+                            reader.BaseStream.Position = expected;
+                            int keyLength = reader.ReadUInt16();
+                            frame.ShapeKey = Encoding.UTF8.GetString(reader.ReadBytes(keyLength));
+                            if (reader.BaseStream.Position != frame.Payload.Length) throw new InvalidDataException("unexpected bytes after the shape key");
+                        }
+                        else if (frame.Payload.Length != expected) throw new InvalidDataException("expected " + expected + " bytes, got " + frame.Payload.Length);
                         return true;
                     }
                 default:

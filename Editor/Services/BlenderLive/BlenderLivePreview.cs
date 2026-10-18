@@ -23,7 +23,8 @@ internal sealed class BlenderLivePreview
     {
         this.renderer = renderer;
         this.map = map;
-        original = renderer.sharedMesh;
+        // A live mesh left on the renderer (an older preview's) stands for its original.
+        original = BlenderLiveMeshGuard.OriginalOf(renderer.sharedMesh) ?? renderer.sharedMesh;
         positions = original.vertices;
         originalNormals = original.normals;
         triangles = original.triangles;
@@ -59,15 +60,23 @@ internal sealed class BlenderLivePreview
     public Mesh Original => original;
     public bool Active => live != null && renderer != null && renderer.sharedMesh == live;
 
-    /// <summary>Shows Blender's current positions; false when they do not fit this mesh (another vertex count).</summary>
-    public bool Apply(float[] blenderPositions)
+    /// <summary>
+    /// Shows Blender's current positions; false when they do not fit this mesh (another vertex count). Positions of a shape
+    /// key (<paramref name="shapeKey"/>) are the base plus that key: the blendshape of that name comes off them, so it shows
+    /// once, as Blender has it, at its full weight.
+    /// </summary>
+    public bool Apply(float[] blenderPositions, string shapeKey = null)
     {
         if (renderer == null || original == null || !map.Apply(blenderPositions, positions)) return false;
+        var delta = ShapeDelta(shapeKey);
+        if (delta != null)
+            for (int i = 0; i < positions.Length; i++) positions[i] -= delta[i];
         if (live == null)
         {
             live = Object.Instantiate(original);
             live.name = original.name + " (Blender live)";
             live.hideFlags = HideFlags.HideAndDontSave;
+            BlenderLiveMeshGuard.Shown(live, original);
         }
         live.vertices = positions;
         live.normals = SmoothNormals(positions);
@@ -76,10 +85,30 @@ internal sealed class BlenderLivePreview
         return true;
     }
 
+    // The full-weight offsets of the original mesh's blendshape of that name (read once per name), or null.
+    private readonly Dictionary<string, Vector3[]> shapeDeltas = new Dictionary<string, Vector3[]>();
+
+    private Vector3[] ShapeDelta(string shapeKey)
+    {
+        if (string.IsNullOrEmpty(shapeKey)) return null;
+        if (shapeDeltas.TryGetValue(shapeKey, out var known)) return known;
+        int index = original.GetBlendShapeIndex(shapeKey);
+        Vector3[] delta = null;
+        if (index >= 0)
+        {
+            int frame = original.GetBlendShapeFrameCount(index) - 1;
+            delta = new Vector3[original.vertexCount];
+            original.GetBlendShapeFrameVertices(index, frame, delta, new Vector3[original.vertexCount], new Vector3[original.vertexCount]);
+        }
+        shapeDeltas[shapeKey] = delta;
+        return delta;
+    }
+
     /// <summary>The original mesh again; the temporary copy is destroyed.</summary>
     public void Revert()
     {
         if (renderer != null && renderer.sharedMesh == live) renderer.sharedMesh = original;
+        BlenderLiveMeshGuard.Released(live);
         if (live != null) Object.DestroyImmediate(live);
         live = null;
     }
@@ -104,7 +133,8 @@ internal sealed class BlenderLivePreview
         {
             var sum = Vector3.zero;
             foreach (int j in smoothWith[i]) sum += perVertex[j];
-            normals[i] = sum.sqrMagnitude > 1e-20f ? sum.normalized : hadNormals ? originalNormals[i] : Vector3.up;
+            // By hand: small faces (millimetres in metres) sum below Vector3.normalized's threshold, which gives zero.
+            normals[i] = sum.sqrMagnitude > 1e-20f ? sum / Mathf.Sqrt(sum.sqrMagnitude) : hadNormals ? originalNormals[i] : Vector3.up;
         }
         return normals;
     }

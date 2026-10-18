@@ -14,6 +14,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Orbiters.Toolkit.Editor;
+using Orbiters.Toolkit.Editor.Meshes;
 
 public static partial class NativeMeshPayloadService
 {
@@ -362,32 +363,124 @@ public static partial class NativeMeshPayloadService
             throw new FileNotFoundException("Original FBX key file not found for native mesh payload.", originalFbxPath);
     }
 
-    public static NativeMeshPayloadAsset ApplyModelPreview(
-        Transform avatarRoot, GameObject importedModel, string sourceFbxPath,
-        IEnumerable<ModelFileSmrPathData> smrPaths, string outputFolder)
+    /// <summary>
+    /// Shows a Blender export on the avatar as a version's payload would: its meshes are read straight from the FBX
+    /// (<see cref="FbxModel"/>, no import), the dynamic-normal blendshapes get their normals baked as a version build bakes
+    /// them (with the legs apart given by <paramref name="boneTranslations"/>), the other blendshapes carry positions only,
+    /// and the meshes go into a payload asset as they are, with no byte payload written and read back.
+    /// </summary>
+    /// <param name="dynamicNormals">The blendshapes whose normals are recalculated, by avatar renderer path.</param>
+    public static NativeMeshPayloadAsset ApplyBlenderExportPreview(
+        Transform avatarRoot, string exportFbxPath, string sourceFbxPath, IEnumerable<ModelFileSmrPathData> smrPaths,
+        string outputFolder, IEnumerable<MeshBlendshapeSelection> dynamicNormals,
+        Func<SkinnedMeshRenderer, Dictionary<string, Vector3>> boneTranslations)
     {
         if (avatarRoot == null) throw new ArgumentNullException(nameof(avatarRoot));
-        if (importedModel == null) throw new ArgumentNullException(nameof(importedModel));
         if (string.IsNullOrWhiteSpace(outputFolder)) throw new ArgumentNullException(nameof(outputFolder));
-        var sources = ResolvePayloadRendererSources(importedModel, smrPaths);
-        if (sources.Count == 0) throw new InvalidOperationException("The preview contains no matching skinned meshes.");
+        var profile = System.Diagnostics.Stopwatch.StartNew();
+        var step = System.Diagnostics.Stopwatch.StartNew();
+        var mappings = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>()).Where(m => m != null).ToList();
+        byte[] bytes = File.ReadAllBytes(Path.GetFullPath(exportFbxPath));
+        var document = FbxDocument.Read(bytes);
+        string name = Path.GetFileNameWithoutExtension(exportFbxPath);
+        LogApplyProfile("Read the Blender export", step, profile, $"bytes={bytes.Length}");
 
-        byte[] bytes;
-        using (var stream = new MemoryStream())
+        // The dynamic-normal blendshapes alone first, to bake their normals: every blendshape frame is then added once.
+        var selected = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var selection in dynamicNormals ?? Enumerable.Empty<MeshBlendshapeSelection>())
         {
-            CreateBinaryPayload(sourceFbxPath, importedModel, sources, stream,
-                new NativeMeshPayloadBuildMetrics(), false, null);
-            bytes = stream.ToArray();
+            var mapping = mappings.FirstOrDefault(m => m.avatarPath == selection.mesh);
+            string mesh = LastPathSegment(mapping?.fbxMeshPath) ?? mapping?.meshName;
+            if (mesh == null || selection.names == null) continue;
+            if (!selected.TryGetValue(mesh, out var names)) selected[mesh] = names = new HashSet<string>(StringComparer.Ordinal);
+            names.UnionWith(selection.names);
         }
-        string hash;
-        using (var sha = MCBHashing.CreateSha256()) hash = BytesToHex(sha.ComputeHash(bytes));
-        // Content-addressed assets keep earlier previews valid for Undo and scene saves.
-        string path = MCBUtils.CombineUnityPath(outputFolder, hash + ".asset");
-        var payload = WriteBinaryPayloadAsset(path, bytes, hash, PayloadCompressionNone);
-        ApplyPayloadToAvatar(avatarRoot, payload);
-        ApplyPayloadAuthoringPose(avatarRoot, payload);
+        var frames = new Dictionary<(string mesh, string shape, int frame), FbxModel.FrameNormals>();
+        if (selected.Count > 0)
+        {
+            var light = FbxModel.Load(document, name, new FbxModel.Options { IncludeShape = (mesh, shape) => selected.TryGetValue(mesh, out var names) && names.Contains(shape) });
+            try
+            {
+                foreach (var renderer in light.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                {
+                    if (!selected.TryGetValue(renderer.name, out var names) || renderer.sharedMesh.blendShapeCount == 0) continue;
+                    var shapes = Enumerable.Range(0, renderer.sharedMesh.blendShapeCount).Select(renderer.sharedMesh.GetBlendShapeName).Where(names.Contains).ToList();
+                    foreach (var pair in DynamicNormals.CaptureNormalFrames(renderer, shapes, boneTranslations?.Invoke(renderer)))
+                        frames[(renderer.name, pair.Key.shape, pair.Key.frame)] = new FbxModel.FrameNormals { Normals = pair.Value.normals, Tangents = pair.Value.tangents };
+                }
+            }
+            finally
+            {
+                FbxModel.Release(light);
+            }
+            LogApplyProfile("Baked dynamic normals", step, profile, $"frames={frames.Count}");
+        }
+
+        var model = FbxModel.Load(document, name, new FbxModel.Options
+        {
+            Normals = (mesh, shape, frame) => frames.TryGetValue((mesh, shape, frame), out var baked) ? baked : null,
+        });
+        try
+        {
+            LogApplyProfile("Built the meshes", step, profile);
+            var sources = ResolvePayloadRendererSources(model, mappings);
+            if (sources.Count == 0) throw new InvalidOperationException("The preview contains no matching skinned meshes.");
+            // Content-addressed assets keep earlier previews valid for Undo and scene saves.
+            var key = Hash128.Compute(bytes);
+            foreach (var mapping in mappings) key.Append(mapping.avatarPath + "|" + mapping.fbxMeshPath + "|" + mapping.meshName);
+            foreach (var frame in frames.Keys) key.Append(frame.mesh + "|" + frame.shape);
+            string hash = key.ToString();
+            string path = MCBUtils.CombineUnityPath(outputFolder, hash + ".asset");
+            var payload = LoadPayloadAsset(path);
+            if (payload == null || payload.payloadHash != hash)
+            {
+                EnsureAssetFolder(outputFolder);
+                DeleteAssetFile(path);
+                payload = BuildPayloadAsset(sourceFbxPath, model, sources, hash);
+                AssetDatabase.CreateAsset(payload, path);
+                foreach (var record in payload.renderers) AssetDatabase.AddObjectToAsset(record.mesh, payload);
+                AssetDatabase.SetMainObject(payload, path);
+                EditorUtility.SetDirty(payload);
+                AssetDatabase.SaveAssetIfDirty(payload);
+                LogApplyProfile("Saved the preview asset", step, profile, path);
+            }
+            ApplyPayloadToAvatar(avatarRoot, payload);
+            ApplyPayloadAuthoringPose(avatarRoot, payload);
+            LogApplyProfile("Applied the preview", step, profile);
+            return payload;
+        }
+        finally
+        {
+            FbxModel.Release(model);
+        }
+    }
+
+    // A payload asset of a model's renderers, their meshes as they are (renamed as a payload names them).
+    private static NativeMeshPayloadAsset BuildPayloadAsset(string sourceFbxPath, GameObject customFbx, List<PayloadRendererSource> sources, string payloadHash)
+    {
+        var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
+        payload.payloadVersion = PayloadVersion;
+        payload.sourceFbxPath = StripOriginalSuffix(MCBUtils.ToUnityPath(sourceFbxPath)) ?? "";
+        payload.sourceFbxHash = SourceFbxHash(sourceFbxPath) ?? "";
+        payload.payloadHash = payloadHash;
+        var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
+        var usedAssetNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var source in sources)
+        {
+            var record = RendererRecord(customFbx.transform, source);
+            var mesh = source.renderer.sharedMesh;
+            string meshName = BuildUniqueSubAssetName(string.IsNullOrWhiteSpace(source.entry.meshName) ? mesh.name : source.entry.meshName, usedMeshNames);
+            mesh.name = BuildUniqueSubAssetName($"{meshName}_{ShortHash(payloadHash)}", usedAssetNames);
+            record.mesh = mesh;
+            payload.renderers.Add(record);
+        }
+        payload.authoringPoseBones = BuildAuthoringPoseDeltas(sourceFbxPath, customFbx.transform, null);
+        payload.bones = PayloadBones(customFbx.transform, payload.renderers, payload.authoringPoseBones, true);
+        payload.name = payloadHash;
         return payload;
     }
+
+    private static string LastPathSegment(string path) => string.IsNullOrEmpty(path) ? null : path.Substring(path.LastIndexOf('/') + 1);
 
     public static GameObject ImportExternalFbxForPayload(string externalFbxPath, out string tempUnityPath)
     {
@@ -414,6 +507,11 @@ public static partial class NativeMeshPayloadService
         string tempName = $"{SanitizeFileName(Path.GetFileNameWithoutExtension(sourcePath))}_{Guid.NewGuid():N}{extension}";
         tempUnityPath = MCBUtils.CombineUnityPath(tempFolder, tempName);
         File.Copy(sourcePath, Path.GetFullPath(tempUnityPath), true);
+        // Its import settings are written before its first import: readable (turning Read/Write on afterwards imported a
+        // body with hundreds of blendshapes a second time, about 30 s), without what MCB never reads from it.
+        File.WriteAllText(Path.GetFullPath(tempUnityPath) + ".meta",
+            "fileFormatVersion: 2\nguid: " + Guid.NewGuid().ToString("N") + "\nModelImporter:\n  serializedVersion: 22200\n" +
+            "  animations:\n    isReadable: 1\n  meshes:\n    importCameras: 0\n    importLights: 0\n  importAnimation: 0\n");
         AssetDatabase.ImportAsset(tempUnityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 
         var imported = AssetDatabase.LoadAssetAtPath<GameObject>(tempUnityPath);
@@ -1267,7 +1365,7 @@ public static partial class NativeMeshPayloadService
         bool bindSource = true)
     {
         Transform customRoot = customFbx.transform;
-        string sourceFbxHash = MCBUtils.CalculateFileHash(Path.GetFullPath(sourceFbxPath));
+        string sourceFbxHash = SourceFbxHash(sourceFbxPath);
         var rendererRecordsForBones = new List<NativeMeshPayloadRenderer>();
         var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
 
@@ -1281,62 +1379,29 @@ public static partial class NativeMeshPayloadService
 
             foreach (var source in rendererSources)
             {
-                var renderer = source.renderer;
-                var entry = source.entry;
-                Mesh mesh = renderer.sharedMesh;
-                string meshName = string.IsNullOrWhiteSpace(entry.meshName)
+                var record = RendererRecord(customRoot, source);
+                Mesh mesh = source.renderer.sharedMesh;
+                string meshName = string.IsNullOrWhiteSpace(source.entry.meshName)
                     ? mesh.name
-                    : entry.meshName;
+                    : source.entry.meshName;
                 string uniqueMeshName = BuildUniqueSubAssetName(meshName, usedMeshNames);
-                var bonePaths = (renderer.bones ?? Array.Empty<Transform>())
-                    .Select(bone => bone != null ? GetRelativeTransformPath(customRoot, bone) : "")
-                    .ToList();
-                if (mesh.bindposes != null && mesh.bindposes.Length > 0 && mesh.bindposes.Length != bonePaths.Count)
-                {
-                    MCBLogger.LogWarning($"[NativeMeshPayload] Renderer '{renderer.name}' has {mesh.bindposes.Length} bindposes but {bonePaths.Count} bones. The applied mesh may deform incorrectly.");
-                }
-                string rootBonePath = renderer.rootBone != null
-                    ? GetRelativeTransformPath(customRoot, renderer.rootBone)
-                    : "";
 
-                writer.Write(entry.avatarPath ?? "");
-                writer.Write(entry.fbxMeshPath ?? "");
-                writer.Write(entry.meshName ?? "");
-                writer.Write(entry.rendererName ?? "");
-                WriteVector3(writer, renderer.transform.localPosition);
-                WriteQuaternion(writer, renderer.transform.localRotation);
-                WriteVector3(writer, renderer.transform.localScale);
-                writer.Write(rootBonePath ?? "");
-                WriteStringList(writer, bonePaths);
+                writer.Write(record.avatarPath);
+                writer.Write(record.fbxMeshPath);
+                writer.Write(record.meshName);
+                writer.Write(record.rendererName);
+                WriteVector3(writer, record.localPosition);
+                WriteQuaternion(writer, record.localRotation);
+                WriteVector3(writer, record.localScale);
+                writer.Write(record.rootBonePath);
+                WriteStringList(writer, record.bonePaths);
                 yield return WriteMeshCoroutine(writer, mesh, uniqueMeshName, metrics, source.normalFrames);
 
-                rendererRecordsForBones.Add(new NativeMeshPayloadRenderer
-                {
-                    rootBonePath = rootBonePath,
-                    bonePaths = bonePaths
-                });
+                rendererRecordsForBones.Add(record);
             }
 
-            var payloadBonePaths = CollectPayloadBonePaths(rendererRecordsForBones);
             var authoringPoseBones = BuildAuthoringPoseDeltas(sourceFbxPath, customRoot, sourcePoseRoot);
-            // Without a source model, unweighted original bones (contacts, physbone roots) need absolute poses too.
-            if (!bindSource) foreach (var poseBone in authoringPoseBones) payloadBonePaths.Add(poseBone.path);
-            var bones = customFbx.GetComponentsInChildren<Transform>(true)
-                .Where(transform => transform != null && transform != customRoot)
-                .Where(transform =>
-                {
-                    if (payloadBonePaths.Count == 0) return false;
-                    string path = GetRelativeTransformPath(customRoot, transform);
-                    return payloadBonePaths.Contains(path);
-                })
-                .Select(transform => new NativeMeshPayloadBone
-                {
-                    path = GetRelativeTransformPath(customRoot, transform),
-                    localPosition = transform.localPosition,
-                    localRotation = transform.localRotation,
-                    localScale = transform.localScale
-                })
-                .ToList();
+            var bones = PayloadBones(customRoot, rendererRecordsForBones, authoringPoseBones, bindSource);
 
             writer.Write(bones.Count);
             foreach (var bone in bones)
@@ -1359,6 +1424,67 @@ public static partial class NativeMeshPayloadService
 
             writer.Flush();
         }
+    }
+
+    // What a payload says of one of the model's renderers, its mesh aside.
+    private static NativeMeshPayloadRenderer RendererRecord(Transform customRoot, PayloadRendererSource source)
+    {
+        var renderer = source.renderer;
+        var mesh = renderer.sharedMesh;
+        var bonePaths = (renderer.bones ?? Array.Empty<Transform>())
+            .Select(bone => bone != null ? GetRelativeTransformPath(customRoot, bone) : "")
+            .ToList();
+        if (mesh.bindposes != null && mesh.bindposes.Length > 0 && mesh.bindposes.Length != bonePaths.Count)
+        {
+            MCBLogger.LogWarning($"[NativeMeshPayload] Renderer '{renderer.name}' has {mesh.bindposes.Length} bindposes but {bonePaths.Count} bones. The applied mesh may deform incorrectly.");
+        }
+        return new NativeMeshPayloadRenderer
+        {
+            avatarPath = source.entry.avatarPath ?? "",
+            fbxMeshPath = source.entry.fbxMeshPath ?? "",
+            meshName = source.entry.meshName ?? "",
+            rendererName = source.entry.rendererName ?? "",
+            localPosition = renderer.transform.localPosition,
+            localRotation = renderer.transform.localRotation,
+            localScale = renderer.transform.localScale,
+            rootBonePath = renderer.rootBone != null ? GetRelativeTransformPath(customRoot, renderer.rootBone) : "",
+            bonePaths = bonePaths
+        };
+    }
+
+    // The model's bones a payload carries: those its renderers use, and without a source model every posed one (unweighted
+    // original bones, contacts and physbone roots, need absolute poses too).
+    private static List<NativeMeshPayloadBone> PayloadBones(Transform customRoot, IEnumerable<NativeMeshPayloadRenderer> renderers,
+        IEnumerable<NativeMeshPayloadAuthoringPoseBone> authoringPoseBones, bool bindSource)
+    {
+        var payloadBonePaths = CollectPayloadBonePaths(renderers);
+        if (!bindSource) foreach (var poseBone in authoringPoseBones) payloadBonePaths.Add(poseBone.path);
+        return customRoot.GetComponentsInChildren<Transform>(true)
+            .Where(transform => transform != null && transform != customRoot)
+            .Where(transform => payloadBonePaths.Count > 0 && payloadBonePaths.Contains(GetRelativeTransformPath(customRoot, transform)))
+            .Select(transform => new NativeMeshPayloadBone
+            {
+                path = GetRelativeTransformPath(customRoot, transform),
+                localPosition = transform.localPosition,
+                localRotation = transform.localRotation,
+                localScale = transform.localScale
+            })
+            .ToList();
+    }
+
+    // The source model's hash, read again only when the file changed (hashing a large model takes seconds).
+    private static readonly Dictionary<string, (DateTime written, long length, string hash)> sourceHashes =
+        new Dictionary<string, (DateTime, long, string)>(StringComparer.OrdinalIgnoreCase);
+
+    private static string SourceFbxHash(string sourceFbxPath)
+    {
+        string fullPath = Path.GetFullPath(sourceFbxPath);
+        if (!File.Exists(fullPath)) return MCBUtils.CalculateFileHash(fullPath);
+        var info = new FileInfo(fullPath);
+        if (sourceHashes.TryGetValue(fullPath, out var known) && known.written == info.LastWriteTimeUtc && known.length == info.Length) return known.hash;
+        string hash = MCBUtils.CalculateFileHash(fullPath);
+        sourceHashes[fullPath] = (info.LastWriteTimeUtc, info.Length, hash);
+        return hash;
     }
 
     private static List<NativeMeshPayloadAuthoringPoseBone> BuildAuthoringPoseDeltas(
