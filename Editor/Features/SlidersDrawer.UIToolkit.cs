@@ -66,7 +66,7 @@ public partial class SlidersDrawer
         titleRow.Add(activeToggle);
         content.Add(titleRow);
 
-        // Their parameter cost shows in XRay Gizmos' avatar budget, over the Scene view.
+        // Their parameter cost shows in the Toolkit's avatar budget, over the Scene view.
         content.Add(BuildSliderChipGroupUIToolkit());
 
         toolkitPendingApplyLabel = AvatarOptionsModule.CreateOptionLabel(string.Empty, 11, FontStyle.Normal, new Color(0.55f, 0.55f, 0.55f));
