@@ -1,5 +1,9 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.10 — 2026-10-19
+
+- Requires Orbiters Toolkit 0.4.0: Blender executables are found by the Toolkit's `BlenderInstalls` (the chosen executable is now EditorPrefs `Orbiters.Blender.Executable`).
+
 ## 1.12.9 — 2026-10-13
 
 - Cleaning up generated meshes after a reset or a version switch no longer trusts file dates (a checkout writes files in

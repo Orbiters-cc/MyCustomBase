@@ -516,19 +516,19 @@ public static class BlenderSyncService
 
     private static string BuildBlenderInstallationSelectorUIToolkit(VisualElement root, Action refresh)
     {
-        var installations = BlenderInstallService.GetInstallations();
+        var installations = BlenderInstalls.GetInstallations();
         if (installations.Count == 0)
         {
             return "";
         }
 
-        string selectedPath = BlenderInstallService.GetSelectedExecutablePath();
+        string selectedPath = BlenderInstalls.GetSelectedExecutablePath();
         int selectedIndex = installations.FindIndex(item =>
-            string.Equals(item.executablePath, selectedPath, StringComparison.OrdinalIgnoreCase));
+            string.Equals(item.ExecutablePath, selectedPath, StringComparison.OrdinalIgnoreCase));
         if (selectedIndex < 0)
         {
             selectedIndex = 0;
-            selectedPath = installations[0].executablePath;
+            selectedPath = installations[0].ExecutablePath;
         }
 
         var options = installations.Select(item => item.DisplayLabel).ToList();
@@ -540,7 +540,7 @@ public static class BlenderSyncService
             int nextIndex = options.IndexOf(evt.newValue);
             if (nextIndex >= 0 && nextIndex < installations.Count)
             {
-                BlenderInstallService.SetSelectedExecutablePath(installations[nextIndex].executablePath);
+                BlenderInstalls.SetSelectedExecutablePath(installations[nextIndex].ExecutablePath);
                 refresh?.Invoke();
             }
         });
@@ -679,19 +679,19 @@ public static class BlenderSyncService
 
     private static string DrawBlenderInstallationSelector()
     {
-        var installations = BlenderInstallService.GetInstallations();
+        var installations = BlenderInstalls.GetInstallations();
         if (installations.Count == 0)
         {
             return "";
         }
 
-        string selectedPath = BlenderInstallService.GetSelectedExecutablePath();
+        string selectedPath = BlenderInstalls.GetSelectedExecutablePath();
         int selectedIndex = installations.FindIndex(item =>
-            string.Equals(item.executablePath, selectedPath, StringComparison.OrdinalIgnoreCase));
+            string.Equals(item.ExecutablePath, selectedPath, StringComparison.OrdinalIgnoreCase));
         if (selectedIndex < 0)
         {
             selectedIndex = 0;
-            selectedPath = installations[0].executablePath;
+            selectedPath = installations[0].ExecutablePath;
         }
 
         string[] options = installations.Select(item => item.DisplayLabel).ToArray();
@@ -699,8 +699,8 @@ public static class BlenderSyncService
         int nextIndex = EditorGUILayout.Popup("Blender installation", selectedIndex, options);
         if (EditorGUI.EndChangeCheck() && nextIndex >= 0 && nextIndex < installations.Count)
         {
-            BlenderInstallService.SetSelectedExecutablePath(installations[nextIndex].executablePath);
-            selectedPath = installations[nextIndex].executablePath;
+            BlenderInstalls.SetSelectedExecutablePath(installations[nextIndex].ExecutablePath);
+            selectedPath = installations[nextIndex].ExecutablePath;
         }
 
         return selectedPath;
@@ -714,17 +714,17 @@ public static class BlenderSyncService
         {
             if (GUILayout.Button("Refresh Blender List", GUILayout.Width(150f)))
             {
-                BlenderInstallService.GetInstallations(forceRefresh: true);
+                BlenderInstalls.GetInstallations(forceRefresh: true);
             }
 
             if (GUILayout.Button("Browse", GUILayout.Width(100f)))
             {
-                BlenderInstallService.PickExecutable();
+                BlenderInstalls.PickExecutable();
             }
 
             if (GUILayout.Button("Clear Selection", GUILayout.Width(120f)))
             {
-                BlenderInstallService.ClearSelectedExecutablePath();
+                BlenderInstalls.ClearSelectedExecutablePath();
             }
         }
     }
@@ -837,7 +837,7 @@ public static class BlenderSyncService
         bool preparationStarted = false;
         try
         {
-            string blenderPath = BlenderInstallService.GetSelectedExecutablePath();
+            string blenderPath = BlenderInstalls.GetSelectedExecutablePath();
             if (string.IsNullOrWhiteSpace(blenderPath))
             {
                 EditorUtility.DisplayDialog("Blender Not Found", "Set the Blender executable path before using one-click editing.", "OK");
