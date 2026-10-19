@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Orbiters.Toolkit.Editor.Vpm;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEditorInternal;
@@ -158,7 +159,7 @@ public partial class CreatorModeModule
         creatorRoot.Add(content);
 
         BuildCreatorFormHeaderUIToolkit(content);
-        BlenderSyncService.BuildCreatorModeSectionUIToolkit(content, editor, RefreshEditorUi);
+        BuildBlenderSectionUIToolkit(content);
         BuildParentVersionDropdownUIToolkit(content);
         BuildModelFileBuildEntriesUIToolkit(content);
         content.Add(CreateIconObjectField(
@@ -525,8 +526,6 @@ public partial class CreatorModeModule
         if (customBase == null) return;
         var set = customBase.muscleCorrectives;
         int muscles = set?.muscles?.Count ?? 0;
-        var environment = BlenderSyncService.GetBlenderEnvironment(editor);
-
         var card = CreateCreatorPanel();
         card.AddToClassList("mcb-creator-option");
         card.AddToClassList("mcb-creator-xmuscles");
@@ -537,12 +536,9 @@ public partial class CreatorModeModule
 
         if (muscles == 0)
         {
-            bool installed = environment?.xmuscles != null && environment.xmuscles.installed;
-            card.Add(CreateMutedLabel(installed
-                ? "No correctives yet: bake muscles with XMuscles in Blender, then export (Magic Sync) to bring them here."
-                : environment == null
-                    ? "Correctives baked with XMuscles in Blender show up here after a Magic Sync export."
-                    : "XMuscles is not installed in the connected Blender. Unit Git's Blender link reports it once it is."));
+            var hint = CreateMutedLabel("No correctives yet: bake muscles with XMuscle Orbit Helper in Blender, export the base for MCB and import that export in the Blender card above.");
+            hint.style.whiteSpace = WhiteSpace.Normal;
+            card.Add(hint);
             root.Add(card);
             return;
         }
@@ -585,6 +581,90 @@ public partial class CreatorModeModule
         if (!string.IsNullOrEmpty(xmusclesMessage))
             card.Add(CreateHelpBox(xmusclesMessage, xmusclesMessageIsWarning ? HelpBoxMessageType.Warning : HelpBoxMessageType.Info));
         root.Add(card);
+    }
+
+    // Blender: the base edited live in Blender through Orbiters Mixer, and Blender exports (topology changes, baked
+    // XMuscles correctives) brought back as the creator's custom FBX files.
+    private void BuildBlenderSectionUIToolkit(VisualElement root)
+    {
+        if (editor.customBaseTarget == null) return;
+        var card = CreateCreatorPanel();
+        card.AddToClassList("mcb-creator-option");
+        card.AddToClassList("mcb-blender");
+        var head = CreateCreatorRow();
+        head.AddToClassList("mcb-blender__header");
+        var icon = LoadBlenderIcon();
+        if (icon != null)
+        {
+            var image = new Image { image = icon, scaleMode = ScaleMode.ScaleToFit };
+            image.AddToClassList("mcb-blender__icon");
+            head.Add(image);
+        }
+        head.Add(CreateSectionLabel("Blender"));
+        card.Add(head);
+
+        var targets = BlenderExportImport.TargetFbxPaths(editor);
+        if (targets.Count == 0)
+            card.Add(CreateHelpBox("No target FBX was detected for this avatar. Assign or detect the base FBX first.", HelpBoxMessageType.Warning));
+
+        if (McbBlenderCard.Mixer != null) McbBlenderCard.Mixer(card, editor, RefreshEditorUi);
+        else BuildMixerInstallPromptUIToolkit(card);
+
+        var actions = CreateCreatorRow();
+        actions.AddToClassList("mcb-blender__actions");
+        var import = CreateTextButton("Import Blender export…",
+            "Picks the manifest.json of an MCB export made in Blender: each exported model becomes the creator's custom FBX for its target (with a generated Avatar), or an advanced-mesh payload preview; XMuscles correctives come along.",
+            () => { if (BlenderExportImport.PickAndImport(editor)) RefreshEditorUi(); });
+        import.SetEnabled(targets.Count > 0);
+        actions.Add(import);
+        card.Add(actions);
+        if (!string.IsNullOrEmpty(BlenderExportImport.LastStatus))
+            card.Add(CreateHelpBox(BlenderExportImport.LastStatus,
+                BlenderExportImport.LastStatusType == MessageType.Error ? HelpBoxMessageType.Error
+                : BlenderExportImport.LastStatusType == MessageType.Warning ? HelpBoxMessageType.Warning : HelpBoxMessageType.Info));
+        root.Add(card);
+    }
+
+    private void BuildMixerInstallPromptUIToolkit(VisualElement card)
+    {
+        var description = CreateMutedLabel("Orbiters Mixer opens this scene in Blender with the base's meshes, bones and materials, shows what you edit there on the avatar live, and brings its own sculpt, weight paint and armature tools.");
+        description.style.whiteSpace = WhiteSpace.Normal;
+        card.Add(description);
+        var status = McbDependencies.Vpm.OptionalStatus(McbDependencies.MixerPackageId);
+        if (status != null && (status.IsAssumedInstalled || status.IsInstalled))
+        {
+            card.Add(CreateHelpBox(status.IsAssumedInstalled
+                ? "Advanced settings assume Mixer is installed, but Mixer did not register with MCB. Disable the optional integration bypass to add Mixer through VPM."
+                : "Mixer is installed but did not register with MCB: wait for Unity to finish compiling and check the Console for Mixer errors.", HelpBoxMessageType.Warning));
+            return;
+        }
+        var prompt = new DependencyPrompt(McbDependencies.Vpm, McbDependencies.MixerPackageId, "Orbiters Mixer is not installed in this project.");
+        prompt.style.marginTop = 6;
+        prompt.Installed += RefreshEditorUi;
+        card.Add(prompt);
+    }
+
+    private static Texture2D blenderIcon;
+
+    // The package's blender.png is not an imported asset in every project (packages ship without .meta files): read the file.
+    private static Texture2D LoadBlenderIcon()
+    {
+        if (blenderIcon != null) return blenderIcon;
+        blenderIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(MCBUtils.CombineUnityPath(MCBUtils.PACKAGE_BASE_FOLDER, "Editor", "blender.png"));
+        if (blenderIcon != null) return blenderIcon;
+        try
+        {
+            string absolutePath = Path.Combine(MCBUtils.PACKAGE_BASE_FOLDER_FULL_PATH, "Editor", "blender.png");
+            if (!File.Exists(absolutePath)) return null;
+            var loaded = new Texture2D(2, 2, TextureFormat.RGBA32, false) { name = "MCB Blender icon", hideFlags = HideFlags.HideAndDontSave };
+            if (loaded.LoadImage(File.ReadAllBytes(absolutePath))) blenderIcon = loaded;
+            else UnityEngine.Object.DestroyImmediate(loaded);
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogWarning("[MCB] The Blender icon could not be read: " + ex.Message);
+        }
+        return blenderIcon;
     }
 
     private string xmusclesMessage;
@@ -1561,7 +1641,7 @@ public partial class CreatorModeModule
         return panel;
     }
 
-    private static VisualElement CreateCreatorRow()
+    internal static VisualElement CreateCreatorRow()
     {
         var row = new VisualElement();
         row.AddToClassList("mcb-row");
@@ -1583,7 +1663,7 @@ public partial class CreatorModeModule
         return label;
     }
 
-    private static Label CreateMutedLabel(string text)
+    internal static Label CreateMutedLabel(string text)
     {
         var label = CreateLabel(text, 12, FontStyle.Normal, new Color(0.64f, 0.64f, 0.64f));
         label.AddToClassList("mcb-label--muted");
@@ -1597,7 +1677,7 @@ public partial class CreatorModeModule
         return label;
     }
 
-    private static Label CreateLabel(string text, int fontSize, FontStyle fontStyle, Color color)
+    internal static Label CreateLabel(string text, int fontSize, FontStyle fontStyle, Color color)
     {
         var label = new Label(text ?? string.Empty);
         label.AddToClassList("mcb-label");
@@ -1637,7 +1717,7 @@ public partial class CreatorModeModule
         return row;
     }
 
-    private static Button CreateTextButton(string text, string tooltip, Action onClick)
+    internal static Button CreateTextButton(string text, string tooltip, Action onClick)
     {
         var button = new Button(onClick) { text = text ?? string.Empty, tooltip = tooltip };
         button.AddToClassList("mcb-button");

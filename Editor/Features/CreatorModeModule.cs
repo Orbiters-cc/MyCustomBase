@@ -150,8 +150,6 @@ public partial class CreatorModeModule
         using (new EditorGUI.DisabledScope(editor.isSubmitting))
         {
             PopulateParentVersionDropdown();
-
-            DrawBlenderSyncSection();
             
             // Auto-populate fields if an unsubmitted version is selected
             if (editor.selectedVersionForAction != previouslySelectedVersion)
@@ -298,11 +296,6 @@ public partial class CreatorModeModule
         }
         
         EditorGUILayout.EndVertical();
-    }
-
-    private void DrawBlenderSyncSection()
-    {
-        BlenderSyncService.DrawCreatorModeSection(editor);
     }
 
     private void DrawAdvancedMeshReplacementToggle()

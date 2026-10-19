@@ -54,7 +54,7 @@ public static partial class AvatarDefinitionGenerationService
         {
             EnsureAssetFolderExists(folder);
             outputPath = AssetDatabase.GenerateUniqueAssetPath(MCBUtils.CombineUnityPath(folder,
-                BlenderProjectService.SanitizeFileName(sourceMappingFbx.name) + "Avatar.asset"));
+                BlenderExportImport.SanitizeFileName(sourceMappingFbx.name) + "Avatar.asset"));
         }
 
         string temporaryPath = null;

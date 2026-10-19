@@ -1,0 +1,8 @@
+{
+  "name": "MCB.Mixer.Editor",
+  "references": ["mcb", "mcb.Editor", "Orbiters.Toolkit", "Orbiters.Toolkit.Editor", "Orbiters.Mixer", "Orbiters.Mixer.Editor"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true,
+  "defineConstraints": ["MCB_MIXER"],
+  "versionDefines": [{ "name": "orbiters.mixer", "expression": "0.1.0", "define": "MCB_MIXER" }]
+}

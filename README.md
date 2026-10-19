@@ -1,5 +1,15 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.11 — 2026-10-19
+
+- Blender goes through Orbiters Mixer: the Blender card of the creator mode opens the scene in Blender with Mixer's link
+  (optional dependency `orbiters.mixer`), shows which of the base's meshes Blender or Mixer is editing, and commits or
+  reverts those edits. MCB's own Blender sync (the MCB Blender add-on, per-base Blender projects, Magic Sync, the live
+  preview and its inbox) is gone, with its Advanced mode settings.
+- Blender exports still come back through their manifest: **Import Blender export…** picks a manifest.json and makes
+  each exported model the creator's custom FBX for its target (with a generated Avatar) or an advanced-mesh payload
+  preview; XMuscles correctives arrive the same way. Imports land under `Assets/MCB/generated/blenderExports/<base>`.
+
 ## 1.12.10 — 2026-10-19
 
 - Requires Orbiters Toolkit 0.4.0: Blender executables are found by the Toolkit's `BlenderInstalls` (the chosen executable is now EditorPrefs `Orbiters.Blender.Executable`).

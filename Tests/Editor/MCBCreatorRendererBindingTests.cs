@@ -66,7 +66,7 @@ public class MCBCreatorRendererBindingTests
             var hair = PrefabUtility.SaveAsPrefabAsset(model, folder + "/Hair.prefab");
             var target = root.AddComponent<MyCustomBase>();
             target.baseFbxFiles.AddRange(new[] { hair, body });
-            var method = typeof(BlenderSyncService).GetMethod("GetCreatorTargetIndex", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            var method = typeof(BlenderExportImport).GetMethod("GetCreatorTargetIndex", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
             Assert.AreEqual(1, method.Invoke(null, new object[] { target, folder + "/Body.prefab" }));
             var error = Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, new object[] { target, folder + "/Unknown.prefab" }));
             Assert.IsInstanceOf<InvalidOperationException>(error.InnerException);

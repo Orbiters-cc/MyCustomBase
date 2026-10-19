@@ -215,8 +215,6 @@ public class AdvancedModeModule
                 EditorGUILayout.EndHorizontal();
                 if (!string.IsNullOrEmpty(reloadFeedback)) EditorGUILayout.LabelField(reloadFeedback, EditorStyles.wordWrappedMiniLabel);
 
-                BlenderSyncService.DrawAdvancedBlenderConnectorSettings();
-
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Connectivity Simulation", EditorStyles.boldLabel);
                 ApiSimulationMode currentSimulationMode = MCBUtils.apiSimulationMode;
@@ -1120,8 +1118,8 @@ public class AdvancedModeModule
         bool current = McbDependencies.AssumeLocalOptionalIntegrationsInstalled;
         bool next = EditorGUILayout.Toggle(
             new GUIContent(
-                "Assume local ReFit/Unit Git",
-                "Bypasses VPM optional dependency checks for orbiters.refit and orbiters.unitgit. Useful when developing those packages as local embedded packages."),
+                "Assume local ReFit/Unit Git/Mixer",
+                "Bypasses VPM optional dependency checks for orbiters.refit, orbiters.unitgit and orbiters.mixer. Useful when developing those packages as local embedded packages."),
             current);
 
         if (next != current)

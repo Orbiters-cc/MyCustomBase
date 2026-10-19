@@ -17,8 +17,8 @@ public static class FeatureFlags
             "Detect and manage user-custom avatar bases when the current FBX hash is unknown but a .fbx.originalbase exists.");
         Add(ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR, "Allow advanced replacement for creator",
             "Build submitted custom base model patches as encrypted native Unity mesh payloads instead of replacement FBX bytes.");
-        Add(ALLOW_ADVANCED_MESH_ON_BLENDER_LINK, "Allow advanced mesh on Blender link",
-            "Advertise native mesh transfer support to the Blender connector. Requires advanced replacement for creator.",
+        Add(ALLOW_ADVANCED_MESH_ON_BLENDER_LINK, "Allow advanced mesh from Blender exports",
+            "Apply Blender exports marked as native mesh payloads as advanced-mesh previews instead of importing their FBX. Requires advanced replacement for creator.",
             ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR);
     }
 

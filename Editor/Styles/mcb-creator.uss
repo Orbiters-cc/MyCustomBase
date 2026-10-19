@@ -1057,11 +1057,6 @@
     margin-right: 8px;
 }
 
-.mcb-blender__dropdown {
-    margin-top: 6px;
-    margin-bottom: 6px;
-}
-
 .mcb-blender__actions .mcb-button {
     flex-grow: 1;
     min-width: 160px;
@@ -1082,30 +1077,28 @@
     margin-right: 6px;
 }
 
-.mcb-blender__live {
-    margin-top: 8px;
-    padding: 6px 8px 2px 8px;
-    border-radius: 6px;
-    background-color: rgba(255, 255, 255, 0.04);
-}
-
-.mcb-blender__live > .mcb-blender__state {
-    margin-top: 0;
-}
-
-.mcb-blender__live-summary {
+.mcb-blender__state-text {
     margin-left: 6px;
     flex-shrink: 1;
     white-space: normal;
 }
 
-.mcb-blender__live-meshes {
+.mcb-blender__meshes {
     margin-left: 14px;
-    margin-top: 2px;
+    margin-top: 4px;
 }
 
-.mcb-blender__live-mesh {
-    white-space: normal;
+.mcb-blender__mesh {
+    flex-direction: row;
+    align-items: center;
+    margin-top: 2px;
+    min-height: 24px;
+}
+
+.mcb-blender__mesh .mcb-button {
+    min-height: 22px;
+    margin-left: 8px;
+    flex-grow: 0;
 }
 
 .mcb-blender .mcb-button.is-pressed {
