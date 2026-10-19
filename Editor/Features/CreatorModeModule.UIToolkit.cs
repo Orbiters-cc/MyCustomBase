@@ -612,6 +612,14 @@ public partial class CreatorModeModule
 
         var actions = CreateCreatorRow();
         actions.AddToClassList("mcb-blender__actions");
+        string latest = BlenderExportImport.LatestExportManifest;
+        if (latest != null)
+        {
+            var newest = CreateTextButton("Import the newest export", "Imports the export Blender just made: " + latest,
+                () => { BlenderExportImport.Import(editor, latest); RefreshEditorUi(); });
+            newest.SetEnabled(targets.Count > 0);
+            actions.Add(newest);
+        }
         var import = CreateTextButton("Import Blender export…",
             "Picks the manifest.json of an MCB export made in Blender: each exported model becomes the creator's custom FBX for its target (with a generated Avatar), or an advanced-mesh payload preview; XMuscles correctives come along.",
             () => { if (BlenderExportImport.PickAndImport(editor)) RefreshEditorUi(); });

@@ -22,6 +22,9 @@ internal static class McbMixerIntegration
     static McbMixerIntegration()
     {
         McbBlenderCard.Mixer = Build;
+        // Blender's nodes carry the target FBX of each mesh of a custom base: the Mixer extension's Export for MCB groups by it.
+        MixerLink.TargetFbxResolver = BlenderExportImport.TargetFbxOf;
+        MixerLink.BlenderStatus += (id, message) => { if (id == "mcb.export") BlenderExportImport.NoteExport(message); };
     }
 
     private static void Build(VisualElement card, MCBEditor editor, Action refresh)
@@ -112,6 +115,10 @@ internal static class McbMixerIntegration
 
         Refresh();
         card.schedule.Execute(Refresh).Every(500);
+        // An export Blender reports adds the newest-export button: the card is built again.
+        Action onImportChanged = () => refresh?.Invoke();
+        BlenderExportImport.Changed += onImportChanged;
+        card.RegisterCallback<DetachFromPanelEvent>(_ => BlenderExportImport.Changed -= onImportChanged);
     }
 }
 #endif

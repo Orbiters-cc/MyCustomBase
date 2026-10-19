@@ -9,6 +9,8 @@
 - Blender exports still come back through their manifest: **Import Blender export…** picks a manifest.json and makes
   each exported model the creator's custom FBX for its target (with a generated Avatar) or an advanced-mesh payload
   preview; XMuscles correctives arrive the same way. Imports land under `Assets/MCB/generated/blenderExports/<base>`.
+- Mixer tells Blender which meshes belong to which target FBX of the base, so the Mixer extension's **Export for MCB**
+  writes that manifest; when it does, the Blender card offers **Import the newest export**.
 
 ## 1.12.10 — 2026-10-19
 

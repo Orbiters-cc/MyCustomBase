@@ -71,24 +71,27 @@ internal static class BlenderExportImport
 
     // ---- Targets ----------------------------------------------------------------------------------------------------
 
-    /// <summary>The base's target FBX files: the selected asset's SOURCE files, else the FBX files detected on the avatar.</summary>
+    /// <summary>
+    /// The base's target FBX files: the selected asset's SOURCE files, then the creator's source files, then the FBX
+    /// files detected on the avatar (after an import the renderers show the custom FBX, which is not a target).
+    /// </summary>
     public static List<string> TargetFbxPaths(MCBEditor editor)
     {
         if (editor == null) return new List<string>();
+        var paths = new List<string>();
         var selectedAsset = editor.GetSelectedAsset();
-        var sourceFbxPaths = selectedAsset?.sourceFiles?
-            .Where(file => file != null
-                           && string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase)
-                           && string.Equals(file.role, "SOURCE", StringComparison.OrdinalIgnoreCase)
-                           && !string.IsNullOrWhiteSpace(file.path)
-                           && AssetImporter.GetAtPath(MCBUtils.ToUnityPath(file.path)) is ModelImporter)
-            .Select(file => MCBUtils.ToUnityPath(file.path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList() ?? new List<string>();
-        if (sourceFbxPaths.Count > 0) return sourceFbxPaths;
-        return editor.GetDetectedAvatarFbxPaths()
-            .Where(path => !string.IsNullOrWhiteSpace(path) && AssetImporter.GetAtPath(path) is ModelImporter)
-            .Select(MCBUtils.ToUnityPath)
+        if (selectedAsset?.sourceFiles != null)
+            paths.AddRange(selectedAsset.sourceFiles
+                .Where(file => file != null
+                               && string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase)
+                               && string.Equals(file.role, "SOURCE", StringComparison.OrdinalIgnoreCase)
+                               && !string.IsNullOrWhiteSpace(file.path))
+                .Select(file => MCBUtils.ToUnityPath(file.path)));
+        var customBase = editor.customBaseTarget;
+        if (customBase != null && customBase.baseFbxFiles != null)
+            paths.AddRange(customBase.baseFbxFiles.Where(f => f != null).Select(f => MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(f))));
+        if (paths.Count == 0) paths.AddRange(editor.GetDetectedAvatarFbxPaths().Where(path => !string.IsNullOrWhiteSpace(path)).Select(MCBUtils.ToUnityPath));
+        return paths.Where(path => !string.IsNullOrWhiteSpace(path) && AssetImporter.GetAtPath(path) is ModelImporter)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -161,6 +164,67 @@ internal static class BlenderExportImport
         return result;
     }
 
+    // ---- Mixer ------------------------------------------------------------------------------------------------------
+
+    private static readonly Dictionary<int, (double at, Dictionary<Transform, string> byRenderer)> targetCache = new Dictionary<int, (double, Dictionary<Transform, string>)>();
+
+    /// <summary>
+    /// The target FBX (a Unity path) a renderer of a custom base stands for, or null: what Mixer tells Blender so its
+    /// Export for MCB groups the meshes by target. Renderers showing the FBX's own meshes are matched by the asset, the
+    /// others (an applied version's meshes) by name.
+    /// </summary>
+    public static string TargetFbxOf(Renderer renderer)
+    {
+        if (renderer == null) return null;
+        var customBase = renderer.GetComponentInParent<MyCustomBase>(true);
+        if (customBase == null || customBase.baseFbxFiles == null || customBase.baseFbxFiles.Count == 0) return null;
+        var root = customBase.transform.root;
+        int key = root.GetInstanceID();
+        double now = EditorApplication.timeSinceStartup;
+        if (!targetCache.TryGetValue(key, out var cached) || now - cached.at > 2.0)
+        {
+            var paths = customBase.baseFbxFiles.Where(f => f != null).Select(f => MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(f)))
+                .Where(p => !string.IsNullOrEmpty(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var byRenderer = new Dictionary<Transform, string>();
+            foreach (var pair in SmrPathService.CollectSmrPathsByFbx(root, paths))
+                foreach (var entry in Renderers(root, pair.Value))
+                    if (!byRenderer.ContainsKey(entry.Renderer.transform)) byRenderer[entry.Renderer.transform] = pair.Key;
+            foreach (string path in paths)
+            {
+                var names = new HashSet<string>(AssetDatabase.LoadAllAssetsAtPath(path).OfType<Mesh>().Select(m => MaterialSlotNames.Normalize(m.name)), StringComparer.OrdinalIgnoreCase);
+                foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                {
+                    if (smr.sharedMesh == null || byRenderer.ContainsKey(smr.transform)) continue;
+                    if (names.Contains(MaterialSlotNames.Normalize(smr.name)) || names.Contains(MaterialSlotNames.Normalize(smr.sharedMesh.name))) byRenderer[smr.transform] = path;
+                }
+            }
+            cached = (now, byRenderer);
+            targetCache[key] = cached;
+        }
+        return cached.byRenderer.TryGetValue(renderer.transform, out string target) ? target : null;
+    }
+
+    private static string LatestExportPref => "MCB.BlenderExport.Latest:" + Application.dataPath.GetHashCode();
+
+    /// <summary>The manifest of the newest export Blender reported through Mixer, while its file exists.</summary>
+    public static string LatestExportManifest
+    {
+        get
+        {
+            string path = EditorPrefs.GetString(LatestExportPref, "");
+            return !string.IsNullOrEmpty(path) && File.Exists(path) ? path : null;
+        }
+    }
+
+    /// <summary>Remembers the export Blender just wrote (its manifest path) and tells the Blender card.</summary>
+    public static void NoteExport(string manifestPath)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath)) return;
+        EditorPrefs.SetString(LatestExportPref, manifestPath);
+        LastExportFolder = Path.GetDirectoryName(manifestPath);
+        SetStatus("Blender exported the base: " + manifestPath + "\nImport the newest export from the Blender card to make it the creator's custom FBX.", MessageType.Info);
+    }
+
     // ---- Import -----------------------------------------------------------------------------------------------------
 
     /// <summary>Asks for an export's manifest.json and imports it for the editor's custom base. False when the dialog was cancelled.</summary>
@@ -216,6 +280,9 @@ internal static class BlenderExportImport
         var updatedTargets = new List<string>();
         int generatedAvatarCount = 0;
         int advancedCount = 0;
+        // The inspector applies the editor's SerializedObject later: entries written through another one would be undone.
+        var serialized = editor.serializedObject;
+        serialized.Update();
         Undo.IncrementCurrentGroup();
         int undoGroup = Undo.GetCurrentGroup();
         Undo.SetCurrentGroupName("Import Blender export");
@@ -229,7 +296,7 @@ internal static class BlenderExportImport
                     {
                         string externalFbxPath = CopyModelToAdvancedExports(baseName, plan.sourceFbxPath, plan.targetFbxPath, plan.modelIndex, files);
                         ApplyAdvancedMeshPreview(customBase, baseName, externalFbxPath, plan.targetFbxPath, plan.previewMappings);
-                        AssignCreatorExternalCustomFbx(customBase, plan.targetFbxPath, externalFbxPath);
+                        AssignCreatorExternalCustomFbx(serialized, customBase, plan.targetFbxPath, externalFbxPath);
                         updatedTargets.Add(externalFbxPath);
                         advancedCount++;
                         MCBLogger.Log($"[BlenderExport] Applied native mesh preview and stored the export for submission. source={plan.sourceFbxPath} external={externalFbxPath} target={plan.targetFbxPath}");
@@ -242,7 +309,7 @@ internal static class BlenderExportImport
                         Avatar generatedAvatar = GenerateAvatarForImportedFbx(exportedUnityPath, plan.targetFbxPath);
                         if (generatedAvatar != null) generatedAvatarCount++;
                         RefreshTargetMeshesFromFbx(customBase, plan.target, exportedUnityPath, plan.model.meshNames);
-                        AssignCreatorCustomFbx(customBase, plan.targetFbxPath, exportedUnityPath, generatedAvatar);
+                        AssignCreatorCustomFbx(serialized, customBase, plan.targetFbxPath, exportedUnityPath, generatedAvatar);
                         ApplyGeneratedAvatarToPreview(customBase, exportedUnityPath, generatedAvatar);
                         updatedTargets.Add(exportedUnityPath);
                         MCBLogger.Log($"[BlenderExport] Imported Blender export. source={plan.sourceFbxPath} imported={exportedUnityPath} target={plan.targetFbxPath}");
@@ -258,9 +325,11 @@ internal static class BlenderExportImport
                 // Runs inside one editor update, so the group holds only this import's changes.
                 Undo.RevertAllDownToGroup(undoGroup);
                 files.Restore();
+                serialized.Update();
                 throw;
             }
         }
+        serialized.Update();
 
         string action = advancedCount > 0 ? "Updated the avatar with native meshes from" : "Updated the avatar from";
         string avatarMessage = generatedAvatarCount > 0
@@ -355,7 +424,7 @@ internal static class BlenderExportImport
             string unityPath = MCBUtils.ToUnityPath(requested);
             var match = targets.FirstOrDefault(t => string.Equals(MCBUtils.ToUnityPath(t.UnityPath), unityPath, StringComparison.OrdinalIgnoreCase));
             if (match != null) return match;
-            if (targets.Count > 1) throw new InvalidOperationException($"The export targets '{requested}', which is not one of this base's target FBX files.");
+            throw new InvalidOperationException($"The export targets '{requested}', which is not one of this base's target FBX files ({string.Join(", ", targets.Select(t => t.UnityPath))}).");
         }
         return targets[0];
     }
@@ -529,13 +598,12 @@ internal static class BlenderExportImport
         return entriesProp.GetArrayElementAtIndex(targetIndex);
     }
 
-    private static void AssignCreatorCustomFbx(MyCustomBase customBase, string targetFbxPath, string customFbxUnityPath, Avatar customBaseAvatar)
+    private static void AssignCreatorCustomFbx(SerializedObject serialized, MyCustomBase customBase, string targetFbxPath, string customFbxUnityPath, Avatar customBaseAvatar)
     {
         if (customBase == null || string.IsNullOrWhiteSpace(customFbxUnityPath)) return;
         var customFbx = AssetDatabase.LoadAssetAtPath<GameObject>(MCBUtils.ToUnityPath(customFbxUnityPath));
-        if (customFbx == null) return;
+        if (customFbx == null) throw new InvalidOperationException("The imported FBX could not be loaded: " + customFbxUnityPath);
         int targetIndex = GetCreatorTargetIndex(customBase, targetFbxPath);
-        var serialized = new SerializedObject(customBase);
         var entry = CreatorEntry(serialized, targetIndex);
         if (entry == null) return;
         entry.FindPropertyRelative("customFbx").objectReferenceValue = customFbx;
@@ -546,11 +614,10 @@ internal static class BlenderExportImport
         EditorUtility.SetDirty(customBase);
     }
 
-    private static void AssignCreatorExternalCustomFbx(MyCustomBase customBase, string targetFbxPath, string externalFbxPath)
+    private static void AssignCreatorExternalCustomFbx(SerializedObject serialized, MyCustomBase customBase, string targetFbxPath, string externalFbxPath)
     {
         if (customBase == null || string.IsNullOrWhiteSpace(externalFbxPath)) return;
         int targetIndex = GetCreatorTargetIndex(customBase, targetFbxPath);
-        var serialized = new SerializedObject(customBase);
         var entry = CreatorEntry(serialized, targetIndex);
         if (entry == null) return;
         entry.FindPropertyRelative("customFbx").objectReferenceValue = null;
