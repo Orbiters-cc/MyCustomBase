@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -22,6 +24,30 @@ public sealed class IssueReportingRegressionTests
         StringAssert.Contains("MCB", EditorIssueReporter.ConsentText);
         StringAssert.Contains("stack traces", EditorIssueReporter.ConsentText);
         StringAssert.Contains("every Unity project on this computer", EditorIssueReporter.ConsentText);
+    }
+
+    // Below the level sent nothing is handed over (no stack trace is taken), and nothing while a health check runs: its
+    // failures are deliberate.
+    [Test] public void TheLoggerHandsOverOnlyTheLevelsSentAndNothingWhileQuiet()
+    {
+        var got = new List<string>();
+        Action<string, string, LogType> listen = (message, stack, type) => { if (message.StartsWith("[IssueTest]", StringComparison.Ordinal)) got.Add(message); };
+        int level = MCBLogger.IssueMinLevel;
+        MCBLogger.IssueLogged += listen;
+        try
+        {
+            MCBLogger.IssueMinLevel = 2;
+            MCBLogger.Log("[IssueTest] info");
+            MCBLogger.LogWarning("[IssueTest] warning");
+            using (MCBLogger.QuietIssues()) MCBLogger.LogWarning("[IssueTest] deliberate");
+            MCBLogger.LogWarning("[IssueTest] after");
+            CollectionAssert.AreEqual(new[] { "[IssueTest] warning", "[IssueTest] after" }, got);
+        }
+        finally
+        {
+            MCBLogger.IssueLogged -= listen;
+            MCBLogger.IssueMinLevel = level;
+        }
     }
 
     [Test] public void RequestUrlsInLogsAndConnectivityReportsNeverContainTheAccountToken()

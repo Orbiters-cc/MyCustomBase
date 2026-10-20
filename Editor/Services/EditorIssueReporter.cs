@@ -14,10 +14,11 @@ public static class EditorIssueReporter
     {
         ToolName = "MCB",
         SettingsKey = "MCB",
-        // Connected only while sharing: MCBLogger takes a stack trace for every log while anyone listens.
+        // Connected only while sharing, from the level sent: MCBLogger takes a stack trace for every log it hands over.
         Feed = (reporter, on) =>
         {
             MCBLogger.IssueLogged -= reporter.Submit;
+            MCBLogger.IssueMinLevel = reporter.MinSeverityLevel;
             if (on) MCBLogger.IssueLogged += reporter.Submit;
         },
         Endpoint = () => MCBUtils.getApiUrl(scope: "bugs"),
@@ -41,13 +42,21 @@ public static class EditorIssueReporter
     public static int MinSeverityLevel
     {
         get => Reporter.MinSeverityLevel;
-        set => Reporter.MinSeverityLevel = value;
+        set
+        {
+            Reporter.MinSeverityLevel = value;
+            MCBLogger.IssueMinLevel = Reporter.MinSeverityLevel;
+        }
     }
 
     /// <summary>What sharing sends, for the settings' tooltip.</summary>
     public static string ConsentText => Reporter.ConsentText;
 
     /// <summary>Reads the settings again (another editor may have changed them).</summary>
-    public static void RefreshListener() => Reporter.Refresh();
+    public static void RefreshListener()
+    {
+        Reporter.Refresh();
+        MCBLogger.IssueMinLevel = Reporter.MinSeverityLevel;
+    }
 }
 #endif

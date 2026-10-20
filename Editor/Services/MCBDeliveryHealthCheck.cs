@@ -10,7 +10,13 @@ using Object = UnityEngine.Object;
 
 public static partial class MCBDeliveryHealthCheck
 {
+    /// <summary>Runs the check and throws when it fails. What it logs on purpose is never sent as a diagnostic.</summary>
     public static void RunOrThrow()
+    {
+        using (MCBLogger.QuietIssues()) RunChecks();
+    }
+
+    private static void RunChecks()
     {
         RunReuseCheck();
         RunPlainOrThrow();

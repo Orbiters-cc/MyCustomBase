@@ -27,7 +27,13 @@ public static class NativeMeshPayloadHealthCheck
         }
     }
 
+    /// <summary>Runs the check and throws when it fails. What it logs on purpose is never sent as a diagnostic.</summary>
     public static void RunOrThrow()
+    {
+        using (MCBLogger.QuietIssues()) RunChecks();
+    }
+
+    private static void RunChecks()
     {
         CheckHumanoidProportions();
         string sourceKeyPath = Path.Combine(Path.GetTempPath(), "mcb_native_mesh_health_source.fbx");
