@@ -219,28 +219,56 @@ internal static partial class BlenderExportImport
         foreach (string file in files ?? Enumerable.Empty<string>())
         {
             if (needles.All(n => named.Contains(n.copy))) break;
-            string text;
+            bool yaml;
             try
             {
                 if (!File.Exists(file)) continue;
-                text = File.ReadAllText(file);
+                yaml = FindNamesIn(file, needles, named);
             }
             catch (Exception)
             {
                 named.UnionWith(copies);
                 break;
             }
-            if (!text.StartsWith("%YAML", StringComparison.Ordinal))
+            if (!yaml)
             {
                 // Binary serialization: what it names cannot be read.
                 named.UnionWith(copies);
                 break;
             }
-            string flat = WithoutWhitespace(text);
-            foreach (var needle in needles)
-                if (!named.Contains(needle.copy) && flat.IndexOf(needle.name, StringComparison.OrdinalIgnoreCase) >= 0) named.Add(needle.copy);
         }
         return named;
+    }
+
+    // The file is read in pieces with its whitespace left out, each piece searched with the end of the one before (a name
+    // can span two): a scene or prefab of hundreds of MB is never held in memory. False when the file is not YAML text.
+    private static bool FindNamesIn(string file, List<(string copy, string name)> needles, HashSet<string> named)
+    {
+        int overlap = needles.Max(n => n.name.Length) - 1;
+        var buffer = new char[1 << 18];
+        var flat = new StringBuilder(buffer.Length + overlap);
+        var head = new StringBuilder(5);
+        using (var reader = new StreamReader(file, Encoding.UTF8, true))
+        {
+            int read;
+            while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                if (head.Length < 5)
+                {
+                    for (int i = 0; i < read && head.Length < 5; i++) head.Append(buffer[i]);
+                    if (head.Length == 5 && head.ToString() != "%YAML") return false;
+                }
+                for (int i = 0; i < read; i++)
+                    if (!char.IsWhiteSpace(buffer[i])) flat.Append(buffer[i]);
+                string text = flat.ToString();
+                foreach (var needle in needles)
+                    if (!named.Contains(needle.copy) && text.IndexOf(needle.name, StringComparison.OrdinalIgnoreCase) >= 0) named.Add(needle.copy);
+                if (needles.All(n => named.Contains(n.copy))) return true;
+                flat.Clear();
+                if (overlap > 0) flat.Append(text, Math.Max(0, text.Length - overlap), Math.Min(overlap, text.Length));
+            }
+        }
+        return head.ToString() == "%YAML";
     }
 
     private static string WithoutWhitespace(string text)
