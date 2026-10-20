@@ -2,6 +2,10 @@
 
 ## 1.12.12 — 2026-10-20
 
+- With Orbiters Mixer: a custom base's corrective shapes show in Mixer's blendshape list (the Skinned Mesh Renderer
+  inspector's target button): the shape a corrective fixes, the corrective fixing a shape and the custom blendshape
+  scaling it, from the applied version and from the BlendShape factor links set by hand.
+
 - Work run to its end at once (the deterministic health checks, tests) no longer waits for Unity to finish compiling or
   importing, which it cannot do meanwhile: a script saved during such a run hung the editor for good (`MCBWork.EditorBusy`).
 - **Share MCB diagnostics** now goes through Orbiters Toolkit's shared reporter: any account's Orbiters token, VRChat

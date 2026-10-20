@@ -11,7 +11,9 @@ using UnityEngine.UIElements;
 /// The live part of the creator mode's Blender card when Orbiters Mixer is installed: the Mixer link's state, Open scene
 /// in Blender, and the custom base's renderers with what Blender or Mixer is doing to them, with Commit, Revert and Edit
 /// in Mixer. Registers itself with MCB's creator mode when scripts load. Mixer and Blender edits stay in the scene: a
-/// version carries them only through Export for MCB and the card's import, which the card says.
+/// version carries them only through Export for MCB and the card's import, which the card says. Also tells Mixer's
+/// blendshape list which shapes of a custom base are correctives (the applied version's and the factor links set by
+/// hand), so a shape's target button lists them.
 /// </summary>
 [InitializeOnLoad]
 internal static class McbMixerIntegration
@@ -32,6 +34,48 @@ internal static class McbMixerIntegration
         // Blender's nodes carry the target FBX of each mesh of a custom base: the Mixer extension's Export for MCB groups by it.
         MixerLink.TargetFbxResolver = BlenderExportImport.TargetFbxOf;
         MixerLink.BlenderStatus += (id, message) => { if (id == "mcb.export") BlenderExportImport.NoteExport(message); };
+        MixerLink.BlendshapeUses += CorrectiveUses;
+    }
+
+    private const string CorrectiveGroup = "MCB corrective";
+
+    // The links MCB's build applies (BlendShapeLinkService, as its preprocess does) that name this shape of this renderer:
+    // the shape it corrects, the shape correcting it, the custom blendshape whose value scales the correction.
+    private static IEnumerable<MixerLink.BlendshapeUse> CorrectiveUses(SkinnedMeshRenderer renderer, string shape)
+    {
+        var uses = new List<MixerLink.BlendshapeUse>();
+        if (renderer == null || string.IsNullOrEmpty(shape)) return uses;
+        var customBase = renderer.GetComponentInParent<MyCustomBase>(true) ?? BlendShapeLinkService.FindCustomBase(renderer.transform.root.gameObject);
+        if (customBase == null) return uses;
+        var root = customBase.gameObject;
+        string path = AnimationUtility.CalculateTransformPath(renderer.transform, root.transform);
+        string version = string.IsNullOrEmpty(customBase.appliedCustomBaseVersionString) ? "the applied version" : "version " + customBase.appliedCustomBaseVersionString;
+        bool Named(CorrectiveActivationType type, string name) => type == CorrectiveActivationType.Blendshape && string.Equals(name, shape, StringComparison.Ordinal);
+        string Endpoint(CorrectiveActivationType type, string name) => type == CorrectiveActivationType.Animation ? "the animation " + name : name;
+        foreach (var link in BlendShapeLinkService.Instance.GetActiveVersionLinkDebugInfo(root))
+        {
+            if (!string.IsNullOrEmpty(link.targetRendererPath) && link.targetRendererPath != path) continue;
+            string scaled = string.IsNullOrEmpty(link.driverBlendshape) ? string.Empty : " \u00b7 scaled by the custom blendshape " + link.driverBlendshape;
+            if (Named(link.fixedByType, link.fixedBy))
+                uses.Add(new MixerLink.BlendshapeUse { Group = CorrectiveGroup, Title = "Corrects " + Endpoint(link.toFixType, link.toFix), Detail = "Custom base " + version + scaled, Target = customBase });
+            if (Named(link.toFixType, link.toFix))
+                uses.Add(new MixerLink.BlendshapeUse { Group = CorrectiveGroup, Title = "Corrected by " + Endpoint(link.fixedByType, link.fixedBy), Detail = "Custom base " + version + scaled, Target = customBase });
+            if (string.Equals(link.driverBlendshape, shape, StringComparison.Ordinal) && !Named(link.fixedByType, link.fixedBy) && !Named(link.toFixType, link.toFix))
+                uses.Add(new MixerLink.BlendshapeUse { Group = CorrectiveGroup, Title = "Scales the correction of " + Endpoint(link.toFixType, link.toFix) + " by " + Endpoint(link.fixedByType, link.fixedBy), Detail = "Custom blendshape of " + version, Target = customBase });
+        }
+        if (customBase.blendShapeFactorLinks != null)
+        {
+            foreach (var link in customBase.blendShapeFactorLinks)
+            {
+                if (link == null || (!string.IsNullOrEmpty(link.targetRendererPath) && link.targetRendererPath != path)) continue;
+                string state = link.enabled ? "BlendShape factor link set by hand" : "BlendShape factor link set by hand (off)";
+                if (Named(link.fixedByType, link.fixedBy))
+                    uses.Add(new MixerLink.BlendshapeUse { Group = CorrectiveGroup, Title = "Corrects " + Endpoint(link.toFixType, link.toFix), Detail = state, Target = customBase });
+                if (Named(link.toFixType, link.toFix))
+                    uses.Add(new MixerLink.BlendshapeUse { Group = CorrectiveGroup, Title = "Corrected by " + Endpoint(link.fixedByType, link.fixedBy), Detail = state, Target = customBase });
+            }
+        }
+        return uses;
     }
 
     private static void Build(VisualElement card, MCBEditor editor, Action refresh)
