@@ -12,7 +12,8 @@ public static class McbBlenderCard
     /// <summary>Builds Mixer's part of the card into the given panel; null while Orbiters Mixer is not installed.</summary>
     public static Action<VisualElement, MCBEditor, Action> Mixer;
 
-    /// <summary>Shows a message under the card and logs it.</summary>
-    public static void Say(string message, MessageType type) => BlenderExportImport.SetStatus(message, type);
+    /// <summary>Shows a message under the card of the editor's custom base and logs it.</summary>
+    public static void Say(MCBEditor editor, string message, MessageType type) =>
+        BlenderExportImport.SetStatus(editor != null ? editor.customBaseTarget : null, message, type);
 }
 #endif

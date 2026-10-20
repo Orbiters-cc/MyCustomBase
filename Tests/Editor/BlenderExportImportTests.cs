@@ -219,6 +219,106 @@ public class BlenderExportImportTests
         }
     }
 
+    // Two avatars under one parent (variants of a base, a test copy): each renderer stands for its own base's FBX, and a prop
+    // beside them is no base's.
+    [Test]
+    public void AvatarsUnderOneParentKeepTheirOwnTargets()
+    {
+        string folder = AssetFolder();
+        string Base(string name)
+        {
+            string path = folder + "/" + name + ".prefab";
+            PrefabUtility.SaveAsPrefabAsset(Make(name), path);
+            AssetDatabase.AddObjectToAsset(new Mesh { name = "Body" }, path);
+            return path;
+        }
+        string pathA = Base("BaseA"), pathB = Base("BaseB");
+        var parent = Make("Avatars");
+        var versionMesh = new Mesh { name = "Body" };
+        SkinnedMeshRenderer Avatar(string name, string basePath)
+        {
+            var avatar = Make(name, parent.transform);
+            avatar.AddComponent<VRC.SDK3.Avatars.Components.VRCAvatarDescriptor>();
+            avatar.AddComponent<MyCustomBase>().baseFbxFiles.Add(AssetDatabase.LoadAssetAtPath<GameObject>(basePath));
+            var body = Make("Body", avatar.transform).AddComponent<SkinnedMeshRenderer>();
+            body.sharedMesh = versionMesh;
+            return body;
+        }
+        try
+        {
+            var bodyA = Avatar("A", pathA);
+            var bodyB = Avatar("B", pathB);
+            var prop = Make("Body", parent.transform).AddComponent<SkinnedMeshRenderer>();
+            prop.sharedMesh = versionMesh;
+
+            Assert.AreEqual(pathA, BlenderExportImport.TargetFbxOf(bodyA));
+            Assert.AreEqual(pathB, BlenderExportImport.TargetFbxOf(bodyB), "B's renderers are looked up in B's own targets, not A's.");
+            Assert.IsNull(BlenderExportImport.CustomBaseOf(prop.transform), "A prop beside the avatars is no base's.");
+            Assert.IsNull(BlenderExportImport.TargetFbxOf(prop));
+        }
+        finally
+        {
+            Object.DestroyImmediate(versionMesh);
+            BlenderExportImport.ForgetTargets();
+        }
+    }
+
+    // A partial match is told apart from a full one: the renderers the records name that kept their meshes are listed.
+    [Test]
+    public void RefreshingMeshesFromAModelListsTheRenderersThatKeptTheirs()
+    {
+        string folder = AssetFolder();
+        var mesh = new Mesh { name = "Body" };
+        AssetDatabase.CreateAsset(mesh, folder + "/Body.asset");
+        var model = Make("Model");
+        Make("Body", model.transform).AddComponent<SkinnedMeshRenderer>().sharedMesh = mesh;
+        string modelPath = folder + "/Model.prefab";
+        PrefabUtility.SaveAsPrefabAsset(model, modelPath);
+        var avatar = Make("Avatar");
+        var body = Make("Body", avatar.transform).AddComponent<SkinnedMeshRenderer>();
+        Make("Hair", avatar.transform).AddComponent<SkinnedMeshRenderer>();
+        var entries = new List<ModelFileSmrPathData>
+        {
+            new ModelFileSmrPathData { avatarPath = "Body", fbxMeshPath = "Body", meshName = "Body", rendererName = "Body" },
+            new ModelFileSmrPathData { avatarPath = "Hair", fbxMeshPath = "Hair", meshName = "Hair", rendererName = "Hair" },
+        };
+        var sandbox = TestUndoSandbox.Begin();
+        try
+        {
+            var missed = new List<string>();
+            Assert.AreEqual(1, SmrPathService.RefreshTargetMeshesFromFbx(avatar.transform, modelPath, entries, allowNameFallback: false, notRefreshed: missed));
+            Assert.AreSame(mesh, body.sharedMesh);
+            CollectionAssert.AreEqual(new[] { "Hair" }, missed, "The model has no Hair: that renderer kept its mesh.");
+        }
+        finally
+        {
+            sandbox.End();
+        }
+    }
+
+    // Base A's failed import is A's: B's Blender card does not show it, and only A's form is told.
+    [Test]
+    public void EachBaseShowsOnlyItsOwnBlenderCardMessage()
+    {
+        var a = Make("A").AddComponent<MyCustomBase>();
+        var b = Make("B").AddComponent<MyCustomBase>();
+        var told = new List<MyCustomBase>();
+        Action<MyCustomBase> listen = told.Add;
+        BlenderExportImport.Changed += listen;
+        try
+        {
+            BlenderExportImport.SetStatus(a, "Blender export import failed: test.", MessageType.Error);
+            Assert.AreEqual("Blender export import failed: test.", BlenderExportImport.StatusOf(a, out var type));
+            Assert.AreEqual(MessageType.Error, type);
+            Assert.IsNull(BlenderExportImport.StatusOf(b, out _));
+            CollectionAssert.AreEqual(new[] { a }, told);
+        }
+        finally
+        {
+            BlenderExportImport.Changed -= listen;
+        }
+    }
+
     // ---- What a version would leave out ---------------------------------------------------------------------------------
 
     [Test]

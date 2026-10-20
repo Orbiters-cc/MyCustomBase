@@ -636,13 +636,16 @@ public partial class CreatorModeModule
         import.SetEnabled(targets.Count > 0);
         actions.Add(import);
         card.Add(actions);
-        Action onImportChanged = RefreshEditorUi;
+        // Only this base's messages rebuild this form.
+        var shownBase = editor.customBaseTarget;
+        Action<MyCustomBase> onImportChanged = changed => { if (changed == shownBase) RefreshEditorUi(); };
         BlenderExportImport.Changed += onImportChanged;
         card.RegisterCallback<DetachFromPanelEvent>(_ => BlenderExportImport.Changed -= onImportChanged);
-        if (!string.IsNullOrEmpty(BlenderExportImport.LastStatus))
-            card.Add(CreateHelpBox(BlenderExportImport.LastStatus,
-                BlenderExportImport.LastStatusType == MessageType.Error ? HelpBoxMessageType.Error
-                : BlenderExportImport.LastStatusType == MessageType.Warning ? HelpBoxMessageType.Warning : HelpBoxMessageType.Info));
+        string status = BlenderExportImport.StatusOf(shownBase, out var statusType);
+        if (!string.IsNullOrEmpty(status))
+            card.Add(CreateHelpBox(status,
+                statusType == MessageType.Error ? HelpBoxMessageType.Error
+                : statusType == MessageType.Warning ? HelpBoxMessageType.Warning : HelpBoxMessageType.Info));
         root.Add(card);
     }
 

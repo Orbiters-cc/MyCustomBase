@@ -40,21 +40,30 @@ internal static class McbMixerIntegration
     private const string CorrectiveGroup = "MCB corrective";
 
     // The links MCB's build applies (BlendShapeLinkService, as its preprocess does) that name this shape of this renderer:
-    // the shape it corrects, the shape correcting it, the custom blendshape whose value scales the correction.
+    // the shape it corrects, the shape correcting it, the custom blendshape whose value scales the correction. Paths are
+    // the build's: from the avatar (its descriptor), wherever the base's component sits on it.
     private static IEnumerable<MixerLink.BlendshapeUse> CorrectiveUses(SkinnedMeshRenderer renderer, string shape)
     {
         var uses = new List<MixerLink.BlendshapeUse>();
         if (renderer == null || string.IsNullOrEmpty(shape)) return uses;
-        var customBase = renderer.GetComponentInParent<MyCustomBase>(true) ?? BlendShapeLinkService.FindCustomBase(renderer.transform.root.gameObject);
+        // The renderer's own avatar only: a build copy's fallback by root name would claim another avatar of that name.
+        var customBase = BlenderExportImport.CustomBaseOf(renderer.transform);
         if (customBase == null) return uses;
-        var root = customBase.gameObject;
-        string path = AnimationUtility.CalculateTransformPath(renderer.transform, root.transform);
+        var root = AvatarPaths.Root(customBase);
+        if (!renderer.transform.IsChildOf(root)) return uses;
+        string path = AnimationUtility.CalculateTransformPath(renderer.transform, root);
         string version = string.IsNullOrEmpty(customBase.appliedCustomBaseVersionString) ? "the applied version" : "version " + customBase.appliedCustomBaseVersionString;
         bool Named(CorrectiveActivationType type, string name) => type == CorrectiveActivationType.Blendshape && string.Equals(name, shape, StringComparison.Ordinal);
         string Endpoint(CorrectiveActivationType type, string name) => type == CorrectiveActivationType.Animation ? "the animation " + name : name;
-        foreach (var link in BlendShapeLinkService.Instance.GetActiveVersionLinkDebugInfo(root))
+        // A link without a renderer path is an animation-only one (the build refuses blendshape ends without a path): only its
+        // custom blendshape can be this renderer's.
+        bool OnThisRenderer(string targetPath, CorrectiveActivationType toFixType, CorrectiveActivationType fixedByType) =>
+            string.IsNullOrEmpty(targetPath)
+                ? toFixType != CorrectiveActivationType.Blendshape && fixedByType != CorrectiveActivationType.Blendshape
+                : targetPath == path;
+        foreach (var link in BlendShapeLinkService.Instance.GetActiveVersionLinkDebugInfo(root.gameObject))
         {
-            if (!string.IsNullOrEmpty(link.targetRendererPath) && link.targetRendererPath != path) continue;
+            if (!OnThisRenderer(link.targetRendererPath, link.toFixType, link.fixedByType)) continue;
             string scaled = string.IsNullOrEmpty(link.driverBlendshape) ? string.Empty : " \u00b7 scaled by the custom blendshape " + link.driverBlendshape;
             if (Named(link.fixedByType, link.fixedBy))
                 uses.Add(new MixerLink.BlendshapeUse { Group = CorrectiveGroup, Title = "Corrects " + Endpoint(link.toFixType, link.toFix), Detail = "Custom base " + version + scaled, Target = customBase });
@@ -67,7 +76,7 @@ internal static class McbMixerIntegration
         {
             foreach (var link in customBase.blendShapeFactorLinks)
             {
-                if (link == null || (!string.IsNullOrEmpty(link.targetRendererPath) && link.targetRendererPath != path)) continue;
+                if (link == null || !OnThisRenderer(link.targetRendererPath, link.toFixType, link.fixedByType)) continue;
                 string state = link.enabled ? "BlendShape factor link set by hand" : "BlendShape factor link set by hand (off)";
                 if (Named(link.fixedByType, link.fixedBy))
                     uses.Add(new MixerLink.BlendshapeUse { Group = CorrectiveGroup, Title = "Corrects " + Endpoint(link.toFixType, link.toFix), Detail = state, Target = customBase });
@@ -76,6 +85,20 @@ internal static class McbMixerIntegration
             }
         }
         return uses;
+    }
+
+    // Mixer's own Reverts ask the same before edits are lost for good (MixerConfirm, inside Mixer): Revert also replaces
+    // Blender's copy of the mesh, so it asks while Blender edits it too.
+    private const string RevertOptOutKey = "MCB.Mixer.Confirm.Revert";
+
+    private static bool ConfirmRevert(Renderer renderer)
+    {
+        bool inBlender = MixerLink.StateOf(renderer) == MixerLink.RendererState.EditedInBlender;
+        if (!inBlender && !MixerLink.HasEdits(renderer)) return true;
+        string message = inBlender
+            ? renderer.name + " is being edited in Blender. Its original mesh comes back in Unity and in Blender: what Blender edits in that mode, and Mixer edits not committed, are dropped. This cannot be undone."
+            : "The Mixer edits of " + renderer.name + " have not been committed. Its original mesh comes back, in a linked Blender too. This cannot be undone.";
+        return EditorUtility.DisplayDialog("Revert " + renderer.name, message, "Revert", "Cancel", DialogOptOutDecisionType.ForThisMachine, RevertOptOutKey);
     }
 
     private static void Build(VisualElement card, MCBEditor editor, Action refresh)
@@ -97,7 +120,7 @@ internal static class McbMixerIntegration
             "Starts Blender on this scene's Mixer project: the avatar with its meshes, bones and materials is there, and what you edit in Blender shows on the avatar live.", () =>
             {
                 string error = MixerLink.OpenInBlender();
-                McbBlenderCard.Say(error ?? "Blender is starting on the scene's project. What you edit there shows on the avatar live, and Commit keeps it in this scene. " + NotInVersions,
+                McbBlenderCard.Say(editor, error ?? "Blender is starting on the scene's project. What you edit there shows on the avatar live, and Commit keeps it in this scene. " + NotInVersions,
                     error != null ? MessageType.Warning : MessageType.Info);
             }));
         actions.Add(CreatorModeModule.CreateTextButton("Open Mixer",
@@ -169,7 +192,7 @@ internal static class McbMixerIntegration
                         row.Add(CreatorModeModule.CreateTextButton("Edit in Mixer", "Sculpt, paint weights or edit the armature of this mesh in Unity.", () =>
                         {
                             string error = MixerLink.Edit(renderer);
-                            if (error != null) McbBlenderCard.Say(error, MessageType.Warning);
+                            if (error != null) McbBlenderCard.Say(editor, error, MessageType.Warning);
                             else refresh?.Invoke();
                         }));
                     }
@@ -179,17 +202,19 @@ internal static class McbMixerIntegration
                             "Saves the edits as a mesh asset shown on the renderer, in one Undo step. The mesh stays in this scene: versions are built from the FBX files.", () =>
                             {
                                 var mesh = MixerLink.Commit(renderer);
-                                McbBlenderCard.Say(mesh != null
+                                McbBlenderCard.Say(editor, mesh != null
                                     ? "Committed " + renderer.name + " to " + AssetDatabase.GetAssetPath(mesh) + ". It shows on the avatar in this scene. " + NotInVersions
                                     : renderer.name + " has nothing to commit.", MessageType.Info);
                             });
                         commit.SetEnabled(edits && rendererState != MixerLink.RendererState.EditedInBlender);
                         row.Add(commit);
-                        row.Add(CreatorModeModule.CreateTextButton("Revert", "Puts the renderer's own mesh back; the Blender side keeps its copy.", () =>
-                        {
-                            MixerLink.Revert(renderer);
-                            refresh?.Invoke();
-                        }));
+                        row.Add(CreatorModeModule.CreateTextButton("Revert",
+                            "Puts the renderer's own mesh back and drops the edits not committed (asks first when there are any). A linked Blender gets that mesh again too, in place of its own copy.", () =>
+                            {
+                                if (!ConfirmRevert(renderer)) return;
+                                MixerLink.Revert(renderer);
+                                refresh?.Invoke();
+                            }));
                     }
                     meshes.Add(row);
                 }

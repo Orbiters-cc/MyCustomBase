@@ -465,7 +465,7 @@ public partial class CreatorModeModule
 
             AssetDatabase.ImportAsset(customPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 
-            Transform avatarRoot = editor.customBaseTarget.transform.root;
+            Transform avatarRoot = AvatarPaths.Root(editor.customBaseTarget);
             var smrPaths = CollectTargetedSmrPathsForModelEntry(avatarRoot, targetPath, targetFbx, customFbx);
             if (smrPaths.Count == 0)
             {
@@ -527,7 +527,7 @@ public partial class CreatorModeModule
         {
             if (customFbx == null)
             {
-                AvatarDefinitionGenerationService.SetRootAnimatorAvatar(editor.customBaseTarget.transform.root, customAvatar);
+                AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(editor.customBaseTarget), customAvatar);
                 SaveTemporaryInternalVersion("custom avatar apply");
                 EditorUtility.SetDirty(editor.customBaseTarget);
                 return;
@@ -544,7 +544,7 @@ public partial class CreatorModeModule
             {
                 AssetDatabase.ImportAsset(targetPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
             }
-            Transform avatarRoot = editor.customBaseTarget.transform.root;
+            Transform avatarRoot = AvatarPaths.Root(editor.customBaseTarget);
             var smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, targetPath);
             if (smrPaths.Count == 0)
             {
@@ -599,7 +599,7 @@ public partial class CreatorModeModule
             avatarProp.objectReferenceValue = result.avatar;
             editor.serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(editor.customBaseTarget);
-            AvatarDefinitionGenerationService.SetRootAnimatorAvatar(editor.customBaseTarget.transform.root, result.avatar);
+            AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(editor.customBaseTarget), result.avatar);
             SaveTemporaryInternalVersion("avatar generation");
 
             MCBLogger.Log($"[MCB] Generated custom base Avatar '{result.avatarPath}'. {result.message}");

@@ -33,9 +33,20 @@ internal static partial class BlenderExportImport
     // A target's name as it appears in the file names: short, so every path fits Windows' limit.
     private const int TargetLabelLength = 24;
 
-    public static string LastStatus { get; private set; }
-    public static MessageType LastStatusType { get; private set; } = MessageType.Info;
-    public static event Action Changed;
+    // What each base's Blender card says: the last import, Blender export or Mixer action of that base.
+    private static readonly Dictionary<int, (string message, MessageType type)> statuses = new Dictionary<int, (string, MessageType)>();
+
+    /// <summary>Raised with the base whose Blender card message changed.</summary>
+    public static event Action<MyCustomBase> Changed;
+
+    /// <summary>The message the Blender card of <paramref name="customBase"/> shows (its last import, export or Mixer action), or null.</summary>
+    public static string StatusOf(MyCustomBase customBase, out MessageType type)
+    {
+        type = MessageType.Info;
+        if (customBase == null || !statuses.TryGetValue(customBase.GetInstanceID(), out var status)) return null;
+        type = status.type;
+        return status.message;
+    }
 
     internal sealed class BlenderExportManifest
     {
@@ -111,7 +122,8 @@ internal static partial class BlenderExportImport
         var paths = TargetFbxPaths(editor);
         if (paths.Count == 0 || editor.customBaseTarget == null) return new List<ExportTarget>();
         var selectedAsset = editor.GetSelectedAsset();
-        var discovered = SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, paths);
+        // From the avatar, as the asset's records and the version builds name its renderers (not from an object above it).
+        var discovered = SmrPathService.CollectSmrPathsByFbx(AvatarPaths.Root(editor.customBaseTarget), paths);
         return paths.Select(path => new ExportTarget
         {
             UnityPath = path,
@@ -240,7 +252,8 @@ internal static partial class BlenderExportImport
         if (renderer == null) return null;
         var customBase = CustomBaseOf(renderer.transform);
         if (customBase == null || customBase.baseFbxFiles == null || customBase.baseFbxFiles.Count == 0) return null;
-        int key = customBase.transform.root.GetInstanceID();
+        // Per base: two avatars under one parent each have their own targets.
+        int key = customBase.GetInstanceID();
         double now = EditorApplication.timeSinceStartup;
         if (!targetCache.TryGetValue(key, out var cached) || now - cached.at > 2.0)
         {
@@ -253,24 +266,28 @@ internal static partial class BlenderExportImport
         return cached.byRenderer.TryGetValue(renderer.transform, out string target) ? target : null;
     }
 
-    /// <summary>The custom base a renderer belongs to: on the renderer's parents, else anywhere under its avatar.</summary>
+    /// <summary>
+    /// The custom base a renderer belongs to: on the renderer's parents, else anywhere under its avatar. Without an avatar
+    /// above it, only a base whose avatar holds the renderer: a prop beside another avatar is not that avatar's.
+    /// </summary>
     internal static MyCustomBase CustomBaseOf(Transform transform)
     {
         if (transform == null) return null;
         var above = transform.GetComponentInParent<MyCustomBase>(true);
         if (above != null) return above;
         var descriptor = transform.GetComponentInParent<VRC.SDK3.Avatars.Components.VRCAvatarDescriptor>(true);
-        var avatar = descriptor != null ? descriptor.transform : transform.root;
-        return avatar.GetComponentInChildren<MyCustomBase>(true);
+        if (descriptor != null) return descriptor.GetComponentInChildren<MyCustomBase>(true);
+        return transform.root.GetComponentsInChildren<MyCustomBase>(true).FirstOrDefault(b => transform.IsChildOf(AvatarPaths.Root(b)));
     }
 
     // The renderers the asset's records name first, then, by the FBX's mesh names, one renderer per mesh (active ones first):
     // an applied version's meshes are not the FBX's own, and an inactive outfit copy of "Body" must not go into the base's
     // FBX beside the real one. Only the creator's source files are targets while the base has some, so an export names
-    // targets its import accepts.
+    // targets its import accepts. Only the base's own avatar is searched: another avatar under the same parent keeps its
+    // renderers.
     private static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> MapTargets(MyCustomBase customBase, MCBEditor editor)
     {
-        var root = customBase.transform.root;
+        var root = AvatarPaths.Root(customBase);
         var result = new List<(SkinnedMeshRenderer, string, string)>();
         var mapped = new HashSet<Transform>();
         var claimed = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
@@ -350,22 +367,45 @@ internal static partial class BlenderExportImport
     {
         string path = EditorPrefs.GetString(LatestExportPref, "");
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
-        BlenderExportManifest manifest;
-        try { manifest = ReadExportManifest(path); }
-        catch (Exception) { return path; }
-        var named = (manifest.models ?? new List<ModelInfo>()).Select(model => model?.targetFbxPath).Append(manifest.target?.targetFbxPath)
-            .Where(p => !string.IsNullOrWhiteSpace(p)).Select(MCBUtils.ToUnityPath).ToList();
+        var named = TargetsNamedBy(path);
+        if (named == null) return path;
         var targets = targetFbxPaths ?? Array.Empty<string>();
         return named.Count == 0 || named.Any(p => targets.Contains(p, StringComparer.OrdinalIgnoreCase)) ? path : null;
     }
 
-    /// <summary>Remembers the export Blender just wrote (its manifest path) and tells the Blender card.</summary>
+    // The newest manifest's targets, read again only when the file changed: the creator form asks at every rebuild.
+    private static (string path, DateTime written, long length, List<string> named) latestManifest;
+
+    // The target FBX paths a manifest names (none when it names none), or null when it cannot be read.
+    private static List<string> TargetsNamedBy(string manifestPath)
+    {
+        var file = new FileInfo(manifestPath);
+        if (latestManifest.path == manifestPath && latestManifest.written == file.LastWriteTimeUtc && latestManifest.length == file.Length)
+            return latestManifest.named;
+        List<string> named;
+        try
+        {
+            var manifest = ReadExportManifest(manifestPath);
+            named = (manifest.models ?? new List<ModelInfo>()).Select(model => model?.targetFbxPath).Append(manifest.target?.targetFbxPath)
+                .Where(p => !string.IsNullOrWhiteSpace(p)).Select(MCBUtils.ToUnityPath).ToList();
+        }
+        catch (Exception) { named = null; }
+        latestManifest = (manifestPath, file.LastWriteTimeUtc, file.Length, named);
+        return named;
+    }
+
+    /// <summary>Remembers the export Blender just wrote (its manifest path) and tells the Blender cards of the bases it is for.</summary>
     public static void NoteExport(string manifestPath)
     {
         if (string.IsNullOrWhiteSpace(manifestPath)) return;
         EditorPrefs.SetString(LatestExportPref, manifestPath);
         LastExportFolder = Path.GetDirectoryName(manifestPath);
-        SetStatus("Blender exported the base: " + manifestPath + "\nImport the newest export from the Blender card to make it the creator's custom FBX.", MessageType.Info);
+        string message = "Blender exported the base: " + manifestPath + "\nImport the newest export from the Blender card to make it the creator's custom FBX.";
+        var bases = Resources.FindObjectsOfTypeAll<MCBEditor>()
+            .Where(editor => editor != null && editor.customBaseTarget != null && LatestExportFor(TargetFbxPaths(editor)) != null)
+            .Select(editor => editor.customBaseTarget).Distinct().ToList();
+        if (bases.Count == 0) SetStatus(null, message, MessageType.Info);
+        foreach (var customBase in bases) SetStatus(customBase, message, MessageType.Info);
     }
 
     // An imported export is not offered again.
@@ -399,16 +439,26 @@ internal static partial class BlenderExportImport
         set => EditorPrefs.SetString("MCB.BlenderExport.LastFolder", value ?? "");
     }
 
-    /// <summary>Imports an export for the editor's custom base. Failures land in <see cref="LastStatus"/> and the Console, never thrown.</summary>
+    /// <summary>
+    /// Imports an export for the editor's custom base. Failures land in the base's <see cref="StatusOf"/> and the Console,
+    /// never thrown. Not while a version is built, downloaded or applied: both change the same renderers and entries.
+    /// </summary>
     public static void Import(MCBEditor editor, string manifestPath)
     {
+        var customBase = editor != null ? editor.customBaseTarget : null;
+        if (VersionOperationGuard.VersionWorkRunning)
+        {
+            SetStatus(customBase, "The Blender export was not imported: " + (VersionOperationGuard.BusyMessage ??
+                "MCB is downloading or applying a version. Wait for it to finish, then import again."), MessageType.Warning);
+            return;
+        }
         try
         {
-            Apply(editor, manifestPath);
+            using (VersionOperationGuard.Acquire("importing a Blender export")) Apply(editor, manifestPath);
         }
         catch (Exception ex)
         {
-            SetStatus("Blender export import failed: " + ex.Message + "\nThe avatar was not changed. Fix the export files or export again from Blender to retry.", MessageType.Error);
+            SetStatus(customBase, "Blender export import failed: " + ex.Message + "\nThe avatar was not changed. Fix the export files or export again from Blender to retry.", MessageType.Error);
             MCBLogger.LogError($"[BlenderExport] Import failed for {manifestPath}: {ex}");
         }
     }
@@ -467,8 +517,12 @@ internal static partial class BlenderExportImport
                         string exportedUnityPath = CopyModelToExports(baseKey, plan, files, out bool created);
                         Avatar generatedAvatar = AvatarForImportedFbx(exportedUnityPath, plan.targetFbxPath, created, files);
                         if (generatedAvatar != null) generatedAvatarCount++;
-                        if (RefreshTargetMeshesFromFbx(customBase, plan.target, exportedUnityPath, plan.model.meshNames) == 0)
+                        var missed = new List<string>();
+                        if (RefreshTargetMeshesFromFbx(customBase, plan.target, exportedUnityPath, plan.model.meshNames, missed) == 0)
                             warnings.Add($"No renderer of the avatar matched the meshes of '{Path.GetFileName(plan.targetFbxPath)}': the custom FBX is set for the version, but the avatar still shows its previous meshes.");
+                        else if (missed.Count > 0)
+                            warnings.Add($"{string.Join(", ", missed)} {(missed.Count == 1 ? "still shows its" : "still show their")} previous {(missed.Count == 1 ? "mesh" : "meshes")}: " +
+                                         $"the export's FBX for '{Path.GetFileName(plan.targetFbxPath)}' has no mesh for {(missed.Count == 1 ? "it" : "them")}. The custom FBX is set for the version.");
                         AssignCreatorCustomFbx(serialized, customBase, plan.targetFbxPath, exportedUnityPath, generatedAvatar);
                         ApplyGeneratedAvatarToPreview(customBase, exportedUnityPath, generatedAvatar);
                         updatedTargets.Add(exportedUnityPath);
@@ -495,12 +549,14 @@ internal static partial class BlenderExportImport
         RetainForSession(FilesUsedBy(customBase));
         ForgetLatestExport(manifestPath);
 
-        string action = advancedCount > 0 ? "Updated the avatar with native meshes from" : "Updated the avatar from";
+        // Only what every renderer shows is "updated": otherwise the warnings say which ones kept their previous meshes.
+        string action = advancedCount > 0 ? "Updated the avatar with native meshes from"
+            : warnings.Count > 0 ? "Set the creator's custom FBX from" : "Updated the avatar from";
         string avatarMessage = generatedAvatarCount > 0
             ? $"\nGenerated {generatedAvatarCount} Avatar asset(s)."
             : advancedCount > 0 ? "\nThe original FBX files are unchanged; the exports are ready for submission." : "\nNo Avatar asset was generated.";
         string warningMessage = warnings.Count > 0 ? "\n" + string.Join("\n", warnings) : "";
-        SetStatus($"Blender export imported for {customBase.name}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}{warningMessage}",
+        SetStatus(customBase, $"Blender export imported for {customBase.name}.\n{action} {updatedTargets.Count} FBX file(s).{avatarMessage}{warningMessage}",
             warnings.Count > 0 ? MessageType.Warning : MessageType.Info);
         LogMuscleCorrectives(manifest.xmuscle);
         // What other tools made from these meshes (My Avatar's Substance Painter project) can be made again.
@@ -672,32 +728,14 @@ internal static partial class BlenderExportImport
     }
 
     // The export read straight from Blender's FBX, with the avatar's dynamic normals baked in (as a version's payload has them).
+    // The mappings and the dynamic-normal selections both name renderers from the avatar.
     private static void ApplyAdvancedMeshPreview(MyCustomBase customBase, string baseKey, string externalFbxPath, string targetFbxPath, List<ModelFileSmrPathData> mappings)
     {
-        NativeMeshPayloadService.ApplyBlenderExportPreview(customBase.transform.root, externalFbxPath,
+        NativeMeshPayloadService.ApplyBlenderExportPreview(AvatarPaths.Root(customBase), externalFbxPath,
             MCBUtils.ToUnityPath(targetFbxPath), mappings,
             MCBUtils.CombineUnityPath(PreviewsFolder, baseKey),
-            customBase.useDynamicNormals ? SelectionsUnderSceneRoot(customBase) : null,
+            customBase.useDynamicNormals ? DynamicNormalsService.Selections(customBase) : null,
             renderer => DynamicNormalsService.LegSeparation(customBase, renderer));
-    }
-
-    // The dynamic-normal selections name renderers from the avatar (its descriptor), the preview's mappings from the top of
-    // the scene: an avatar placed under another object would otherwise get no dynamic normals.
-    private static List<MeshBlendshapeSelection> SelectionsUnderSceneRoot(MyCustomBase customBase)
-    {
-        var selections = DynamicNormalsService.Selections(customBase);
-        var avatar = AvatarPaths.Root(customBase);
-        var root = customBase.transform.root;
-        if (avatar == root) return selections;
-        var result = new List<MeshBlendshapeSelection>();
-        foreach (var selection in selections)
-        {
-            Transform renderer = null;
-            try { renderer = selection?.mesh != null ? AvatarPaths.Find(avatar, selection.mesh) : null; }
-            catch (ArgumentException) { }
-            if (renderer != null) result.Add(new MeshBlendshapeSelection { mesh = AnimationUtility.CalculateTransformPath(renderer, root), names = selection.names });
-        }
-        return result;
     }
 
     // Snapshots the project files an import overwrites or creates, so a failed import can put them back.
@@ -825,14 +863,21 @@ internal static partial class BlenderExportImport
     }
 
     // Each renderer of the target gets its mesh from the imported FBX: by the asset's records (for the exported meshes,
-    // else all of them). The number of renderers updated.
-    private static int RefreshTargetMeshesFromFbx(MyCustomBase customBase, ExportTarget target, string sourceFbxPath, IEnumerable<string> meshNames)
+    // else all of them). The number of renderers updated; <paramref name="missed"/> gets the avatar's renderers the records
+    // name that kept their previous mesh (the FBX has none for them).
+    private static int RefreshTargetMeshesFromFbx(MyCustomBase customBase, ExportTarget target, string sourceFbxPath, IEnumerable<string> meshNames, List<string> missed)
     {
         if (customBase == null || string.IsNullOrWhiteSpace(sourceFbxPath)) return 0;
         string path = MCBUtils.ToUnityPath(sourceFbxPath);
-        int refreshed = SmrPathService.RefreshTargetMeshesFromFbx(customBase.transform.root, path, target?.SmrPaths, meshNamesToRefresh: meshNames);
+        var avatar = AvatarPaths.Root(customBase);
+        var notRefreshed = new List<string>();
+        int refreshed = SmrPathService.RefreshTargetMeshesFromFbx(avatar, path, target?.SmrPaths, meshNamesToRefresh: meshNames, notRefreshed: notRefreshed);
         if (refreshed == 0 && meshNames != null && meshNames.Any())
-            refreshed = SmrPathService.RefreshTargetMeshesFromFbx(customBase.transform.root, path, target?.SmrPaths, allowNameFallback: false);
+        {
+            notRefreshed.Clear();
+            refreshed = SmrPathService.RefreshTargetMeshesFromFbx(avatar, path, target?.SmrPaths, allowNameFallback: false, notRefreshed: notRefreshed);
+        }
+        missed?.AddRange(notRefreshed);
         return refreshed;
     }
 
@@ -874,7 +919,8 @@ internal static partial class BlenderExportImport
     {
         if (customBase == null || generatedAvatar == null || string.IsNullOrWhiteSpace(customFbxUnityPath)) return;
         if (AssetDatabase.LoadAssetAtPath<GameObject>(MCBUtils.ToUnityPath(customFbxUnityPath)) == null) return;
-        AvatarDefinitionGenerationService.SetRootAnimatorAvatar(customBase.transform.root, generatedAvatar);
+        // The avatar's own Animator, never one added to an object the avatar is placed under.
+        AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(customBase), generatedAvatar);
     }
 
     private static SerializedProperty CreatorEntry(SerializedObject serialized, int targetIndex)
@@ -940,12 +986,12 @@ internal static partial class BlenderExportImport
     /// </summary>
     public static string SanitizeFileName(string value) => SafePaths.FileName(value, "mcb");
 
-    internal static void SetStatus(string message, MessageType type)
+    /// <summary>Shows a message on the Blender card of <paramref name="customBase"/> (logged too; null only logs it).</summary>
+    internal static void SetStatus(MyCustomBase customBase, string message, MessageType type)
     {
-        LastStatus = message;
-        LastStatusType = type;
+        if (customBase != null) statuses[customBase.GetInstanceID()] = (message, type);
         MCBLogger.Log("[BlenderExport] " + message);
-        Changed?.Invoke();
+        if (customBase != null) Changed?.Invoke(customBase);
     }
 
     private static string GetProjectRoot() => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));

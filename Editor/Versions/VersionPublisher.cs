@@ -314,6 +314,13 @@ public static class VersionOperationGuard
 
     public static bool IsBusy => current != null;
 
+    /// <summary>
+    /// A build, publish or import holds the guard, or an MCB editor downloads or applies a version (a switch runs over many
+    /// editor frames without the guard): what changes the base's renderers and entries waits for both.
+    /// </summary>
+    public static bool VersionWorkRunning => IsBusy ||
+        Resources.FindObjectsOfTypeAll<MCBEditor>().Any(editor => editor != null && (editor.isApplying || editor.isDownloading));
+
     public static string BusyMessage => current == null ? null
         : "Another MCB operation is " + current.Operation + ". Wait for it to finish, then try again.";
 

@@ -155,12 +155,15 @@ public static class SmrPathService
         return result;
     }
 
+    /// <param name="notRefreshed">Gets the avatar paths of the renderers <paramref name="smrPaths"/> name that are on the
+    /// avatar but kept their mesh: the FBX has none for them.</param>
     public static int RefreshTargetMeshesFromFbx(
         Transform avatarRoot,
         string fbxPath,
         IEnumerable<ModelFileSmrPathData> smrPaths,
         bool allowNameFallback = true,
-        IEnumerable<string> meshNamesToRefresh = null)
+        IEnumerable<string> meshNamesToRefresh = null,
+        List<string> notRefreshed = null)
     {
         if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
 
@@ -182,6 +185,8 @@ public static class SmrPathService
         if (entries.Count > 0)
         {
             int refreshedCount = 0;
+            var refreshedRenderers = new HashSet<SkinnedMeshRenderer>();
+            var missed = new List<(SkinnedMeshRenderer renderer, string path)>();
             foreach (var entry in entries)
             {
                 var targetTransform = FindTransformByRelativePath(avatarRoot, entry.avatarPath);
@@ -189,14 +194,21 @@ public static class SmrPathService
                 if (targetSmr == null) continue;
 
                 Mesh replacementMesh = ResolveFbxMesh(fbxRoot.transform, entry);
-                if (replacementMesh == null) continue;
+                if (replacementMesh == null)
+                {
+                    missed.Add((targetSmr, entry.avatarPath));
+                    continue;
+                }
 
                 Undo.RecordObject(targetSmr, "Refresh Mesh from FBX");
                 EyelidBlendshapes.Assign(targetSmr, replacementMesh);
                 EditorUtility.SetDirty(targetSmr);
+                refreshedRenderers.Add(targetSmr);
                 refreshedCount++;
             }
 
+            // A renderer named twice (the asset's record and the avatar's own binding) counts once it got its mesh.
+            notRefreshed?.AddRange(missed.Where(m => !refreshedRenderers.Contains(m.renderer)).Select(m => m.path).Distinct(StringComparer.Ordinal));
             return refreshedCount;
         }
 

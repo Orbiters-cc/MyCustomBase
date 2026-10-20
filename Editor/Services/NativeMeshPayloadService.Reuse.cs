@@ -221,7 +221,7 @@ public static partial class NativeMeshPayloadService
         var retained = await ProjectReferences.ReachableAsync(cleanup.Roots ?? ReferenceRoots(), SkipGenerated(cleanup), progress, cancellation);
         // The search spanned editor frames: a version switch running now ends first, then what is open decides. Assets made
         // during the search wait for the next cleanup.
-        while (VersionSwitchRunning())
+        while (VersionOperationGuard.VersionWorkRunning)
         {
             cancellation.ThrowIfCancellationRequested();
             await Task.Yield();
@@ -229,9 +229,6 @@ public static partial class NativeMeshPayloadService
         var stillUnused = new HashSet<string>(CleanupCandidates(cleanup), StringComparer.Ordinal);
         return Discard(cleanup, candidates.Where(stillUnused.Contains), retained);
     }
-
-    private static bool VersionSwitchRunning() => VersionOperationGuard.IsBusy ||
-        Resources.FindObjectsOfTypeAll<MCBEditor>().Any(editor => editor != null && (editor.isApplying || editor.isDownloading));
 
     private static Task<GeneratedPayloadStorageInfo> cleanupQueue = Task.FromResult<GeneratedPayloadStorageInfo>(null);
 

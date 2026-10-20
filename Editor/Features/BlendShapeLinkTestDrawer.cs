@@ -66,7 +66,8 @@ public class BlendShapeLinkTestDrawer
             MessageType.Info
         );
 
-        GameObject avatarRoot = editor?.customBaseTarget != null ? editor.customBaseTarget.transform.root.gameObject : null;
+        // The avatar (its descriptor), as the build resolves the saved renderer path, not an object it is placed under.
+        GameObject avatarRoot = editor?.customBaseTarget != null ? AvatarPaths.Root(editor.customBaseTarget).gameObject : null;
         if (avatarRoot == null)
         {
             EditorGUILayout.HelpBox("Avatar root not found.", MessageType.Warning);
