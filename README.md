@@ -54,6 +54,28 @@
   `Library/MCB/BlenderLaunch`. MCB leaves them alone (a `.blend` may hold your work): delete them once you no longer need
   them.
 
+- The Blender card's **Revert** asks first when the mesh holds Mixer edits not committed, or while Blender edits it:
+  Revert also sends the original mesh back to a linked Blender, in place of its copy. Its tooltip now says so.
+- A Blender export import on an avatar placed under another object gives the new Avatar to that avatar's own Animator
+  (no Animator is added to the object above it) and only touches that avatar's renderers. So do Apply Custom FBX, Apply
+  Custom Avatar and Generate Avatar in the creator mode. Mixer's Export for MCB keeps each avatar's meshes with its own
+  base when several avatars share a parent, and a prop beside them belongs to none.
+- The Blender card's messages belong to their base: a failed import of one base no longer shows on another's card, and
+  a Mixer message no longer rebuilds every open MCB inspector. An import waits while a version is built, downloaded or
+  applied, and says so. The newest export's manifest is read again only when it changes.
+- When only some renderers take the imported meshes, the import's status names those that kept their previous meshes
+  instead of saying the avatar was updated.
+- Undo and Redo of a version switch put back only the files the switch changed, and only while they are as the switch
+  left them: an FBX exported again or import settings changed since stay as they are (the Console names them), and
+  another base's dynamic normals in the same folder are left alone.
+- With Orbiters Mixer, corrective shapes are listed for avatars placed under another object and for a base on a child
+  object; an avatar of the same name without MCB no longer shows them, and an animation-only link no longer shows on
+  unrelated meshes. BlendShape factor links set by hand in Advanced Mode name their mesh from the avatar, as the build
+  reads them.
+- The health checks' deliberate failures are no longer sent as diagnostics, and logs below the level sent no longer
+  take a stack trace.
+- The cleanup of advanced-mesh copies reads scenes and prefabs in pieces instead of whole (they can be hundreds of MB).
+
 ## 1.12.11 — 2026-10-19
 
 - Blender goes through Orbiters Mixer: the Blender card of the creator mode opens the scene in Blender with Mixer's link
