@@ -396,6 +396,8 @@ public static partial class NativeMeshPayloadService
             names.UnionWith(selection.names);
         }
         var frames = new Dictionary<(string mesh, string shape, int frame), FbxModel.FrameNormals>();
+        // The legs apart (or not) while normals are baked change them: part of the preview's identity.
+        var poseKey = new StringBuilder();
         if (selected.Count > 0)
         {
             var light = FbxModel.Load(document, name, new FbxModel.Options { IncludeShape = (mesh, shape) => selected.TryGetValue(mesh, out var names) && names.Contains(shape) });
@@ -405,7 +407,10 @@ public static partial class NativeMeshPayloadService
                 {
                     if (!selected.TryGetValue(renderer.name, out var names) || renderer.sharedMesh.blendShapeCount == 0) continue;
                     var shapes = Enumerable.Range(0, renderer.sharedMesh.blendShapeCount).Select(renderer.sharedMesh.GetBlendShapeName).Where(names.Contains).ToList();
-                    foreach (var pair in DynamicNormals.CaptureNormalFrames(renderer, shapes, boneTranslations?.Invoke(renderer)))
+                    var translations = boneTranslations?.Invoke(renderer);
+                    foreach (var bone in (translations ?? new Dictionary<string, Vector3>()).OrderBy(b => b.Key, StringComparer.Ordinal))
+                        poseKey.Append(renderer.name).Append('|').Append(bone.Key).Append('|').Append(bone.Value.ToString("F6")).Append(';');
+                    foreach (var pair in DynamicNormals.CaptureNormalFrames(renderer, shapes, translations))
                         frames[(renderer.name, pair.Key.shape, pair.Key.frame)] = new FbxModel.FrameNormals { Normals = pair.Value.normals, Tangents = pair.Value.tangents };
                 }
             }
@@ -429,6 +434,7 @@ public static partial class NativeMeshPayloadService
             var key = Hash128.Compute(bytes);
             foreach (var mapping in mappings) key.Append(mapping.avatarPath + "|" + mapping.fbxMeshPath + "|" + mapping.meshName);
             foreach (var frame in frames.Keys) key.Append(frame.mesh + "|" + frame.shape);
+            if (poseKey.Length > 0) key.Append(poseKey.ToString());
             string hash = key.ToString();
             string path = MCBUtils.CombineUnityPath(outputFolder, hash + ".asset");
             var payload = LoadPayloadAsset(path);

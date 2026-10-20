@@ -692,8 +692,10 @@ public static class VersionRepository
         int deletedFolders = 0;
         var errors = new List<string>();
 
-        // Generated meshes nothing uses go to the Recycle Bin in the background (finding what the project uses can take a while).
+        // Generated meshes nothing uses go to the Recycle Bin in the background (finding what the project uses can take a while),
+        // and so do the copies earlier Blender export imports left behind.
         _ = NativeMeshPayloadService.QueueUnusedPayloadCleanup();
+        _ = BlenderExportImport.CleanUnusedFilesAsync();
 
         try
         {

@@ -261,7 +261,7 @@ public partial class CreatorModeModule
                 GUI.backgroundColor = hasPendingBuild ? Color.white : Color.green;
                 if (GUILayout.Button(editor.isSubmitting ? "Working..." : "Build Version", GUILayout.Height(30)))
                 {
-                    if (EditorUtility.DisplayDialog("Confirm Build", "This will build the new version files and apply them locally as a temporary version. Nothing is uploaded yet. The original FBX will be backed up.", "Build", "Cancel"))
+                    if (EditorUtility.DisplayDialog("Confirm Build", ConfirmBuildMessage(), "Build", "Cancel"))
                     {
                         EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine());
                     }
@@ -2023,7 +2023,7 @@ public partial class CreatorModeModule
             bool hasCustomAvatar = customAvatar != null;
             if (!hasCustomFbx && string.IsNullOrWhiteSpace(externalCustomFbxPath) && !hasCustomAvatar) continue;
             if (!hasCustomFbx && !string.IsNullOrWhiteSpace(externalCustomFbxPath) && !hasExternalCustomFbx)
-                throw new FileNotFoundException($"External Blender FBX for target {i + 1} no longer exists. Sync it again or choose Use original.", externalCustomFbxPath);
+                throw new FileNotFoundException($"External Blender FBX for target {i + 1} no longer exists. Import the Blender export again from the Blender card, or choose Use original.", externalCustomFbxPath);
             if (sourceFbx == null)
                 throw new Exception($"Target model file {i + 1} is missing its source FBX.");
 
@@ -2811,6 +2811,13 @@ public partial class CreatorModeModule
         editor.isSubmitting = true;
         editor.submitError = "";
         editor.warningsModule.Clear();
+        // Builds without a dialog (MCP) see it too: the version is built from the FBX entries, never from the renderers.
+        string editsOutside = BlenderExportImport.EditsOutsideVersionsWarning(editor);
+        if (editsOutside != null)
+        {
+            editor.warningsModule.AddWarning(editsOutside, MessageType.Warning, "Not in this version");
+            MCBLogger.LogWarning("[MCB] Building a version without edits the avatar shows: " + editsOutside);
+        }
         editor.Repaint();
 
         VersionArtifact builtArtifact = null;

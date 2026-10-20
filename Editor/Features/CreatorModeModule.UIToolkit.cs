@@ -607,25 +607,38 @@ public partial class CreatorModeModule
         if (targets.Count == 0)
             card.Add(CreateHelpBox("No target FBX was detected for this avatar. Assign or detect the base FBX first.", HelpBoxMessageType.Warning));
 
-        if (McbBlenderCard.Mixer != null) McbBlenderCard.Mixer(card, editor, RefreshEditorUi);
+        if (McbBlenderCard.Mixer != null)
+        {
+            // An optional integration: when it fails, the rest of the creator form is still built.
+            try { McbBlenderCard.Mixer(card, editor, RefreshEditorUi); }
+            catch (Exception ex)
+            {
+                MCBLogger.LogWarning("[MCB] Mixer's part of the Blender card failed: " + ex);
+                card.Add(CreateHelpBox("Mixer's part of the Blender card could not be shown: " + ex.Message, HelpBoxMessageType.Warning));
+            }
+        }
         else BuildMixerInstallPromptUIToolkit(card);
 
+        // Every import, and what Mixer's part says, ends in BlenderExportImport.Changed: the form is built again once.
         var actions = CreateCreatorRow();
         actions.AddToClassList("mcb-blender__actions");
-        string latest = BlenderExportImport.LatestExportManifest;
+        string latest = BlenderExportImport.LatestExportFor(targets);
         if (latest != null)
         {
             var newest = CreateTextButton("Import the newest export", "Imports the export Blender just made: " + latest,
-                () => { BlenderExportImport.Import(editor, latest); RefreshEditorUi(); });
+                () => BlenderExportImport.Import(editor, latest));
             newest.SetEnabled(targets.Count > 0);
             actions.Add(newest);
         }
         var import = CreateTextButton("Import Blender export…",
             "Picks the manifest.json of an MCB export made in Blender: each exported model becomes the creator's custom FBX for its target (with a generated Avatar), or an advanced-mesh payload preview; XMuscles correctives come along.",
-            () => { if (BlenderExportImport.PickAndImport(editor)) RefreshEditorUi(); });
+            () => BlenderExportImport.PickAndImport(editor));
         import.SetEnabled(targets.Count > 0);
         actions.Add(import);
         card.Add(actions);
+        Action onImportChanged = RefreshEditorUi;
+        BlenderExportImport.Changed += onImportChanged;
+        card.RegisterCallback<DetachFromPanelEvent>(_ => BlenderExportImport.Changed -= onImportChanged);
         if (!string.IsNullOrEmpty(BlenderExportImport.LastStatus))
             card.Add(CreateHelpBox(BlenderExportImport.LastStatus,
                 BlenderExportImport.LastStatusType == MessageType.Error ? HelpBoxMessageType.Error
@@ -1401,7 +1414,7 @@ public partial class CreatorModeModule
                 return;
             }
 
-            if (EditorUtility.DisplayDialog("Confirm Build", "This will build the new version files and apply them locally as a temporary version. Nothing is uploaded yet. The original FBX will be backed up.", "Build", "Cancel"))
+            if (EditorUtility.DisplayDialog("Confirm Build", ConfirmBuildMessage(), "Build", "Cancel"))
             {
                 EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine());
                 RefreshEditorUi();
@@ -1431,6 +1444,14 @@ public partial class CreatorModeModule
         root.Add(buttonRow);
 
         refreshValidation();
+    }
+
+    // The build's confirmation, with what the version would leave out: edits Mixer or Blender made on the renderers only.
+    private string ConfirmBuildMessage()
+    {
+        const string message = "This will build the new version files and apply them locally as a temporary version. Nothing is uploaded yet. The original FBX will be backed up.";
+        string outside = BlenderExportImport.EditsOutsideVersionsWarning(editor);
+        return outside == null ? message : message + Environment.NewLine + Environment.NewLine + "Not in this version: " + outside;
     }
 
     private void UpdateSubmissionValidation(MCBCreatorHelpBoxElement versionWarningBox, MCBCreatorHelpBoxElement metadataWarningBox, Button buildButton, Button publishButton)

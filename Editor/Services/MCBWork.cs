@@ -37,9 +37,23 @@ public static class MCBWork
     // Synchronous callers (including deterministic health checks) consume the same implementation.
     public static void Drain(IEnumerator routine)
     {
-        using var flat = new DisposableEnumerator(Flatten(routine));
-        while (flat.Value.MoveNext()) { }
+        draining++;
+        try
+        {
+            using var flat = new DisposableEnumerator(Flatten(routine));
+            while (flat.Value.MoveNext()) { }
+        }
+        finally { draining--; }
     }
+
+    [ThreadStatic] private static int draining;
+
+    /// <summary>
+    /// Whether Unity can finish compiling or importing while the work waits: never while it is drained, since the main
+    /// thread is running it then. A script compile requested meanwhile (a file saved during a test run) waited for the
+    /// work, and the work for the compile: the editor hung until it was killed.
+    /// </summary>
+    public static bool EditorBusy => draining == 0 && (UnityEditor.EditorApplication.isCompiling || UnityEditor.EditorApplication.isUpdating);
     private sealed class DisposableEnumerator : IDisposable
     {
         public readonly IEnumerator Value;

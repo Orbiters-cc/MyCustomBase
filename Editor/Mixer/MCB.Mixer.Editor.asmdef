@@ -4,5 +4,5 @@
   "includePlatforms": ["Editor"],
   "autoReferenced": true,
   "defineConstraints": ["MCB_MIXER"],
-  "versionDefines": [{ "name": "orbiters.mixer", "expression": "0.1.0", "define": "MCB_MIXER" }]
+  "versionDefines": [{ "name": "orbiters.mixer", "expression": "[0.1.0,0.2.0)", "define": "MCB_MIXER" }]
 }

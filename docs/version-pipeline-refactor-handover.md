@@ -1,5 +1,9 @@
 # Version Pipeline Refactor — Implementation Handover
 
+> Note (MCB 1.12.11): MCB's own Blender sync, Magic Sync sessions and the Blender-sync auto-saved versions this plan
+> mentions are gone. Blender goes through Orbiters Mixer's link, and Blender exports come back through
+> `BlenderExportImport` (Import Blender export… in the creator's Blender card). Sign-in is Discord or Telegram.
+
 Status: core refactor implemented, NOT compiled or runtime-tested (no Unity available in
 the implementation environment). This document lists what changed, deliberate deviations
 from `version-pipeline-refactor.md`, and exactly what a follow-up agent must verify/fix.

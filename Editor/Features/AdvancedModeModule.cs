@@ -281,7 +281,7 @@ public class AdvancedModeModule
 
                 // Optional MCB-only diagnostics (off by default).
                 bool currentShare = EditorIssueReporter.ShareIssueLogs;
-                bool newShare = EditorGUILayout.Toggle(new GUIContent("Share MCB diagnostics", "Opt in to MCB-only diagnostics. Known credentials, URLs and paths are redacted; reports are rate limited. Project paths and unrelated Unity logs are excluded."), currentShare);
+                bool newShare = EditorGUILayout.Toggle(new GUIContent("Share MCB diagnostics", EditorIssueReporter.ConsentText), currentShare);
                 if (newShare != currentShare)
                 {
                     EditorIssueReporter.ShareIssueLogs = newShare;
@@ -987,12 +987,12 @@ public class AdvancedModeModule
         GUILayout.Space(EditorGUI.indentLevel * 15);
         if (GUILayout.Button(new GUIContent(
                 "Flush removable data",
-                "Deletes data MCB can recreate anytime: downloaded version files (except versions an avatar, scene or asset still uses, and unsubmitted versions) and generated advanced mesh caches."),
+                "Deletes data MCB can recreate anytime: downloaded version files (except versions an avatar, scene or asset still uses, and unsubmitted versions), generated advanced mesh caches and the copies Blender export imports left unused."),
             GUILayout.Width(180)))
         {
             if (EditorUtility.DisplayDialog(
                     "Flush Removable Data",
-                    "Delete downloaded version files and all generated advanced mesh caches?\n\nVersions applied to an open avatar or used by a scene, prefab, material or model are kept, as are unsubmitted versions. Everything else can be downloaded or rebuilt again anytime.",
+                    "Delete downloaded version files, all generated advanced mesh caches and unused copies of Blender export imports?\n\nVersions applied to an open avatar or used by a scene, prefab, material or model are kept, as are unsubmitted versions. Everything else can be downloaded or rebuilt again anytime.",
                     "Flush",
                     "Cancel"))
             {

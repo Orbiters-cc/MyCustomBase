@@ -1,5 +1,55 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.12 — 2026-10-20
+
+- Work run to its end at once (the deterministic health checks, tests) no longer waits for Unity to finish compiling or
+  importing, which it cannot do meanwhile: a script saved during such a run hung the editor for good (`MCBWork.EditorBusy`).
+- **Share MCB diagnostics** now goes through Orbiters Toolkit's shared reporter: any account's Orbiters token, VRChat
+  cookies, license and API keys, %40 e-mails, VRChat ids, names and user paths with spaces are masked before anything is
+  cut; a project path keeps its file, line and reason; a varying warning goes once an hour; exceptions are sent as
+  errors; tests' logs are never sent. The tooltip says what is sent.
+- **Export FBX** beside Apply in the ReFit option writes the re-fitted assets as they look fitted (the fit applied, the
+  version's blendshapes kept at their weights) with their armature to one FBX file that Unity and Blender import as it
+  is. Requires Orbiters Toolkit 0.4.1.
+- Blender export imports no longer overwrite each other. Each custom base has its own folder, named after its stable
+  id instead of the asset's name (`Assets/MCB/generated/blenderExports/<base id>`, `blenderAdvancedExports~/<base id>`,
+  `blenderPreviews/<base id>`), so two avatars of one asset, or two bases of the same name, no longer replace each
+  other's custom FBX and Avatar. Each import is named after the export's content (`NN_<target>-<hash>.fbx`, 16 hex
+  digits, under Windows' 259-character limit), so it never overwrites an earlier import: Undo goes back to the previous
+  custom FBX, and importing the same export twice reuses the first copy.
+- The copies imports leave behind are cleaned up: once per editor session (30 s after start), and with **Flush
+  Removable Data**, the imported exports, Avatars and advanced-mesh previews nothing uses any more go to the Recycle
+  Bin, and so do the advanced-mesh export copies. Only MCB's own file names in those folders are touched. A copy stays
+  while a saved scene, prefab or asset uses it, while an open avatar does (unsaved changes and the creator's entries
+  included), and for the rest of the session once an import used or made it, so Undo still finds it.
+- A manifest can only name FBX files in its own export folder: absolute paths, `..`, links and device names are
+  refused, so a crafted manifest can no longer copy another file of the computer into `Assets` (and into the next
+  version's upload).
+- Mixer and Blender edits that were only committed are not in a version (versions are built from the creator's FBX
+  entries): the Blender card names those meshes ("committed in Mixer, not in versions yet"), and the build's
+  confirmation and warnings list them, with the way in: Export for MCB in Blender, then import the export.
+- The import is safer: a model without a target goes to the creator's first source file (never a SOURCE file the
+  creator does not use), several models without a target or two models for one target are refused, a model whose FBX
+  leaves out meshes Unity keeps out of Blender (Mixer's `missingUnityTargetMeshNames`) is refused naming them, instead
+  of removing them from the base, XMuscles correctives
+  are part of the import's Undo step (a failure leaves the avatar unchanged), a failed rollback no longer hides the
+  import's own error, the status warns when no renderer took the new meshes, the copied FBX is readable from its first
+  import (the version build no longer imports it again to turn Read/Write on), and no full asset refresh runs.
+- Mixer's Export for MCB groups meshes as the Blender card does: a base on a child object of the avatar is found, an
+  inactive outfit copy of a base mesh is no longer exported with it, Blender learns a changed target at once, and the
+  FBX mesh names are read again only once Unity imports the FBX again. Advanced-mesh previews get their dynamic normals
+  for avatars placed under another object, and switching the legs-apart option makes a new preview.
+- **Import the newest export** goes away once that export is imported, shows only on the base it was made for, and is
+  kept per project folder. The Blender card looks up the base's renderers every 3 s and after hierarchy changes instead
+  of every half second, builds once per action, and a failure in Mixer's part (or in any inspector section) no longer
+  hides the rest of the form. MCB's Mixer integration only compiles with Mixer 0.1.x.
+- Building a version turns Read/Write on in the creator's model import settings when they lack it (since 1.12.9): the
+  advanced mesh payload reads the meshes.
+- Leftovers of the Blender sync that 1.12.11 removed are no longer used: `Assets/MCB/blenderProjects` (its `.blend`
+  files make Unity start Blender on every import), `Library/MCB/BlenderSync`, `Library/MCB/BlenderSyncRollback` and
+  `Library/MCB/BlenderLaunch`. MCB leaves them alone (a `.blend` may hold your work): delete them once you no longer need
+  them.
+
 ## 1.12.11 — 2026-10-19
 
 - Blender goes through Orbiters Mixer: the Blender card of the creator mode opens the scene in Blender with Mixer's link
@@ -278,7 +328,7 @@ with the banner pipeline (asset field `mcbBannerEffectVersion`).
 
 ## XMuscles (experimental)
 
-Correctives baked with XMuscles in Blender (XMuscle Orbit Helper) come with each Magic Sync export (`manifest.xmuscle`)
+Correctives baked with XMuscles in Blender (XMuscle Orbit Helper) come with each Blender export (`manifest.xmuscle`)
 and are kept on the custom base per exported mesh (`MuscleCorrectiveStore`). The Creator panel shows them with their
 contact cost; **Build rig on this avatar** (`MuscleDriverGenerator`) turns each sensor the bake measured (XMuscle Orbit
 Helper API 2) into a proximity receiver and a point sender where Blender measured them: the muscle's stretch, from its

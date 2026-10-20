@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Orbiters.Mixer.Editor;
 using UnityEditor;
@@ -9,7 +10,8 @@ using UnityEngine.UIElements;
 /// <summary>
 /// The live part of the creator mode's Blender card when Orbiters Mixer is installed: the Mixer link's state, Open scene
 /// in Blender, and the custom base's renderers with what Blender or Mixer is doing to them, with Commit, Revert and Edit
-/// in Mixer. Registers itself with MCB's creator mode when scripts load.
+/// in Mixer. Registers itself with MCB's creator mode when scripts load. Mixer and Blender edits stay in the scene: a
+/// version carries them only through Export for MCB and the card's import, which the card says.
 /// </summary>
 [InitializeOnLoad]
 internal static class McbMixerIntegration
@@ -18,10 +20,15 @@ internal static class McbMixerIntegration
     private static readonly Color Grey = new Color(0.45f, 0.45f, 0.45f);
     private static readonly Color LiveText = new Color(0.5f, 0.85f, 0.6f);
     private static readonly Color IdleText = new Color(0.66f, 0.66f, 0.66f);
+    // The base's renderers are looked up again at least this often (and at once after a hierarchy change or an Undo).
+    private const double RendererLookupSeconds = 3.0;
+
+    private const string NotInVersions = "Versions are built from the FBX files: to put these edits in a version, use Export for MCB in Blender and import the export below.";
 
     static McbMixerIntegration()
     {
         McbBlenderCard.Mixer = Build;
+        BlenderExportImport.InMixerSession = renderer => MixerLink.StateOf(renderer) != MixerLink.RendererState.Untouched;
         // Blender's nodes carry the target FBX of each mesh of a custom base: the Mixer extension's Export for MCB groups by it.
         MixerLink.TargetFbxResolver = BlenderExportImport.TargetFbxOf;
         MixerLink.BlenderStatus += (id, message) => { if (id == "mcb.export") BlenderExportImport.NoteExport(message); };
@@ -39,15 +46,15 @@ internal static class McbMixerIntegration
         state.Add(text);
         card.Add(state);
 
+        // Say() refreshes the card (the creator form follows BlenderExportImport.Changed): no second refresh after it.
         var actions = CreatorModeModule.CreateCreatorRow();
         actions.AddToClassList("mcb-blender__actions");
         actions.Add(CreatorModeModule.CreateTextButton("Open scene in Blender",
             "Starts Blender on this scene's Mixer project: the avatar with its meshes, bones and materials is there, and what you edit in Blender shows on the avatar live.", () =>
             {
                 string error = MixerLink.OpenInBlender();
-                McbBlenderCard.Say(error ?? "Blender is starting on the scene's project. Edit the base there: the edits show on the avatar live, and Commit keeps them.",
+                McbBlenderCard.Say(error ?? "Blender is starting on the scene's project. What you edit there shows on the avatar live, and Commit keeps it in this scene. " + NotInVersions,
                     error != null ? MessageType.Warning : MessageType.Info);
-                refresh?.Invoke();
             }));
         actions.Add(CreatorModeModule.CreateTextButton("Open Mixer",
             "Mixer's own tools (sculpt, weights, armature) and the Blender link's settings.", MixerLink.OpenMixer));
@@ -57,68 +64,120 @@ internal static class McbMixerIntegration
         meshes.AddToClassList("mcb-blender__meshes");
         card.Add(meshes);
 
+        List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> renderers = null;
+        double lookedUpAt = 0;
+        string targetsKey = null;
         string shown = null;
+        string failure = null;
+        void Stale() => renderers = null;
+
         void Refresh()
         {
-            bool connected = MixerLink.Connected, listening = MixerLink.Listening;
-            dot.style.backgroundColor = connected ? Green : listening ? EditorUIUtils.OrangeColor : Grey;
-            text.text = connected ? "Blender " + (MixerLink.BlenderVersion ?? string.Empty).Trim() + " is linked: what you edit there shows on the avatar."
-                : listening ? "Waiting for Blender: open the scene in Blender, or connect from the Mixer extension in an open Blender."
-                : "The Blender link is off: turn it on in Mixer's Blender menu.";
-
-            var renderers = BlenderExportImport.TargetRenderers(editor);
-            string key = string.Join("\n", renderers.Select(r => r.Renderer.GetInstanceID() + ":" + MixerLink.StateOf(r.Renderer) + ":" + MixerLink.HasEdits(r.Renderer)));
-            if (key == shown) return;
-            shown = key;
-            meshes.Clear();
-            foreach (var entry in renderers)
+            try
             {
-                var renderer = entry.Renderer;
-                var rendererState = MixerLink.StateOf(renderer);
-                bool edits = MixerLink.HasEdits(renderer);
-                var row = CreatorModeModule.CreateCreatorRow();
-                row.AddToClassList("mcb-blender__mesh");
-                string what = rendererState == MixerLink.RendererState.EditedInBlender ? "being edited in Blender"
-                    : rendererState == MixerLink.RendererState.EditedInMixer ? (edits ? "edited in Mixer, not committed" : "open in Mixer")
-                    : "as imported";
-                var label = CreatorModeModule.CreateLabel(renderer.name + ": " + what, 11, FontStyle.Normal, rendererState == MixerLink.RendererState.Untouched ? IdleText : LiveText);
-                label.style.flexGrow = 1;
-                row.Add(label);
-                if (rendererState == MixerLink.RendererState.Untouched)
+                bool connected = MixerLink.Connected, listening = MixerLink.Listening;
+                dot.style.backgroundColor = connected ? Green : listening ? EditorUIUtils.OrangeColor : Grey;
+                text.text = connected ? "Blender " + (MixerLink.BlenderVersion ?? string.Empty).Trim() + " is linked: what you edit there shows on the avatar."
+                    : listening ? "Waiting for Blender: open the scene in Blender, or connect from the Mixer extension in an open Blender."
+                    : "The Blender link is off: turn it on in Mixer's Blender menu.";
+
+                double now = EditorApplication.timeSinceStartup;
+                if (renderers == null || now - lookedUpAt > RendererLookupSeconds)
                 {
-                    row.Add(CreatorModeModule.CreateTextButton("Edit in Mixer", "Sculpt, paint weights or edit the armature of this mesh in Unity.", () =>
+                    renderers = BlenderExportImport.TargetRenderers(editor);
+                    lookedUpAt = now;
+                    // Blender learns each mesh's target when the scene is sent: send it again once the targets changed.
+                    string targets = string.Join("\n", renderers.Select(r => r.Renderer.GetInstanceID() + ">" + r.TargetUnityPath));
+                    if (targetsKey != null && targets != targetsKey)
                     {
-                        string error = MixerLink.Edit(renderer);
-                        if (error != null) McbBlenderCard.Say(error, MessageType.Warning);
-                        refresh?.Invoke();
-                    }));
+                        BlenderExportImport.ForgetTargets();
+                        MixerLink.RefreshScene();
+                    }
+                    targetsKey = targets;
                 }
-                else
+
+                var live = renderers.Where(r => r.Renderer != null).ToList();
+                string key = string.Join("\n", live.Select(r => r.Renderer.GetInstanceID() + ":" + MixerLink.StateOf(r.Renderer) + ":" + MixerLink.HasEdits(r.Renderer) + ":" +
+                                                                 (r.Renderer.sharedMesh != null ? r.Renderer.sharedMesh.GetInstanceID() : 0)));
+                if (key == shown) return;
+                shown = key;
+                meshes.Clear();
+                var outside = new List<Renderer>();
+                foreach (var entry in live)
                 {
-                    var commit = CreatorModeModule.CreateTextButton("Commit", "Saves the edits as a mesh asset shown on the renderer, in one Undo step.", () =>
+                    var renderer = entry.Renderer;
+                    var rendererState = MixerLink.StateOf(renderer);
+                    bool edits = MixerLink.HasEdits(renderer);
+                    bool committed = rendererState == MixerLink.RendererState.Untouched && BlenderExportImport.ShowsMeshOutsideVersions(renderer);
+                    if (rendererState != MixerLink.RendererState.Untouched || committed) outside.Add(renderer);
+                    var row = CreatorModeModule.CreateCreatorRow();
+                    row.AddToClassList("mcb-blender__mesh");
+                    string what = rendererState == MixerLink.RendererState.EditedInBlender ? "being edited in Blender"
+                        : rendererState == MixerLink.RendererState.EditedInMixer ? (edits ? "edited in Mixer, not committed" : "open in Mixer")
+                        : committed ? "committed in Mixer, not in versions yet"
+                        : "as imported";
+                    var label = CreatorModeModule.CreateLabel(renderer.name + ": " + what, 11, FontStyle.Normal,
+                        rendererState == MixerLink.RendererState.Untouched && !committed ? IdleText : LiveText);
+                    label.style.flexGrow = 1;
+                    row.Add(label);
+                    if (rendererState == MixerLink.RendererState.Untouched)
                     {
-                        var mesh = MixerLink.Commit(renderer);
-                        McbBlenderCard.Say(mesh != null ? "Committed " + renderer.name + " to " + AssetDatabase.GetAssetPath(mesh) + "." : renderer.name + " has nothing to commit.", MessageType.Info);
-                        refresh?.Invoke();
-                    });
-                    commit.SetEnabled(edits && rendererState != MixerLink.RendererState.EditedInBlender);
-                    row.Add(commit);
-                    row.Add(CreatorModeModule.CreateTextButton("Revert", "Puts the renderer's own mesh back; the Blender side keeps its copy.", () =>
+                        row.Add(CreatorModeModule.CreateTextButton("Edit in Mixer", "Sculpt, paint weights or edit the armature of this mesh in Unity.", () =>
+                        {
+                            string error = MixerLink.Edit(renderer);
+                            if (error != null) McbBlenderCard.Say(error, MessageType.Warning);
+                            else refresh?.Invoke();
+                        }));
+                    }
+                    else
                     {
-                        MixerLink.Revert(renderer);
-                        refresh?.Invoke();
-                    }));
+                        var commit = CreatorModeModule.CreateTextButton("Commit",
+                            "Saves the edits as a mesh asset shown on the renderer, in one Undo step. The mesh stays in this scene: versions are built from the FBX files.", () =>
+                            {
+                                var mesh = MixerLink.Commit(renderer);
+                                McbBlenderCard.Say(mesh != null
+                                    ? "Committed " + renderer.name + " to " + AssetDatabase.GetAssetPath(mesh) + ". It shows on the avatar in this scene. " + NotInVersions
+                                    : renderer.name + " has nothing to commit.", MessageType.Info);
+                            });
+                        commit.SetEnabled(edits && rendererState != MixerLink.RendererState.EditedInBlender);
+                        row.Add(commit);
+                        row.Add(CreatorModeModule.CreateTextButton("Revert", "Puts the renderer's own mesh back; the Blender side keeps its copy.", () =>
+                        {
+                            MixerLink.Revert(renderer);
+                            refresh?.Invoke();
+                        }));
+                    }
+                    meshes.Add(row);
                 }
-                meshes.Add(row);
+                if (outside.Count > 0)
+                {
+                    var note = CreatorModeModule.CreateMutedLabel(BlenderExportImport.EditsOutsideVersionsWarning(outside));
+                    note.AddToClassList("mcb-blender__note");
+                    note.style.whiteSpace = WhiteSpace.Normal;
+                    meshes.Add(note);
+                }
+                failure = null;
+            }
+            catch (Exception ex)
+            {
+                // Mixer's part only: the rest of the creator form stays, and the same failure is logged once.
+                if (ex.Message != failure) MCBLogger.LogWarning("[MCB] The Blender card could not show Mixer's state: " + ex);
+                failure = ex.Message;
             }
         }
 
         Refresh();
         card.schedule.Execute(Refresh).Every(500);
-        // An export Blender reports adds the newest-export button: the card is built again.
-        Action onImportChanged = () => refresh?.Invoke();
-        BlenderExportImport.Changed += onImportChanged;
-        card.RegisterCallback<DetachFromPanelEvent>(_ => BlenderExportImport.Changed -= onImportChanged);
+        Action stale = Stale;
+        MixerLink.Changed += stale;
+        EditorApplication.hierarchyChanged += stale;
+        Undo.undoRedoPerformed += new Undo.UndoRedoCallback(stale);
+        card.RegisterCallback<DetachFromPanelEvent>(_ =>
+        {
+            MixerLink.Changed -= stale;
+            EditorApplication.hierarchyChanged -= stale;
+            Undo.undoRedoPerformed -= new Undo.UndoRedoCallback(stale);
+        });
     }
 }
 #endif

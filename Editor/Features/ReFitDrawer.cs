@@ -1,6 +1,8 @@
 #if UNITY_EDITOR
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using Orbiters.Toolkit.Editor;
 using Orbiters.Toolkit.Editor.Refit;
 using Orbiters.Toolkit.Editor.VRChat.Refit;
 using Orbiters.Toolkit.Editor.Vpm;
@@ -28,6 +30,7 @@ public class ReFitDrawer
     private readonly Dictionary<string, Toggle> renderedToggles = new Dictionary<string, Toggle>();
     private readonly Dictionary<string, Label> renderedLabels = new Dictionary<string, Label>();
     private VisualElement statusHost;
+    private Button exportButton;
     private bool initializedSelection;
     private bool isRunning;
     private bool lastFailed;
@@ -122,9 +125,23 @@ public class ReFitDrawer
             });
         button.AddToClassList("mcb-button");
         button.AddToClassList("mcb-button--primary");
-        button.style.marginTop = 10;
         button.style.height = 32;
-        card.Add(button);
+        button.style.flexGrow = 1;
+
+        // The re-fitted assets as they look fitted, with their bones and blendshapes, in one FBX file.
+        exportButton = AvatarOptionsModule.CreateOptionButton("Export FBX", null);
+        ButtonInteraction.RegisterImmediateClick(exportButton, () => ExportFbx(candidates, avatarRoot));
+        exportButton.tooltip = "Writes the re-fitted assets as they look fitted, with their bones and blendshapes, to an FBX file.";
+        exportButton.style.height = 32;
+        exportButton.style.marginLeft = 6;
+        exportButton.style.marginRight = 0;
+
+        var actions = new VisualElement();
+        actions.style.flexDirection = FlexDirection.Row;
+        actions.style.marginTop = 10;
+        actions.Add(button);
+        actions.Add(exportButton);
+        card.Add(actions);
 
         statusHost = new VisualElement();
         statusHost.AddToClassList("mcb-avatar-refit__status");
@@ -194,6 +211,7 @@ public class ReFitDrawer
             if (renderedToggles.TryGetValue(pair.Key, out var toggle) && toggle != null)
                 toggle.SetEnabled(!isRunning);
         }
+        exportButton?.SetEnabled(!isRunning && renderedRenderers.Values.Any(r => r != null && MCBReFitIntegration.IsRefitApplied(r)));
 
         if (statusHost != null)
         {
@@ -248,6 +266,12 @@ public class ReFitDrawer
             if (selectedPaths.Contains(path) != MCBReFitIntegration.IsRefitApplied(smr)) count++;
         }
         return count;
+    }
+
+    private static void ExportFbx(List<SkinnedMeshRenderer> candidates, Transform avatarRoot)
+    {
+        var applied = candidates.Where(smr => smr != null && MCBReFitIntegration.IsRefitApplied(smr)).ToList();
+        if (applied.Count > 0) RefitFbxExport.Save(applied, avatarRoot != null ? avatarRoot.name : applied[0].name);
     }
 
     private void StartApply(List<SkinnedMeshRenderer> candidates, Dictionary<SkinnedMeshRenderer, string> pathOf)

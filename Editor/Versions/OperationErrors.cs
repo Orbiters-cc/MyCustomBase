@@ -75,7 +75,7 @@ public static class OperationErrorClassifier
         else if (Contains(message, "[401]") || Contains(message, "Unauthorized") || Contains(message, "ACCESS_DENIED"))
         {
             error.Category = OperationErrorCategory.Auth;
-            error.UserMessage = "Authentication failed or expired. Re-connect through Magic Sync and try again.\n" + message;
+            error.UserMessage = "Authentication failed or expired. Sign in again (Discord or Telegram, in the account row) and try again.\n" + message;
         }
         else if (Contains(message, "[409]") || Contains(message, "already exists"))
         {

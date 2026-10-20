@@ -113,7 +113,13 @@ public static partial class NativeMeshPayloadService
         public IEnumerable<string> Roots;
         // Tests: deleted for good, nothing of theirs left in the Recycle Bin.
         public bool Permanent;
+        // The asset types searched for in Folder (FindAssets filters): generated payloads and humanoid Avatars by default.
+        public string[] Types;
+        // What more open objects use (beyond renderers, Animators, open animations and version switch Undo): kept.
+        public Func<IEnumerable<string>> InUse;
     }
+
+    private static readonly string[] PayloadTypes = { "t:NativeMeshPayloadAsset", "t:Avatar" };
 
     private static Cleanup CleanupOf(CustomBaseVersion version)
     {
@@ -138,8 +144,8 @@ public static partial class NativeMeshPayloadService
     {
         if (!AssetDatabase.IsValidFolder(cleanup.Folder)) return new List<string>();
         var loaded = CollectLoadedGeneratedAssets();
-        return AssetDatabase.FindAssets("t:NativeMeshPayloadAsset", new[] { cleanup.Folder })
-            .Concat(AssetDatabase.FindAssets("t:Avatar", new[] { cleanup.Folder }))
+        if (cleanup.InUse != null) loaded.UnionWith(cleanup.InUse().Where(path => !string.IsNullOrEmpty(path)));
+        return (cleanup.Types ?? PayloadTypes).SelectMany(type => AssetDatabase.FindAssets(type, new[] { cleanup.Folder }))
             .Select(AssetDatabase.GUIDToAssetPath).Distinct(StringComparer.Ordinal)
             .Where(path => !loaded.Contains(path) && (cleanup.Include == null || cleanup.Include(path))).ToList();
     }
@@ -151,9 +157,11 @@ public static partial class NativeMeshPayloadService
     internal static bool IsGeneratedAsset(string path) =>
         path != null && path.StartsWith(GeneratedFolder + "/", StringComparison.Ordinal);
 
-    // The saved files whose references keep generated assets: the project's scenes, prefabs and assets, generated ones aside.
+    // The saved files whose references keep generated assets: the project's scenes, prefabs and assets, generated ones aside
+    // (the previews of Blender exports are payloads too: self-contained, and up to hundreds of MB to read).
     internal static IEnumerable<string> ReferenceRoots() => AssetDatabase.GetAllAssetPaths().Where(p =>
         p.StartsWith("Assets/", StringComparison.Ordinal) && !IsGeneratedAsset(p)
+        && !p.StartsWith(BlenderExportImport.PreviewsFolder + "/", StringComparison.Ordinal)
         && (p.EndsWith(".unity", StringComparison.Ordinal) || p.EndsWith(".prefab", StringComparison.Ordinal) || p.EndsWith(".asset", StringComparison.Ordinal)));
 
     // Generated assets open objects (unsaved avatars included) or a version switch Undo/Redo still use.
@@ -282,6 +290,21 @@ public static partial class NativeMeshPayloadService
     /// <summary>Moves every generated asset nothing uses any more to the Recycle Bin in the background (null when it failed).</summary>
     public static Task<GeneratedPayloadStorageInfo> QueueUnusedPayloadCleanup() =>
         Queue(new Cleanup { Folder = GeneratedFolder, Label = "of every version" });
+
+    /// <summary>
+    /// Moves the assets under <paramref name="folder"/> that <paramref name="include"/> accepts (and <paramref name="types"/>
+    /// finds) and nothing uses any more to the Recycle Bin, in the background, queued with the other cleanups: what the
+    /// saved <paramref name="referenceRoots"/> use, open objects use (<paramref name="inUse"/> adds to them) and version
+    /// switch Undo can bring back stays. The result is null when it failed or was cancelled.
+    /// </summary>
+    internal static Task<GeneratedPayloadStorageInfo> QueueUnusedAssetCleanup(string folder, string label, Func<string, bool> include,
+        string[] types, Func<IEnumerable<string>> inUse, IEnumerable<string> referenceRoots) =>
+        Queue(new Cleanup { Folder = folder, Label = label, Include = include, Types = types, InUse = inUse, Roots = referenceRoots });
+
+    /// <summary>Tests: <see cref="QueueUnusedAssetCleanup"/> at once, on the main thread, deleted for good.</summary>
+    internal static GeneratedPayloadStorageInfo DeleteUnusedAssets(string folder, Func<string, bool> include, string[] types,
+        Func<IEnumerable<string>> inUse, IEnumerable<string> referenceRoots) =>
+        DeleteUnreferenced(new Cleanup { Folder = folder, Label = "in " + folder, Include = include, Types = types, InUse = inUse, Roots = referenceRoots, Permanent = true });
 
     /// <summary>The version's generated assets nothing uses any more, at once (<see cref="QueueUnusedPayloadCleanup(CustomBaseVersion)"/> otherwise).</summary>
     internal static GeneratedPayloadStorageInfo DeleteUnreferencedPayloadsOfVersion(CustomBaseVersion version, IEnumerable<string> referenceRoots = null)

@@ -1,5 +1,9 @@
 # MCB Version Pipeline Refactor — Final Implementation Plan
 
+> Note (MCB 1.12.11): MCB's own Blender sync, Magic Sync sessions and the Blender-sync auto-saved versions this plan
+> mentions are gone. Blender goes through Orbiters Mixer's link, and Blender exports come back through
+> `BlenderExportImport` (Import Blender export… in the creator's Blender card). Sign-in is Discord or Telegram.
+
 Status: PLAN — nothing implemented.
 Mode: single full refactor on a dedicated branch, merged once, no intermediate half-states on main.
 Supersedes: the first draft of this document (see §10 for what changed and why).

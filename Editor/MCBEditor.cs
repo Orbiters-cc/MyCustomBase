@@ -336,13 +336,21 @@ public class MCBEditor : UnityEditor.Editor
             return;
         }
 
-        try
+        // Each section on its own: one that fails is reported (in the status bar and the Console) without hiding the
+        // sections after it.
+        void Section(Action refresh)
         {
-            DrawVectorBannerUIToolkit();
-            dependencyInstallerModule?.RefreshUIToolkit();
-            RefreshConnectivityDiagnosticsUIToolkit();
-            assetGalleryModule?.RefreshUIToolkit();
-            creatorModule?.RefreshUIToolkit();
+            try { refresh(); }
+            catch (Exception ex) { RecordUiException(ex); }
+        }
+
+        Section(DrawVectorBannerUIToolkit);
+        Section(() => dependencyInstallerModule?.RefreshUIToolkit());
+        Section(RefreshConnectivityDiagnosticsUIToolkit);
+        Section(() => assetGalleryModule?.RefreshUIToolkit());
+        Section(() => creatorModule?.RefreshUIToolkit());
+        Section(() =>
+        {
             // The full version DTO is not Unity-serialized. Rehydrate it from local/server
             // metadata before both the action button and avatar options read the state.
             if (customBaseTarget != null &&
@@ -350,20 +358,18 @@ public class MCBEditor : UnityEditor.Editor
                 !string.IsNullOrEmpty(customBaseTarget.appliedCustomBaseVersionString))
                 versionModule?.actions.UpdateAppliedVersionAndState();
             versionModule?.RefreshUIToolkit();
-            avatarOptionsModule?.RefreshUIToolkit();
-            RefreshStatusMessagesUIToolkit();
-            RefreshAdjustMaterialUIToolkit();
-            ApplyDependencyBlockerState();
-            OrderUiToolkitLayers();
+        });
+        Section(() => avatarOptionsModule?.RefreshUIToolkit());
+        Section(RefreshStatusMessagesUIToolkit);
+        Section(RefreshAdjustMaterialUIToolkit);
+        Section(ApplyDependencyBlockerState);
+        Section(OrderUiToolkitLayers);
+        Section(() =>
+        {
             chromeSurfaceHost?.WakeForSeconds(20f);
             chromeSurfaceHost?.MarkDirtyRepaint();
-            bottomBarImGuiContainer?.MarkDirtyRepaint();
-        }
-        catch (Exception ex)
-        {
-            RecordUiException(ex);
-            bottomBarImGuiContainer?.MarkDirtyRepaint();
-        }
+        });
+        bottomBarImGuiContainer?.MarkDirtyRepaint();
     }
 
     private void OrderUiToolkitLayers()

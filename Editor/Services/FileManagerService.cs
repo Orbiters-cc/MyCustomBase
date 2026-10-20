@@ -724,7 +724,7 @@ public class FileManagerService
             var import = Orbiters.Toolkit.Editor.UnityPackageImport.ImportAsync(importPackagePath);
             while (!import.IsCompleted) yield return null;
             import.GetAwaiter().GetResult();
-            while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
+            while (MCBWork.EditorBusy) yield return null;
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
         }
         finally
@@ -1261,7 +1261,7 @@ public class FileManagerService
                 entries, originalModelPaths);
 
             AssetDatabase.Refresh();
-            while (EditorApplication.isUpdating || EditorApplication.isCompiling) yield return null;
+            while (MCBWork.EditorBusy) yield return null;
         }
     }
 
