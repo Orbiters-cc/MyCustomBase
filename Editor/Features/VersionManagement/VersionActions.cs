@@ -3995,6 +3995,8 @@ public class VersionActions
                 {
                     var asset = AssetDatabase.LoadMainAssetAtPath(entry.unityPath);
                     if (asset != null && !(asset is GameObject)) AssetDatabase.SaveAssetIfDirty(asset);
+                    // Import settings the switch left unsaved are written now: Undo compares the files with what it keeps here.
+                    else if (asset is GameObject) AssetDatabase.WriteImportSettingsIfDirty(entry.unityPath);
                     entry.after = VersionSwitchFileUndo.Save(entry.unityPath, folder, "after", entry.before);
                 }
                 VersionSwitchFileUndo.Record(id, folder, entries, veinsBefore, VersionSwitchFileUndo.SaveVeins(), UndoName,

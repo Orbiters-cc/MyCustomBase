@@ -142,6 +142,56 @@ public sealed class VersionSwitchRegressionTests
         }
     }
 
+    // A file changed after the switch (a new export over the FBX, other import settings) is left by its Undo and Redo, which
+    // say so; the switch's other files still go back.
+    [Test]
+    public void UndoAndRedoOfASwitchLeaveFilesChangedSince()
+    {
+        string folder = "Assets/MCB_UndoTest_" + Guid();
+        string body = folder + "/body.txt", hair = folder + "/hair.txt";
+        var type = typeof(VersionActions).GetNestedType("VersionTransitionRollbackSnapshot", BindingFlags.NonPublic);
+        var warnings = new List<string>();
+        Action<string, string, LogType> listen = (message, stack, logType) => { if (logType == LogType.Warning && message.Contains("changed after it")) warnings.Add(message); };
+        Undo.IncrementCurrentGroup();
+        int setupGroup = Undo.GetCurrentGroup();
+        int level = MCBLogger.IssueMinLevel;
+        MCBLogger.IssueMinLevel = 1;
+        MCBLogger.IssueLogged += listen;
+        try
+        {
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            void Write(string path, string text)
+            {
+                File.WriteAllText(path, text);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            }
+            Write(body, "body A");
+            Write(hair, "hair A");
+            var snapshot = type.GetMethod("Capture").Invoke(null, new object[] { new[] { body, hair }, null, null });
+            Write(body, "body B");
+            Write(hair, "hair B");
+            type.GetMethod("Commit").Invoke(snapshot, null);
+            Write(body, "body exported later");
+
+            sandbox.PerformUndo();
+            Assert.AreEqual("body exported later", File.ReadAllText(body), "The newer file stays.");
+            Assert.AreEqual("hair A", File.ReadAllText(hair));
+            Assert.That(warnings, Has.Count.EqualTo(1));
+            StringAssert.Contains(body, warnings[0]);
+            Undo.PerformRedo();
+            Assert.AreEqual("body exported later", File.ReadAllText(body));
+            Assert.AreEqual("hair B", File.ReadAllText(hair));
+        }
+        finally
+        {
+            MCBLogger.IssueLogged -= listen;
+            MCBLogger.IssueMinLevel = level;
+            Undo.RevertAllDownToGroup(setupGroup);
+            VersionSwitchFileUndo.Forget(folder);
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
+
     // Only the last switches keep their files. Undoing an older one moves the scene back and leaves its files (reported).
     [Test]
     public void UndoBeyondTheKeptSwitchesLeavesTheirFilesAsTheyAre()

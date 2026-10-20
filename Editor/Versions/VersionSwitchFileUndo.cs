@@ -12,7 +12,9 @@ using UnityEngine;
 /// setting, before and after the switch. Unity's Undo only restores scene objects: its <see cref="applied"/> flag is
 /// recorded in the switch's Undo step, and Undo/Redo puts the matching files back so the avatar, its meshes and MCB's
 /// detected version agree again. Copies live in Library/MCB/VersionUndo for the last few switches of this session; an
-/// older switch keeps its record without copies, so undoing it says its files stay as they are.
+/// older switch keeps its record without copies, so undoing it says its files stay as they are. Only files the switch
+/// changed are put back, and only while they are still as the step left them: a file changed since (a new export over
+/// the FBX, other import settings) stays, and Undo says so.
 /// </summary>
 internal sealed class VersionSwitchFileUndo : ScriptableObject
 {
@@ -149,6 +151,28 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
         AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
     }
 
+    /// <summary>Whether <paramref name="unityPath"/> and its .meta are still as <paramref name="state"/> saved them.</summary>
+    internal static bool IsAt(string unityPath, FileState state)
+    {
+        string full = Path.GetFullPath(unityPath);
+        bool exists = File.Exists(full);
+        if (exists != state.exists) return false;
+        if (!exists) return true;
+        if (!SameFile(full, state.copy)) return false;
+        // Unity ignores names ending in '~': no .meta.
+        if (unityPath.EndsWith("~", StringComparison.Ordinal)) return true;
+        if (File.Exists(full + ".meta") != state.metaExists) return false;
+        return !state.metaExists || SameFile(full + ".meta", state.metaCopy);
+    }
+
+    // Two saved states of one file: the same content and import settings (an unchanged file shares its copy).
+    private static bool SameState(FileState a, FileState b) =>
+        a.exists == b.exists && a.metaExists == b.metaExists &&
+        (!a.exists || a.copy == b.copy || SameFile(a.copy, b.copy)) &&
+        (!a.metaExists || SameFile(a.metaCopy, b.metaCopy));
+
+    private static bool SameFile(string path, string copy) => path != null && File.Exists(path) && SameContent(path, copy);
+
     /// <summary>Records a committed switch: <see cref="applied"/> turns true inside its (still open) Undo group.</summary>
     internal static void Record(string id, string folder, List<Entry> entries, Setting veinsBefore, Setting veinsAfter, string undoName,
         IEnumerable<string> assetsBefore = null, IEnumerable<string> assetsAfter = null)
@@ -227,6 +251,7 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
         changed = undoing ? changed.OrderByDescending(r => r.sequence).ToList() : changed.OrderBy(r => r.sequence).ToList();
         var failures = new List<string>();
         var dropped = new List<string>();
+        var changedSince = new List<string>();
         foreach (var record in changed)
         {
             if (record.FilesDropped)
@@ -239,7 +264,18 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
             // Files of a folder deleted since the switch stay deleted.
             foreach (var entry in record.entries.Where(e => Directory.Exists(Path.GetDirectoryName(Path.GetFullPath(e.unityPath)))))
             {
-                try { Restore(entry.unityPath, record.applied ? entry.after : entry.before); }
+                try
+                {
+                    // Left as it was by the switch (another base's dynamic normals in the same folder): nothing to put back.
+                    if (SameState(entry.before, entry.after)) continue;
+                    // Changed since the step wrote it: the newer file stays.
+                    if (!IsAt(entry.unityPath, record.applied ? entry.before : entry.after))
+                    {
+                        changedSince.Add(entry.unityPath);
+                        continue;
+                    }
+                    Restore(entry.unityPath, record.applied ? entry.after : entry.before);
+                }
                 catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { failures.Add(entry.unityPath + ": " + ex.Message); }
             }
             var veins = record.applied ? record.veinsAfter : record.veinsBefore;
@@ -257,6 +293,10 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
         }
         if (failures.Count > 0)
             MCBLogger.LogError("[MCB] The version switch was " + (undoing ? "undone" : "redone") + " in the scene, but these files could not be restored:\n" + string.Join("\n", failures));
+        if (changedSince.Count > 0)
+            MCBLogger.LogWarning("[MCB] The version switch was " + (undoing ? "undone" : "redone") + " in the scene, but these files changed after it " +
+                "(a new export, other import settings) and were left as they are, so the avatar may not match its models: apply a version or reset the avatar.\n" +
+                string.Join("\n", changedSince.Distinct(StringComparer.OrdinalIgnoreCase)));
         if (dropped.Count > 0)
             MCBLogger.LogError("[MCB] The version switch was " + (undoing ? "undone" : "redone") + " in the scene, but MCB only keeps the files of the last " + MaxRecords +
                 " switches. These files were left as they are, so the avatar may not match its models: apply a version or reset the avatar.\n" +
