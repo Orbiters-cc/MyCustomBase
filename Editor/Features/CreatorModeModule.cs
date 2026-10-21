@@ -1427,7 +1427,7 @@ public partial class CreatorModeModule
             return options;
         }
 
-        Transform root = editor.customBaseTarget.transform != null ? editor.customBaseTarget.transform.root : null;
+        Transform root = AvatarPaths.Root(editor.customBaseTarget);
         if (root == null)
         {
             return options;
@@ -2080,8 +2080,9 @@ public partial class CreatorModeModule
                                             !packageEntry.useAdvancedMeshReplacement &&
                                             (packageEntry.customFbx != null ||
                                              !string.IsNullOrWhiteSpace(packageEntry.externalCustomFbxPath));
+            // Paths from the avatar's root, where a version apply looks them up (an avatar under an organizer object too).
             packageEntry.smrPaths = CollectTargetedSmrPathsForModelEntry(
-                editor.customBaseTarget.transform.root,
+                AvatarPaths.Root(editor.customBaseTarget),
                 sourceUnityPath,
                 sourceFbx,
                 packageEntry.customFbx);

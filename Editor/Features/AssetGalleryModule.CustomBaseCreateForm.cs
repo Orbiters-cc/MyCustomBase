@@ -695,7 +695,7 @@ public partial class AssetGalleryModule
     {
         if (editor?.customBaseTarget == null || string.IsNullOrWhiteSpace(targetPath)) return;
 
-        var entries = SmrPathService.CollectSmrPathsForFbx(editor.customBaseTarget.transform.root, targetPath);
+        var entries = SmrPathService.CollectSmrPathsForFbx(AvatarPaths.Root(editor.customBaseTarget), targetPath);
         if (entries.Count == 0)
         {
             EditorGUILayout.HelpBox("No avatar SkinnedMeshRenderer currently uses this FBX.", MessageType.Warning);
@@ -1120,7 +1120,7 @@ public partial class AssetGalleryModule
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var replacedRenderers = AvatarSceneMeshProvenanceService.FindReplacedBaseRenderers(
-            editor?.customBaseTarget != null ? editor.customBaseTarget.transform.root : null,
+            editor?.customBaseTarget != null ? AvatarPaths.Root(editor.customBaseTarget) : null,
             detectedTargetPaths);
         int excludedTargetCount = KeepOnlyDetectedTargetFbxFiles(detection);
         string baseName = avatarBaseOptions[detection.baseIndex].name ?? "avatar base";
@@ -1587,7 +1587,7 @@ public partial class AssetGalleryModule
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var smrPathsByFbx = editor?.customBaseTarget != null
-            ? SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, pathList)
+            ? SmrPathService.CollectSmrPathsByFbx(AvatarPaths.Root(editor.customBaseTarget), pathList)
             : new Dictionary<string, List<ModelFileSmrPathData>>(StringComparer.OrdinalIgnoreCase);
         foreach (string unityPath in pathList)
         {
@@ -1646,7 +1646,7 @@ public partial class AssetGalleryModule
             .Select(match => ((ExistingOriginalBaseKey)match.local.tag).localTargetPath)
             .ToList();
         var smrPathsByFbx = editor?.customBaseTarget != null
-            ? SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, targetPaths)
+            ? SmrPathService.CollectSmrPathsByFbx(AvatarPaths.Root(editor.customBaseTarget), targetPaths)
             : new Dictionary<string, List<ModelFileSmrPathData>>(StringComparer.OrdinalIgnoreCase);
         var files = new List<ModelFileData>();
         foreach (var match in detectedOriginalBaseKeySource.matches)
@@ -1692,7 +1692,7 @@ public partial class AssetGalleryModule
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var smrPathsByFbx = editor?.customBaseTarget != null
-            ? SmrPathService.CollectSmrPathsByFbx(editor.customBaseTarget.transform.root, localTargetPaths)
+            ? SmrPathService.CollectSmrPathsByFbx(AvatarPaths.Root(editor.customBaseTarget), localTargetPaths)
             : new Dictionary<string, List<ModelFileSmrPathData>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var mapping in originalSourceKeyMappings)

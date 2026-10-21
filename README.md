@@ -2,6 +2,10 @@
 
 ## 1.12.12 — 2026-10-20
 
+- A version built while the avatar sits under another object in the scene records its renderers from the avatar's
+  root, where applying a version looks them up: such versions apply (they stopped with "Cannot find the avatar
+  renderer"). The create form, the mesh suggestions and the version comparison read the same root.
+
 - With Orbiters Mixer: a custom base's corrective shapes show in Mixer's blendshape list (the Skinned Mesh Renderer
   inspector's target button): the shape a corrective fixes, the corrective fixing a shape and the custom blendshape
   scaling it, from the applied version and from the BlendShape factor links set by hand.

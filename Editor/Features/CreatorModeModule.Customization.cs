@@ -124,7 +124,7 @@ public partial class CreatorModeModule
             if (custom == null || target == null) continue;
             try
             {
-                var smrPaths = CollectTargetedSmrPathsForModelEntry(editor.customBaseTarget.transform.root, AssetDatabase.GetAssetPath(target), target, custom);
+                var smrPaths = CollectTargetedSmrPathsForModelEntry(AvatarPaths.Root(editor.customBaseTarget), AssetDatabase.GetAssetPath(target), target, custom);
                 result.AddRange(NativeMeshPayloadService.CollectRendererSlots(custom, smrPaths).Where(r => result.All(e => e.path != r.path)));
             }
             catch (Exception ex) { MCBLogger.LogWarning("[MCB] Could not read the custom renderers of " + custom.name + ": " + ex.Message); }

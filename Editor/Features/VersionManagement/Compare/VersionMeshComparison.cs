@@ -333,7 +333,7 @@ internal sealed class VersionMeshComparison : IDisposable
     public IEnumerator Load(CompareReference reference)
     {
         if (target == null) throw new InvalidOperationException("The avatar is no longer in the scene.");
-        Transform root = target.transform.root;
+        Transform root = AvatarPaths.Root(target);
         Report(0.02f, "Finding the version's meshes…");
         var patches = actions.ResolveModelPatches(Version);
         if (patches.Count == 0) throw new InvalidOperationException("This version does not change any mesh.");
@@ -1100,7 +1100,7 @@ internal sealed class VersionMeshComparison : IDisposable
     {
         if (contextBuilt || target == null) return;
         contextBuilt = true;
-        Transform root = target.transform.root;
+        Transform root = AvatarPaths.Root(target);
         var keys = new HashSet<string>(sources.Select(s => s.Key), StringComparer.Ordinal);
         foreach (var renderer in root.GetComponentsInChildren<Renderer>(false))
         {
