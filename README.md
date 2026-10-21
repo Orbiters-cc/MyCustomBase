@@ -1,6 +1,6 @@
 # My Custom Base (MCB) by Enzo
 
-## 1.12.12 — 2026-10-20
+## 1.12.12 — 2026-10-21
 
 - **Export FBX** in a version's details (beside See differences, on versions that ship meshes) saves the version's
   model as an FBX file without applying it. A version that replaces the model (XOR or HDiff) gives the very file its
