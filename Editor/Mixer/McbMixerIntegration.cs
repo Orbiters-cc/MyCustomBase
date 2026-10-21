@@ -89,8 +89,8 @@ internal static class McbMixerIntegration
         return uses;
     }
 
-    // Mixer's own Reverts ask the same before edits are lost for good (MixerConfirm, inside Mixer): Revert also replaces
-    // Blender's copy of the mesh, so it asks while Blender edits it too.
+    // Mixer's own Reverts ask the same before edits are lost for good (MixerConfirm, inside Mixer). It asks while Blender
+    // edits the mesh too: Blender's edit in that mode is no longer taken (Blender keeps it and offers to send it again).
     private const string RevertOptOutKey = "MCB.Mixer.Confirm.Revert";
 
     private static bool ConfirmRevert(Renderer renderer)
@@ -98,7 +98,7 @@ internal static class McbMixerIntegration
         bool inBlender = MixerLink.StateOf(renderer) == MixerLink.RendererState.EditedInBlender;
         if (!inBlender && !MixerLink.HasEdits(renderer)) return true;
         string message = inBlender
-            ? renderer.name + " is being edited in Blender. Its original mesh comes back in Unity and in Blender: what Blender edits in that mode, and Mixer edits not committed, are dropped. This cannot be undone."
+            ? renderer.name + " is being edited in Blender. Its original mesh comes back in Unity, and Mixer edits not committed are dropped: this cannot be undone. Blender keeps what it edits in that mode; its Mixer panel then sends it to Unity again or takes Unity's mesh."
             : "The Mixer edits of " + renderer.name + " have not been committed. Its original mesh comes back, in a linked Blender too. This cannot be undone.";
         return EditorUtility.DisplayDialog("Revert " + renderer.name, message, "Revert", "Cancel", DialogOptOutDecisionType.ForThisMachine, RevertOptOutKey);
     }
@@ -213,7 +213,7 @@ internal static class McbMixerIntegration
                         commit.SetEnabled(edits && rendererState != MixerLink.RendererState.EditedInBlender);
                         row.Add(commit);
                         row.Add(CreatorModeModule.CreateTextButton("Revert",
-                            "Puts the renderer's own mesh back and drops the edits not committed (asks first when there are any). A linked Blender gets that mesh again too, in place of its own copy.", () =>
+                            "Puts the renderer's own mesh back and drops the edits not committed (asks first when there are any). A linked Blender gets that mesh's positions, shapes and weights again; while it edits the mesh, it keeps its edits and offers to send them again or take Unity's.", () =>
                             {
                                 if (!ConfirmRevert(renderer)) return;
                                 MixerLink.Revert(renderer);

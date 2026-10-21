@@ -71,7 +71,9 @@
   them.
 
 - The Blender card's **Revert** asks first when the mesh holds Mixer edits not committed, or while Blender edits it:
-  Revert also sends the original mesh back to a linked Blender, in place of its copy. Its tooltip now says so.
+  Revert also sends the original mesh back to a linked Blender (its positions, shapes and weights; UVs and what was made
+  in Blender stay), and a Blender editing the mesh keeps that edit and offers to send it again or take Unity's (Mixer's
+  Blender extension of this release). The tooltip and the confirmation say so.
 - A Blender export import on an avatar placed under another object gives the new Avatar to that avatar's own Animator
   (no Animator is added to the object above it) and only touches that avatar's renderers. So do Apply Custom FBX, Apply
   Custom Avatar and Generate Avatar in the creator mode. Mixer's Export for MCB keeps each avatar's meshes with its own
