@@ -1,5 +1,12 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.13 — 2026-10-21
+
+- Mixer's Hierarchy shows **Update** beside the avatar's custom base when MCB's server recommends a newer version than
+  the one applied (from the version list MCB read last, read again in the background when there is none). Clicking it
+  opens the avatar in MCB's Inspector, which applies that version with its usual confirmation and progress, as its
+  version list does. Needs Orbiters Toolkit 0.4.2.
+
 ## 1.12.12 — 2026-10-21
 
 - **Export FBX** in a version's details (beside See differences, on versions that ship meshes) saves the version's

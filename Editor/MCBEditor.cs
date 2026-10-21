@@ -1570,7 +1570,10 @@ public class MCBEditor : UnityEditor.Editor
             .OrderByDescending(v => ParseVersion(v.version)).ToList();
     }
     
-    public Version ParseVersion(string v)
+    public Version ParseVersion(string v) => VersionNumber(v);
+
+    /// <summary>A version label as a comparable number ("0.5" reads as 0.5.0; anything unreadable as 0.0).</summary>
+    public static Version VersionNumber(string v)
     {
         if (string.IsNullOrEmpty(v)) return new Version(0,0);
         if (v.Count(c => c == '.') == 0) v += ".0.0";
