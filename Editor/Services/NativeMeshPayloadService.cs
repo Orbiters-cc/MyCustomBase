@@ -2256,7 +2256,7 @@ public static partial class NativeMeshPayloadService
         completed?.Invoke(payload);
     }
 
-    private static Mesh CreateMeshFromPreparedData(PreparedMeshData data)
+    internal static Mesh CreateMeshFromPreparedData(PreparedMeshData data)
     {
         Mesh result = null;
         var create = CreateMeshFromPreparedDataCoroutine(data, mesh => result = mesh, null, false);

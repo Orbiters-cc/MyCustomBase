@@ -435,6 +435,11 @@
     scale: 0.94 0.94;
 }
 
+.mcb-version-mesh-row__button--text {
+    margin-left: 4px;
+    padding-right: 12px;
+}
+
 .mcb-version-mesh-row__icon {
     width: 16px;
     height: 16px;

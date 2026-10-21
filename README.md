@@ -2,6 +2,12 @@
 
 ## 1.12.12 — 2026-10-20
 
+- **Export FBX** in a version's details (beside See differences, on versions that ship meshes) saves the version's
+  model as an FBX file without applying it. A version that replaces the model (XOR or HDiff) gives the very file its
+  creator published, decoded from your original model and checked against its hash; a version of advanced meshes gives
+  the avatar's meshes from its models as the version makes them. The version must be downloaded, and the avatar must
+  have the original model the version was made for.
+
 - A version built while the avatar sits under another object in the scene records its renderers from the avatar's
   root, where applying a version looks them up: such versions apply (they stopped with "Cannot find the avatar
   renderer"). The create form, the mesh suggestions and the version comparison read the same root.

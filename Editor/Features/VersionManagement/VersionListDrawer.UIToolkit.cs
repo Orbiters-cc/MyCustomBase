@@ -677,7 +677,7 @@ public partial class VersionListDrawer
         return details;
     }
 
-    // A version that ships meshes can be seen in 3D, on the avatar, before it is applied.
+    // A version that ships meshes can be seen in 3D, on the avatar, before it is applied, and saved as an FBX file.
     private VisualElement CreateMeshChangesRow(CustomBaseVersion ver)
     {
         var row = new VisualElement();
@@ -694,12 +694,28 @@ public partial class VersionListDrawer
         var icon = new CompareGlyph(CompareGlyph.Kind.Compare);
         icon.AddToClassList("mcb-version-mesh-row__icon");
         button.Add(icon);
+        ShowPress(button);
+        ButtonInteraction.RegisterImmediateClick(button, () => VersionCompareWindow.Open(editor, ver));
+        row.Add(button);
+
+        var export = new Button { tooltip = "Save this version's model as an FBX file, without applying it: the file its creator published, or the avatar's meshes as the version makes them." };
+        export.AddToClassList("mcb-version-mesh-row__button");
+        export.AddToClassList("mcb-version-mesh-row__button--text");
+        var exportLabel = new Label("Export FBX") { pickingMode = PickingMode.Ignore };
+        exportLabel.AddToClassList("mcb-version-mesh-row__label");
+        export.Add(exportLabel);
+        ShowPress(export);
+        ButtonInteraction.RegisterImmediateClick(export, () => VersionFbxExport.Export(actions, editor, ver));
+        row.Add(export);
+        return row;
+    }
+
+    // The row's buttons shrink as soon as the pointer goes down.
+    private static void ShowPress(Button button)
+    {
         button.RegisterCallback<PointerDownEvent>(_ => button.AddToClassList("mcb-version-mesh-row__button--pressed"), TrickleDown.TrickleDown);
         button.RegisterCallback<PointerUpEvent>(_ => button.RemoveFromClassList("mcb-version-mesh-row__button--pressed"), TrickleDown.TrickleDown);
         button.RegisterCallback<PointerLeaveEvent>(_ => button.RemoveFromClassList("mcb-version-mesh-row__button--pressed"));
-        ButtonInteraction.RegisterImmediateClick(button, () => VersionCompareWindow.Open(editor, ver));
-        row.Add(button);
-        return row;
     }
 
     private VisualElement CreateVersionEditForm(CustomBaseVersion ver)
