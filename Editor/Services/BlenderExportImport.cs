@@ -14,8 +14,8 @@ using UnityEngine;
 /// CUSTOM_BASE model per target FBX, plus the XMuscles correctives XMuscle Orbit Helper baked. Each model becomes the
 /// creator's custom FBX for its target, imported with a generated Avatar, or, for an advanced-mesh export, is kept out of
 /// the asset database and shown on the avatar as the version's payload will show it. Live edits of the base go through
-/// Orbiters Mixer's link; an export is how topology changes and baked correctives come back, and the only way Mixer or
-/// Blender edits reach a version (versions are built from the FBX files).
+/// Orbiters Mixer's link; an export is how topology changes, armature edits and baked correctives come back (a version build
+/// takes the mesh edits Mixer committed by itself, see <see cref="VersionAvatarMeshes"/>).
 /// </summary>
 internal static partial class BlenderExportImport
 {
@@ -136,9 +136,16 @@ internal static partial class BlenderExportImport
     /// the Blender card lists, and what Mixer's Export for MCB groups by (<see cref="TargetFbxOf"/>).
     /// </summary>
     internal static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> TargetRenderers(MCBEditor editor) =>
-        editor == null || editor.customBaseTarget == null
+        TargetRenderers(editor != null ? editor.customBaseTarget : null, editor);
+
+    /// <summary>
+    /// <see cref="TargetRenderers(MCBEditor)"/> of a base: <paramref name="editor"/> is the one showing it (its targets are
+    /// the card's), or null (the base's own source files, as <see cref="TargetFbxOf"/> without an editor).
+    /// </summary>
+    internal static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> TargetRenderers(MyCustomBase customBase, MCBEditor editor) =>
+        customBase == null
             ? new List<(SkinnedMeshRenderer, string, string)>()
-            : MapTargets(editor.customBaseTarget, editor);
+            : MapTargets(customBase, editor);
 
     /// <summary>The avatar's renderers for a target FBX (by the renderer paths), each with the FBX mesh it shows.</summary>
     internal static List<(SkinnedMeshRenderer Renderer, string FbxMesh)> Renderers(Transform avatarRoot, IEnumerable<ModelFileSmrPathData> smrPaths)
@@ -180,57 +187,6 @@ internal static partial class BlenderExportImport
                 if (seen.Add(key)) result.Add(entry);
             }
         return result;
-    }
-
-    // ---- Edits a version does not carry ------------------------------------------------------------------------------
-
-    /// <summary>
-    /// Whether a renderer is in a Mixer session (registered by MCB's Mixer integration): its working copy, committed or
-    /// not, is not in the FBX files versions are built from.
-    /// </summary>
-    internal static Func<Renderer, bool> InMixerSession;
-
-    /// <summary>
-    /// Whether the renderer shows a mesh a version cannot carry: one Mixer committed (from its own or Blender's edits),
-    /// or a Mixer working copy. Versions are built from the creator's FBX entries, never from the renderers.
-    /// </summary>
-    internal static bool ShowsMeshOutsideVersions(Renderer renderer)
-    {
-        if (renderer == null) return false;
-        if (InMixerSession != null && InMixerSession(renderer)) return true;
-        Mesh mesh = null;
-        if (renderer is SkinnedMeshRenderer skinned) mesh = skinned.sharedMesh;
-        else
-        {
-            var filter = renderer.GetComponent<MeshFilter>();
-            if (filter != null) mesh = filter.sharedMesh;
-        }
-        return mesh != null && MeshAssets.IsOwnedBy(mesh, "Mixer");
-    }
-
-    /// <summary>The base's renderers whose meshes a version would leave out (see <see cref="ShowsMeshOutsideVersions"/>).</summary>
-    internal static List<SkinnedMeshRenderer> RenderersOutsideVersions(MCBEditor editor) =>
-        TargetRenderers(editor).Select(entry => entry.Renderer).Where(ShowsMeshOutsideVersions).ToList();
-
-    /// <summary>What a build would leave out of the version, for its confirmation and warnings; null when nothing.</summary>
-    internal static string EditsOutsideVersionsWarning(IEnumerable<Renderer> renderers)
-    {
-        var names = (renderers ?? Enumerable.Empty<Renderer>()).Where(r => r != null).Select(r => r.name).Distinct().ToList();
-        if (names.Count == 0) return null;
-        return $"{string.Join(", ", names)} {(names.Count == 1 ? "shows a mesh" : "show meshes")} edited in Mixer or Blender that the version " +
-               "will not contain: versions are built from the FBX files. To include the edits, use Export for MCB in Blender and import " +
-               "the export from the Blender card first.";
-    }
-
-    /// <summary><see cref="EditsOutsideVersionsWarning(IEnumerable{Renderer})"/> for the editor's custom base.</summary>
-    internal static string EditsOutsideVersionsWarning(MCBEditor editor)
-    {
-        try { return EditsOutsideVersionsWarning(RenderersOutsideVersions(editor)); }
-        catch (Exception ex)
-        {
-            MCBLogger.LogWarning("[BlenderExport] Could not check the avatar for Mixer edits: " + ex.Message);
-            return null;
-        }
     }
 
     // ---- Mixer ------------------------------------------------------------------------------------------------------
@@ -840,14 +796,23 @@ internal static partial class BlenderExportImport
         MeshAssets.EnsureFolder(folderUnityPath);
         files.Track(unityPath);
         File.Copy(plan.sourceFbxPath, destination, true);
-        // Import settings before the first import: readable, as a version build needs it (turning Read/Write on afterwards
-        // imported the body a second time), without cameras and lights.
-        if (!File.Exists(destination + ".meta"))
-            File.WriteAllText(destination + ".meta",
-                "fileFormatVersion: 2\nguid: " + Guid.NewGuid().ToString("N") + "\nModelImporter:\n  serializedVersion: 22200\n" +
-                "  animations:\n    isReadable: 1\n  meshes:\n    importCameras: 0\n    importLights: 0\n");
+        WriteModelMeta(destination);
         AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport);
         return unityPath;
+    }
+
+    /// <summary>
+    /// The import settings of a model MCB writes into the project (<paramref name="fullPath"/>), before its first import and
+    /// unless it has some: readable, as a version build needs it (turning Read/Write on afterwards imported the body a second
+    /// time), without cameras and lights, with <paramref name="userData"/> (one line of plain text) for its importer.
+    /// </summary>
+    internal static void WriteModelMeta(string fullPath, string userData = null)
+    {
+        if (File.Exists(fullPath + ".meta")) return;
+        File.WriteAllText(fullPath + ".meta",
+            "fileFormatVersion: 2\nguid: " + Guid.NewGuid().ToString("N") + "\nModelImporter:\n  serializedVersion: 22200\n" +
+            "  animations:\n    isReadable: 1\n  meshes:\n    importCameras: 0\n    importLights: 0\n" +
+            (string.IsNullOrEmpty(userData) ? "" : "  userData: " + userData + "\n"));
     }
 
     private static string CopyModelToAdvancedExports(string baseKey, ModelUpdatePlan plan, ExportFileRollback files)
@@ -923,7 +888,8 @@ internal static partial class BlenderExportImport
         AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(customBase), generatedAvatar);
     }
 
-    private static SerializedProperty CreatorEntry(SerializedObject serialized, int targetIndex)
+    /// <summary>The creator's entry for a target (by its index among the source files), added when the list is shorter.</summary>
+    internal static SerializedProperty CreatorEntry(SerializedObject serialized, int targetIndex)
     {
         var entriesProp = serialized.FindProperty("modelFileBuildEntries");
         if (entriesProp == null) return null;

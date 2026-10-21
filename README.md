@@ -33,9 +33,21 @@
 - A manifest can only name FBX files in its own export folder: absolute paths, `..`, links and device names are
   refused, so a crafted manifest can no longer copy another file of the computer into `Assets` (and into the next
   version's upload).
-- Mixer and Blender edits that were only committed are not in a version (versions are built from the creator's FBX
-  entries): the Blender card names those meshes ("committed in Mixer, not in versions yet"), and the build's
-  confirmation and warnings list them, with the way in: Export for MCB in Blender, then import the export.
+- Mixer and Blender edits that were committed are in the versions built after them. Building a version writes the
+  meshes Mixer committed on the base's renderers into a new custom FBX of their model, with Orbiters Toolkit's FBX
+  export: every object, mesh, blendshape and material slot name of the model, the committed meshes in place of theirs
+  (`Assets/MCB/generated/blenderExports/<base id>/NN_<target>-<hash>.fbx`). The model's entry names that FBX from then
+  on, so the version holds what the avatar shows, with advanced meshes (XOR or not) and with FBX patches alike. Taking
+  the same meshes again reuses the file.
+- The build's confirmation names those meshes and offers **Build with them** (the default) or **Build without them**,
+  and the warnings say what was taken. Builds without a dialog take them too: MCP's `mcb_authoring` build lists them in
+  `takenFromAvatar` and its draft names the new custom FBX. A mesh still being edited in Mixer or Blender stops the
+  build until it is committed or reverted. Armature edits (another rest pose, weights on bones the model lacks) and
+  models imported with a Scale Factor other than 1 or Convert Units off are refused, with the way in: Export for MCB
+  in Blender, then import the export on the Blender card. The Blender card says which meshes the next build takes in.
+- Publishing a version built earlier asks first when the avatar shows Mixer meshes its entries do not hold (committed
+  after the build, left out of it, or still in a Mixer session): **Publish as built** or cancel and build again. MCP's
+  publish preview says the same in `avatarBeyondVersion`.
 - The import is safer: a model without a target goes to the creator's first source file (never a SOURCE file the
   creator does not use), several models without a target or two models for one target are refused, a model whose FBX
   leaves out meshes Unity keeps out of Blender (Mixer's `missingUnityTargetMeshNames`) is refused naming them, instead

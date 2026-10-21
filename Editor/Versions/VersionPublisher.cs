@@ -43,6 +43,12 @@ public static class VersionPublisher
             editor.submitError = "This avatar is already building or publishing a version. Wait for it to finish, then publish again.";
             yield break;
         }
+        // A version built before ships as built: what the avatar shows beyond it (meshes Mixer committed since the build or
+        // left out of it, meshes in a Mixer session) is said first, never shipped silently.
+        string beyond = interactive ? VersionAvatarMeshes.NotInBuildMessage(editor.customBaseTarget, editor) : null;
+        if (beyond != null && !EditorUtility.DisplayDialog("The avatar shows more than this version",
+                beyond + "\n\nPublish the version as built, or cancel and build it again.", "Publish as built", "Cancel"))
+            yield break;
         if (!VersionOperationGuard.TryAcquire("publishing version " + version.version, out var operation, out string busy))
         {
             editor.submitError = busy;

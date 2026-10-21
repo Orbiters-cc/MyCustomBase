@@ -13,8 +13,8 @@ using Object = UnityEngine.Object;
 
 /// <summary>
 /// Blender export imports: what a manifest may name, where the copies land and how they are named, which target a model
-/// goes to, which renderer stands for which target, what a version would leave out, and the cleanup of the copies nothing
-/// uses. Fixtures live in preview scenes, temporary folders and unique Assets/ folders.
+/// goes to, which renderer stands for which target, and the cleanup of the copies nothing uses (what a build takes from
+/// the avatar: VersionAvatarMeshesTests). Fixtures live in preview scenes, temporary folders and unique Assets/ folders.
 /// </summary>
 public class BlenderExportImportTests
 {
@@ -316,30 +316,6 @@ public class BlenderExportImportTests
         finally
         {
             BlenderExportImport.Changed -= listen;
-        }
-    }
-
-    // ---- What a version would leave out ---------------------------------------------------------------------------------
-
-    [Test]
-    public void RenderersInMixerSessionsAreNamedAsNotInTheVersion()
-    {
-        var edited = Make("Body").AddComponent<SkinnedMeshRenderer>();
-        var untouched = Make("Hair").AddComponent<SkinnedMeshRenderer>();
-        var previous = BlenderExportImport.InMixerSession;
-        BlenderExportImport.InMixerSession = renderer => renderer == edited;
-        try
-        {
-            Assert.IsTrue(BlenderExportImport.ShowsMeshOutsideVersions(edited));
-            Assert.IsFalse(BlenderExportImport.ShowsMeshOutsideVersions(untouched));
-            string warning = BlenderExportImport.EditsOutsideVersionsWarning(new Renderer[] { edited });
-            StringAssert.Contains("Body", warning);
-            StringAssert.Contains("Export for MCB", warning);
-            Assert.IsNull(BlenderExportImport.EditsOutsideVersionsWarning(new Renderer[0]));
-        }
-        finally
-        {
-            BlenderExportImport.InMixerSession = previous;
         }
     }
 

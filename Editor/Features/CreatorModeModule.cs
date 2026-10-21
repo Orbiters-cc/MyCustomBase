@@ -261,10 +261,7 @@ public partial class CreatorModeModule
                 GUI.backgroundColor = hasPendingBuild ? Color.white : Color.green;
                 if (GUILayout.Button(editor.isSubmitting ? "Working..." : "Build Version", GUILayout.Height(30)))
                 {
-                    if (EditorUtility.DisplayDialog("Confirm Build", ConfirmBuildMessage(), "Build", "Cancel"))
-                    {
-                        EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine());
-                    }
+                    ConfirmAndBuild();
                 }
                 GUI.backgroundColor = Color.white;
             }
@@ -696,7 +693,8 @@ public partial class CreatorModeModule
             if (sourceFbx != null && (customFbx != null || hasExternalCustomFbx || avatar != null)) return true;
         }
 
-        return false;
+        // Meshes Mixer committed on the base become their model's custom FBX when the version is built.
+        return VersionAvatarMeshes.Find(editor).Committed.Count > 0;
     }
 
     private bool HasSuggestRealisticPayload()
@@ -1920,20 +1918,26 @@ public partial class CreatorModeModule
         return result;
     }
 
+    /// <summary>What the last build took from the avatar into its models' custom FBX files (<see cref="VersionAvatarMeshes"/>); empty when nothing.</summary>
+    internal IReadOnlyList<VersionAvatarMeshes.Taken> TakenFromAvatar { get; private set; } = Array.Empty<VersionAvatarMeshes.Taken>();
+
     /// <summary>
     /// The shared build path (creator window, temporary versions and MCP). It holds the process-wide
     /// VersionOperationGuard unless the caller already does (<paramref name="operation"/>), so a build never runs next to
-    /// another build or a publish.
+    /// another build or a publish. The version holds what the avatar shows: meshes Mixer committed on the base's renderers
+    /// are written into their model's custom FBX first (<see cref="TakenFromAvatar"/>), unless the creator chose to leave
+    /// them out (<paramref name="takeAvatarMeshes"/> false), and a mesh still in a Mixer session stops the build.
     /// </summary>
-    public IEnumerator BuildNewVersionCoroutine(Action<VersionArtifact> completed, VersionOperationGuard.Scope operation = null)
+    public IEnumerator BuildNewVersionCoroutine(Action<VersionArtifact> completed, VersionOperationGuard.Scope operation = null, bool takeAvatarMeshes = true)
     {
         var owned = operation != null && operation.IsHeld ? null : VersionOperationGuard.Acquire("building a version");
-        try { yield return BuildNewVersionCoroutineCore(completed); }
+        try { yield return BuildNewVersionCoroutineCore(completed, takeAvatarMeshes); }
         finally { owned?.Dispose(); }
     }
 
-    private IEnumerator BuildNewVersionCoroutineCore(Action<VersionArtifact> completed)
+    private IEnumerator BuildNewVersionCoroutineCore(Action<VersionArtifact> completed, bool takeAvatarMeshes)
     {
+        TakenFromAvatar = Array.Empty<VersionAvatarMeshes.Taken>();
         var logicPrefab = editor.avatarLogicPrefabProp.objectReferenceValue as GameObject;
         bool shouldIncludeCustomVeins = editor.includeCustomVeinsForCreatorProp.boolValue;
         var customVeinsTexture = editor.customVeinsNormalMapProp.objectReferenceValue as Texture2D;
@@ -2009,6 +2013,20 @@ public partial class CreatorModeModule
         EditorUtility.DisplayProgressBar("Preparing Build", "Creating version package...", 0.2f);
 
         SyncModelFileBuildEntryCount();
+        // With a dialog or without (MCP, temporary versions): a Mixer working copy is not built, committed meshes go into
+        // their model's custom FBX before the entries are read.
+        var shown = VersionAvatarMeshes.Find(editor.customBaseTarget, editor);
+        string inSession = VersionAvatarMeshes.InSessionMessage(shown.InSession.Select(s => s.Renderer));
+        if (inSession != null) throw new InvalidOperationException(inSession);
+        if (shown.Committed.Count > 0 && takeAvatarMeshes)
+        {
+            EditorUtility.DisplayProgressBar("Preparing Build", "Writing the meshes Mixer committed into custom FBX files...", 0.25f);
+            TakenFromAvatar = VersionAvatarMeshes.TakeIntoEntries(editor.customBaseTarget, editor.serializedObject, shown.Committed);
+            yield return null;
+        }
+        else if (shown.Committed.Count > 0)
+            MCBLogger.LogWarning("[MCB] Building a version without the meshes Mixer committed, as asked: " +
+                                 VersionAvatarMeshes.LeftOutMessage(shown.Committed.Select(s => s.Renderer)));
         var packageEntries = new List<FileManagerService.ModelFilePackageEntry>();
         var sourceFbxByPath = new Dictionary<string, GameObject>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
@@ -2799,7 +2817,7 @@ public partial class CreatorModeModule
         MCBLogger.Log($"[CreatorMode] Recovered pending build v{artifact.Metadata.version} after domain reload.");
     }
 
-    private IEnumerator BuildAndApplyLocalVersionCoroutine()
+    private IEnumerator BuildAndApplyLocalVersionCoroutine(bool takeAvatarMeshes)
     {
         // Build and apply hold the process-wide guard together: an MCP build or another avatar's publish waits.
         if (!VersionOperationGuard.TryAcquire("building and applying a version", out var operation, out string busy))
@@ -2812,13 +2830,8 @@ public partial class CreatorModeModule
         editor.isSubmitting = true;
         editor.submitError = "";
         editor.warningsModule.Clear();
-        // Builds without a dialog (MCP) see it too: the version is built from the FBX entries, never from the renderers.
-        string editsOutside = BlenderExportImport.EditsOutsideVersionsWarning(editor);
-        if (editsOutside != null)
-        {
-            editor.warningsModule.AddWarning(editsOutside, MessageType.Warning, "Not in this version");
-            MCBLogger.LogWarning("[MCB] Building a version without edits the avatar shows: " + editsOutside);
-        }
+        // Left out because the creator chose so: said after the build too.
+        string leftOut = takeAvatarMeshes ? null : VersionAvatarMeshes.LeftOutMessage(VersionAvatarMeshes.Find(editor).Committed.Select(s => s.Renderer));
         editor.Repaint();
 
         VersionArtifact builtArtifact = null;
@@ -2826,7 +2839,7 @@ public partial class CreatorModeModule
 
         try
         {
-            yield return MCBWork.Guard(BuildNewVersionCoroutine(value => builtArtifact = value, operation), ex => buildError = ex);
+            yield return MCBWork.Guard(BuildNewVersionCoroutine(value => builtArtifact = value, operation, takeAvatarMeshes), ex => buildError = ex);
 
             if (buildError != null)
             {
@@ -2840,6 +2853,9 @@ public partial class CreatorModeModule
             {
                 // The artifact (version folder + version.json + manifest) is already
                 // committed and persisted as unsubmitted by VersionBuilder.
+                string taken = VersionAvatarMeshes.TakenMessage(TakenFromAvatar);
+                if (taken != null) editor.warningsModule.AddWarning(taken, MessageType.Info, "Taken from the avatar");
+                if (leftOut != null) editor.warningsModule.AddWarning(leftOut, MessageType.Warning, "Not in this version");
                 var metadata = builtArtifact.Metadata;
                 creatorWindow?.Built(metadata);
                 RememberPendingBuild(metadata, builtArtifact.Manifest?.formSignature);

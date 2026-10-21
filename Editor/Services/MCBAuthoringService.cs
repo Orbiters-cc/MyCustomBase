@@ -40,6 +40,11 @@ public static class MCBAuthoringService
         // Trusted creators: verify a Discord role and, with it, publish versions without XOR protection.
         public VersionProtection protection;
     }
+    /// <summary>A mesh Mixer committed on the base that a build took in: the renderer (from the avatar), its target FBX and the custom FBX written for it.</summary>
+    public sealed class TakenMesh
+    {
+        public string renderer, target, customFbx;
+    }
     private sealed class Session : IDisposable
     {
         public readonly MCBEditor Editor;
@@ -156,19 +161,23 @@ public static class MCBAuthoringService
         return model;
     }
 
-    public static IEnumerator Build(MyCustomBase owner, Action<VersionArtifact> complete)
+    /// <summary>
+    /// Builds the saved draft. Meshes Mixer committed on the base's renderers go into the version as a creator's build takes
+    /// them (a new custom FBX per model, see VersionAvatarMeshes), with no dialog: <paramref name="complete"/> gets them, and
+    /// the draft names those custom FBX files from then on. A base mesh still in a Mixer session stops the build.
+    /// </summary>
+    public static IEnumerator Build(MyCustomBase owner, Action<VersionArtifact, List<TakenMesh>> complete)
     {
         var draft = JsonConvert.DeserializeObject<Draft>(owner.creatorAuthoringDraftJson ?? "null") ?? throw new InvalidOperationException("Configure an authoring draft first.");
         RequireEnvironmentFolder(draft.asset.id);
-        var built = complete;
-        complete = artifact =>
-        {
-            File.WriteAllText(EnvironmentPath(artifact.Metadata.assetId), EnvironmentName);
-            built(artifact);
-        };
         // One build or publish at a time across MCP and every creator window (each editor only knows its own isSubmitting).
         using var operation = VersionOperationGuard.Acquire("building version " + draft.version);
         using var session = new Session(owner); var editor = session.Editor;
+        Action<VersionArtifact> built = artifact =>
+        {
+            File.WriteAllText(EnvironmentPath(artifact.Metadata.assetId), EnvironmentName);
+            complete(artifact, KeepTakenInDraft(owner, draft, editor.creatorModule.TakenFromAvatar));
+        };
         if (editor.isSubmitting) throw new InvalidOperationException("This avatar already has an active operation.");
         var previousAsset = editor.GetSelectedAsset();
         editor.isSubmitting = true;
@@ -188,10 +197,34 @@ public static class MCBAuthoringService
             owner.includeSuggestRealisticForCreator = draft.suggestRealistic.Count > 0; owner.suggestRealisticMeshPathsForCreator = draft.suggestRealistic.ToList();
             editor.serializedObject.Update();
             editor.creatorModule.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
-            yield return editor.creatorModule.BuildNewVersionCoroutine(complete, operation);
+            yield return editor.creatorModule.BuildNewVersionCoroutine(built, operation);
         }
         // The window's asset is restored whatever failed, including a draft model that no longer loads.
         finally { editor.isSubmitting = false; EditorUtility.ClearProgressBar(); editor.SetCreatorWindowAsset(previousAsset); }
+    }
+
+    /// <summary>
+    /// What the avatar shows that the base's model entries do not hold (meshes Mixer committed after the last build, meshes in
+    /// a Mixer session), for a publish preview; null when nothing.
+    /// </summary>
+    public static string AvatarBeyondEntries(MyCustomBase owner) => VersionAvatarMeshes.NotInBuildMessage(owner, null);
+
+    // Later builds start from the draft again: it names the custom FBX files the meshes taken from the avatar went into, as
+    // the creator's entries do (once a version is applied, the avatar no longer shows Mixer's meshes to take).
+    private static List<TakenMesh> KeepTakenInDraft(MyCustomBase owner, Draft draft, IEnumerable<VersionAvatarMeshes.Taken> taken)
+    {
+        var result = new List<TakenMesh>();
+        foreach (var item in taken ?? Enumerable.Empty<VersionAvatarMeshes.Taken>())
+        {
+            int index = draft.sourceModels.FindIndex(path => string.Equals(MCBUtils.ToUnityPath(path), MCBUtils.ToUnityPath(item.Target), StringComparison.OrdinalIgnoreCase));
+            if (index >= 0 && index < draft.customModels.Count) draft.customModels[index] = item.CustomFbx;
+            result.Add(new TakenMesh { renderer = item.Renderer, target = item.Target, customFbx = item.CustomFbx });
+        }
+        if (result.Count == 0) return result;
+        Undo.RecordObject(owner, "Build MCB authoring draft");
+        owner.creatorAuthoringDraftJson = JsonConvert.SerializeObject(draft);
+        EditorUtility.SetDirty(owner);
+        return result;
     }
 
     public static IEnumerator Apply(MyCustomBase owner, CustomBaseVersion version)

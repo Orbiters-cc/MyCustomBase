@@ -2847,7 +2847,8 @@ public static partial class NativeMeshPayloadService
         public long skippedBlendShapeTangentBytes;
     }
 
-    private static SkinnedMeshRenderer ResolveCustomRenderer(Transform customRoot, ModelFileSmrPathData entry)
+    /// <summary>The custom model's renderer for an avatar renderer's mapping: by its path in the model, else its mesh's or its own name.</summary>
+    internal static SkinnedMeshRenderer ResolveCustomRenderer(Transform customRoot, ModelFileSmrPathData entry)
     {
         if (customRoot == null || entry == null)
         {

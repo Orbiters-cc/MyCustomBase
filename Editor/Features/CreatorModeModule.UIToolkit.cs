@@ -1417,11 +1417,7 @@ public partial class CreatorModeModule
                 return;
             }
 
-            if (EditorUtility.DisplayDialog("Confirm Build", ConfirmBuildMessage(), "Build", "Cancel"))
-            {
-                EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine());
-                RefreshEditorUi();
-            }
+            if (ConfirmAndBuild()) RefreshEditorUi();
         });
         buildButton.AddToClassList("mcb-button--primary");
         buildButton.AddToClassList("mcb-creator-submit__button");
@@ -1449,12 +1445,35 @@ public partial class CreatorModeModule
         refreshValidation();
     }
 
-    // The build's confirmation, with what the version would leave out: edits Mixer or Blender made on the renderers only.
-    private string ConfirmBuildMessage()
+    // The build's confirmation, then the build. A base mesh still in a Mixer session stops it (commit or revert first); meshes
+    // Mixer committed go into the version unless the creator leaves them out. False when no build started.
+    private bool ConfirmAndBuild()
     {
         const string message = "This will build the new version files and apply them locally as a temporary version. Nothing is uploaded yet. The original FBX will be backed up.";
-        string outside = BlenderExportImport.EditsOutsideVersionsWarning(editor);
-        return outside == null ? message : message + Environment.NewLine + Environment.NewLine + "Not in this version: " + outside;
+        var shown = VersionAvatarMeshes.Find(editor);
+        string inSession = VersionAvatarMeshes.InSessionMessage(shown.InSession.Select(s => s.Renderer));
+        if (inSession != null)
+        {
+            EditorUtility.DisplayDialog("Build Version", inSession, "OK");
+            return false;
+        }
+        bool takeAvatarMeshes = true;
+        if (shown.Committed.Count == 0)
+        {
+            if (!EditorUtility.DisplayDialog("Confirm Build", message, "Build", "Cancel")) return false;
+        }
+        else
+        {
+            string committed = VersionAvatarMeshes.CommittedMessage(shown.Committed.Select(s => s.Renderer));
+            int choice = EditorUtility.DisplayDialogComplex("Confirm Build",
+                message + Environment.NewLine + Environment.NewLine + committed + Environment.NewLine + Environment.NewLine +
+                "Build without them: the version holds the FBX files as they are, without these edits.",
+                "Build with them", "Cancel", "Build without them");
+            if (choice == 1) return false;
+            takeAvatarMeshes = choice == 0;
+        }
+        EditorCoroutineUtility.StartCoroutineOwnerless(BuildAndApplyLocalVersionCoroutine(takeAvatarMeshes));
+        return true;
     }
 
     private void UpdateSubmissionValidation(MCBCreatorHelpBoxElement versionWarningBox, MCBCreatorHelpBoxElement metadataWarningBox, Button buildButton, Button publishButton)

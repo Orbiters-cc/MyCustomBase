@@ -10,10 +10,11 @@ using UnityEngine.UIElements;
 /// <summary>
 /// The live part of the creator mode's Blender card when Orbiters Mixer is installed: the Mixer link's state, Open scene
 /// in Blender, and the custom base's renderers with what Blender or Mixer is doing to them, with Commit, Revert and Edit
-/// in Mixer. Registers itself with MCB's creator mode when scripts load. Mixer and Blender edits stay in the scene: a
-/// version carries them only through Export for MCB and the card's import, which the card says. Also tells Mixer's
-/// blendshape list which shapes of a custom base are correctives (the applied version's and the factor links set by
-/// hand), so a shape's target button lists them.
+/// in Mixer. Registers itself with MCB's creator mode when scripts load. Committed Mixer and Blender edits of the base's
+/// meshes go into the next version build (written into their model's custom FBX, <see cref="VersionAvatarMeshes"/>), which
+/// waits while a mesh is still in a Mixer session; armature edits reach a version through Export for MCB and the card's
+/// import. The card says so. Also tells Mixer's blendshape list which shapes of a custom base are correctives (the applied
+/// version's and the factor links set by hand), so a shape's target button lists them.
 /// </summary>
 [InitializeOnLoad]
 internal static class McbMixerIntegration
@@ -25,12 +26,13 @@ internal static class McbMixerIntegration
     // The base's renderers are looked up again at least this often (and at once after a hierarchy change or an Undo).
     private const double RendererLookupSeconds = 3.0;
 
-    private const string NotInVersions = "Versions are built from the FBX files: to put these edits in a version, use Export for MCB in Blender and import the export below.";
+    private const string IntoVersions = "Building a version writes committed meshes into a new custom FBX of their model. Armature edits reach a version " +
+                                        "through Export for MCB in Blender and the import below.";
 
     static McbMixerIntegration()
     {
         McbBlenderCard.Mixer = Build;
-        BlenderExportImport.InMixerSession = renderer => MixerLink.StateOf(renderer) != MixerLink.RendererState.Untouched;
+        VersionAvatarMeshes.InMixerSession = renderer => MixerLink.StateOf(renderer) != MixerLink.RendererState.Untouched;
         // Blender's nodes carry the target FBX of each mesh of a custom base: the Mixer extension's Export for MCB groups by it.
         MixerLink.TargetFbxResolver = BlenderExportImport.TargetFbxOf;
         MixerLink.BlenderStatus += (id, message) => { if (id == "mcb.export") BlenderExportImport.NoteExport(message); };
@@ -120,7 +122,7 @@ internal static class McbMixerIntegration
             "Starts Blender on this scene's Mixer project: the avatar with its meshes, bones and materials is there, and what you edit in Blender shows on the avatar live.", () =>
             {
                 string error = MixerLink.OpenInBlender();
-                McbBlenderCard.Say(editor, error ?? "Blender is starting on the scene's project. What you edit there shows on the avatar live, and Commit keeps it in this scene. " + NotInVersions,
+                McbBlenderCard.Say(editor, error ?? "Blender is starting on the scene's project. What you edit there shows on the avatar live, and Commit keeps it. " + IntoVersions,
                     error != null ? MessageType.Warning : MessageType.Info);
             }));
         actions.Add(CreatorModeModule.CreateTextButton("Open Mixer",
@@ -169,19 +171,21 @@ internal static class McbMixerIntegration
                 if (key == shown) return;
                 shown = key;
                 meshes.Clear();
-                var outside = new List<Renderer>();
+                var committedMeshes = new List<Renderer>();
+                var inSession = new List<Renderer>();
                 foreach (var entry in live)
                 {
                     var renderer = entry.Renderer;
                     var rendererState = MixerLink.StateOf(renderer);
                     bool edits = MixerLink.HasEdits(renderer);
-                    bool committed = rendererState == MixerLink.RendererState.Untouched && BlenderExportImport.ShowsMeshOutsideVersions(renderer);
-                    if (rendererState != MixerLink.RendererState.Untouched || committed) outside.Add(renderer);
+                    bool committed = rendererState == MixerLink.RendererState.Untouched && VersionAvatarMeshes.IsCommitted(renderer);
+                    if (committed) committedMeshes.Add(renderer);
+                    else if (rendererState != MixerLink.RendererState.Untouched) inSession.Add(renderer);
                     var row = CreatorModeModule.CreateCreatorRow();
                     row.AddToClassList("mcb-blender__mesh");
                     string what = rendererState == MixerLink.RendererState.EditedInBlender ? "being edited in Blender"
                         : rendererState == MixerLink.RendererState.EditedInMixer ? (edits ? "edited in Mixer, not committed" : "open in Mixer")
-                        : committed ? "committed in Mixer, not in versions yet"
+                        : committed ? "committed in Mixer: the next version build takes it in"
                         : "as imported";
                     var label = CreatorModeModule.CreateLabel(renderer.name + ": " + what, 11, FontStyle.Normal,
                         rendererState == MixerLink.RendererState.Untouched && !committed ? IdleText : LiveText);
@@ -199,11 +203,11 @@ internal static class McbMixerIntegration
                     else
                     {
                         var commit = CreatorModeModule.CreateTextButton("Commit",
-                            "Saves the edits as a mesh asset shown on the renderer, in one Undo step. The mesh stays in this scene: versions are built from the FBX files.", () =>
+                            "Saves the edits as a mesh asset shown on the renderer, in one Undo step. Building a version writes it into a new custom FBX of its model.", () =>
                             {
                                 var mesh = MixerLink.Commit(renderer);
                                 McbBlenderCard.Say(editor, mesh != null
-                                    ? "Committed " + renderer.name + " to " + AssetDatabase.GetAssetPath(mesh) + ". It shows on the avatar in this scene. " + NotInVersions
+                                    ? "Committed " + renderer.name + " to " + AssetDatabase.GetAssetPath(mesh) + ". It shows on the avatar. " + IntoVersions
                                     : renderer.name + " has nothing to commit.", MessageType.Info);
                             });
                         commit.SetEnabled(edits && rendererState != MixerLink.RendererState.EditedInBlender);
@@ -218,9 +222,11 @@ internal static class McbMixerIntegration
                     }
                     meshes.Add(row);
                 }
-                if (outside.Count > 0)
+                string said = string.Join(" ", new[] { VersionAvatarMeshes.CommittedMessage(committedMeshes), VersionAvatarMeshes.InSessionMessage(inSession) }
+                    .Where(text => text != null));
+                if (said.Length > 0)
                 {
-                    var note = CreatorModeModule.CreateMutedLabel(BlenderExportImport.EditsOutsideVersionsWarning(outside));
+                    var note = CreatorModeModule.CreateMutedLabel(said);
                     note.AddToClassList("mcb-blender__note");
                     note.style.whiteSpace = WhiteSpace.Normal;
                     meshes.Add(note);
