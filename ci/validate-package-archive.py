@@ -40,6 +40,9 @@ REQUIRED_COMPRESSION_FILES = (
 ALLOWED_EXTERNAL_ASMDEF_REFERENCES = {
     # MCP for Unity: only MCB.MCP.Editor uses it, compiled when that package is installed (MCB_MCP version define).
     "MCPForUnity.Editor",
+    # Orbiters Mixer: only MCB.Mixer.Editor uses it, compiled when Mixer is installed (MCB_MIXER version define).
+    "Orbiters.Mixer",
+    "Orbiters.Mixer.Editor",
     "Orbiters.Toolkit",
     "Orbiters.Toolkit.VRChat",
     "Orbiters.Toolkit.Editor",
