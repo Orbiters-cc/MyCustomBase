@@ -1,6 +1,6 @@
 # My Custom Base (MCB) by Enzo
 
-## 1.12.13 — 2026-10-21
+## 1.12.13 — 2026-10-23
 
 - MCB finds the avatar's custom base while Orbiters Mixer edits its meshes. A mesh in a Mixer session shows a working
   copy that is no asset: MCB found no model file behind the body and listed no custom base ("No matching avatar assets
