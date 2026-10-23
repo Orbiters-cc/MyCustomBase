@@ -7,6 +7,43 @@ using UnityEngine;
 
 public static class AvatarSceneMeshProvenanceService
 {
+    /// <summary>
+    /// The original of a mesh another tool shows in its place while editing it (Orbiters Mixer's working copies, which are
+    /// no assets), null for any other mesh. Set by MCB's Mixer integration.
+    /// </summary>
+    public static Func<Mesh, Mesh> WorkingMeshOriginal;
+
+    /// <summary>The mesh a scene renderer's mesh stands for: the original of a working copy, else the mesh itself.</summary>
+    public static Mesh SourceOf(Mesh mesh)
+    {
+        if (mesh == null) return null;
+        var original = WorkingMeshOriginal?.Invoke(mesh);
+        return original != null ? original : mesh;
+    }
+
+    /// <summary>
+    /// The model file (FBX) a scene mesh comes from: its own, or the one an applied native mesh was made from, through a
+    /// working copy (an avatar whose meshes were all in a Mixer session matched no custom base: MCB took an outfit's FBX
+    /// for the base model). Null for other meshes.
+    /// </summary>
+    public static string ModelPathOf(Mesh mesh)
+    {
+        mesh = SourceOf(mesh);
+        string assetPath = mesh != null ? AssetDatabase.GetAssetPath(mesh) : null;
+        if (string.IsNullOrWhiteSpace(assetPath)) return null;
+        if (AssetImporter.GetAtPath(assetPath) is ModelImporter) return assetPath.Replace("\\", "/");
+
+        var payload = AssetDatabase.LoadMainAssetAtPath(assetPath) as NativeMeshPayloadAsset;
+        string sourcePath = MCBUtils.ToUnityPath(payload?.sourceFbxPath);
+        if (string.IsNullOrWhiteSpace(sourcePath)) return null;
+        if (!(AssetImporter.GetAtPath(sourcePath) is ModelImporter))
+        {
+            MCBLogger.LogWarning($"[MCBEditor] Advanced mesh payload points to a source FBX that is not present in this project: {sourcePath}");
+            return null;
+        }
+        return sourcePath;
+    }
+
     public static IEnumerable<string> GetAdditionalDiscoverySources(MyCustomBase owner, bool hasMeshSources)
     {
         if (owner == null) yield break;

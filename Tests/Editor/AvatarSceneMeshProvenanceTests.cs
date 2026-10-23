@@ -27,6 +27,42 @@ public class AvatarSceneMeshProvenanceTests
         finally { UnityEngine.Object.DestroyImmediate(root); UnityEngine.Object.DestroyImmediate(stale); }
     }
 
+    // While Orbiters Mixer edits a mesh the renderer shows a working copy that is no asset: MCB found no base model for an
+    // avatar whose meshes were all in a session, took an outfit's FBX for it and listed no custom base.
+    [Test]
+    public void AWorkingCopyStandsForTheModelFileOfItsOriginal()
+    {
+        const string model = "Packages/orbiters.toolkit/Tests/Editor/Fixtures/BlenderSkinned.fbx";
+        if (!(AssetImporter.GetAtPath(model) is ModelImporter)) Assert.Ignore("Orbiters Toolkit's test model is not in this project.");
+        if (!AssetDatabase.IsValidFolder(TestFolder))
+        {
+            AssetDatabase.CreateFolder("Assets", "__MCBSceneMeshProvenanceTests");
+        }
+        var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
+        payload.sourceFbxPath = model;
+        AssetDatabase.CreateAsset(payload, TestFolder + "/payload.asset");
+        var applied = new Mesh { name = "Body" };
+        AssetDatabase.AddObjectToAsset(applied, payload);
+        var working = new Mesh { name = "Body (Mixer working)" };
+        var previous = AvatarSceneMeshProvenanceService.WorkingMeshOriginal;
+        try
+        {
+            AvatarSceneMeshProvenanceService.WorkingMeshOriginal = null;
+            Assert.That(AvatarSceneMeshProvenanceService.ModelPathOf(working), Is.Null, "a working copy is no asset");
+            AvatarSceneMeshProvenanceService.WorkingMeshOriginal = mesh => mesh == working ? applied : null;
+            Assert.That(AvatarSceneMeshProvenanceService.ModelPathOf(working), Is.EqualTo(model), "through the working copy, the applied mesh's model");
+            Assert.That(AvatarSceneMeshProvenanceService.ModelPathOf(applied), Is.EqualTo(model));
+            var fbxMesh = AssetDatabase.LoadAllAssetsAtPath(model).OfType<Mesh>().First();
+            Assert.That(AvatarSceneMeshProvenanceService.ModelPathOf(fbxMesh), Is.EqualTo(model), "a model's own mesh");
+        }
+        finally
+        {
+            AvatarSceneMeshProvenanceService.WorkingMeshOriginal = previous;
+            UnityEngine.Object.DestroyImmediate(working);
+            AssetDatabase.DeleteAsset(TestFolder);
+        }
+    }
+
     [Test]
     public void BaseOwnedRendererWithMeshFromAnotherAssetIsReported()
     {

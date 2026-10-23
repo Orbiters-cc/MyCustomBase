@@ -32,6 +32,8 @@ internal static class McbMixerIntegration
     static McbMixerIntegration()
     {
         McbBlenderCard.Mixer = Build;
+        // A mesh in a Mixer session shows a working copy (no asset): MCB reads the base's model files through it.
+        AvatarSceneMeshProvenanceService.WorkingMeshOriginal = MixerLink.OriginalOf;
         VersionAvatarMeshes.InMixerSession = renderer => MixerLink.StateOf(renderer) != MixerLink.RendererState.Untouched;
         // Blender's nodes carry the target FBX of each mesh of a custom base: the Mixer extension's Export for MCB groups by it.
         MixerLink.TargetFbxResolver = BlenderExportImport.TargetFbxOf;

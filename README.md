@@ -2,6 +2,12 @@
 
 ## 1.12.13 — 2026-10-21
 
+- MCB finds the avatar's custom base while Orbiters Mixer edits its meshes. A mesh in a Mixer session shows a working
+  copy that is no asset: MCB found no model file behind the body and listed no custom base ("No matching avatar assets
+  were found for this avatar", on any server, however often you reconnected), and it took an outfit's FBX for the base
+  model, which ReFit then offered as the original base. MCB now reads each mesh's model file through the working copy
+  (`AvatarSceneMeshProvenanceService.ModelPathOf`, with Mixer 0.1.1 or later); the avatar's base FBX list puts itself
+  right the next time MCB's Inspector shows it.
 - Mixer's Hierarchy shows **Update** beside the avatar's custom base when MCB's server recommends a newer version than
   the one applied (from the version list MCB read last, read again in the background when there is none). Clicking it
   opens the avatar in MCB's Inspector, which applies that version with its usual confirmation and progress, as its

@@ -1726,18 +1726,17 @@ public class MCBEditor : UnityEditor.Editor
         {
             foreach (var smr in MeshFinder.GetAllSkinnedMeshRenderers(root))
             {
-                TryAddFbxPathFromObject(smr != null ? smr.sharedMesh : null, path =>
-                {
-                    TryAddPath(path);
-                    path = path.Replace("\\", "/");
-                    if (!skinned.TryGetValue(path, out var renderers)) skinned[path] = renderers = new List<SkinnedMeshRenderer>();
-                    renderers.Add(smr);
-                });
+                string path = AvatarSceneMeshProvenanceService.ModelPathOf(smr != null ? smr.sharedMesh : null);
+                if (path == null) continue;
+                TryAddPath(path);
+                path = path.Replace("\\", "/");
+                if (!skinned.TryGetValue(path, out var renderers)) skinned[path] = renderers = new List<SkinnedMeshRenderer>();
+                renderers.Add(smr);
             }
 
             foreach (var meshFilter in root.GetComponentsInChildren<MeshFilter>(true))
             {
-                TryAddFbxPathFromObject(meshFilter != null ? meshFilter.sharedMesh : null, TryAddPath);
+                TryAddPath(AvatarSceneMeshProvenanceService.ModelPathOf(meshFilter != null ? meshFilter.sharedMesh : null));
             }
         }
 
@@ -1858,51 +1857,6 @@ public class MCBEditor : UnityEditor.Editor
         {
             SharedDetectedAvatarFbxPathCache.Clear();
         }
-    }
-
-    private static void TryAddFbxPathFromObject(UnityEngine.Object obj, Action<string> addPath)
-    {
-        if (obj == null || addPath == null)
-        {
-            return;
-        }
-
-        string assetPath = AssetDatabase.GetAssetPath(obj);
-        if (string.IsNullOrWhiteSpace(assetPath))
-        {
-            return;
-        }
-
-        if (!(AssetImporter.GetAtPath(assetPath) is ModelImporter))
-        {
-            TryAddFbxPathFromNativeMeshPayload(assetPath, addPath);
-            return;
-        }
-
-        addPath(assetPath);
-    }
-
-    private static void TryAddFbxPathFromNativeMeshPayload(string meshAssetPath, Action<string> addPath)
-    {
-        if (string.IsNullOrWhiteSpace(meshAssetPath) || addPath == null)
-        {
-            return;
-        }
-
-        var payload = AssetDatabase.LoadMainAssetAtPath(meshAssetPath) as NativeMeshPayloadAsset;
-        string sourcePath = MCBUtils.ToUnityPath(payload?.sourceFbxPath);
-        if (string.IsNullOrWhiteSpace(sourcePath))
-        {
-            return;
-        }
-
-        if (!(AssetImporter.GetAtPath(sourcePath) is ModelImporter))
-        {
-            MCBLogger.LogWarning($"[MCBEditor] Advanced mesh payload points to a source FBX that is not present in this project: {sourcePath}");
-            return;
-        }
-
-        addPath(sourcePath);
     }
 
     private void RepaintFromConnectivityMonitor()
