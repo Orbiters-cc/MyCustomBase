@@ -1,5 +1,10 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.14 — 2026-10-24
+
+- MCB records its release checkpoints and ReFit's generated files through Mixer Git, which comes with Mixer 0.2 (Unit
+  Git became part of Mixer): the optional dependency is Mixer 0.2, and Advanced settings shows the Mixer Git connector.
+
 ## 1.12.13 — 2026-10-23
 
 - MCB finds the avatar's custom base while Orbiters Mixer edits its meshes. A mesh in a Mixer session shows a working

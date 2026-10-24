@@ -3,12 +3,11 @@ using System;
 using Orbiters.Toolkit.Editor.Vpm;
 using UnityEditor;
 
-/// <summary>MCB's VPM dependencies (declared in its package.json) and the local-development bypass for ReFit, Unit Git and Mixer.</summary>
+/// <summary>MCB's VPM dependencies (declared in its package.json) and the local-development bypass for ReFit and Mixer.</summary>
 public static class McbDependencies
 {
     public const string PackageId = "orbiters.mcb";
     public const string ReFitPackageId = "orbiters.refit";
-    public const string UnitGitPackageId = "orbiters.unitgit";
     public const string MixerPackageId = "orbiters.mixer";
     public const string PoiyomiPackageId = "com.poiyomi.toon";
     private const string AssumeLocalPrefKey = "MCB.AssumeLocalOptionalIntegrationsInstalled";
@@ -18,7 +17,7 @@ public static class McbDependencies
     [InitializeOnLoadMethod]
     private static void Configure() => Vpm.AssumeOptionalInstalled = IsOptionalDependencyAssumedInstalled;
 
-    /// <summary>Treat ReFit, Unit Git and Mixer as installed, for developing them as local packages outside VPM.</summary>
+    /// <summary>Treat ReFit and Mixer as installed, for developing them as local packages outside VPM.</summary>
     public static bool AssumeLocalOptionalIntegrationsInstalled
     {
         get => EditorPrefs.GetBool(AssumeLocalPrefKey, false);
@@ -33,7 +32,6 @@ public static class McbDependencies
     public static bool IsOptionalDependencyAssumedInstalled(string packageId) =>
         AssumeLocalOptionalIntegrationsInstalled &&
         (string.Equals(packageId, ReFitPackageId, StringComparison.OrdinalIgnoreCase) ||
-         string.Equals(packageId, UnitGitPackageId, StringComparison.OrdinalIgnoreCase) ||
          string.Equals(packageId, MixerPackageId, StringComparison.OrdinalIgnoreCase));
 }
 #endif

@@ -33,7 +33,7 @@ public sealed class UnitGitReleaseApiBindingTests
         api.AddReleaseField(entry, "Asset Id", "42");
 
         var publishResult = api.PublishRelease(entry, "MCB : v1.2.3 - Contract Test", new[] { "Assets/version.json" });
-        var commitResult = api.CommitFiles("MCB : Unit Git connector test", "body", new[] { "Assets/file.txt" });
+        var commitResult = api.CommitFiles("MCB : Mixer Git connector test", "body", new[] { "Assets/file.txt" });
 
         Assert.That(publishResult.Success, Is.True, publishResult.Message);
         Assert.That(publishResult.CommitHash, Is.EqualTo("publish-hash"));
@@ -55,7 +55,7 @@ public sealed class UnitGitReleaseApiBindingTests
             out string message);
 
         Assert.That(ok, Is.False);
-        Assert.That(message, Is.EqualTo("The Unit Git package is installed but incompatible. MCB requires Unit Git release API v2; found v1."));
+        Assert.That(message, Is.EqualTo("Mixer is installed, but its Mixer Git is incompatible. MCB requires Mixer Git release API v2; found v1."));
     }
 
     [Test]
@@ -70,7 +70,7 @@ public sealed class UnitGitReleaseApiBindingTests
             out string message);
 
         Assert.That(ok, Is.False);
-        Assert.That(message, Is.EqualTo("The Unit Git package is installed but incompatible. Missing release API capability: scoped-release-checkpoint."));
+        Assert.That(message, Is.EqualTo("Mixer is installed, but its Mixer Git is incompatible. Missing release API capability: scoped-release-checkpoint."));
     }
 
     [Test]
@@ -85,7 +85,7 @@ public sealed class UnitGitReleaseApiBindingTests
             out string message);
 
         Assert.That(ok, Is.False);
-        Assert.That(message, Is.EqualTo("The Unit Git package is installed but incompatible. Missing release API method: PublishRelease()."));
+        Assert.That(message, Is.EqualTo("Mixer is installed, but its Mixer Git is incompatible. Missing release API method: PublishRelease()."));
     }
 
     [Test]
@@ -121,7 +121,7 @@ public sealed class UnitGitReleaseApiBindingTests
 
         Assert.That(ok, Is.False);
         Assert.That(UnitGitReleasePublisher.SuppressOptionalCheckpointMessage(ref message), Is.False);
-        Assert.That(message, Is.EqualTo("The Unit Git package is installed but incompatible. MCB requires Unit Git release API v2; found v1."));
+        Assert.That(message, Is.EqualTo("Mixer is installed, but its Mixer Git is incompatible. MCB requires Mixer Git release API v2; found v1."));
     }
 
     public sealed class ReleaseField

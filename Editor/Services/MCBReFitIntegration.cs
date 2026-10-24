@@ -263,7 +263,7 @@ public static partial class MCBReFitIntegration
     /// Re-fits the given meshes from the default base body to the applied version body, with the version's blendshapes.
     /// Heavy geometry runs on a background thread; progress is reported into <paramref name="progressState"/>. On
     /// completion the fits are saved for this version, the scene is saved and the generated files are committed through
-    /// Unit Git when available.
+    /// Mixer Git when available.
     /// </summary>
     public static IEnumerator RunReFitCoroutine(MyCustomBase target, List<SkinnedMeshRenderer> targets,
         VersionApplyProgressState progressState, Action<bool, string> onComplete)
@@ -345,7 +345,7 @@ public static partial class MCBReFitIntegration
         }
     }
 
-    /// <summary>Commits only the ReFit-generated files (and the scene) through Unit Git when installed.</summary>
+    /// <summary>Commits only the ReFit-generated files (and the scene) through Mixer Git when installed.</summary>
     private static string CommitReFitChanges(List<string> assetPaths, string scenePath, int meshCount)
     {
         try
@@ -373,19 +373,19 @@ public static partial class MCBReFitIntegration
                 out string message,
                 out string commitHash))
             {
-                MCBLogger.Log($"[MCB] ReFit changes committed via Unit Git: {commitHash}");
-                return "Committed via Unit Git.";
+                MCBLogger.Log($"[MCB] ReFit changes committed via Mixer Git: {commitHash}");
+                return "Committed via Mixer Git.";
             }
 
             if (UnitGitReleasePublisher.IsUnitGitAvailable)
             {
-                MCBLogger.LogWarning($"[MCB] ReFit Unit Git commit failed: {message}");
+                MCBLogger.LogWarning($"[MCB] ReFit Mixer Git commit failed: {message}");
             }
             return null;
         }
         catch (Exception ex)
         {
-            MCBLogger.LogWarning($"[MCB] ReFit Unit Git commit failed: {ex.Message}");
+            MCBLogger.LogWarning($"[MCB] ReFit Mixer Git commit failed: {ex.Message}");
             return null;
         }
     }

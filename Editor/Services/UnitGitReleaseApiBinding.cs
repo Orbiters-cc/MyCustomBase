@@ -14,7 +14,7 @@ internal sealed class UnitGitReleaseApiResult
 }
 
 /// <summary>
-/// Reflection boundary for the current Unit Git release API contract. MCB supports exactly
+/// Reflection boundary for the current Mixer Git release API contract. MCB supports exactly
 /// API v2 here; newer contracts should be handled by intentionally updating this binding.
 /// </summary>
 internal sealed class UnitGitReleaseApiBinding
@@ -27,7 +27,7 @@ internal sealed class UnitGitReleaseApiBinding
     private const string UnitGitReleasesTypeName = "Orbiters.UnitGit.Editor.UnitGitReleases";
     private const string UnitGitReleaseEntryTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseEntry";
     private const string UnitGitReleaseFieldTypeName = "Orbiters.UnitGit.Editor.UnitGitReleaseField";
-    internal const string MissingPackageMessage = "The Unit Git package (orbiters.unitgit) is not installed.";
+    internal const string MissingPackageMessage = "Mixer (orbiters.mixer), which carries Mixer Git, is not installed.";
 
     private readonly Type releasesType;
     private readonly Type entryType;
@@ -73,7 +73,7 @@ internal sealed class UnitGitReleaseApiBinding
         int apiVersion = GetStaticIntMember(releasesType, "ApiVersion");
         if (apiVersion != SupportedApiVersion)
         {
-            message = $"The Unit Git package is installed but incompatible. MCB requires Unit Git release API v{SupportedApiVersion}; found v{apiVersion}.";
+            message = $"Mixer is installed, but its Mixer Git is incompatible. MCB requires Mixer Git release API v{SupportedApiVersion}; found v{apiVersion}.";
             return false;
         }
 
@@ -91,7 +91,7 @@ internal sealed class UnitGitReleaseApiBinding
 
             if (!capabilities.Contains(capability, StringComparer.Ordinal))
             {
-                message = $"The Unit Git package is installed but incompatible. Missing release API capability: {capability}.";
+                message = $"Mixer is installed, but its Mixer Git is incompatible. Missing release API capability: {capability}.";
                 return false;
             }
         }
@@ -138,7 +138,7 @@ internal sealed class UnitGitReleaseApiBinding
     {
         if (!(GetMemberValue(entry, "fields") is IList fields))
         {
-            throw new InvalidOperationException("Unit Git release API v2 entry is missing a writable fields list.");
+            throw new InvalidOperationException("Mixer Git release API v2 entry is missing a writable fields list.");
         }
 
         fields.Add(CreateReleaseField(key, value));
@@ -211,7 +211,7 @@ internal sealed class UnitGitReleaseApiBinding
         var method = releasesType.GetMethod("GetCapabilities", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
         if (method == null)
         {
-            message = "The Unit Git package is installed but incompatible. Missing release API method: GetCapabilities().";
+            message = "Mixer is installed, but its Mixer Git is incompatible. Missing release API method: GetCapabilities().";
             return false;
         }
 
@@ -222,13 +222,13 @@ internal sealed class UnitGitReleaseApiBinding
         }
         catch (TargetInvocationException ex) when (ex.InnerException != null)
         {
-            message = "The Unit Git package is installed but incompatible. GetCapabilities() failed: " + ex.InnerException.Message;
+            message = "Mixer is installed, but its Mixer Git is incompatible. GetCapabilities() failed: " + ex.InnerException.Message;
             return false;
         }
 
         if (!(rawCapabilities is IEnumerable enumerable))
         {
-            message = "The Unit Git package is installed but incompatible. GetCapabilities() must return an enumerable capability list.";
+            message = "Mixer is installed, but its Mixer Git is incompatible. GetCapabilities() must return an enumerable capability list.";
             return false;
         }
 
@@ -245,7 +245,7 @@ internal sealed class UnitGitReleaseApiBinding
     {
         if (entryType.GetConstructor(Type.EmptyTypes) == null)
         {
-            message = "The Unit Git package is installed but incompatible. Release entry must have a public parameterless constructor.";
+            message = "Mixer is installed, but its Mixer Git is incompatible. Release entry must have a public parameterless constructor.";
             return false;
         }
 
@@ -256,13 +256,13 @@ internal sealed class UnitGitReleaseApiBinding
         }
         catch (Exception ex)
         {
-            message = "The Unit Git package is installed but incompatible. Release entry could not be created: " + ex.Message;
+            message = "Mixer is installed, but its Mixer Git is incompatible. Release entry could not be created: " + ex.Message;
             return false;
         }
 
         if (!(GetMemberValue(entry, "fields") is IList))
         {
-            message = "The Unit Git package is installed but incompatible. Release entry must expose a fields list.";
+            message = "Mixer is installed, but its Mixer Git is incompatible. Release entry must expose a fields list.";
             return false;
         }
 
@@ -286,7 +286,7 @@ internal sealed class UnitGitReleaseApiBinding
 
         if (fieldType.GetConstructor(Type.EmptyTypes) == null)
         {
-            message = "The Unit Git package is installed but incompatible. Release field must have a public (string, string) or parameterless constructor.";
+            message = "Mixer is installed, but its Mixer Git is incompatible. Release field must have a public (string, string) or parameterless constructor.";
             return false;
         }
 
@@ -310,7 +310,7 @@ internal sealed class UnitGitReleaseApiBinding
             return true;
         }
 
-        message = $"The Unit Git package is installed but incompatible. Missing writable release API member: {type.Name}.{memberName}.";
+        message = $"Mixer is installed, but its Mixer Git is incompatible. Missing writable release API member: {type.Name}.{memberName}.";
         return false;
     }
 
@@ -324,7 +324,7 @@ internal sealed class UnitGitReleaseApiBinding
             null);
         if (method == null)
         {
-            message = $"The Unit Git package is installed but incompatible. Missing release API method: {methodName}().";
+            message = $"Mixer is installed, but its Mixer Git is incompatible. Missing release API method: {methodName}().";
             return false;
         }
 
@@ -355,7 +355,7 @@ internal sealed class UnitGitReleaseApiBinding
             return true;
         }
 
-        message = $"The Unit Git package is installed but incompatible. Missing readable release API member: {type.Name}.{memberName}.";
+        message = $"Mixer is installed, but its Mixer Git is incompatible. Missing readable release API member: {type.Name}.{memberName}.";
         return false;
     }
 
@@ -430,7 +430,7 @@ internal sealed class UnitGitReleaseApiBinding
             return;
         }
 
-        throw new InvalidOperationException($"Unit Git release entry is missing writable member '{name}'.");
+        throw new InvalidOperationException($"Mixer Git release entry is missing writable member '{name}'.");
     }
 
     private static object GetMemberValue(object target, string name)

@@ -1,7 +1,7 @@
 {
   "name": "orbiters.mcb",
   "displayName": "My Custom Base (MCB)",
-  "version": "1.12.13",
+  "version": "1.12.14",
   "license": "LicenseRef-MCB-Proprietary",
   "unity": "2022.3",
   "description": "Wizard to apply a custom base with the MCB tool",
@@ -21,7 +21,6 @@
       "com.vrcfury.vrcfury": "VRCFury",
       "com.poiyomi.toon": "Poiyomi Toon",
       "orbiters.refit": "ReFit",
-      "orbiters.unitgit": "Unit Git",
       "orbiters.toolkit": "Orbiters Toolkit",
       "orbiters.mixer": "Mixer"
     },
@@ -30,7 +29,6 @@
         "url": "https://orbiters.cc/vpm/orbiters/index.json",
         "packages": [
           "orbiters.refit",
-          "orbiters.unitgit",
           "orbiters.toolkit",
           "orbiters.mixer"
         ]
@@ -54,15 +52,10 @@
         "displayName": "ReFit",
         "reason": "Adds the ReFit avatar options panel for adapting clothing and accessory meshes to the applied custom base."
       },
-      "orbiters.unitgit": {
-        "version": ">=0.1.0 <1.0.0",
-        "displayName": "Unit Git",
-        "reason": "Records MCB release checkpoints and generated ReFit files through Unit Git when available."
-      },
       "orbiters.mixer": {
-        "version": ">=0.1.0 <0.2.0",
+        "version": ">=0.2.0 <0.3.0",
         "displayName": "Mixer",
-        "reason": "Opens the custom base's scene in Blender through the Mixer link, with Blender's edits shown on the avatar live, and brings Mixer's sculpt, weight paint and armature tools."
+        "reason": "Opens the custom base's scene in Blender through the Mixer link, with Blender's edits shown on the avatar live, brings Mixer's sculpt, weight paint and armature tools, and records MCB release checkpoints and generated ReFit files through Mixer Git."
       },
       "com.poiyomi.toon": {
         "version": ">=9.0.0 <10.0.0",

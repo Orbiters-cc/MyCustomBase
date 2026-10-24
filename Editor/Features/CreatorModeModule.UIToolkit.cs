@@ -1423,7 +1423,7 @@ public partial class CreatorModeModule
         buildButton.AddToClassList("mcb-creator-submit__button");
         buttonRow.Add(buildButton);
 
-        publishButton = CreateTextButton(editor.isSubmitting ? "Working..." : "Publish", "Upload the built version to the server and create a Unit Git release checkpoint.", () =>
+        publishButton = CreateTextButton(editor.isSubmitting ? "Working..." : "Publish", "Upload the built version to the server and create a Mixer Git release checkpoint.", () =>
         {
             if (!HasBuiltPendingVersion)
             {
@@ -1432,7 +1432,7 @@ public partial class CreatorModeModule
 
             string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
             string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
-            if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Unit Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
+            if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Mixer Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
             {
                 EditorCoroutineUtility.StartCoroutineOwnerless(PublishBuiltVersionCoroutine());
                 RefreshEditorUi();

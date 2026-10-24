@@ -1013,16 +1013,16 @@ public class AdvancedModeModule
     private void DrawUnitGitConnectorControls()
     {
         EditorGUILayout.Space();
-        EditorGUILayout.LabelField("UnitGit Connector", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Mixer Git connector", EditorStyles.boldLabel);
 
         if (!UnitGitReleasePublisher.IsUnitGitAvailable)
         {
             string availabilityMessage = UnitGitReleasePublisher.UnitGitAvailabilityMessage;
-            if (McbDependencies.IsOptionalDependencyAssumedInstalled(McbDependencies.UnitGitPackageId))
+            if (McbDependencies.IsOptionalDependencyAssumedInstalled(McbDependencies.MixerPackageId))
             {
                 EditorGUILayout.HelpBox(
                     string.IsNullOrWhiteSpace(availabilityMessage)
-                        ? "The optional dependency check is currently bypassed, but the Unit Git editor API was not found. The MCB <-> Unit Git integration is disabled."
+                        ? "The optional dependency check is currently bypassed, but Mixer Git's editor API was not found. MCB's Mixer Git integration is off."
                         : availabilityMessage,
                     MessageType.Warning);
                 return;
@@ -1030,13 +1030,13 @@ public class AdvancedModeModule
 
             EditorGUILayout.HelpBox(
                 string.IsNullOrWhiteSpace(availabilityMessage)
-                    ? "The Unit Git package (orbiters.unitgit) is not installed, so the MCB <-> Unit Git integration is disabled."
+                    ? "Mixer (orbiters.mixer), which carries Mixer Git, is not installed, so MCB's Mixer Git integration is off."
                     : availabilityMessage,
                 MessageType.Warning);
             return;
         }
 
-        // Test commit: generates a dummy file and commits it through Unit Git.
+        // Test commit: generates a dummy file and commits it through Mixer Git.
         EditorGUILayout.BeginHorizontal();
         GUILayout.Space(EditorGUI.indentLevel * 15);
         using (new EditorGUI.DisabledScope(unitGitConnectorBusy))
@@ -1059,7 +1059,7 @@ public class AdvancedModeModule
         EditorGUILayout.LabelField("Creates a dummy commit with a small generated file.", EditorStyles.miniLabel);
         EditorGUILayout.EndHorizontal();
 
-        // Insert release: records an existing version of the asset as a Unit Git release checkpoint.
+        // Insert release: records an existing version of the asset as a Mixer Git release checkpoint.
         var insertableVersions = new System.Collections.Generic.List<CustomBaseVersion>();
         if (editor.serverVersions != null) insertableVersions.AddRange(editor.serverVersions.Where(v => v != null));
         if (editor.unsubmittedVersions != null) insertableVersions.AddRange(editor.unsubmittedVersions.Where(v => v != null));
@@ -1091,7 +1091,7 @@ public class AdvancedModeModule
                             editor.GetSelectedAsset()?.name,
                             out string insertMessage);
                         unitGitConnectorStatus = ok
-                            ? $"Release checkpoint created for v{versionToInsert.version}. It is now visible in the Unit Git history."
+                            ? $"Release checkpoint created for v{versionToInsert.version}. It is now visible in the Mixer Git history."
                             : insertMessage;
                         unitGitConnectorStatusType = ok ? MessageType.Info : MessageType.Error;
                     }
@@ -1118,8 +1118,8 @@ public class AdvancedModeModule
         bool current = McbDependencies.AssumeLocalOptionalIntegrationsInstalled;
         bool next = EditorGUILayout.Toggle(
             new GUIContent(
-                "Assume local ReFit/Unit Git/Mixer",
-                "Bypasses VPM optional dependency checks for orbiters.refit, orbiters.unitgit and orbiters.mixer. Useful when developing those packages as local embedded packages."),
+                "Assume local ReFit/Mixer",
+                "Bypasses VPM optional dependency checks for orbiters.refit and orbiters.mixer. Useful when developing those packages as local embedded packages."),
             current);
 
         if (next != current)
@@ -1132,13 +1132,13 @@ public class AdvancedModeModule
         if (next)
         {
             EditorGUILayout.HelpBox(
-                "MCB will treat ReFit and Unit Git as installed for optional dependency prompts. Use this only for local package development; if the packages are not actually present or their assemblies fail to compile, related behavior may be unavailable or unexpected.",
+                "MCB will treat ReFit and Mixer as installed for optional dependency prompts. Use this only for local package development; if the packages are not actually present or their assemblies fail to compile, related behavior may be unavailable or unexpected.",
                 MessageType.Warning);
         }
         else
         {
             EditorGUILayout.HelpBox(
-                "Leave this off for normal projects so MCB can offer to add ReFit and Unit Git from the configured VPM repository.",
+                "Leave this off for normal projects so MCB can offer to add ReFit and Mixer from the configured VPM repository.",
                 MessageType.None);
         }
     }

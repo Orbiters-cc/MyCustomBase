@@ -275,7 +275,7 @@ public partial class CreatorModeModule
                     if (GUILayout.Button(editor.isSubmitting ? "Working..." : "Publish", GUILayout.Height(30)))
                     {
                         string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
-                        if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Unit Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
+                        if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Mixer Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
                         {
                             EditorCoroutineUtility.StartCoroutineOwnerless(PublishBuiltVersionCoroutine());
                         }

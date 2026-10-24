@@ -17,7 +17,7 @@ using UnityEngine;
 /// manifest (hard gate), warns about source drift (soft gate), re-creates the upload
 /// zip from exactly the manifest-listed files, streams it to the server with progress
 /// and cancel, and only after a confirmed success marks the artifact as published and
-/// runs the post-publish steps (version refetch + Unit Git release checkpoint).
+/// runs the post-publish steps (version refetch + Mixer Git release checkpoint).
 ///
 /// This is the single upload path: both the creator-form Publish button and the
 /// version-list Upload button go through here. Publishing never rebuilds or
