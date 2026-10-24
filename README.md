@@ -4,6 +4,9 @@
 
 - MCB records its release checkpoints and ReFit's generated files through Mixer Git, which comes with Mixer 0.2 (Unit
   Git became part of Mixer): the optional dependency is Mixer 0.2, and Advanced settings shows the Mixer Git connector.
+- MCB's Mixer bridge (`MCB.Mixer.Editor`) builds with Mixer 0.2 again: its version range stopped before 0.2.0, so while
+  Mixer edited the body MCB read the working copy again and listed no custom base ("No matching avatar assets were
+  found for this avatar").
 
 ## 1.12.13 — 2026-10-23
 
