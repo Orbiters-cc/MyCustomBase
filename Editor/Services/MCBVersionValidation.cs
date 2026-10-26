@@ -86,19 +86,17 @@ public static class MCBVersionValidation
     // VRCFury's own upload/test entry point, without the SDK (nothing uploaded), on an avatar VRCFury builds at upload. Its
     // path caches are warmed first, as the upload's first preprocessor does, and Write Defaults are left as they are
     // (Orbiters Toolkit's VrcFury.LeaveWriteDefaults): a broken mix would otherwise open VRCFury's modal question in the
-    // middle of a check.
+    // middle of a check. Its controllers then play copies of the project's clips (VrcFury.RunMain), which the version's
+    // build steps change.
     private static void RunVrcFury(GameObject clone)
     {
-        var builder = VrcFury.Find("VF.Builder.VRCFuryBuilder") ?? throw new InvalidOperationException("VRCFury is required to validate a version.");
+        if (VrcFury.Find("VF.Builder.VRCFuryBuilder") == null) throw new InvalidOperationException("VRCFury is required to validate a version.");
         if (!VrcFury.Builds(clone)) return; // as at upload: VRCFury leaves an avatar without its components alone
         var paths = VrcFury.Find("VF.Hooks.OriginalPathsHook");
         if (paths != null) ((VRC.SDKBase.Editor.BuildPipeline.IVRCSDKPreprocessAvatarCallback)Activator.CreateInstance(paths, true)).OnPreprocessAvatar(clone);
         VrcFury.LeaveWriteDefaults(clone);
-        var wrapper = VrcFury.Find("VF.Utils.VFGameObject");
-        var convert = wrapper.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == "op_Implicit" && m.ReturnType == wrapper && m.GetParameters()[0].ParameterType == typeof(GameObject));
-        try { builder.GetMethod("RunMain", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new[] { convert.Invoke(null, new object[] { clone }) }); }
-        catch (TargetInvocationException ex) { throw new InvalidOperationException("VRCFury could not build the avatar: " + ex.GetBaseException().Message, ex.GetBaseException()); }
+        try { VrcFury.RunMain(clone); }
+        catch (Exception ex) { throw new InvalidOperationException("VRCFury could not build the avatar: " + ex.Message, ex); }
     }
 }
 #endif
