@@ -1,5 +1,11 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.15 — 2026-10-26
+
+- Requires Orbiters Toolkit 0.4.7. Version validation builds with VRCFury 1.1434 as an upload does.
+- A custom base's Inspector shows the asset it applied (not the one picked last in the project), and Update from Mixer's
+  Hierarchy applies it, or shows "Retry update" with the reason when it cannot start.
+
 ## 1.12.14 — 2026-10-24
 
 - MCB records its release checkpoints and ReFit's generated files through Mixer Git, which comes with Mixer 0.2 (Unit
