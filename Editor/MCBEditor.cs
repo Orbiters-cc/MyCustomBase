@@ -1588,6 +1588,9 @@ public class MCBEditor : UnityEditor.Editor
         return creatorWindowAsset ?? (assetGalleryModule != null ? assetGalleryModule.SelectedAsset : null);
     }
 
+    /// <summary>Shows the asset the custom base applied in the gallery (see <see cref="AssetGalleryModule.ShowAppliedAsset"/>).</summary>
+    internal bool ShowAppliedAsset() => creatorWindowAsset == null && assetGalleryModule != null && assetGalleryModule.ShowAppliedAsset();
+
     private AvatarDiscoveredAsset creatorWindowAsset;
     internal void SetCreatorWindowAsset(AvatarDiscoveredAsset asset) { creatorWindowAsset = asset; }
 

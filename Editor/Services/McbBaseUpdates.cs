@@ -32,6 +32,9 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
     }
 
     private static readonly List<Request> Waiting = new List<Request>();
+    // The update each custom base could not start, and why: its pill says so (and retries) until a version is applied or
+    // another one is offered.
+    private static readonly Dictionary<int, (string version, string why)> Failures = new Dictionary<int, (string, string)>();
     private static readonly Dictionary<int, (string version, double at)> Recommended = new Dictionary<int, (string, double)>();
     private static readonly Dictionary<int, double> LastRead = new Dictionary<int, double>();
     // Version lists may be read off the main thread: the views hear of it from the next editor update.
@@ -41,7 +44,7 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
     static McbBaseUpdates()
     {
         AvatarObjectTools.RegisterUpdates(new McbBaseUpdates());
-        CustomBases.Changed += _ => { Recommended.Clear(); AvatarObjectTools.NotifyChanged(); };
+        CustomBases.Changed += _ => { Recommended.Clear(); Failures.Clear(); AvatarObjectTools.NotifyChanged(); };
         EditorApplication.update += () =>
         {
             if (!versionsRead) return;
@@ -74,15 +77,29 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
         if (newer == null || MCBEditor.VersionNumber(newer).CompareTo(MCBEditor.VersionNumber(applied)) <= 0) return null;
         bool asked = Waiting.Any(r => r.Target == target);
         bool running = asked || (editor != null && (editor.isDownloading || editor.isApplying));
+        bool failed = !running && Failures.TryGetValue(target.GetInstanceID(), out var failure) && failure.version == newer;
         return new AvatarObjectUpdate
         {
             Name = string.IsNullOrEmpty(target.appliedCustomBaseName) ? "the custom base" : target.appliedCustomBaseName,
             From = applied,
             To = newer,
             Running = running,
-            Status = !running ? null : asked ? "Opening it in MCB…" : editor.isDownloading ? "Downloading " + newer + "…" : "Applying " + newer + "…",
+            Failed = failed,
+            Status = running ? (asked ? "Opening it in MCB…" : editor.isDownloading ? "Downloading " + newer + "…" : "Applying " + newer + "…")
+                : failed ? Failures[target.GetInstanceID()].why : null,
             Start = () => Ask(target, newer),
         };
+    }
+
+    // The version the custom base has now (its Inspector may have applied one since the view asked).
+    private static string Applied(MyCustomBase target) =>
+        !string.IsNullOrWhiteSpace(target.appliedCustomBaseVersionString) ? target.appliedCustomBaseVersionString : target.appliedCustomBaseVersion?.version;
+
+    // Whether the custom base already has this version or a later one: updating to it would do nothing.
+    private static bool AlreadyAt(MyCustomBase target, string version)
+    {
+        string applied = Applied(target);
+        return string.IsNullOrEmpty(version) || !string.IsNullOrEmpty(applied) && MCBEditor.VersionNumber(version).CompareTo(MCBEditor.VersionNumber(applied)) <= 0;
     }
 
     // The live Inspector's recommendation when it shows this custom base's asset; else the version list cached last, as the
@@ -123,6 +140,9 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
     private static void Ask(MyCustomBase target, string version)
     {
         if (target == null || Waiting.Any(r => r.Target == target)) return;
+        Failures.Remove(target.GetInstanceID());
+        // Asked from a view drawn before the custom base was updated elsewhere: nothing to do.
+        if (AlreadyAt(target, version)) { AvatarObjectTools.NotifyChanged(); return; }
         Waiting.Add(new Request { Target = target, Version = version, Asked = EditorApplication.timeSinceStartup });
         if (LiveEditor(target) == null) Selection.activeGameObject = target.gameObject;
         EditorApplication.update -= Pump;
@@ -140,6 +160,11 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
             var target = request.Target;
             if (target == null) { Waiting.Remove(request); changed = true; continue; }
             var editor = LiveEditor(target);
+            // Updated meanwhile (from its Inspector): nothing left to apply.
+            if (AlreadyAt(target, request.Version)) { Waiting.Remove(request); changed = true; continue; }
+            // Its gallery may show another asset (the one picked last on another avatar): the custom base's own is shown,
+            // with its versions.
+            if (editor != null && editor.GetSelectedAsset()?.id != target.appliedCustomBaseAssetId) editor.ShowAppliedAsset();
             // Ready once it shows the custom base's asset with its version list read.
             var version = editor != null && !editor.isFetching && editor.GetSelectedAsset()?.id == target.appliedCustomBaseAssetId
                 ? editor.GetAllVersions()?.FirstOrDefault(v => v != null && v.version == request.Version)
@@ -160,6 +185,9 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
             {
                 Waiting.Remove(request);
                 changed = true;
+                Failures[target.GetInstanceID()] = (request.Version, editor == null ? "MCB's Inspector did not open on it"
+                    : editor.GetSelectedAsset()?.id != target.appliedCustomBaseAssetId ? "MCB did not find " + (string.IsNullOrEmpty(target.appliedCustomBaseName) ? "its asset" : target.appliedCustomBaseName) + " among the avatar's assets (signed out?)"
+                    : "MCB's version list did not show " + request.Version + " (signed out, or its versions not loaded)");
                 Debug.LogWarning("[MCB] The update of " + (string.IsNullOrEmpty(target.appliedCustomBaseName) ? "the custom base" : target.appliedCustomBaseName) +
                                  " to " + request.Version + " did not start: MCB's Inspector did not show that version within " + GiveUpAfter +
                                  " seconds (signed out, or its versions not loaded). Select the avatar and apply it from MCB's version list.");

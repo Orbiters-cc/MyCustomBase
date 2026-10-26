@@ -452,7 +452,22 @@ public partial class AssetGalleryModule
 
     private void TryRestoreSelectedAsset()
     {
-        if (SelectedAsset != null || !EditorPrefs.HasKey(SelectedAssetIdPrefKey))
+        if (SelectedAsset != null)
+        {
+            return;
+        }
+
+        // A custom base shows the asset it applied (its versions and their updates), not the one picked last on another
+        // avatar of the project; that one is kept for avatars without a custom base.
+        var applied = AppliedAsset();
+        if (applied != null)
+        {
+            SelectAsset(applied, persist: false, refreshVersions: false);
+            editor.LoadCachedVersionsForCurrentSelection();
+            return;
+        }
+
+        if (!EditorPrefs.HasKey(SelectedAssetIdPrefKey))
         {
             return;
         }
@@ -474,6 +489,25 @@ public partial class AssetGalleryModule
 
         SelectAsset(asset, persist: true, refreshVersions: false);
         editor.LoadCachedVersionsForCurrentSelection();
+    }
+
+    // The asset the custom base applied, among those found for the avatar (null before they are, or when it is not one).
+    private AvatarDiscoveredAsset AppliedAsset()
+    {
+        int applied = editor.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseAssetId : 0;
+        return applied <= 0 ? null : compatibleAssets.Concat(allAssets).FirstOrDefault(a => a != null && a.id == applied);
+    }
+
+    /// <summary>
+    /// Shows the asset the custom base applied, with its versions read again (an update asked from another view applies one
+    /// of them); true when it is shown or now loading, false when the avatar's assets do not hold it (yet).
+    /// </summary>
+    internal bool ShowAppliedAsset()
+    {
+        var applied = AppliedAsset();
+        if (applied == null) return false;
+        if (SelectedAsset == null || SelectedAsset.id != applied.id) SelectAsset(applied, persist: false, refreshVersions: true);
+        return true;
     }
 }
 #endif
