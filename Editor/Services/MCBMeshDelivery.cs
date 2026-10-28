@@ -154,7 +154,7 @@ public static class MCBMeshDelivery
                 progress?.Invoke((float)Math.Min(1d, (double)current / Math.Max(1, total)));
             };
             string commonPath = Path.Combine(staging, "common.zip");
-            var common = await clock.Time(() => network.DownloadFileAsync(url + "&meshCommon=1", commonPath, onDownloadedBytes: bytes => report(0, bytes), authToken: authToken));
+            var common = await clock.Time(() => network.DownloadFileAsync(url + "&meshCommon=1", commonPath, onDownloadedBytes: bytes => report(0, bytes), authToken: authToken, maxBytes: manifest.commonBytes));
             if (!common.success) throw new IOException(common.error);
             bool commonValid = await Task.Run(() => new FileInfo(commonPath).Length == manifest.commonBytes && MCBUtils.CalculateFileHash(commonPath) == manifest.commonHash);
             if (!commonValid) throw new InvalidDataException("Common version package failed integrity verification.");
@@ -166,7 +166,7 @@ public static class MCBMeshDelivery
                     await limit.WaitAsync();
                     try {
                         string temp = Path.Combine(staging, i + ".bin");
-                        var blob = await clock.Time(() => network.DownloadFileAsync(url + "&meshBlob=" + v.hash, temp, onDownloadedBytes: bytes => report(i + 1, bytes), authToken: authToken));
+                        var blob = await clock.Time(() => network.DownloadFileAsync(url + "&meshBlob=" + v.hash, temp, onDownloadedBytes: bytes => report(i + 1, bytes), authToken: authToken, maxBytes: v.bytes));
                         if (!blob.success) throw new IOException(blob.error);
                         await Task.Run(() => StoreVerifiedBlob(v, temp));
                         report(i + 1, (ulong)v.bytes);

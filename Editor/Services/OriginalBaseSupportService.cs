@@ -79,7 +79,7 @@ public static class OriginalBaseSupportService
                     foreach (var codec in MCBVersionDelivery.GetVariants(patch))
                     {
                         string destination = SafePath(folder, codec.path);
-                        var blob = await network.DownloadFileAsync(url + "&meshBlob=" + codec.hash, destination, authToken: token);
+                        var blob = await network.DownloadFileAsync(url + "&meshBlob=" + codec.hash, destination, authToken: token, maxBytes: codec.bytes);
                         if (!blob.success) throw new IOException(blob.error);
                         if (MCBUtils.CalculateFileHash(destination) != codec.hash) throw new InvalidDataException("Downloaded historical mesh failed verification.");
                     }

@@ -678,20 +678,49 @@ public class FileManagerService
         }
     }
 
+    /// <summary>The armature debug prefab Advanced mode places on the avatar.</summary>
+    public const string DebugPrefabPath = MCBUtils.PACKAGE_BASE_FOLDER + "/debug/debug.prefab";
+
+    /// <summary>
+    /// Removes the objects MCB installed under the avatar: instances of a version's logic prefab and of the armature debug
+    /// prefab. Other objects stay whatever their name ("debug" from another tool, a creator's own "mcb logic"), and so does
+    /// the avatar root.
+    /// </summary>
     public void RemoveExistingLogic(Transform root)
     {
         if (root == null) return;
-        // Remove any instances named "mcb logic" or "debug" anywhere under the avatar root (case-insensitive)
-        var targets = root.GetComponentsInChildren<Transform>(true)
-            .Where(t => t != null && (string.Equals(t.name, "mcb logic", StringComparison.OrdinalIgnoreCase)
-                                      || string.Equals(t.name, "debug", StringComparison.OrdinalIgnoreCase)))
+        foreach (var go in InstalledObjects(root)) Undo.DestroyObjectImmediate(go);
+    }
+
+    /// <summary>The objects under <paramref name="root"/> (never the root itself) that <see cref="IsInstalledObject"/> owns.</summary>
+    public static List<GameObject> InstalledObjects(Transform root)
+    {
+        if (root == null) return new List<GameObject>();
+        return root.GetComponentsInChildren<Transform>(true)
+            .Where(t => t != null && t != root && IsInstalledObject(t))
             .Select(t => t.gameObject)
             .Distinct()
             .ToList();
-        foreach (var go in targets)
-        {
-            Undo.DestroyObjectImmediate(go);
-        }
+    }
+
+    /// <summary>
+    /// True for the root of a prefab instance MCB installed: a version's logic prefab (named "mcb logic", its prefab in
+    /// MCB's own folder, or missing since that version folder went away) or the armature debug prefab.
+    /// </summary>
+    public static bool IsInstalledObject(Transform t)
+    {
+        // The nearest root: the logic is a nested instance when the avatar itself is a prefab instance.
+        if (t == null || PrefabUtility.GetNearestPrefabInstanceRoot(t.gameObject) != t.gameObject) return false;
+        return IsInstalledSource(t.name, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(t.gameObject),
+            PrefabUtility.IsPrefabAssetMissing(t.gameObject));
+    }
+
+    internal static bool IsInstalledSource(string name, string prefabPath, bool prefabMissing)
+    {
+        string path = MCBUtils.ToUnityPath(prefabPath ?? string.Empty);
+        if (string.Equals(path, DebugPrefabPath, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!string.Equals(name, MCBLogicPrefabService.LogicRootName, StringComparison.OrdinalIgnoreCase)) return false;
+        return prefabMissing || path.StartsWith(MCBUtils.ASSETS_BASE_FOLDER + "/", StringComparison.OrdinalIgnoreCase);
     }
 
     public void ApplyAvatarToModel(Transform root, GameObject fbx, string avatarPath)

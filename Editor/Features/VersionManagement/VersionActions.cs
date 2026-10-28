@@ -421,7 +421,7 @@ public class VersionActions
             }, bytes =>
             {
                 downloadedBytes = bytes;
-            }, requestedToken);
+            }, requestedToken, NetworkService.DownloadBudget(delivery.packageBytes));
         }
         else
         {
@@ -439,7 +439,7 @@ public class VersionActions
             }, bytes =>
             {
                 downloadedBytes = bytes;
-            }, requestedToken);
+            }, requestedToken, NetworkService.DownloadBudget(delivery?.packageBytes ?? 0));
         }
         bool setupSucceeded = memoryDownloadTask != null || diskDownloadTask != null;
         

@@ -821,7 +821,7 @@ public class AdvancedModeModule
         // Remove existing debug prefab if it exists
         RemoveDebugPrefab();
         
-        string prefabPath = "Packages/orbiters.mcb/debug/debug.prefab";
+        string prefabPath = FileManagerService.DebugPrefabPath;
         GameObject debugPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
         
         if (debugPrefab == null)
@@ -846,11 +846,11 @@ public class AdvancedModeModule
         }
         else
         {
-            // Try to find existing debug object by name
+            // An earlier debug prefab instance (another object named "debug" is not MCB's)
             if (editor.customBaseTarget != null)
             {
                 Transform existingDebug = editor.customBaseTarget.transform.Find("debug");
-                if (existingDebug != null)
+                if (existingDebug != null && FileManagerService.IsInstalledObject(existingDebug))
                 {
                     Object.DestroyImmediate(existingDebug.gameObject);
                     MCBLogger.Log("Existing debug object removed from avatar root");

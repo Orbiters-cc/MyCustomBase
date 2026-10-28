@@ -215,6 +215,50 @@ public class MCBDeliveryRobustnessTests
         }
     }
 
+    // An answer larger than the expected size is refused while it downloads, whether the server announces its size or not,
+    // and never retried; nothing is left on disk.
+    [UnityTest]
+    public IEnumerator OversizedDownloadsAreRefused([Values(true, false)] bool announced)
+    {
+        byte[] payload = new byte[300_000];
+        int requests = 0;
+        var listener = Serve((path, headers) =>
+        {
+            System.Threading.Interlocked.Increment(ref requests);
+            return new Reply { Head = "HTTP/1.1 200 OK\r\n" + (announced ? "Content-Length: " + payload.Length + "\r\n" : ""), Body = payload };
+        }, out string root);
+        string file = Path.Combine(Path.GetTempPath(), "mcb_dl_test_" + Guid.NewGuid().ToString("N") + ".zip");
+        try
+        {
+            LogAssert.ignoreFailingMessages = true;
+            var download = new NetworkService().DownloadFileAsync(root + "model?version=1", file, authToken: "orbit-secret", maxBytes: 100_000);
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (!download.IsCompleted && DateTime.UtcNow < deadline) yield return null;
+            Assert.That(download.IsCompleted, Is.True, "The download did not finish.");
+            IgnoreWhenHttpIsBlocked(download.Result.error);
+            Assert.That(download.Result.success, Is.False);
+            StringAssert.Contains("larger than", download.Result.error);
+            Assert.That(requests, Is.EqualTo(1), "An oversized answer is not retried.");
+            Assert.That(File.Exists(file), Is.False);
+        }
+        finally
+        {
+            LogAssert.ignoreFailingMessages = false;
+            listener.Stop();
+            if (File.Exists(file)) File.Delete(file);
+        }
+    }
+
+    [Test]
+    public void DownloadBudgetsFollowTheListedSize()
+    {
+        Assert.That(NetworkService.DownloadBudget(0), Is.EqualTo(NetworkService.MaxDownloadBytes));
+        Assert.That(NetworkService.DownloadBudget(-1), Is.EqualTo(NetworkService.MaxDownloadBytes));
+        Assert.That(NetworkService.DownloadBudget(1000), Is.EqualTo(1000 + 1024 * 1024));
+        Assert.That(NetworkService.DownloadBudget(160L * 1024 * 1024), Is.EqualTo(170L * 1024 * 1024));
+        Assert.That(NetworkService.DownloadBudget(long.MaxValue / 2), Is.EqualTo(NetworkService.MaxDownloadBytes));
+    }
+
     static void IgnoreWhenHttpIsBlocked(string error)
     {
         if (error?.IndexOf("Insecure connection", StringComparison.OrdinalIgnoreCase) >= 0)

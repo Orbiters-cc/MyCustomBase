@@ -198,13 +198,31 @@ public class NetworkService
         public byte[] Data;
     }
 
+    /// <summary>The most a download may write when its size is not known: a version's whole expanded budget.</summary>
+    internal const long MaxDownloadBytes = VersionArchiveBudget.DefaultMaxTotalBytes;
+
+    private static string TooLargeError(long limit) =>
+        "The download is larger than the " + Orbiters.Toolkit.Editor.Storage.ArchiveBudget.Format(limit) + " expected.";
+
+    /// <summary>
+    /// The bytes a download of <paramref name="expectedBytes"/> may take: the listed size of a package plus room for its ZIP
+    /// headers (the listing sums its parts), or <see cref="MaxDownloadBytes"/> when the size is unknown.
+    /// </summary>
+    internal static long DownloadBudget(long expectedBytes) => expectedBytes > 0
+        ? Math.Min(MaxDownloadBytes, expectedBytes + Math.Max(expectedBytes / 16, 1024 * 1024))
+        : MaxDownloadBytes;
+
+    /// <param name="maxBytes">The answer is refused once it grows past this many bytes (0: <see cref="MaxDownloadBytes"/>).
+    /// Pass the exact size of a file verified by size afterwards, else <see cref="DownloadBudget"/>.</param>
     public async Task<(bool success, string error)> DownloadFileAsync(
         string url,
         string destinationPath,
         Action<float> onProgress = null,
         Action<ulong> onDownloadedBytes = null,
-        string authToken = null)
+        string authToken = null,
+        long maxBytes = 0)
     {
+        long limit = maxBytes > 0 ? maxBytes : MaxDownloadBytes;
         bool succeeded = false;
         MCBDownloadTempFiles.Track(destinationPath);
         try
@@ -233,7 +251,7 @@ public class NetworkService
                     {
                         downloadHandler = new DownloadHandlerFile(destinationPath, offset > 0) { removeFileOnAbort = false }
                     });
-                }, offset, 0, running =>
+                }, offset, Math.Max(1, limit - offset), running =>
                 {
                     long received = offset + (long)running.downloadedBytes, length = ContentLength(running);
                     long expected = length >= 0 ? offset + length : total;
@@ -257,9 +275,15 @@ public class NetworkService
                     error = "The server could not resume the download.";
                     if (offset > 0) { attempt--; continue; }
                 }
+                else if (result.TooLarge || (total > limit && (code == 200 || code == 206)))
+                {
+                    error = TooLargeError(limit);
+                    break;
+                }
                 else if (result.Completed && (code == 200 || code == 206))
                 {
                     long received = FileLength(destinationPath);
+                    if (received > limit) { error = TooLargeError(limit); break; }
                     if (total <= 0 || result.Encoded || received == total) { succeeded = true; break; }
                     error = $"The download ended early ({received} of {total} bytes).";
                 }

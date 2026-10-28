@@ -1,5 +1,16 @@
 # My Custom Base (MCB) by Enzo
 
+## Unreleased
+
+- **A version change removes only what MCB installed.** Applying, resetting or applying a saved custom version deleted
+  every object named "mcb logic" or "debug" anywhere under the avatar, whoever made it (another tool's Debug object, a
+  creator's own hierarchy). It now removes instances of a version's logic prefab (from MCB's own folder, or missing since
+  that version folder went away) and of the armature debug prefab, never the avatar root. A logic prefab that was
+  unpacked, or copied with Instantiate, is no longer recognized and stays.
+- **Downloads have a byte budget.** A version download stops, without retrying, once the answer grows past the size its
+  listing gives (plus room for the ZIP headers), a mesh package or mesh blob past its exact size, and anything else past
+  8 GB, instead of filling the disk before a check after the download.
+
 ## 1.12.15 — 2026-10-26
 
 - Requires Orbiters Toolkit 0.4.7. Version validation builds with VRCFury 1.1434 as an upload does.

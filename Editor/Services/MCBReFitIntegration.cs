@@ -194,7 +194,7 @@ public static partial class MCBReFitIntegration
         var root = Root(target);
         var footprint = new CustomBaseFootprint();
         foreach (var t in root.GetComponentsInChildren<Transform>(true))
-            if (string.Equals(t.name, "mcb logic", StringComparison.OrdinalIgnoreCase) || (t.parent == root && t.name == VRCFuryService.SLIDERS_GAMEOBJECT_NAME))
+            if ((string.Equals(t.name, MCBLogicPrefabService.LogicRootName, StringComparison.OrdinalIgnoreCase) && FileManagerService.IsInstalledObject(t)) || (t.parent == root && t.name == VRCFuryService.SLIDERS_GAMEOBJECT_NAME))
                 footprint.Objects.Add(t.gameObject);
         foreach (var bone in target.nativeMeshGeneratedBones)
             if (bone != null) footprint.Bones.Add(bone.transform);
