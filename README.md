@@ -1,6 +1,6 @@
 # My Custom Base (MCB) by Enzo
 
-## Unreleased
+## 1.12.16 — 2026-10-29
 
 - **A version change removes only what MCB installed.** Applying, resetting or applying a saved custom version deleted
   every object named "mcb logic" or "debug" anywhere under the avatar, whoever made it (another tool's Debug object, a
