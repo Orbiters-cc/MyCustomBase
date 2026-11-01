@@ -145,7 +145,7 @@ public class BlendShapeLinksDebugWindow : EditorWindow
             ClearSearchHistory(); _isRecording = false;
             Render();
         });
-        _type.AddToClassList("orb-segmented--compact");
+        _type.AddToClassList("orbiters-segmented--compact");
         _type.SetIndex((int)_searchType);
         card.Add(_type);
 

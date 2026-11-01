@@ -19,9 +19,9 @@
 .mcb-twist__card-header .mcb-cmp__card-title { margin-bottom: 0; }
 .mcb-twist__mini-switch { flex-direction: row; align-items: center; }
 .mcb-twist__mini-switch .mcb-cmp__caption { margin-right: 6px; }
-.mcb-twist__mini-switch .orb-switch { width: 30px; height: 18px; border-radius: 9px; }
-.mcb-twist__mini-switch .orb-switch__knob { width: 12px; height: 12px; border-radius: 6px; }
-.mcb-twist__mini-switch .orb-switch--on .orb-switch__knob { translate: 12px 0; }
+.mcb-twist__mini-switch .orbiters-switch { width: 30px; height: 18px; border-radius: 9px; }
+.mcb-twist__mini-switch .orbiters-switch__knob { width: 12px; height: 12px; border-radius: 6px; }
+.mcb-twist__mini-switch .orbiters-switch--on .orbiters-switch__knob { translate: 12px 0; }
 
 .mcb-twist__bones-card { flex-grow: 1; flex-shrink: 1; flex-basis: 0; min-height: 160px; }
 .mcb-twist__selected-card { flex-grow: 1; flex-shrink: 1; flex-basis: 0; min-height: 180px; margin-bottom: 0; }
@@ -51,10 +51,10 @@
 .mcb-twist__entry--open .mcb-twist__chevron { rotate: 90deg; }
 .mcb-twist__remove { width: 22px; height: 22px; margin-left: 4px; border-radius: 11px; align-items: center; justify-content: center; }
 .mcb-twist__remove:hover { background-color: rgba(255, 92, 97, 0.14); }
-.mcb-twist__remove .orb-icon { width: 11px; height: 11px; --icon-color: #9a9aa0; }
-.mcb-twist__remove:hover .orb-icon { --icon-color: #ff8f93; }
+.mcb-twist__remove .orbiters-icon { width: 11px; height: 11px; --icon-color: #9a9aa0; }
+.mcb-twist__remove:hover .orbiters-icon { --icon-color: #ff8f93; }
 .mcb-twist__details { padding: 2px 10px 10px 10px; }
-.mcb-twist__details .orb-search-dropdown__label { min-width: 88px; }
+.mcb-twist__details .orbiters-search-dropdown__label { min-width: 88px; }
 .mcb-twist__field-label { margin-top: 8px; margin-bottom: 4px; color: #a9a9b0; font-size: 11px; }
 .mcb-twist__presets { height: 26px; }
 .mcb-twist__curve { margin: 6px 0 0 0; height: 64px; }

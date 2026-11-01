@@ -443,7 +443,7 @@ public partial class AssetGalleryModule
     private static VisualElement CreateCardShell()
     {
         var card = new VisualElement();
-        card.AddToClassList("orb-card");
+        card.AddToClassList("orbiters-card");
         card.pickingMode = PickingMode.Position;
         return card;
     }

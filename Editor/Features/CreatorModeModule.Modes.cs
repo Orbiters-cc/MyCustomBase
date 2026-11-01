@@ -76,7 +76,7 @@ public partial class CreatorModeModule
                 foreach (var member in members) member.enabledByDefault = member == keep;
             }
         }, true));
-        rule.AddToClassList("orb-segmented--compact");
+        rule.AddToClassList("orbiters-segmented--compact");
         rule.tooltip = "Pick one: the modes replace each other, like a genre. Combine: users turn each mode on or off.";
         rule.SetIndex(category.exclusive ? 0 : 1);
         header.Add(rule);
@@ -296,7 +296,7 @@ public partial class CreatorModeModule
         if (target == null) name.AddToClassList("mcb-section__note--error");
         row.Add(name);
         var active = new SegmentedControl(new[] { "Enabled", "Disabled" }, index => ChangeCustomization(() => state.active = index == 0));
-        active.AddToClassList("orb-segmented--compact");
+        active.AddToClassList("orbiters-segmented--compact");
         active.SetIndex(state.active ? 0 : 1);
         row.Add(active);
         row.Add(McbSectionUi.IconAction(IconGlyph.Close, "Remove " + state.path, () => ChangeCustomization(() => option.gameObjects.Remove(state), true)));

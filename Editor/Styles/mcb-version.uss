@@ -266,7 +266,7 @@
     margin-top: 8px;
 }
 
-.mcb-version-chip-row--details .orb-version-chip {
+.mcb-version-chip-row--details .orbiters-version-chip {
     margin-bottom: 5px;
 }
 

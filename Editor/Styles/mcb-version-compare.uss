@@ -206,22 +206,22 @@
     width: 300px;
 }
 
-.mcb-cmp-stage__layouts .orb-segmented,
-.mcb-cmp-stage__toolbar .orb-segmented {
+.mcb-cmp-stage__layouts .orbiters-segmented,
+.mcb-cmp-stage__toolbar .orbiters-segmented {
     background-color: rgba(12, 12, 14, 0.78);
     border-width: 1px;
     border-color: rgba(255, 255, 255, 0.08);
 }
 
-.mcb-cmp-stage__layouts .orb-segmented {
+.mcb-cmp-stage__layouts .orbiters-segmented {
     height: 30px;
 }
 
-.mcb-cmp-stage__layouts .orb-segmented__tab {
+.mcb-cmp-stage__layouts .orbiters-segmented__tab {
     height: 22px;
 }
 
-.mcb-cmp-stage__layouts .orb-segmented__label {
+.mcb-cmp-stage__layouts .orbiters-segmented__label {
     font-size: 11px;
 }
 
@@ -233,21 +233,21 @@
     width: 280px;
 }
 
-.mcb-cmp-stage__toolbar .orb-segmented {
+.mcb-cmp-stage__toolbar .orbiters-segmented {
     height: 36px;
     border-radius: 12px;
 }
 
-.mcb-cmp-stage__toolbar .orb-segmented__tab {
+.mcb-cmp-stage__toolbar .orbiters-segmented__tab {
     height: 28px;
 }
 
-.mcb-cmp-stage__toolbar .orb-segmented__indicator {
+.mcb-cmp-stage__toolbar .orbiters-segmented__indicator {
     border-radius: 9px;
     background-color: #00DA6D;
 }
 
-.mcb-cmp-stage__toolbar .orb-segmented__tab--selected .orb-segmented__label {
+.mcb-cmp-stage__toolbar .orbiters-segmented__tab--selected .orbiters-segmented__label {
     color: #0b0b0b;
     -unity-font-style: bold;
 }
@@ -573,7 +573,7 @@
     white-space: normal;
 }
 
-.mcb-cmp__card .orb-segmented {
+.mcb-cmp__card .orbiters-segmented {
     margin-bottom: 4px;
 }
 

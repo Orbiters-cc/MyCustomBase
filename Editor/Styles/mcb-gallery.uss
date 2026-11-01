@@ -12,7 +12,7 @@
     width: 180px;
 }
 
-/* Asset cards (.orb-card, .orb-gallery-grid) are Orbiters Toolkit's gallery-card.uss, shared with My Avatar. */
+/* Asset cards (.orbiters-card, .orbiters-gallery-grid) are Orbiters Toolkit's gallery-card.uss, shared with My Avatar. */
 
 .mcb-selected-title-band {
     background-color: rgba(0,0,0,0);
