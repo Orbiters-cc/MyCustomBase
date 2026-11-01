@@ -1,5 +1,10 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.17 — 2026-11-01
+
+- Orbiters Toolkit's shared UI classes are `orbiters-*` (they were named after N4N0's former name): MCB's gallery cards,
+  sections, version chips and switches follow. Requires Orbiters Toolkit 0.4.11.
+
 ## 1.12.16 — 2026-10-29
 
 - **A version change removes only what MCB installed.** Applying, resetting or applying a saved custom version deleted
