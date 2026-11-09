@@ -1,5 +1,12 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.22 — 2026-11-09
+
+- **Clothing skinned straight to a moved bone stays on the body too.** After 1.12.21 kept hair and props in place when a
+  version moves a bone's pivot (Ultirex V5's Head), a mesh of your own weighted directly to that bone (a hood on Head)
+  still rose with it. Its bind poses are now corrected so every vertex stays where it was; the corrected mesh is a copy
+  in Assets/MCB/rebound (a model's own mesh is never changed), switched in the apply's or reset's Undo step.
+
 ## 1.12.21 — 2026-11-09
 
 - **Your shape values survive migrating an old release.** The original model lacks a release's own shapes ("orbit ears
