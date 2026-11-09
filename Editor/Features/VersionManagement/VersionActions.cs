@@ -1096,7 +1096,7 @@ public class VersionActions
         IEnumerator routine = null;
         try
         {
-            routine = RunPreparedMutation(ThenShowApplying(PrepareVersionSwitchCoroutine(version, isReset), isReset), () => ApplyOrResetCore(version, isReset));
+            routine = RunPreparedMutation(ThenShowApplying(PrepareVersionSwitchCoroutine(version, isReset), isReset), () => ApplyOrResetFollowingAnimations(version, isReset));
         }
         catch (Exception ex)
         {
@@ -1188,6 +1188,40 @@ public class VersionActions
     {
         while (preparation.MoveNext()) yield return preparation.Current;
         mutate();
+    }
+
+    /// <summary>
+    /// A version (or a reset) can move the avatar's bones: Ultirex V5 puts TopFut between the knee and the ankle. The
+    /// person's own animations that reached the moved bones by their former paths (a toe curl layer) follow them, as
+    /// Toolkit's AnimationPaths fixes any rename or move: shared clips are copied for this avatar, package and model clips
+    /// are left alone. MCB's own logic clips already use the new paths. Only after a switch that finished.
+    /// </summary>
+    private void ApplyOrResetFollowingAnimations(CustomBaseVersion version, bool isReset)
+    {
+        var target = editor.customBaseTarget;
+        var root = target != null ? AvatarPaths.Root(target) : null;
+        Orbiters.Toolkit.Editor.Animations.PathSnapshot before = null;
+        try { if (root != null) before = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Snapshot(root.gameObject); }
+        catch (Exception ex) { MCBLogger.LogWarning("[MCB] Could not record the avatar's animation paths before the switch: " + ex.Message); }
+        ApplyOrResetCore(version, isReset);
+        if (before == null || target == null) return;
+        bool switched = isReset
+            ? target.appliedCustomBaseAssetId == 0
+            : version != null && target.appliedCustomBaseAssetId == version.assetId && target.appliedCustomBaseVersionString == version.version;
+        if (!switched) return;
+        try
+        {
+            var plan = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Plan(root.gameObject, before, null, broken: false);
+            if (plan.Fixable == 0) return;
+            var applied = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Apply(plan, everywhere: false,
+                undoName: isReset ? "Animations follow the original bones" : "Animations follow the version's bones");
+            MCBLogger.Log($"[MCB] {applied.Paths} animation path(s) in {applied.Assets} asset(s) now follow the bones the "
+                + (isReset ? "reset" : "version") + $" moved ({applied.Copies} shared asset(s) copied for this avatar).");
+            if (applied.Skipped.Count > 0)
+                editor.warningsModule.AddWarning("Some animations still use the former bone paths and were left as they are: "
+                    + string.Join("; ", applied.Skipped), MessageType.Warning, "Animation paths");
+        }
+        catch (Exception ex) { MCBLogger.LogWarning("[MCB] Animations could not follow the moved bones: " + ex.Message); }
     }
 
     private void ApplyOrResetCore(CustomBaseVersion version, bool isReset, bool finalize = true)
