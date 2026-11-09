@@ -202,6 +202,7 @@ public static class LegacyMigrationService
             removedObjects.Add(path);
         }
         var assets = CleanDescriptor(avatar, cleanup, match.legacyRelease.label);
+        PointBaseModelsAtOriginal(avatar, legacyPaths, original);
         Undo.CollapseUndoOperations(group);
         UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(avatar.gameObject.scene);
         AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
@@ -214,6 +215,19 @@ public static class LegacyMigrationService
     /// its Animator's avatar), then files named like an original, then any other model. Each file is hashed once, and
     /// files far larger than an avatar base are skipped.
     /// </summary>
+    // MCB's base models (the first one is what versions apply to and reset from) named the legacy models: the original
+    // takes their place, in the migration's Undo step, so an open inspector never applies from the legacy model.
+    private static void PointBaseModelsAtOriginal(Transform avatar, ICollection<string> legacyPaths, GameObject original)
+    {
+        foreach (var owner in avatar.GetComponentsInChildren<MyCustomBase>(true))
+        {
+            if (owner.baseFbxFiles == null || !owner.baseFbxFiles.Any(m => m != null && legacyPaths.Contains(AssetDatabase.GetAssetPath(m)))) continue;
+            var models = owner.baseFbxFiles.Select(m => m != null && legacyPaths.Contains(AssetDatabase.GetAssetPath(m)) ? original : m)
+                .Where(m => m != null).Distinct().ToList();
+            FileManagerService.SetCreatorSourceFiles(owner, models);
+        }
+    }
+
     // Avatar renderers at an original renderer's path whose model is neither a legacy model of the release nor an
     // original base file (by hash): what a migration would leave custom.
     private static List<(string renderer, string model)> UnregisteredBaseRenderers(Transform avatar, ICollection<string> originalPaths, Cleanup cleanup,

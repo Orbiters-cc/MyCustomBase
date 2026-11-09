@@ -81,8 +81,9 @@ public partial class AssetGalleryModule
                     legacyMatches.RemoveAll(release.Contains);
                     LegacyLookups.Clear();
                     legacySignature = null;
-                    editor.InvalidateDetectedAvatarFbxCache();
-                    // The avatar's models changed: a refresh records their new signature before discovering again.
+                    // The avatar's models changed: its base models are detected again, and a refresh records their new
+                    // signature before discovering again.
+                    editor.RedetectBaseFbx();
                     RefreshIfNeeded(force: true);
                 }
                 catch (Exception ex)

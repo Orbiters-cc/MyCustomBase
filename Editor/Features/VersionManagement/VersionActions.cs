@@ -1090,6 +1090,9 @@ public class VersionActions
 
     internal IEnumerator ApplyOrResetCoroutine(CustomBaseVersion version, bool isReset)
     {
+        // The base models are read through this inspector's serialized copy: a migration, MCP or another inspector may
+        // have changed the component since, and a stale copy restores the armature from a model the avatar no longer has.
+        editor.serializedObject.Update();
         IEnumerator routine = null;
         try
         {
@@ -1196,6 +1199,7 @@ public class VersionActions
             return;
         }
         MCBPerformance.PauseForeground();
+        editor.serializedObject.Update();
         if (!isReset) MCBVersionDelivery.ApplyLocalDelivery(version);
         float startingProgress = applyProgressBase > 0f
             ? 0f

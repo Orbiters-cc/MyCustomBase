@@ -1016,6 +1016,15 @@ public class MCBEditor : UnityEditor.Editor
         MCBLogger.LogError($"[MCBEditor] Version fetch error: {error}");
     }
 
+    /// <summary>The avatar's models changed (a legacy migration): detect its base models again, as when the inspector opens.</summary>
+    internal void RedetectBaseFbx()
+    {
+        serializedObject.Update();
+        InvalidateDetectedAvatarFbxCache();
+        if (!SyncBaseFbxFilesFromSelectedAsset()) AutoDetectBaseFbxViaHierarchy();
+        versionModule?.actions?.UpdateCurrentBaseFbxHash();
+    }
+
     private bool AutoDetectBaseFbxViaHierarchy()
     {
         if (customBaseTarget == null) return false;
