@@ -1056,7 +1056,7 @@ public class MCBEditor : UnityEditor.Editor
         return true;
     }
 
-    private string GetCurrentFBXPath()
+    internal string GetCurrentFBXPath()
     {
         if (baseFbxFilesProp.arraySize > 0)
         {

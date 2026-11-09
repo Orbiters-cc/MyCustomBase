@@ -147,6 +147,13 @@ public static class LegacyMigrationService
                 target.Split('/').Last()));
         }
         if (plans.Count == 0) throw new InvalidOperationException("No renderer of this avatar uses the legacy model with a matching original renderer.");
+        // A base renderer (Body...) on a model that is neither the original nor this release's (another build of the
+        // release the creator did not register) would stay custom while the rest migrates: refuse before changing anything.
+        var unknown = UnregisteredBaseRenderers(avatar, originalRenderers.Keys, cleanup, legacyPaths, originalPath, originals);
+        if (unknown.Count > 0)
+            throw new InvalidOperationException(string.Join(", ", unknown.Select(u => u.renderer + " uses " + Path.GetFileName(u.model)))
+                + ", which " + match.legacyRelease.label + " does not list. Migrating the rest would leave a half-converted avatar: "
+                + "ask the creator to add " + (unknown.Select(u => u.model).Distinct().Count() == 1 ? "that model" : "those models") + " to the release.");
 
         Undo.IncrementCurrentGroup();
         int group = Undo.GetCurrentGroup();
@@ -207,6 +214,34 @@ public static class LegacyMigrationService
     /// its Animator's avatar), then files named like an original, then any other model. Each file is hashed once, and
     /// files far larger than an avatar base are skipped.
     /// </summary>
+    // Avatar renderers at an original renderer's path whose model is neither a legacy model of the release nor an
+    // original base file (by hash): what a migration would leave custom.
+    private static List<(string renderer, string model)> UnregisteredBaseRenderers(Transform avatar, ICollection<string> originalPaths, Cleanup cleanup,
+        ICollection<string> legacyPaths, string originalPath, IEnumerable<ModelFileData> originals)
+    {
+        const long MaxBytes = 256L << 20;
+        var wanted = new HashSet<string>(originals.Where(o => o?.hash != null).Select(o => o.hash.ToLowerInvariant()), StringComparer.Ordinal);
+        var known = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<(string, string)>();
+        foreach (var renderer in avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            string model = renderer.sharedMesh == null ? null : AssetDatabase.GetAssetPath(renderer.sharedMesh);
+            if (string.IsNullOrEmpty(model) || legacyPaths.Contains(model) || string.Equals(model, originalPath, StringComparison.OrdinalIgnoreCase)
+                || !model.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)) continue;
+            string path = AnimationUtility.CalculateTransformPath(renderer.transform, avatar);
+            string target = cleanup.rendererMap != null && cleanup.rendererMap.TryGetValue(path, out string mapped) ? mapped : path;
+            if (!originalPaths.Contains(target)) continue;
+            if (!known.TryGetValue(model, out bool isOriginal))
+            {
+                var info = new FileInfo(Path.GetFullPath(model));
+                string hash = info.Exists && info.Length <= MaxBytes ? MCBUtils.CalculateFileHash(model)?.ToLowerInvariant() : null;
+                known[model] = isOriginal = hash != null && wanted.Contains(hash);
+            }
+            if (!isOriginal) result.Add((path, model));
+        }
+        return result;
+    }
+
     private static string PickOriginal(Transform avatar, IReadOnlyCollection<ModelFileData> originals, ICollection<string> legacyPaths)
     {
         const long MaxBytes = 256L << 20;

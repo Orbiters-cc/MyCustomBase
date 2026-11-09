@@ -14,6 +14,8 @@ public class WarningsModule
     }
 
     private readonly List<WarningEntry> warnings = new List<WarningEntry>();
+    /// <summary>The warnings MCB shows now, for callers that drive it without its window (MCP).</summary>
+    public IReadOnlyList<WarningEntry> Entries => warnings;
 
     public event System.Action Changed;
 

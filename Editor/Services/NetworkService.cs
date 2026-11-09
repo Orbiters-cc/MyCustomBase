@@ -562,6 +562,17 @@ public class NetworkService
         Action<float, ulong> onProgress = null,
         System.Threading.CancellationToken cancellationToken = default)
     {
+        // Production sits behind Cloudflare, which refuses request bodies over 100 MB: a larger package is staged in parts
+        // first, and the upload then names it instead of carrying it.
+        string stagedId = null;
+        long packageBytes = new FileInfo(zipFilePath).Length;
+        if (packageBytes > StageAbovePackageBytes)
+        {
+            var staged = await StagePackageAsync(zipFilePath, authToken, onProgress, cancellationToken);
+            if (!staged.success) return (false, null, staged.error, staged.cancelled);
+            stagedId = staged.uploadId;
+            url += (url.Contains("?") ? "&" : "?") + "packageUpload=" + Uri.EscapeDataString(stagedId);
+        }
         string boundary = "----MCBUpload" + Guid.NewGuid().ToString("N");
         string bodyPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_body_{Guid.NewGuid():N}.tmp");
         MCBDownloadTempFiles.Track(bodyPath);
@@ -569,11 +580,13 @@ public class NetworkService
         try
         {
             // Same wire format as before ("metadata" JSON + "packageFile" zip), written by Orbiters Toolkit's transfer service.
-            OrbitersTransfer.WriteMultipart(bodyPath, boundary, new[]
-            {
-                OrbitersTransfer.Part.Field("metadata", metadataJson),
-                OrbitersTransfer.Part.File("packageFile", zipFilePath, Path.GetFileName(zipFilePath), "application/zip"),
-            });
+            OrbitersTransfer.WriteMultipart(bodyPath, boundary, stagedId != null
+                ? new[] { OrbitersTransfer.Part.Field("metadata", metadataJson) }
+                : new[]
+                {
+                    OrbitersTransfer.Part.Field("metadata", metadataJson),
+                    OrbitersTransfer.Part.File("packageFile", zipFilePath, Path.GetFileName(zipFilePath), "application/zip"),
+                });
 
             using (var req = MCBDownloadTempFiles.Attach(bodyPath, new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST)))
             {
@@ -594,10 +607,11 @@ public class NetworkService
                     return (false, null, $"Upload failed to start: {ex.Message}", false);
                 }
 
-                var end = await OrbitersTransfer.WaitAsync(req, operation, running => onProgress?.Invoke(Mathf.Clamp01(running.uploadProgress), running.uploadedBytes),
+                // A staged package already reported its bytes; the small form that names it only finishes the bar.
+                var end = await OrbitersTransfer.WaitAsync(req, operation, running => { if (stagedId == null) onProgress?.Invoke(Mathf.Clamp01(running.uploadProgress), running.uploadedBytes); },
                     cancellationToken, UploadStallTimeoutSeconds, upload: true);
 
-                onProgress?.Invoke(1f, req.uploadedBytes);
+                onProgress?.Invoke(1f, stagedId == null ? req.uploadedBytes : (ulong)packageBytes);
                 // A cancelled or stalled upload does not take MCB offline; one that never reached the server does.
                 MCBConnectivityMonitor.ReportManagedUnityWebRequest(req, url, end == OrbitersTransfer.End.Done
                     ? MCBRequestPolicy.Backend("Upload version") : MCBRequestPolicy.Transfer("Upload version"));
@@ -634,6 +648,78 @@ public class NetworkService
             // A body that could not be deleted yet stays tracked: it goes before the next reload.
             MCBDownloadTempFiles.Finish(bodyPath, File.Exists(bodyPath));
         }
+    }
+
+    /// <summary>Packages above this go up in parts (Cloudflare's 100 MB request limit in front of production).</summary>
+    private const long StageAbovePackageBytes = 90L * 1024 * 1024;
+    private const int StagedPartAttempts = 3;
+
+    /// <summary>
+    /// Stages a package on the server in parts (POST /package-uploads with its size and SHA-256, then each part as
+    /// PUT /package-uploads/{id}/parts/{index}), retrying a part that failed in transit; returns the id the upload names.
+    /// </summary>
+    private async Task<(bool success, string uploadId, string error, bool cancelled)> StagePackageAsync(string zipFilePath, string authToken,
+        Action<float, ulong> onProgress, System.Threading.CancellationToken cancellationToken)
+    {
+        long size = new FileInfo(zipFilePath).Length;
+        string hash = await Task.Run(() => MCBUtils.CalculateFileHash(zipFilePath), cancellationToken);
+        string root = MCBUtils.getApiUrl() + "/package-uploads";
+        string uploadId; int partBytes, parts;
+        using (var create = new UnityWebRequest(root, UnityWebRequest.kHttpVerbPOST))
+        {
+            create.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { size, sha256 = hash })));
+            create.downloadHandler = new DownloadHandlerBuffer();
+            create.SetRequestHeader("Content-Type", "application/json");
+            MCBRequestHeaders.SetAuthorization(create, authToken);
+            create.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
+            await MCBManagedRequest.SendUnityWebRequestAsync(create, root, MCBRequestPolicy.Backend("Stage version package"));
+            if (create.result != UnityWebRequest.Result.Success)
+                return (false, null, $"Upload failed: [{create.responseCode}] {create.error} | {CreateBodySnippet(create.downloadHandler?.text, 500)}", false);
+            var answer = Newtonsoft.Json.Linq.JObject.Parse(create.downloadHandler.text);
+            uploadId = answer.Value<string>("uploadId"); partBytes = answer.Value<int>("partBytes"); parts = answer.Value<int>("parts");
+        }
+        var buffer = new byte[partBytes];
+        using (var file = File.OpenRead(zipFilePath))
+        {
+            for (int part = 0; part < parts; part++)
+            {
+                long offset = (long)part * partBytes;
+                int length = (int)Math.Min(partBytes, size - offset);
+                file.Position = offset;
+                for (int read = 0; read < length;)
+                {
+                    int count = file.Read(buffer, read, length - read);
+                    if (count <= 0) return (false, null, "The package file changed while it was uploading.", false);
+                    read += count;
+                }
+                byte[] data = length == partBytes ? buffer : buffer.Take(length).ToArray();
+                string url = root + "/" + Uri.EscapeDataString(uploadId) + "/parts/" + part;
+                string error = null;
+                for (int attempt = 1; attempt <= StagedPartAttempts; attempt++)
+                {
+                    using (var put = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPUT))
+                    {
+                        put.uploadHandler = new UploadHandlerRaw(data);
+                        put.downloadHandler = new DownloadHandlerBuffer();
+                        put.SetRequestHeader("Content-Type", "application/octet-stream");
+                        MCBRequestHeaders.SetAuthorization(put, authToken);
+                        put.timeout = 0; // stall detection replaces the fixed timeout
+                        var end = await OrbitersTransfer.WaitAsync(put, put.SendWebRequest(),
+                            running => onProgress?.Invoke(Mathf.Clamp01((offset + (long)running.uploadedBytes) / (float)size), (ulong)offset + running.uploadedBytes),
+                            cancellationToken, UploadStallTimeoutSeconds, upload: true);
+                        if (end == OrbitersTransfer.End.Cancelled) return (false, null, "The upload was cancelled.", true);
+                        if (end == OrbitersTransfer.End.Done && put.result == UnityWebRequest.Result.Success) { error = null; break; }
+                        error = end == OrbitersTransfer.End.Stalled
+                            ? $"The upload timed out: no data was sent for {UploadStallTimeoutSeconds:0} seconds."
+                            : $"Upload failed: [{put.responseCode}] {put.error} | {CreateBodySnippet(put.downloadHandler?.text, 500)}";
+                        // A refusal (wrong part, unknown package) does not get better on retry.
+                        if (put.responseCode >= 400 && put.responseCode < 500) break;
+                    }
+                }
+                if (error != null) return (false, null, $"Part {part + 1} of {parts}: {error}", false);
+            }
+        }
+        return (true, uploadId, null, false);
     }
 
     public async Task<(bool success, CustomBaseVersion version, string error)> UpdateCreatorVersionMetadataAsync(string url, string authToken, string title, string changelog)

@@ -235,6 +235,41 @@ public static class MCBAuthoringService
             throw new InvalidOperationException("Version application did not finish. Inspect MCB warnings and the Console.");
     }
 
+    /// <summary>
+    /// What a member does in the gallery: the assets the server offers for this avatar's models, the chosen asset's
+    /// versions for its original, then Download and Apply of <paramref name="version"/> through MCB's own version actions.
+    /// </summary>
+    public static IEnumerator Install(MyCustomBase owner, int assetId, string version, Action<object> complete)
+    {
+        if (assetId <= 0 || string.IsNullOrWhiteSpace(version)) throw new ArgumentException("Provide assetId and version.");
+        using var session = new Session(owner); var editor = session.Editor;
+        if (string.IsNullOrEmpty(editor.authToken)) throw new InvalidOperationException("Sign in to MCB first.");
+        AvatarAssetDiscoveryResponse offered = null; string discoveryError = null;
+        AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
+        yield return AvatarAssetDiscoveryService.DiscoverAssetsCoroutine(editor.authToken, editor.GetDetectedAvatarFbxPaths(), true,
+            (response, error) => { offered = response; discoveryError = error; }, owner);
+        var asset = offered?.assets?.FirstOrDefault(a => a.id == assetId) ?? throw new InvalidOperationException("The server does not offer asset "
+            + assetId + " for this avatar" + (discoveryError != null ? ": " + discoveryError : "") + ". Offered: "
+            + string.Join(", ", (offered?.assets ?? new List<AvatarDiscoveredAsset>()).Select(a => a.id + " " + a.name)) + ".");
+        editor.SetCreatorWindowAsset(asset);
+        editor.SyncBaseFbxFilesFromSelectedAsset();
+        var fetch = AsyncVersionService.Instance.FetchVersionsAsync(editor.GetCurrentFBXPath(), editor.authToken, assetId, useCache: false,
+            sourceVersionKey: OriginalBaseLibrary.ActiveKey(asset));
+        while (!fetch.IsCompleted) yield return null;
+        var (versions, _, fetchError) = fetch.GetAwaiter().GetResult();
+        var chosen = versions?.FirstOrDefault(v => v.version == version) ?? throw new InvalidOperationException("Version " + version + " is not offered"
+            + (fetchError != null ? ": " + fetchError : "") + ". Offered: " + string.Join(", ", (versions ?? new List<CustomBaseVersion>()).Select(v => v.version)) + ".");
+        editor.serverVersions = versions;
+        editor.warningsModule.Clear();
+        editor.versionModule.actions.StartVersionDownload(chosen, true);
+        // Download and Apply runs as MCB's own coroutines: it is over once nothing downloads or applies any more.
+        do yield return null; while (editor.isDownloading || editor.isApplying || editor.versionModule.actions.ApplyProgress.IsRunning);
+        var warnings = editor.warningsModule.Entries.Select(w => (w.title != null ? w.title + ": " : "") + w.message).ToArray();
+        if (owner.appliedCustomBaseAssetId != assetId || owner.appliedCustomBaseVersionString != version)
+            throw new InvalidOperationException("Version " + version + " was not applied." + (warnings.Length > 0 ? " MCB says: " + string.Join(" | ", warnings) : " Inspect the Console."));
+        complete(new { installed = version, assetId, asset = asset.name, warnings });
+    }
+
     public static IEnumerator Reset(MyCustomBase owner)
     {
         using var session = new Session(owner);

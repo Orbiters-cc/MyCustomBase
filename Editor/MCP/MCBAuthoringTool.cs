@@ -11,12 +11,12 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
-[McpForUnityTool("mcb_authoring", Description = "Create and configure MCB custom bases, import FBX, build and apply local versions. inspect lists scene target IDs and data. configure accepts MCBAuthoringService.Draft; create_base accepts Registration. build_logic (MCBLogicPrefabService.LogicSpec) converts a reference avatar's contacts and an FX controller into a logic prefab (Target Bones proxies with VRCFury Armature Links, Full Controller, optional clip pruning); prepare_custom_model (CustomModelSpec) keeps the custom FBX renderers the original has, without materials and with shapes at 0. update_listing {assetId, name?, description?, avatarBaseId? | avatarBaseName?, avatarBasePaths?} turns an owned listing into a custom base; a base name no avatar base has yet is created only with avatarBasePaths (project paths of its FBX files, e.g. Assets/Base/Body.fbx) or the custom base's uploaded source files, and with target_id the target avatar's original models are sent when avatarBasePaths is omitted. set_media {assetId, thumbnailPath?, bannerPath?} uploads its gallery thumbnail/banner (PNG or JPEG files). set_legacy_releases {assetId, legacyReleases:[{label, customModelHashes, cleanup:{objects, layers, parameters, rendererMap}}]} registers releases distributed before MCB (the server refuses hashes of original base files and of other assets' models); find_legacy / migrate_legacy (target_id, optional data.hash) recognise and migrate an avatar built from one (renderers back to the original base, cleanup on copies, one Undo step). set_environment {environment: development|production} switches the Orbiters server (inspect shows it; each keeps its own login; an Assets/MCB/assets/<id> folder only holds one environment's versions). validate (target_id) builds a hidden clone of the applied avatar with VRCFury and reports unlinked proxies, contact parameters missing from the built controllers, unresolved animation paths and performance. Build/apply/reset/import return pending jobs. build takes meshes Mixer committed on the base's renderers into the version (each model gets a new custom FBX holding them, listed in takenFromAvatar, and the draft names it from then on) and fails while a base mesh is in a Mixer session (commit or revert it first). Protection belongs to the asset: a trusted creator sets it with create_base (registration.protection) or set_asset_protection {assetId, protection:{xor, discordRole}}; with xor false, builds are one unencrypted package for every original. set_mode switches a version mode (genre, dog ears) on the applied avatar. Publication requires preview_publish followed by explicit human approval of its immutable artifact and confirm_publish with the returned code. Never infer approval from build/apply. Tokens are read from MCB's existing login and never returned.", RequiresPolling = true, PollAction = "status", MaxPollSeconds = 120)]
+[McpForUnityTool("mcb_authoring", Description = "Create and configure MCB custom bases, import FBX, build and apply local versions. inspect lists scene target IDs and data. configure accepts MCBAuthoringService.Draft; create_base accepts Registration. build_logic (MCBLogicPrefabService.LogicSpec) converts a reference avatar's contacts and an FX controller into a logic prefab (Target Bones proxies with VRCFury Armature Links, Full Controller, optional clip pruning); prepare_custom_model (CustomModelSpec) keeps the custom FBX renderers the original has, without materials and with shapes at 0. update_listing {assetId, name?, description?, avatarBaseId? | avatarBaseName?, avatarBasePaths?} turns an owned listing into a custom base; a base name no avatar base has yet is created only with avatarBasePaths (project paths of its FBX files, e.g. Assets/Base/Body.fbx) or the custom base's uploaded source files, and with target_id the target avatar's original models are sent when avatarBasePaths is omitted. set_media {assetId, thumbnailPath?, bannerPath?} uploads its gallery thumbnail/banner (PNG or JPEG files). set_legacy_releases {assetId, legacyReleases:[{label, customModelHashes, cleanup:{objects, layers, parameters, rendererMap}}]} registers releases distributed before MCB (the server refuses hashes of original base files and of other assets' models); find_legacy / migrate_legacy (target_id, optional data.hash) recognise and migrate an avatar built from one (renderers back to the original base, cleanup on copies, one Undo step). server_asset {assetId} reads that asset on the current environment's server: the signed-in creator's listing (name, type, avatar base, protection, Discord role, media, legacy releases), its registered original base versions and its published versions; use it before create_base or a build to compare environments. discord_access {assetId} lists the asset's Discord role rules (ownership role -> access scope and destination role); discord_roles {guildId?} lists the creator's Discord servers, or that server's roles (Orbiters role ids with their Discord snowflakes); add_discord_rule {assetId, roleId, targetRoleId?, scope?: public|beta|alpha, direction?: import|export} adds one, which a version with discordRole protection requires before it publishes. set_environment {environment: development|production} switches the Orbiters server (inspect shows it; each keeps its own login; an Assets/MCB/assets/<id> folder only holds one environment's versions). validate (target_id) builds a hidden clone of the applied avatar with VRCFury and reports unlinked proxies, contact parameters missing from the built controllers, unresolved animation paths and performance. install {assetId, version} (target_id) is the member's path: the asset the server offers for the avatar, its published version, Download and Apply. Build/apply/install/reset/import return pending jobs. build takes meshes Mixer committed on the base's renderers into the version (each model gets a new custom FBX holding them, listed in takenFromAvatar, and the draft names it from then on) and fails while a base mesh is in a Mixer session (commit or revert it first). Protection belongs to the asset: a trusted creator sets it with create_base (registration.protection) or set_asset_protection {assetId, protection:{xor, discordRole}}; with xor false, builds are one unencrypted package for every original. set_mode switches a version mode (genre, dog ears) on the applied avatar. Publication requires preview_publish followed by explicit human approval of its immutable artifact and confirm_publish with the returned code. Never infer approval from build/apply. Tokens are read from MCB's existing login and never returned.", RequiresPolling = true, PollAction = "status", MaxPollSeconds = 120)]
 public static class MCBAuthoringTool
 {
     public sealed class Parameters
     {
-        [ToolParameter("inspect, configure, create_base, import_fbx, build_logic, prepare_custom_model, update_listing, set_media, set_legacy_releases, find_legacy, migrate_legacy, validate, set_environment, build, apply, reset, set_mode, set_asset_protection, preview_publish, confirm_publish, status")] public string action { get; set; }
+        [ToolParameter("inspect, configure, create_base, import_fbx, build_logic, prepare_custom_model, update_listing, set_media, set_legacy_releases, server_asset, discord_access, discord_roles, add_discord_rule, find_legacy, migrate_legacy, validate, set_environment, build, apply, install, reset, set_mode, set_asset_protection, preview_publish, confirm_publish, status")] public string action { get; set; }
         [ToolParameter("Scene MyCustomBase component or GameObject ID", Required = false)] public int target_id { get; set; }
         [ToolParameter("Typed draft, registration, or version identity; inspect describes current data", Required = false)] public object data { get; set; }
         [ToolParameter("FBX source on disk for import_fbx", Required = false)] public string source_path { get; set; }
@@ -85,6 +85,23 @@ public static class MCBAuthoringTool
             if (p.action == "set_legacy_releases")
                 return Start(p.action, done => Await(() => LegacyMigrationService.SaveReleasesAsync(Token(), AssetId(data),
                     data["legacyReleases"]?.ToObject<LegacyMigrationService.Release[]>() ?? throw new ArgumentException("Provide legacyReleases.")), done));
+            if (p.action == "server_asset")
+                return Start(p.action, done => ServerAsset(AssetId(data), done));
+            if (p.action == "discord_access")
+                return Start(p.action, done => Await(() => DiscordAccessService.RulesAsync(Token(), AssetId(data)), done));
+            if (p.action == "discord_roles")
+            {
+                string guild = data?.Value<string>("guildId");
+                return string.IsNullOrWhiteSpace(guild)
+                    ? Start(p.action, done => Await(() => DiscordAccessService.ServersAsync(Token()), done))
+                    : Start(p.action, done => Await(() => DiscordAccessService.RolesAsync(Token(), guild), done));
+            }
+            if (p.action == "add_discord_rule")
+            {
+                var rule = data?.ToObject<DiscordAccessRule>() ?? throw new ArgumentException("Provide assetId and roleId.");
+                if (rule.roleId <= 0) throw new ArgumentException("Provide roleId: the ownership role (discord_roles lists them).");
+                return Start(p.action, done => Await(() => DiscordAccessService.AddRuleAsync(Token(), AssetId(data), rule), done));
+            }
             if (p.action == "set_environment")
                 return new SuccessResponse("Environment switched.", MCBAuthoringService.SetEnvironment(data?.Value<string>("environment")));
             if (p.action == "validate")
@@ -112,6 +129,7 @@ public static class MCBAuthoringTool
                     takenFromAvatar = taken,
                     note = taken.Count == 0 ? null : "The version holds the meshes Mixer committed on the avatar: each model in takenFromAvatar got a new custom FBX with them, which the draft now names." })));
                 case "apply": return Start(p.action, done => Apply(target, Version(data), done));
+                case "install": return Start(p.action, done => MCBAuthoringService.Install(target, AssetId(data), data.Value<string>("version"), done));
                 case "reset": return Start(p.action, done => Reset(target, done));
                 case "set_asset_protection": return Start(p.action, done => MCBAuthoringService.SetAssetProtection(target, data?.Value<int>("assetId") ?? 0,
                     data?["protection"]?.ToObject<VersionProtection>(), result => done(new { protection = result })));
@@ -157,6 +175,33 @@ public static class MCBAuthoringTool
         while (!task.IsCompleted) yield return null;
         var result = task.GetAwaiter().GetResult();
         done(shape == null ? (object)result : shape(result));
+    }
+    // Reads, never blocks: each request is polled by the job's coroutine (a Task waited on the main thread deadlocks Unity).
+    private static IEnumerator ServerAsset(int assetId, Action<object> done)
+    {
+        string token = Token();
+        var listing = new NetworkService().DownloadBytesAsync(MCBUtils.getApiUrl("creator") + "/assets", authToken: token);
+        while (!listing.IsCompleted) yield return null;
+        var owned = listing.GetAwaiter().GetResult();
+        if (!owned.success) throw new System.IO.IOException("Could not read the creator's assets: " + owned.error);
+        var asset = (JObject.Parse(Encoding.UTF8.GetString(owned.data))["assets"] as JArray)?.OfType<JObject>().SingleOrDefault(a => a.Value<int>("id") == assetId)
+            ?? throw new ArgumentException("Asset " + assetId + " is not owned by the signed-in creator on " + MCBAuthoringService.EnvironmentName + ".");
+        var originals = OriginalBaseSupportService.Load(assetId, token);
+        while (!originals.IsCompleted) yield return null;
+        var versions = new NetworkService().FetchVersionsAsync(OriginalBaseSupportService.Url(assetId, "/versions") + "?allSourceVersions=1", token);
+        while (!versions.IsCompleted) yield return null;
+        var published = versions.GetAwaiter().GetResult();
+        done(new
+        {
+            environment = MCBAuthoringService.EnvironmentName, id = assetId, name = asset.Value<string>("name"),
+            type = asset.Value<string>("type"), avatarBaseId = asset["avatarBaseId"], protection = asset["mcbProtection"], discordRoleId = asset["relatedRoleId"],
+            thumbnail = asset["thumbnail"], banner = asset["mcbBanner"], bannerOriginalFileId = asset["mcbBannerOriginal"],
+            legacyReleases = (asset["mcbLegacyReleases"] as JArray)?.Select(r => new { label = r.Value<string>("label"), customModelHashes = r["customModelHashes"]?.Count() ?? 0 }),
+            originalBaseVersions = (originals.IsFaulted ? Array.Empty<OriginalBaseVersionData>() : originals.Result).Select(o => new { o.key, o.label, files = o.sourceFiles?.Select(f => new { f.path, f.hash }) }),
+            originalsError = originals.IsFaulted ? originals.Exception?.GetBaseException().Message : null,
+            versions = published.success ? published.response?.versions?.Select(v => new { v.id, v.version, v.defaultAviVersion, v.scope, v.title, v.sourceVersionKey }) : null,
+            versionsError = published.success ? null : published.error
+        });
     }
     // One frame later, so the pending answer reaches the client before the VRCFury build holds the editor.
     private static IEnumerator Validate(MyCustomBase target, Action<object> done)

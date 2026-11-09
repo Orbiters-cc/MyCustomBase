@@ -802,6 +802,15 @@ public partial class AssetGalleryModule
                     if (!string.Equals(requestSignature, lastAvatarSignature, StringComparison.Ordinal) ||
                         !string.Equals(requestToken, editor.authToken, StringComparison.Ordinal))
                     {
+                        // A stale answer is dropped, but the load it belonged to is over: otherwise the gallery shows
+                        // "Discovering" for good and skips every refresh while it believes this load still runs.
+                        if (string.Equals(requestSignature, loadingAvatarSignature, StringComparison.Ordinal))
+                        {
+                            isLoading = false;
+                            loadingAvatarSignature = null;
+                            editor.RefreshUiToolkitSections();
+                            editor.Repaint();
+                        }
                         return;
                     }
 
