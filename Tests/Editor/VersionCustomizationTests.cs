@@ -151,6 +151,18 @@ public class VersionCustomizationTests
         Assert.That(ModeService.EnabledIds(owner), Is.EqualTo(new[] { "male", "dogears", "tail" }), "A missing genre falls back to the default; new modes start with theirs.");
     }
 
+    [Test] public void ToggleOffKeepsThePersonsOwnShapeValue()
+    {
+        // A person's own ear size (an Ultirex V4 "EarsSmall" kept through a migration) stays while the dog ears toggle,
+        // which also sets it, is off; on, the mode's value; off again, theirs.
+        var (root, owner, renderer, physics, ears) = ModeAvatar("Mode own value test");
+        renderer.SetBlendShapeWeight(1, 54.8f);
+        ModeService.Set(owner, "female", true);
+        Assert.That(renderer.GetBlendShapeWeight(1), Is.EqualTo(54.8f).Within(1e-4));
+        ModeService.Set(owner, "dogears", true); Assert.That(renderer.GetBlendShapeWeight(1), Is.EqualTo(100));
+        ModeService.Set(owner, "dogears", false); Assert.That(renderer.GetBlendShapeWeight(1), Is.EqualTo(54.8f).Within(1e-4));
+    }
+
     [Test] public void ModeLockRewritesPrivateControllerAndSurvivesPosingAnimation()
     {
         var (root, owner, renderer, physics, ears) = ModeAvatar("Mode build test");

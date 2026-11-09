@@ -70,7 +70,8 @@ public static class VersionCustomizationBuild
             {
                 var target = AvatarPaths.Find(avatar.transform, shape.mesh);
                 if (target == null) continue;
-                plan.Properties.Add(new Property { Target = target, Type = typeof(SkinnedMeshRenderer), Name = "blendShape." + shape.name, Value = modes.Shapes[shape] });
+                plan.Properties.Add(new Property { Target = target, Type = typeof(SkinnedMeshRenderer), Name = "blendShape." + shape.name,
+                    Value = ModeService.ShapeValue(owner, modes, shape, target.GetComponent<SkinnedMeshRenderer>()) });
             }
             foreach (string path in modes.LockedObjects)
             {

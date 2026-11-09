@@ -10,11 +10,12 @@ using UnityEngine;
 /// </summary>
 public static class ModeService
 {
-    /// <summary>What the enabled modes set. Blendshapes any mode controls are 0 unless an enabled mode sets them;
-    /// objects and animated values keep their original state unless an enabled mode sets them.</summary>
+    /// <summary>What the enabled modes set. Blendshapes, objects and animated values keep the avatar's own state unless an
+    /// enabled mode sets them (null): a person's own ear size stays while the dog ears toggle that also sets it is off.
+    /// A blendshape of an exclusive category's option is 0 while another option of it is on.</summary>
     public sealed class Plan
     {
-        public readonly Dictionary<(string mesh, string name), float> Shapes = new Dictionary<(string, string), float>();
+        public readonly Dictionary<(string mesh, string name), float?> Shapes = new Dictionary<(string, string), float?>();
         public readonly Dictionary<string, bool?> Objects = new Dictionary<string, bool?>(StringComparer.Ordinal);
         public readonly Dictionary<EditorCurveBinding, float?> Properties = new Dictionary<EditorCurveBinding, float?>();
         // Locked in the build against other animations: everything an exclusive category declares, and what enabled
@@ -108,8 +109,11 @@ public static class ModeService
             void SetShape(string mesh, string name, float value)
             {
                 var key = (mesh, name);
-                if (!plan.Shapes.ContainsKey(key)) plan.Shapes[key] = 0;
+                if (!plan.Shapes.ContainsKey(key)) plan.Shapes[key] = null;
+                // An exclusive category's other choice means the shape is meant away (male, not female): 0. A toggle that
+                // is off (dog ears) leaves the avatar's own value.
                 if (on) plan.Shapes[key] = value;
+                else if (exclusive && !plan.Shapes[key].HasValue) plan.Shapes[key] = 0;
                 if (on || exclusive) plan.LockedShapes.Add(key);
             }
             void SetObject(string path, bool active)
@@ -151,10 +155,10 @@ public static class ModeService
             var smr = AvatarPaths.Find(root, shape.Key.mesh)?.GetComponent<SkinnedMeshRenderer>();
             int index = smr != null && smr.sharedMesh != null ? smr.sharedMesh.GetBlendShapeIndex(shape.Key.name) : -1;
             if (index < 0) { MCBLogger.LogWarning($"[MCB] A mode sets '{shape.Key.mesh}/{shape.Key.name}', which this avatar does not have."); continue; }
-            if (!owner.modeOriginalShapes.Any(s => s.target == smr && s.name == shape.Key.name))
-                owner.modeOriginalShapes.Add(new ModeOriginalShape { target = smr, name = shape.Key.name, value = smr.GetBlendShapeWeight(index) });
+            var original = owner.modeOriginalShapes.FirstOrDefault(s => s.target == smr && s.name == shape.Key.name);
+            if (original == null) owner.modeOriginalShapes.Add(original = new ModeOriginalShape { target = smr, name = shape.Key.name, value = smr.GetBlendShapeWeight(index) });
             Undo.RecordObject(smr, "Apply MCB modes");
-            smr.SetBlendShapeWeight(index, shape.Value);
+            smr.SetBlendShapeWeight(index, shape.Value ?? original.value);
             EditorUtility.SetDirty(smr);
         }
         foreach (var state in plan.Objects)
@@ -182,6 +186,16 @@ public static class ModeService
         }
         Write(root, values, "Apply MCB modes");
         EditorUtility.SetDirty(owner);
+    }
+
+    /// <summary>A shape's value with the enabled modes: the one an enabled mode sets, else the avatar's own (as before the modes).</summary>
+    public static float ShapeValue(MyCustomBase owner, Plan plan, (string mesh, string name) key, SkinnedMeshRenderer target)
+    {
+        if (plan.Shapes.TryGetValue(key, out var set) && set.HasValue) return set.Value;
+        var original = owner.modeOriginalShapes.FirstOrDefault(s => s.target == target && s.name == key.name);
+        if (original != null) return original.value;
+        int index = target != null && target.sharedMesh != null ? target.sharedMesh.GetBlendShapeIndex(key.name) : -1;
+        return index >= 0 ? target.GetBlendShapeWeight(index) : 0f;
     }
 
     public static void Restore(MyCustomBase owner)

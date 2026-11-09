@@ -1203,12 +1203,21 @@ public class VersionActions
         Orbiters.Toolkit.Editor.Animations.PathSnapshot before = null;
         try { if (root != null) before = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Snapshot(root.gameObject); }
         catch (Exception ex) { MCBLogger.LogWarning("[MCB] Could not record the avatar's animation paths before the switch: " + ex.Message); }
+        var placements = root != null ? AccessoryPlacements.Capture(root) : null;
         ApplyOrResetCore(version, isReset);
-        if (before == null || target == null) return;
+        if (target == null) return;
         bool switched = isReset
             ? target.appliedCustomBaseAssetId == 0
             : version != null && target.appliedCustomBaseAssetId == version.assetId && target.appliedCustomBaseVersionString == version.version;
         if (!switched) return;
+        try
+        {
+            int kept = placements?.Restore(root, BaseBoneNames(target, root)) ?? 0;
+            if (kept > 0) MCBLogger.Log($"[MCB] {kept} object(s) on the armature (hair, props, contacts) kept their place on the body the "
+                + (isReset ? "reset" : "version") + " moved the bones of.");
+        }
+        catch (Exception ex) { MCBLogger.LogWarning("[MCB] Objects on the armature could not keep their place: " + ex.Message); }
+        if (before == null) return;
         try
         {
             var plan = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Plan(root.gameObject, before, null, broken: false);
@@ -1222,6 +1231,86 @@ public class VersionActions
                     + string.Join("; ", applied.Skipped), MessageType.Warning, "Animation paths");
         }
         catch (Exception ex) { MCBLogger.LogWarning("[MCB] Animations could not follow the moved bones: " + ex.Message); }
+    }
+
+    /// <summary>The armature's own bones after a switch: the base models' transforms and the base renderers' bones, by name.</summary>
+    private static HashSet<string> BaseBoneNames(MyCustomBase target, Transform root)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        // Only the first base model is the base: the list also names the accessories' models found on the avatar.
+        var model = target.baseFbxFiles?.FirstOrDefault(m => m != null);
+        if (model != null) foreach (var t in model.GetComponentsInChildren<Transform>(true)) names.Add(t.name);
+        var baseMeshPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (model != null) baseMeshPaths.Add(AssetDatabase.GetAssetPath(model));
+        foreach (var renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (renderer.sharedMesh == null) continue;
+            string meshPath = AssetDatabase.GetAssetPath(renderer.sharedMesh);
+            // Base renderers: from a base model, or a version's own mesh (MCB stores those in its own folder).
+            if (!baseMeshPaths.Contains(meshPath) && !meshPath.StartsWith("Assets/MCB/", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var bone in renderer.bones) if (bone != null) names.Add(bone.name);
+        }
+        return names;
+    }
+
+    /// <summary>
+    /// Objects of the person's own on the armature (a hair's root under Head, horns, props, contacts). A version can move a
+    /// bone's pivot while the body around it stays (Ultirex V5 raises Head and moves its child bones back down): such an
+    /// object, left at its offset from the bone, would move with the pivot. After the switch it moves as the bone's own
+    /// child bones did instead (not at all when the body stayed), keeping its rotation. Objects MCB itself moved, and
+    /// objects under a bone the version reshaped around (its child bones moved differently) are left as they are.
+    /// </summary>
+    private sealed class AccessoryPlacements
+    {
+        private sealed class Entry { public Transform transform, parent; public Vector3 local, position; public Quaternion localRotation, rotation; }
+        private readonly List<Entry> entries = new List<Entry>();
+        // Every armature transform's place on the avatar before the switch (children of the bones it then compares).
+        private readonly Dictionary<Transform, Vector3> placesBefore = new Dictionary<Transform, Vector3>();
+
+        public static AccessoryPlacements Capture(Transform root)
+        {
+            var result = new AccessoryPlacements();
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == root || t.parent == null) continue;
+                result.placesBefore[t] = root.InverseTransformPoint(t.position);
+                result.entries.Add(new Entry { transform = t, parent = t.parent, local = t.localPosition, localRotation = t.localRotation,
+                    position = root.InverseTransformPoint(t.position), rotation = Quaternion.Inverse(root.rotation) * t.rotation });
+            }
+            return result;
+        }
+
+        public int Restore(Transform root, HashSet<string> baseBones)
+        {
+            int moved = 0;
+            foreach (var group in entries.Where(e => e.transform != null && e.parent != null && e.transform.parent == e.parent && baseBones.Contains(e.parent.name))
+                         .GroupBy(e => e.parent))
+            {
+                var bone = group.Key;
+                if (!placesBefore.TryGetValue(bone, out var boneBefore)) continue;
+                var boneShift = root.InverseTransformPoint(bone.position) - boneBefore;
+                // How the body around the bone moved: its own child bones that were there before.
+                // Only a pivot moved on its own: the bone's own child bones (two or more) all shifted alike, within 2 mm, and
+                // the bone by more than a millimetre apart from them. Child bones that moved differently mean the version
+                // reshaped that part (a longer arm, a bent ear): its objects keep following the bone.
+                var shifts = group.Where(e => baseBones.Contains(e.transform.name)).Select(e => root.InverseTransformPoint(e.transform.position) - e.position).ToList();
+                if (shifts.Count < 2) continue;
+                var bodyShift = shifts.Aggregate(Vector3.zero, (sum, v) => sum + v) / shifts.Count;
+                if (shifts.Any(v => (v - bodyShift).sqrMagnitude > 4e-6f)) continue;
+                if ((boneShift - bodyShift).sqrMagnitude < 1e-6f) continue;
+                foreach (var e in group.Where(e => !baseBones.Contains(e.transform.name)))
+                {
+                    // Objects the switch itself placed keep MCB's place.
+                    if ((e.transform.localPosition - e.local).sqrMagnitude > 1e-10f || Quaternion.Angle(e.transform.localRotation, e.localRotation) > 0.01f) continue;
+                    Undo.RecordObject(e.transform, "Keep objects on the body");
+                    e.transform.position = root.TransformPoint(e.position + bodyShift);
+                    e.transform.rotation = root.rotation * e.rotation;
+                    EditorUtility.SetDirty(e.transform);
+                    moved++;
+                }
+            }
+            return moved;
+        }
     }
 
     private void ApplyOrResetCore(CustomBaseVersion version, bool isReset, bool finalize = true)
@@ -1608,10 +1697,16 @@ public class VersionActions
                 {
                     var remembered = RememberedBlendshapes(version);
                     // Coming from the original base, a same-named original shape must not replace the custom base's value.
+                    // Other remembered shapes only fill the shapes the avatar does not have yet (below).
+                    var sliders = new HashSet<string>((version.customBlendshapes ?? new CustomBlendshapeEntry[0]).Where(e => e != null && !string.IsNullOrEmpty(e.name)).Select(e => e.name), StringComparer.Ordinal);
                     if (previousVersion == null)
                         foreach (var weights in blendshapeSnapshot.Values)
-                            foreach (string name in remembered.Keys) weights.Remove(name);
-                    RestoreBlendshapeState(root, blendshapeSnapshot, BuildBlendshapeDefaultLookup(version, remembered));
+                            foreach (string name in remembered.Keys.Where(sliders.Contains)) weights.Remove(name);
+                    var defaults = BuildBlendshapeDefaultLookup(version, remembered);
+                    // Remembered shapes the version does not expose as sliders too (a migrated legacy release's "EarsSmall").
+                    if (previousVersion == null)
+                        foreach (var pair in remembered) defaults[pair.Key] = pair.Value;
+                    RestoreBlendshapeState(root, blendshapeSnapshot, defaults);
                     SyncReFitTransferredBlendshapeWeights(root, version);
                     SyncBlendshapeOverridesFromCurrentWeights(root, version);
                     MCBLogger.Log($"[VersionActions] Restored blendshape values by name (saved renderers: {blendshapeSnapshot.Count}, overrides: {editor.customBaseTarget.customBlendshapeOverrideNames.Count})");

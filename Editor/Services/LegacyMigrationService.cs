@@ -158,6 +158,16 @@ public static class LegacyMigrationService
         Undo.IncrementCurrentGroup();
         int group = Undo.GetCurrentGroup();
         Undo.SetCurrentGroupName("Migrate " + match.legacyRelease.label + " to MCB");
+        // The legacy model's shape values (its own shapes too: "orbit ears wide"), the body's first: the original model
+        // lacks the release's own shapes, so the next apply of the asset sets them back instead of its defaults.
+        var legacyWeights = new Dictionary<string, float>(StringComparer.Ordinal);
+        foreach (var plan in plans.OrderByDescending(p => p.name == "Body"))
+            for (int i = 0; i < plan.renderer.sharedMesh.blendShapeCount; i++)
+            {
+                string shape = plan.renderer.sharedMesh.GetBlendShapeName(i);
+                if (!legacyWeights.ContainsKey(shape)) legacyWeights[shape] = plan.renderer.GetBlendShapeWeight(i);
+            }
+        RememberLegacyShapes(avatar, match.assetId, legacyWeights);
         foreach (var plan in plans)
         {
             var weights = new Dictionary<string, float>(StringComparer.Ordinal);
@@ -215,6 +225,26 @@ public static class LegacyMigrationService
     /// its Animator's avatar), then files named like an original, then any other model. Each file is hashed once, and
     /// files far larger than an avatar base are skipped.
     /// </summary>
+    // Each MCB component of the avatar remembers the legacy shape values for the asset (in the migration's Undo step):
+    // VersionActions applies remembered values over the version's defaults when the avatar comes from its original base.
+    private static void RememberLegacyShapes(Transform avatar, int assetId, Dictionary<string, float> weights)
+    {
+        if (assetId <= 0 || weights.Count == 0) return;
+        foreach (var owner in avatar.GetComponentsInChildren<MyCustomBase>(true))
+        {
+            Undo.RecordObject(owner, "Remember legacy blendshapes");
+            var memory = owner.blendshapeMemory.FirstOrDefault(m => m.assetId == assetId);
+            if (memory == null) owner.blendshapeMemory.Add(memory = new BlendshapeMemory { assetId = assetId });
+            foreach (var pair in weights)
+            {
+                int index = memory.names.IndexOf(pair.Key);
+                if (index < 0) { memory.names.Add(pair.Key); memory.values.Add(pair.Value); }
+                else if (index < memory.values.Count) memory.values[index] = pair.Value;
+            }
+            EditorUtility.SetDirty(owner);
+        }
+    }
+
     // MCB's base models (the first one is what versions apply to and reset from) named the legacy models: the original
     // takes their place, in the migration's Undo step, so an open inspector never applies from the legacy model.
     private static void PointBaseModelsAtOriginal(Transform avatar, ICollection<string> legacyPaths, GameObject original)
