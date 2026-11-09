@@ -1,5 +1,17 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.21 — 2026-11-09
+
+- **Your shape values survive migrating an old release.** The original model lacks a release's own shapes ("orbit ears
+  wide"), so migrating dropped their values and the next apply set the version's defaults instead. The migration now
+  remembers the old model's values and the next apply sets them back.
+- **A mode that is off leaves your own value.** A toggle's blendshape (Ultirex V5's dog ears sets EarsSmall) went to 0
+  while the toggle was off, erasing the ear size you had set. It now keeps yours; the other choice of an exclusive
+  category (male, not female) still sets 0.
+- **Hair and props stay on the head when a version moves a bone's pivot.** Ultirex V5 raises Head and moves its child
+  bones back down: your objects under it (a hair's root, horns, contacts) rose with the pivot. After an apply or a reset
+  they now move as the bone's own child bones did; where a version reshapes a part (a longer arm), they follow the bone.
+
 ## 1.12.20 — 2026-11-09
 
 - **Your animations follow the bones a version moves.** A version can move the avatar's bones (Ultirex V5 puts TopFut
