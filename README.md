@@ -1,5 +1,13 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.19 — 2026-11-09
+
+- **Applying after migrating a release made before MCB works.** The migration left MCB's base models naming the legacy
+  model, and an inspector open during it kept that in its own copy: the apply then rebuilt the armature from the legacy
+  model and failed ("could not safely restore the canonical FBX armature pose"). The migration now names the original base
+  model instead, an open inspector detects its base models again, and every apply or reset reads the component's current
+  base models first.
+
 ## 1.12.18 — 2026-11-09
 
 - **Migrating a release made before MCB no longer leaves the gallery "Discovering" for good.** After *Migrate avatar*
