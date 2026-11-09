@@ -1,5 +1,13 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.23 — 2026-11-09
+
+- **Resetting to the original base keeps your face and body shapes.** A reset put the original meshes back without
+  setting their blendshapes, so Unity kept the version's values by slot: after Ultirex V5, the snout length landed on
+  the muscles and other values on visemes. Every shape is now set by name: the version's own shapes go back to what
+  the original base had, the rest keep your value. Applying the version again also brings back a migrated release's own
+  shapes ("arcane correction", "flooof"), which the reset used to forget.
+
 ## 1.12.22 — 2026-11-09
 
 - **Clothing skinned straight to a moved bone stays on the body too.** After 1.12.21 kept hair and props in place when a
