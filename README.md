@@ -1,5 +1,18 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.18 — 2026-11-09
+
+- **Migrating a release made before MCB no longer leaves the gallery "Discovering" for good.** After *Migrate avatar*
+  the gallery started a discovery for the avatar's new models without recording them, dropped the answer as stale and
+  never ended the loading state; it now refreshes like any model change.
+- **No half migrations.** When a renderer the original base has (Body…) uses a model that is neither the original nor
+  one of the release's registered models, *Migrate avatar* changes nothing and names that model, instead of migrating
+  only the recognised parts (a separate tail) and leaving the body custom.
+- **Large versions publish to production.** Packages over 90 MB are uploaded in 64 MB parts, then named by the usual
+  publish request, so they pass the 100 MB request limit in front of the production server (needs the matching server).
+- MCP `mcb_authoring`: `install {assetId, version}` (a member's Download and Apply from the gallery), `server_asset`,
+  `discord_access`, `discord_roles` and `add_discord_rule`.
+
 ## 1.12.17 — 2026-11-01
 
 - Orbiters Toolkit's shared UI classes are `orbiters-*` (they were named after N4N0's former name): MCB's gallery cards,
