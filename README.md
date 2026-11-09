@@ -1,5 +1,13 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.20 — 2026-11-09
+
+- **Your animations follow the bones a version moves.** A version can move the avatar's bones (Ultirex V5 puts TopFut
+  between the knee and the ankle): animations of your own that reached them by their former paths (the toe curl layers
+  of an Ultirex V4 project) stopped working. After an apply or a reset, MCB now rewrites those paths with Orbiters
+  Toolkit's animation paths (shared clips are copied for this avatar, package and model clips are left as they are) and
+  tells which ones it could not change. Requires Orbiters Toolkit 0.4.13.
+
 ## 1.12.19 — 2026-11-09
 
 - **Applying after migrating a release made before MCB works.** The migration left MCB's base models naming the legacy
