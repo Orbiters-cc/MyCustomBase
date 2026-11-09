@@ -1215,6 +1215,8 @@ public class VersionActions
             int kept = placements?.Restore(root, BaseBoneNames(target, root)) ?? 0;
             if (kept > 0) MCBLogger.Log($"[MCB] {kept} object(s) on the armature (hair, props, contacts) kept their place on the body the "
                 + (isReset ? "reset" : "version") + " moved the bones of.");
+            int rebound = placements?.Rebind(root, renderer => IsBaseRenderer(target, renderer)) ?? 0;
+            if (rebound > 0) MCBLogger.Log($"[MCB] {rebound} mesh(es) skinned to those bones (clothing, hoodies) kept their place: copies in {AccessoryPlacements.ReboundFolder}.");
         }
         catch (Exception ex) { MCBLogger.LogWarning("[MCB] Objects on the armature could not keep their place: " + ex.Message); }
         if (before == null) return;
@@ -1240,17 +1242,20 @@ public class VersionActions
         // Only the first base model is the base: the list also names the accessories' models found on the avatar.
         var model = target.baseFbxFiles?.FirstOrDefault(m => m != null);
         if (model != null) foreach (var t in model.GetComponentsInChildren<Transform>(true)) names.Add(t.name);
-        var baseMeshPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (model != null) baseMeshPaths.Add(AssetDatabase.GetAssetPath(model));
         foreach (var renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-        {
-            if (renderer.sharedMesh == null) continue;
-            string meshPath = AssetDatabase.GetAssetPath(renderer.sharedMesh);
-            // Base renderers: from a base model, or a version's own mesh (MCB stores those in its own folder).
-            if (!baseMeshPaths.Contains(meshPath) && !meshPath.StartsWith("Assets/MCB/", StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var bone in renderer.bones) if (bone != null) names.Add(bone.name);
-        }
+            if (IsBaseRenderer(target, renderer)) foreach (var bone in renderer.bones) if (bone != null) names.Add(bone.name);
         return names;
+    }
+
+    /// <summary>A base renderer: its mesh from the first base model, or a version's own mesh (MCB's folder, not the rebound copies).</summary>
+    private static bool IsBaseRenderer(MyCustomBase target, SkinnedMeshRenderer renderer)
+    {
+        if (renderer == null || renderer.sharedMesh == null) return false;
+        string meshPath = AssetDatabase.GetAssetPath(renderer.sharedMesh);
+        var model = target.baseFbxFiles?.FirstOrDefault(m => m != null);
+        if (model != null && string.Equals(meshPath, AssetDatabase.GetAssetPath(model), StringComparison.OrdinalIgnoreCase)) return true;
+        return meshPath.StartsWith("Assets/MCB/", StringComparison.OrdinalIgnoreCase)
+               && !meshPath.StartsWith(AccessoryPlacements.ReboundFolder + "/", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1266,6 +1271,11 @@ public class VersionActions
         private readonly List<Entry> entries = new List<Entry>();
         // Every armature transform's place on the avatar before the switch (children of the bones it then compares).
         private readonly Dictionary<Transform, Vector3> placesBefore = new Dictionary<Transform, Vector3>();
+        // Each transform's matrix on the avatar before the switch, and the bones whose pivot alone moved with how the body
+        // around them moved (found by Restore).
+        private readonly Dictionary<Transform, Matrix4x4> matricesBefore = new Dictionary<Transform, Matrix4x4>();
+        private readonly Dictionary<Transform, Vector3> pivots = new Dictionary<Transform, Vector3>();
+        public const string ReboundFolder = "Assets/MCB/rebound";
 
         public static AccessoryPlacements Capture(Transform root)
         {
@@ -1274,6 +1284,7 @@ public class VersionActions
             {
                 if (t == root || t.parent == null) continue;
                 result.placesBefore[t] = root.InverseTransformPoint(t.position);
+                result.matricesBefore[t] = root.worldToLocalMatrix * t.localToWorldMatrix;
                 result.entries.Add(new Entry { transform = t, parent = t.parent, local = t.localPosition, localRotation = t.localRotation,
                     position = root.InverseTransformPoint(t.position), rotation = Quaternion.Inverse(root.rotation) * t.rotation });
             }
@@ -1298,6 +1309,7 @@ public class VersionActions
                 var bodyShift = shifts.Aggregate(Vector3.zero, (sum, v) => sum + v) / shifts.Count;
                 if (shifts.Any(v => (v - bodyShift).sqrMagnitude > 4e-6f)) continue;
                 if ((boneShift - bodyShift).sqrMagnitude < 1e-6f) continue;
+                pivots[bone] = bodyShift;
                 foreach (var e in group.Where(e => !baseBones.Contains(e.transform.name)))
                 {
                     // Objects the switch itself placed keep MCB's place.
@@ -1310,6 +1322,60 @@ public class VersionActions
                 }
             }
             return moved;
+        }
+
+        /// <summary>
+        /// Meshes of the person's own skinned straight to a bone whose pivot alone moved (a hoodie on Head) would rise with
+        /// the pivot: their bind poses for those bones are rewritten so each vertex lands where it was, moved as the body
+        /// around the bone moved. The mesh is a copy in <see cref="ReboundFolder"/> (a model's mesh cannot be changed);
+        /// the renderer points at it in the switch's Undo step. Base renderers are left to the version. After Restore.
+        /// </summary>
+        public int Rebind(Transform root, Func<SkinnedMeshRenderer, bool> isBase)
+        {
+            if (pivots.Count == 0) return 0;
+            int rebound = 0;
+            foreach (var renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                var mesh = renderer.sharedMesh;
+                if (mesh == null || isBase(renderer)) continue;
+                var bones = renderer.bones;
+                var poses = mesh.bindposes;
+                if (poses.Length != bones.Length) continue;
+                bool changed = false;
+                for (int i = 0; i < bones.Length; i++)
+                {
+                    var bone = bones[i];
+                    if (bone == null || !pivots.TryGetValue(bone, out var shift) || !matricesBefore.TryGetValue(bone, out var before)) continue;
+                    // On the avatar: after = bone now * pose', wanted = shift * bone before * pose.
+                    var now = root.worldToLocalMatrix * bone.localToWorldMatrix;
+                    poses[i] = now.inverse * Matrix4x4.Translate(shift) * before * poses[i];
+                    changed = true;
+                }
+                if (!changed) continue;
+                var copy = UnityEngine.Object.Instantiate(mesh);
+                copy.name = mesh.name;
+                copy.bindposes = poses;
+                string folder = ReboundFolder + "/" + Safe(root.name);
+                EnsureFolder(folder);
+                string path = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + Safe(renderer.name) + ".asset");
+                AssetDatabase.CreateAsset(copy, path);
+                Undo.RecordObject(renderer, "Keep meshes on the body");
+                renderer.sharedMesh = copy;
+                EditorUtility.SetDirty(renderer);
+                rebound++;
+            }
+            if (rebound > 0) AssetDatabase.SaveAssets();
+            return rebound;
+        }
+
+        private static string Safe(string name) => string.Concat((name ?? "Avatar").Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c)).Trim();
+
+        private static void EnsureFolder(string folder)
+        {
+            if (AssetDatabase.IsValidFolder(folder)) return;
+            string parent = MCBUtils.ToUnityPath(Path.GetDirectoryName(folder));
+            EnsureFolder(parent);
+            AssetDatabase.CreateFolder(parent, Path.GetFileName(folder));
         }
     }
 
