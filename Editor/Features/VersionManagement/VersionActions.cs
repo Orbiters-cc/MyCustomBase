@@ -1398,8 +1398,6 @@ public class VersionActions
         bool preserveBlendshapeValues = editor.customBaseTarget != null && editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch;
         var blendshapeSnapshot = preserveBlendshapeValues ? CaptureBlendshapeState(root) : null;
         var previousVersion = ResolvePersistedAppliedVersion();
-        // The original base has none of the custom base's blendshapes: remember their values for its next install.
-        if (isReset) RememberVersionBlendshapes(root, previousVersion);
         var versionForAssets = isReset ? (previousVersion ?? editor.selectedVersionForAction) : version;
         bool previousUsesAdvancedMesh = NativeMeshPayloadService.VersionUsesAdvancedMesh(previousVersion);
         bool versionUsesAdvancedMesh = NativeMeshPayloadService.VersionUsesAdvancedMesh(versionForAssets);
@@ -1420,6 +1418,7 @@ public class VersionActions
             {
                 Undo.RecordObject(target, "Record original models");
                 target.versionOriginalModels = target.baseFbxFiles.Where(model => model != null).ToList();
+                RememberOriginalBaseBlendshapes(root, blendshapeSnapshot ?? CaptureBlendshapeState(root));
             }
         }
         else if (target.versionOriginalModels.Count > 0 && !target.baseFbxFiles.SequenceEqual(target.versionOriginalModels))
@@ -1444,6 +1443,10 @@ public class VersionActions
             GetTransitionAffectedFbxPaths(transitionVersions, fbxPath), editor.customBaseTarget, editor);
 
         ModeService.Restore(editor.customBaseTarget);
+        // The person's values without the version's modes: the reset gives them back by name once the original meshes are on.
+        var resetSnapshot = isReset ? CaptureBlendshapeState(root) : null;
+        // The original base has none of the custom base's blendshapes: remember their values for its next install.
+        if (isReset) RememberVersionBlendshapes(root, previousVersion);
         NativeRendererLayoutService.Restore(editor.customBaseTarget);
         NativeMeshPayloadService.RestoreOriginalBoneParents(editor.customBaseTarget);
         MCBReFitIntegration.SaveVersionFits(editor.customBaseTarget, previousVersion);
@@ -1831,6 +1834,7 @@ public class VersionActions
             else if (isReset)
             {
                 ReportApplyProgress(0.95f, "Clearing custom version controls...");
+                RestoreOriginalBaseBlendshapes(root, resetSnapshot, previousVersion, preserveBlendshapeValues);
                 // Clear custom overrides when resetting
                 editor.customBaseTarget.customBlendshapeOverrideNames.Clear();
                 editor.customBaseTarget.customBlendshapeOverrideValues.Clear();
@@ -2821,20 +2825,73 @@ public class VersionActions
     {
         var owner = editor.customBaseTarget;
         if (root == null || owner == null || version?.customBlendshapes == null || version.assetId <= 0) return;
-        var renderers = GetTargetBlendshapeRenderers(root).ToList();
+        var renderers = GetTargetBlendshapeRenderers(root).OrderByDescending(r => r.name == "Body").ToList();
+        // Merged into what the asset already remembers: a migrated legacy release's own shapes ("arcane correction") are
+        // no sliders of the version but must come back on the next install too.
+        var existing = owner.blendshapeMemory.FirstOrDefault(m => m.assetId == version.assetId);
+        var names = new List<string>(existing?.names ?? new List<string>());
+        names.AddRange(version.customBlendshapes.Where(e => e != null && !string.IsNullOrEmpty(e.name)).Select(e => e.name).Where(n => !names.Contains(n)));
         var memory = new BlendshapeMemory { assetId = version.assetId };
-        foreach (var entry in version.customBlendshapes.Where(e => e != null && !string.IsNullOrEmpty(e.name)))
+        for (int i = 0; i < names.Count; i++)
         {
-            var renderer = renderers.OrderByDescending(r => r.name == "Body").FirstOrDefault(r => r.sharedMesh.GetBlendShapeIndex(entry.name) >= 0);
-            if (renderer == null) continue;
-            memory.names.Add(entry.name);
-            memory.values.Add(renderer.GetBlendShapeWeight(renderer.sharedMesh.GetBlendShapeIndex(entry.name)));
+            var renderer = renderers.FirstOrDefault(r => r.sharedMesh.GetBlendShapeIndex(names[i]) >= 0);
+            int old = existing?.names.IndexOf(names[i]) ?? -1;
+            if (renderer == null && (old < 0 || old >= existing.values.Count)) continue;
+            memory.names.Add(names[i]);
+            memory.values.Add(renderer != null ? renderer.GetBlendShapeWeight(renderer.sharedMesh.GetBlendShapeIndex(names[i])) : existing.values[old]);
         }
         if (memory.names.Count == 0) return;
         Undo.RecordObject(owner, "Remember custom base blendshapes");
         owner.blendshapeMemory.RemoveAll(m => m.assetId == version.assetId);
         owner.blendshapeMemory.Add(memory);
         EditorUtility.SetDirty(owner);
+    }
+
+    // Memory 0 holds the original base's own shape values, saved when the avatar leaves it.
+    private const int OriginalBaseMemoryId = 0;
+
+    private void RememberOriginalBaseBlendshapes(Transform root, Dictionary<string, Dictionary<string, float>> snapshot)
+    {
+        var owner = editor.customBaseTarget;
+        if (root == null || owner == null || snapshot == null) return;
+        var memory = new BlendshapeMemory { assetId = OriginalBaseMemoryId };
+        // The body's values first when two renderers share a shape name.
+        foreach (var pair in snapshot.OrderByDescending(p => p.Key == "Body" || p.Key.EndsWith("/Body", StringComparison.Ordinal)))
+            foreach (var weight in pair.Value)
+                if (!memory.names.Contains(weight.Key)) { memory.names.Add(weight.Key); memory.values.Add(weight.Value); }
+        if (memory.names.Count == 0) return;
+        Undo.RecordObject(owner, "Remember original blendshapes");
+        owner.blendshapeMemory.RemoveAll(m => m.assetId == OriginalBaseMemoryId);
+        owner.blendshapeMemory.Add(memory);
+        EditorUtility.SetDirty(owner);
+    }
+
+    /// <summary>
+    /// Back on the original meshes, each shape is set by name (Unity would keep the version's values by slot index):
+    /// the version's own shapes return to the original base's saved values, the others keep the person's value, and a
+    /// shape the version lacks gets its saved value (else 0).
+    /// </summary>
+    private void RestoreOriginalBaseBlendshapes(Transform root, Dictionary<string, Dictionary<string, float>> snapshot, CustomBaseVersion previousVersion, bool keepValues)
+    {
+        if (root == null || snapshot == null) return;
+        var original = new Dictionary<string, float>(StringComparer.Ordinal);
+        var memory = editor.customBaseTarget?.blendshapeMemory.FirstOrDefault(m => m.assetId == OriginalBaseMemoryId);
+        for (int i = 0; memory != null && i < memory.names.Count && i < memory.values.Count; i++) original[memory.names[i]] = memory.values[i];
+        var owned = new HashSet<string>((previousVersion?.customBlendshapes ?? new CustomBlendshapeEntry[0]).Where(e => e != null && !string.IsNullOrEmpty(e.name)).Select(e => e.name), StringComparer.Ordinal);
+        foreach (var renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (renderer == null || renderer.sharedMesh == null) continue;
+            if (!snapshot.TryGetValue(GetRelativeTransformPath(root, renderer.transform), out var current)) continue;
+            Undo.RecordObject(renderer, "Restore Blendshape Values");
+            for (int i = 0; i < renderer.sharedMesh.blendShapeCount; i++)
+            {
+                string name = renderer.sharedMesh.GetBlendShapeName(i);
+                bool hasOriginal = original.TryGetValue(name, out float saved);
+                float value = keepValues && !(owned.Contains(name) && hasOriginal) && current.TryGetValue(name, out float now) ? now : hasOriginal ? saved : 0f;
+                renderer.SetBlendShapeWeight(i, value);
+            }
+            EditorUtility.SetDirty(renderer);
+        }
     }
 
     private Dictionary<string, float> RememberedBlendshapes(CustomBaseVersion version)
