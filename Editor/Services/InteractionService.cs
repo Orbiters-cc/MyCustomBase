@@ -3,10 +3,11 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
+using System.Net.Http;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using UnityEngine.Networking;
+using Orbiters.Toolkit;
 
 public static class InteractionTypes
 {
@@ -116,29 +117,25 @@ public static class InteractionService
         }
 
         string url = $"{MCBUtils.getApiUrl()}/assets/{assetId}/interactions";
-        using (var request = UnityWebRequest.Get(url))
+        var call = SendAsync<AssetInteractionsResponse>(HttpMethod.Get, url, authToken, null, "Load interactions", "Failed to load interactions");
+        while (!call.IsCompleted) yield return null;
+        var reply = call.Result;
+        if (reply.Error != null)
         {
-            MCBRequestHeaders.SetAuthorization(request, authToken);
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Load interactions"));
+            onComplete?.Invoke(null, reply.Error);
+            yield break;
+        }
 
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                onComplete?.Invoke(null, BuildRequestError("Failed to load interactions", request));
-                yield break;
-            }
-
-            try
-            {
-                var response = JsonConvert.DeserializeObject<AssetInteractionsResponse>(request.downloadHandler.text);
-                response = response ?? new AssetInteractionsResponse();
-                response.NormalizeForViewer(currentUserId);
-                onComplete?.Invoke(response, null);
-            }
-            catch (Exception ex)
-            {
-                onComplete?.Invoke(null, $"Failed to parse interactions: {ex.Message}");
-            }
+        try
+        {
+            if (reply.ParseError != null) throw reply.ParseError;
+            var response = reply.Value ?? new AssetInteractionsResponse();
+            response.NormalizeForViewer(currentUserId);
+            onComplete?.Invoke(response, null);
+        }
+        catch (Exception ex)
+        {
+            onComplete?.Invoke(null, $"Failed to parse interactions: {ex.Message}");
         }
     }
 
@@ -154,38 +151,28 @@ public static class InteractionService
         }
 
         string url = $"{MCBUtils.getApiUrl()}/interactions";
-        string json = JsonConvert.SerializeObject(payload);
-        byte[] bytes = Encoding.UTF8.GetBytes(json);
-
-        using (var request = new UnityWebRequest(url, "POST"))
+        var call = SendAsync<CreateInteractionResponse>(HttpMethod.Post, url, authToken, payload, "Create interaction", "Failed to create interaction");
+        while (!call.IsCompleted) yield return null;
+        var reply = call.Result;
+        if (reply.Error != null)
         {
-            MCBRequestHeaders.SetAuthorization(request, authToken);
-            request.uploadHandler = new UploadHandlerRaw(bytes);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Create interaction"));
+            onComplete?.Invoke(null, reply.Error);
+            yield break;
+        }
 
-            if (request.result != UnityWebRequest.Result.Success)
+        try
+        {
+            if (reply.ParseError != null) throw reply.ParseError;
+            if (reply.Value?.interaction == null || reply.Value.interaction.id <= 0)
             {
-                onComplete?.Invoke(null, BuildRequestError("Failed to create interaction", request));
-                yield break;
+                throw new InvalidOperationException("The server did not return an interaction.");
             }
 
-            try
-            {
-                var response = JsonConvert.DeserializeObject<CreateInteractionResponse>(request.downloadHandler.text);
-                if (response?.interaction == null || response.interaction.id <= 0)
-                {
-                    throw new InvalidOperationException("The server did not return an interaction.");
-                }
-
-                onComplete?.Invoke(response.interaction, null);
-            }
-            catch (Exception ex)
-            {
-                onComplete?.Invoke(null, $"Failed to parse created interaction: {ex.Message}");
-            }
+            onComplete?.Invoke(reply.Value.interaction, null);
+        }
+        catch (Exception ex)
+        {
+            onComplete?.Invoke(null, $"Failed to parse created interaction: {ex.Message}");
         }
     }
 
@@ -198,20 +185,10 @@ public static class InteractionService
         }
 
         string url = $"{MCBUtils.getApiUrl()}/interactions/{interactionId}";
-        using (var request = UnityWebRequest.Delete(url))
-        {
-            MCBRequestHeaders.SetAuthorization(request, authToken);
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Delete interaction"));
-
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                onComplete?.Invoke(BuildRequestError("Failed to delete interaction", request));
-                yield break;
-            }
-
-            onComplete?.Invoke(null);
-        }
+        var call = SendAsync<JToken>(HttpMethod.Delete, url, authToken, null, "Delete interaction", "Failed to delete interaction");
+        while (!call.IsCompleted) yield return null;
+        // The answer's body is not read: deleted is deleted.
+        onComplete?.Invoke(call.Result.Error);
     }
 
     public static IEnumerator UpdateInteractionCoroutine(
@@ -233,50 +210,64 @@ public static class InteractionService
         };
 
         string url = $"{MCBUtils.getApiUrl()}/interactions/{interactionId}";
-        string json = JsonConvert.SerializeObject(payload);
-        byte[] bytes = Encoding.UTF8.GetBytes(json);
-
-        using (var request = new UnityWebRequest(url, "PUT"))
+        var call = SendAsync<CreateInteractionResponse>(HttpMethod.Put, url, authToken, payload, "Update interaction", "Failed to update interaction");
+        while (!call.IsCompleted) yield return null;
+        var reply = call.Result;
+        if (reply.Error != null)
         {
-            MCBRequestHeaders.SetAuthorization(request, authToken);
-            request.uploadHandler = new UploadHandlerRaw(bytes);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Update interaction"));
+            onComplete?.Invoke(null, reply.Error);
+            yield break;
+        }
 
-            if (request.result != UnityWebRequest.Result.Success)
+        try
+        {
+            if (reply.ParseError != null) throw reply.ParseError;
+            if (reply.Value?.interaction == null || reply.Value.interaction.id <= 0)
             {
-                onComplete?.Invoke(null, BuildRequestError("Failed to update interaction", request));
-                yield break;
+                throw new InvalidOperationException("The server did not return an interaction.");
             }
 
-            try
-            {
-                var response = JsonConvert.DeserializeObject<CreateInteractionResponse>(request.downloadHandler.text);
-                if (response?.interaction == null || response.interaction.id <= 0)
-                {
-                    throw new InvalidOperationException("The server did not return an interaction.");
-                }
-
-                onComplete?.Invoke(response.interaction, null);
-            }
-            catch (Exception ex)
-            {
-                onComplete?.Invoke(null, $"Failed to parse updated interaction: {ex.Message}");
-            }
+            onComplete?.Invoke(reply.Value.interaction, null);
+        }
+        catch (Exception ex)
+        {
+            onComplete?.Invoke(null, $"Failed to parse updated interaction: {ex.Message}");
         }
     }
 
-    private static string BuildRequestError(string prefix, UnityWebRequest request)
+    // A request's outcome: the answer, or the error to show (Error), or an answer that is not what was asked (ParseError).
+    private sealed class Reply<T>
+    {
+        public T Value;
+        public string Error;
+        public Exception ParseError;
+    }
+
+    // Never throws: the coroutines above read the outcome.
+    private static async Task<Reply<T>> SendAsync<T>(HttpMethod method, string url, string authToken, object payload, string context, string failure)
+    {
+        try
+        {
+            return new Reply<T>
+            {
+                Value = await McbHttp.JsonAsync<T>(method, url, authToken, payload, MCBRequestPolicy.Backend(context),
+                    NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery))
+            };
+        }
+        catch (OrbitersHttpException ex) { return new Reply<T> { Error = BuildRequestError(failure, ex) }; }
+        catch (JsonException ex) { return new Reply<T> { ParseError = ex }; }
+        catch (Exception ex) when (ex is UriFormatException || ex is ArgumentException) { return new Reply<T> { Error = $"{failure}: {ex.Message}" }; }
+    }
+
+    private static string BuildRequestError(string prefix, OrbitersHttpException error)
     {
         string message = null;
         try
         {
-            var payload = JsonConvert.DeserializeObject<JObject>(request.downloadHandler?.text ?? "{}");
+            var payload = JsonConvert.DeserializeObject<JObject>(error.Body ?? "{}");
             message = payload?.Value<string>("error") ?? payload?.Value<string>("message");
         }
-        catch
+        catch (Exception ex) when (ex is JsonException || ex is InvalidCastException || ex is FormatException)
         {
         }
 
@@ -285,7 +276,7 @@ public static class InteractionService
             return $"{prefix}: {message}";
         }
 
-        return $"{prefix}: HTTP {request.responseCode} {request.error}";
+        return $"{prefix}: {error.Message}";
     }
 }
 #endif

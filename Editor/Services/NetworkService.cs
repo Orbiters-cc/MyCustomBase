@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using Orbiters.Toolkit;
 using Orbiters.Toolkit.Editor.Net;
 using System;
 using System.IO;
@@ -40,6 +41,8 @@ public class NetworkService
         }
     }
 
+    // Still a UnityWebRequest: OrbitersHttp follows redirects (to another server without the token), and trust must
+    // come from the authenticated API's own answer.
     public async Task<VersionContentTrust.CreatorTrustSnapshot> FetchCreatorTrustAsync(string url, string authToken)
     {
         try
@@ -63,65 +66,64 @@ public class NetworkService
 
     public async Task<(bool success, CustomBaseVersionResponse response, string error)> FetchVersionsAsync(string url, string authToken)
     {
-        using (var req = UnityWebRequest.Get(url))
+        MCBLogger.Log($"[NetworkService] FetchVersionsAsync GET {SanitizeUrlForLogs(url)}");
+        string body;
+        try
         {
-            MCBRequestHeaders.SetAuthorization(req, authToken);
-            MCBLogger.Log($"[NetworkService] FetchVersionsAsync GET {SanitizeUrlForLogs(url)}");
-            req.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
-            await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Fetch versions"));
-
-            long code = req.responseCode;
-            string body = null;
-            try { body = req.downloadHandler?.text; } catch { /* ignore */ }
-
+            body = await McbHttp.TextAsync(url, authToken, MCBRequestPolicy.Backend("Fetch versions"), GetTimeoutSeconds(NetworkRequestType.VersionFetch));
+        }
+        catch (OrbitersHttpException ex)
+        {
             // A member who does not own the asset gets 403 {"code": "ACCESS_DENIED", "assetId"}: callers show the store link.
             // Other 403s (a Discord role, ...) keep their server message below.
-            if (code == 403 && TryReadAccessDenied(body, out string deniedAssetId))
+            if (ex.StatusCode == 403 && TryReadAccessDenied(ex.Body, out string deniedAssetId))
             {
-                MCBLogger.LogWarning($"[NetworkService] FetchVersionsAsync access denied: {BuildHttpContext(req, url, body)}");
+                MCBLogger.LogWarning($"[NetworkService] FetchVersionsAsync access denied: {McbHttp.Context(ex, url)}");
                 return (false, null, AccessDeniedPrefix + deniedAssetId);
             }
 
-            if (req.result != UnityWebRequest.Result.Success)
-            {
-                string httpContext = BuildHttpContext(req, url, body);
-                MCBLogger.LogError($"[NetworkService] FetchVersionsAsync failed: {httpContext}");
+            string httpContext = McbHttp.Context(ex, url);
+            MCBLogger.LogError($"[NetworkService] FetchVersionsAsync failed: {httpContext}");
 
-                // Try to extract specific error message from JSON body
-                if (!string.IsNullOrEmpty(body))
+            // Try to extract specific error message from JSON body
+            if (!string.IsNullOrEmpty(ex.Body))
+            {
+                try
                 {
-                    try
-                    {
-                        var errorObj = JsonConvert.DeserializeObject<AccessDeniedPayload>(body);
-                        if (!string.IsNullOrEmpty(errorObj.errorMessage)) return (false, null, $"{errorObj.errorMessage}\n{httpContext}");
-                        if (!string.IsNullOrEmpty(errorObj.error)) return (false, null, $"{errorObj.error}\n{httpContext}");
-                    }
-                    catch { /* ignore JSON parse errors */ }
+                    var errorObj = JsonConvert.DeserializeObject<AccessDeniedPayload>(ex.Body);
+                    if (!string.IsNullOrEmpty(errorObj?.errorMessage)) return (false, null, $"{errorObj.errorMessage}\n{httpContext}");
+                    if (!string.IsNullOrEmpty(errorObj?.error)) return (false, null, $"{errorObj.error}\n{httpContext}");
                 }
-
-                switch (req.responseCode)
-                {
-                    case 401:
-                        return (false, null, $"Unauthorized while fetching versions.\n{httpContext}");
-                    case 404:
-                        return (false, null, $"Version discovery endpoint returned 404.\n{httpContext}");
-                    case 500:
-                        return (false, null, $"Server error while fetching versions.\n{httpContext}");
-                }
-                return (false, null, $"Version fetch request failed.\n{httpContext}");
+                catch (JsonException) { /* not JSON */ }
             }
 
-            try
+            switch (ex.StatusCode)
             {
-                var response = JsonConvert.DeserializeObject<CustomBaseVersionResponse>(body);
-                return (true, response, null);
+                case 401:
+                    return (false, null, $"Unauthorized while fetching versions.\n{httpContext}");
+                case 404:
+                    return (false, null, $"Version discovery endpoint returned 404.\n{httpContext}");
+                case 500:
+                    return (false, null, $"Server error while fetching versions.\n{httpContext}");
             }
-            catch (Exception e)
-            {
-                string parseContext = BuildHttpContext(req, url, body);
-                MCBLogger.LogError($"[NetworkService] FetchVersionsAsync parse failure: {e.Message}. {parseContext}");
-                return (false, null, $"Failed to parse version response: {e.Message}\n{parseContext}");
-            }
+            return (false, null, $"Version fetch request failed.\n{httpContext}");
+        }
+        catch (Exception ex) when (ex is UriFormatException || ex is ArgumentException)
+        {
+            MCBLogger.LogError($"[NetworkService] FetchVersionsAsync failed: {ex.Message} | url={SanitizeUrlForLogs(url)}");
+            return (false, null, $"Version fetch request failed.\n{ex.Message}");
+        }
+
+        try
+        {
+            var response = JsonConvert.DeserializeObject<CustomBaseVersionResponse>(body);
+            return (true, response, null);
+        }
+        catch (Exception e)
+        {
+            string parseContext = $"HTTP 200 | url={SanitizeUrlForLogs(url)}" + (CreateBodySnippet(body) is string snippet ? $" | body={snippet}" : string.Empty);
+            MCBLogger.LogError($"[NetworkService] FetchVersionsAsync parse failure: {e.Message}. {parseContext}");
+            return (false, null, $"Failed to parse version response: {e.Message}\n{parseContext}");
         }
     }
 
@@ -145,13 +147,6 @@ public class NetworkService
         catch (Exception) { return false; }
     }
 
-    private static string BuildHttpContext(UnityWebRequest req, string url, string body)
-    {
-        string bodySnippet = CreateBodySnippet(body);
-        return $"HTTP {(long)req.responseCode} {req.error} | url={SanitizeUrlForLogs(url)}" +
-               (string.IsNullOrEmpty(bodySnippet) ? string.Empty : $" | body={bodySnippet}");
-    }
-
     public static string SanitizeUrlForLogs(string url)
     {
         if (string.IsNullOrEmpty(url))
@@ -162,7 +157,7 @@ public class NetworkService
         return Regex.Replace(url, @"([?&]t=)([^&]+)", "$1<redacted>", RegexOptions.IgnoreCase);
     }
 
-    private static string CreateBodySnippet(string body, int maxLength = 240)
+    internal static string CreateBodySnippet(string body, int maxLength = 240)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
@@ -543,16 +538,14 @@ public class NetworkService
     
     // --- Creator Mode Upload: streaming multipart with progress, cancel and stall detection ---
 
-    /// <summary>Seconds without any uploaded-bytes movement before a large upload is
-    /// considered stalled and aborted (replaces the old fixed 300 s total timeout that
-    /// killed big uploads on slow links and let dead connections hang).</summary>
+    /// <summary>Seconds without any uploaded-bytes movement before a staged part is considered stalled and aborted.</summary>
     private const double UploadStallTimeoutSeconds = 120d;
 
     /// <summary>
-    /// Uploads a version package as multipart/form-data ("metadata" JSON field +
-    /// "packageFile" zip part — wire-compatible with the previous implementation), but
-    /// streams the body from disk via UploadHandlerFile instead of loading the whole
-    /// zip into memory. The complete multipart body is pre-written to a temp file.
+    /// Uploads a version package as multipart/form-data ("metadata" JSON field + "packageFile" zip part), streamed from the
+    /// zip itself by Orbiters Toolkit (<see cref="OrbitersHttp.UploadMultipartAsync"/>): the same body, byte for byte, as
+    /// the file the previous uploader wrote first, without that copy. Stopped when nothing moved for
+    /// <see cref="OrbitersHttp.StallSeconds"/>.
     /// </summary>
     public async Task<(bool success, string serverResponse, string error, bool cancelled)> SubmitNewVersionStreamingAsync(
         string url,
@@ -573,86 +566,48 @@ public class NetworkService
             stagedId = staged.uploadId;
             url += (url.Contains("?") ? "&" : "?") + "packageUpload=" + Uri.EscapeDataString(stagedId);
         }
-        string boundary = "----MCBUpload" + Guid.NewGuid().ToString("N");
-        string bodyPath = Path.Combine(Path.GetTempPath(), $"mcb_upload_body_{Guid.NewGuid():N}.tmp");
-        MCBDownloadTempFiles.Track(bodyPath);
 
+        var parts = new System.Collections.Generic.List<OrbitersFormPart> { OrbitersFormPart.Field("metadata", metadataJson) };
+        if (stagedId == null) parts.Add(OrbitersFormPart.File("packageFile", zipFilePath, Path.GetFileName(zipFilePath), "application/zip"));
+        // A staged package already reported its bytes; the small form that names it only finishes the bar.
+        Action<long, long> progress = null;
+        if (stagedId == null && onProgress != null)
+            progress = (sent, total) => onProgress(total > 0 ? Mathf.Clamp01((float)((double)sent / total)) : 0f, (ulong)Math.Max(0, sent));
+        OrbitersTransferResult result;
         try
         {
-            // Same wire format as before ("metadata" JSON + "packageFile" zip), written by Orbiters Toolkit's transfer service.
-            OrbitersTransfer.WriteMultipart(bodyPath, boundary, stagedId != null
-                ? new[] { OrbitersTransfer.Part.Field("metadata", metadataJson) }
-                : new[]
-                {
-                    OrbitersTransfer.Part.Field("metadata", metadataJson),
-                    OrbitersTransfer.Part.File("packageFile", zipFilePath, Path.GetFileName(zipFilePath), "application/zip"),
-                });
-
-            using (var req = MCBDownloadTempFiles.Attach(bodyPath, new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST)))
-            {
-                req.uploadHandler = new UploadHandlerFile(bodyPath);
-                req.downloadHandler = new DownloadHandlerBuffer();
-                req.SetRequestHeader("Content-Type", $"multipart/form-data; boundary={boundary}");
-                MCBRequestHeaders.SetAuthorization(req, authToken);
-                req.timeout = 0; // stall detection below replaces the fixed timeout
-
-                UnityWebRequestAsyncOperation operation;
-                try
-                {
-                    operation = req.SendWebRequest();
-                }
-                catch (Exception ex)
-                {
-                    MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Upload version"));
-                    return (false, null, $"Upload failed to start: {ex.Message}", false);
-                }
-
-                // A staged package already reported its bytes; the small form that names it only finishes the bar.
-                var end = await OrbitersTransfer.WaitAsync(req, operation, running => { if (stagedId == null) onProgress?.Invoke(Mathf.Clamp01(running.uploadProgress), running.uploadedBytes); },
-                    cancellationToken, UploadStallTimeoutSeconds, upload: true);
-
-                onProgress?.Invoke(1f, stagedId == null ? req.uploadedBytes : (ulong)packageBytes);
-                // A cancelled or stalled upload does not take MCB offline; one that never reached the server does.
-                MCBConnectivityMonitor.ReportManagedUnityWebRequest(req, url, end == OrbitersTransfer.End.Done
-                    ? MCBRequestPolicy.Backend("Upload version") : MCBRequestPolicy.Transfer("Upload version"));
-
-                if (end == OrbitersTransfer.End.Cancelled)
-                {
-                    return (false, null, "The upload was cancelled.", true);
-                }
-
-                if (end == OrbitersTransfer.End.Stalled)
-                {
-                    return (false, null, $"The upload timed out: no data was sent for {UploadStallTimeoutSeconds:0} seconds.", false);
-                }
-
-                if (req.result != UnityWebRequest.Result.Success)
-                {
-                    string body = null;
-                    try { body = req.downloadHandler?.text; } catch { }
-                    string serverMessage = CreateBodySnippet(body, 500);
-                    string error = $"Upload failed: [{req.responseCode}] {req.error}";
-                    if (!string.IsNullOrWhiteSpace(serverMessage))
-                    {
-                        error += $" | {serverMessage}";
-                    }
-                    return (false, body, error, false);
-                }
-
-                return (true, req.downloadHandler.text, null, false);
-            }
+            result = await OrbitersHttp.UploadMultipartAsync(url, authToken, parts, progress, cancellationToken);
         }
-        finally
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is UriFormatException || ex is ArgumentException)
         {
-            try { if (File.Exists(bodyPath)) File.Delete(bodyPath); } catch { }
-            // A body that could not be deleted yet stays tracked: it goes before the next reload.
-            MCBDownloadTempFiles.Finish(bodyPath, File.Exists(bodyPath));
+            MCBManagedRequest.ReportException(url, ex, MCBRequestPolicy.Backend("Upload version"));
+            return (false, null, $"Upload failed to start: {ex.Message}", false);
         }
+
+        onProgress?.Invoke(1f, stagedId == null ? (ulong)Math.Max(0, result.Bytes) : (ulong)packageBytes);
+        if (result.Cancelled) return (false, null, "The upload was cancelled.", true);
+        // An answer proves the server reachable. No answer takes MCB offline only when the connection itself failed
+        // (OrbitersHttp.Offline): a stalled upload does not, as before.
+        if (result.StatusCode == 0 && OrbitersHttp.Offline) MCBConnectivityMonitor.ReportAnswer(url, 0, result.Error, MCBRequestPolicy.Backend("Upload version"));
+        else MCBConnectivityMonitor.ReportAnswer(url, result.StatusCode, result.Error, MCBRequestPolicy.Transfer("Upload version"));
+
+        if (!result.Success)
+        {
+            string serverMessage = CreateBodySnippet(result.Body, 500);
+            string error = result.StatusCode > 0 ? $"Upload failed: [{result.StatusCode}] {result.Error}" : result.Error;
+            if (!string.IsNullOrWhiteSpace(serverMessage)) error += $" | {serverMessage}";
+            return (false, result.Body, error, false);
+        }
+
+        return (true, result.Body, null, false);
     }
 
     /// <summary>Packages above this go up in parts (Cloudflare's 100 MB request limit in front of production).</summary>
     private const long StageAbovePackageBytes = 90L * 1024 * 1024;
     private const int StagedPartAttempts = 3;
+
+    // The answer to POST /package-uploads.
+    private sealed class StagedUpload { public string uploadId; public int partBytes, parts; }
 
     /// <summary>
     /// Stages a package on the server in parts (POST /package-uploads with its size and SHA-256, then each part as
@@ -664,20 +619,20 @@ public class NetworkService
         long size = new FileInfo(zipFilePath).Length;
         string hash = await Task.Run(() => ContentHash.Proof(zipFilePath), cancellationToken);
         string root = MCBUtils.getApiUrl() + "/package-uploads";
-        string uploadId; int partBytes, parts;
-        using (var create = new UnityWebRequest(root, UnityWebRequest.kHttpVerbPOST))
+        StagedUpload staged;
+        try
         {
-            create.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { size, sha256 = hash })));
-            create.downloadHandler = new DownloadHandlerBuffer();
-            create.SetRequestHeader("Content-Type", "application/json");
-            MCBRequestHeaders.SetAuthorization(create, authToken);
-            create.timeout = GetTimeoutSeconds(NetworkRequestType.VersionFetch);
-            await MCBManagedRequest.SendUnityWebRequestAsync(create, root, MCBRequestPolicy.Backend("Stage version package"));
-            if (create.result != UnityWebRequest.Result.Success)
-                return (false, null, $"Upload failed: [{create.responseCode}] {create.error} | {CreateBodySnippet(create.downloadHandler?.text, 500)}", false);
-            var answer = Newtonsoft.Json.Linq.JObject.Parse(create.downloadHandler.text);
-            uploadId = answer.Value<string>("uploadId"); partBytes = answer.Value<int>("partBytes"); parts = answer.Value<int>("parts");
+            staged = await McbHttp.JsonAsync<StagedUpload>(HttpMethod.Post, root, authToken, new { size, sha256 = hash },
+                MCBRequestPolicy.Backend("Stage version package"), GetTimeoutSeconds(NetworkRequestType.VersionFetch), cancellationToken);
         }
+        catch (OrbitersHttpException ex) { return (false, null, $"Upload failed: [{ex.StatusCode}] {ex.Message} | {CreateBodySnippet(ex.Body, 500)}", false); }
+        catch (OperationCanceledException) { return (false, null, "The upload was cancelled.", true); }
+        catch (JsonException ex) { return (false, null, $"Upload failed: the server's answer was not understood ({ex.Message}).", false); }
+        if (staged == null || string.IsNullOrEmpty(staged.uploadId) || staged.partBytes <= 0 || staged.parts <= 0)
+            return (false, null, "Upload failed: the server did not say how to send the package in parts.", false);
+        string uploadId = staged.uploadId;
+        int partBytes = staged.partBytes, parts = staged.parts;
+        // OrbitersHttp sends no raw (non-multipart) body yet: each part is a UnityWebRequest PUT of its bytes.
         var buffer = new byte[partBytes];
         using (var file = File.OpenRead(zipFilePath))
         {
@@ -692,7 +647,12 @@ public class NetworkService
                     if (count <= 0) return (false, null, "The package file changed while it was uploading.", false);
                     read += count;
                 }
-                byte[] data = length == partBytes ? buffer : buffer.Take(length).ToArray();
+                byte[] data = buffer;
+                if (length != partBytes)
+                {
+                    data = new byte[length];
+                    Buffer.BlockCopy(buffer, 0, data, 0, length);
+                }
                 string url = root + "/" + Uri.EscapeDataString(uploadId) + "/parts/" + part;
                 string error = null;
                 for (int attempt = 1; attempt <= StagedPartAttempts; attempt++)
@@ -729,47 +689,35 @@ public class NetworkService
             title = title,
             changelog = changelog ?? string.Empty
         };
-        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload));
 
-        using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPUT))
+        CreatorVersionMetadataUpdateResponse response;
+        try
         {
-            req.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            req.downloadHandler = new DownloadHandlerBuffer();
-            req.SetRequestHeader("Content-Type", "application/json");
-            MCBRequestHeaders.SetAuthorization(req, authToken);
-            req.timeout = GetTimeoutSeconds(NetworkRequestType.Upload);
-
-            await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Update version metadata"));
-
-            string body = null;
-            try { body = req.downloadHandler?.text; } catch { }
-
-            if (req.result != UnityWebRequest.Result.Success)
-            {
-                string serverMessage = CreateBodySnippet(body, 500);
-                string error = $"Update failed: [{req.responseCode}] {req.error}";
-                if (!string.IsNullOrWhiteSpace(serverMessage))
-                {
-                    error += $" | {serverMessage}";
-                }
-                return (false, null, error);
-            }
-
-            try
-            {
-                var response = JsonConvert.DeserializeObject<CreatorVersionMetadataUpdateResponse>(body);
-                if (response?.version == null)
-                {
-                    return (false, null, "The server did not return the updated version.");
-                }
-
-                return (true, response.version, null);
-            }
-            catch (Exception ex)
-            {
-                return (false, null, $"Failed to parse update response: {ex.Message}");
-            }
+            // MCB allowed 300 s; OrbitersHttp's API limit (90 s) ends the call first.
+            response = await McbHttp.JsonAsync<CreatorVersionMetadataUpdateResponse>(HttpMethod.Put, url, authToken, payload,
+                MCBRequestPolicy.Backend("Update version metadata"), GetTimeoutSeconds(NetworkRequestType.Upload));
         }
+        catch (OrbitersHttpException ex)
+        {
+            string serverMessage = CreateBodySnippet(ex.Body, 500);
+            string error = $"Update failed: [{ex.StatusCode}] {ex.Message}";
+            if (!string.IsNullOrWhiteSpace(serverMessage))
+            {
+                error += $" | {serverMessage}";
+            }
+            return (false, null, error);
+        }
+        catch (JsonException ex)
+        {
+            return (false, null, $"Failed to parse update response: {ex.Message}");
+        }
+
+        if (response?.version == null)
+        {
+            return (false, null, "The server did not return the updated version.");
+        }
+
+        return (true, response.version, null);
     }
 
     private class CreatorVersionMetadataUpdateRequest
@@ -793,45 +741,39 @@ public class NetworkService
 
     public async Task<CheckConnectionResponse> CheckConnectionDetailedAsync(string url, string authToken = null)
     {
-        using (var req = UnityWebRequest.Get(url))
+        try
         {
-            MCBRequestHeaders.SetAuthorization(req, authToken);
-
+            string text;
             try
             {
-                req.timeout = GetTimeoutSeconds(NetworkRequestType.ConnectionCheck);
-                await MCBManagedRequest.SendUnityWebRequestAsync(req, url, MCBRequestPolicy.Backend("Check connection"));
-                if (req.result != UnityWebRequest.Result.Success)
-                {
-                    long code = req.responseCode;
-                    string body = null;
-                    try { body = req.downloadHandler?.text; } catch { /* ignore */ }
-                    MCBLogger.LogWarning($"[MCB] Connection check failed: [{code}] [url: {SanitizeUrlForLogs(url)}] {req.error} {(string.IsNullOrEmpty(body) ? string.Empty : "- " + body)}");
-                    return new CheckConnectionResponse { state = "disconnected" };
-                }
-
-                var text = req.downloadHandler.text;
-                CheckConnectionResponse resp = null;
-                try { resp = JsonConvert.DeserializeObject<CheckConnectionResponse>(text); }
-                catch (Exception jex)
-                {
-                    MCBLogger.LogWarning($"[MCB] Invalid connection check response JSON: {jex.Message}");
-                    return new CheckConnectionResponse { state = "disconnected" };
-                }
-                if (resp == null || string.IsNullOrEmpty(resp.state))
-                {
-                    MCBLogger.LogWarning("[MCB] Connection check response missing 'state'.");
-                    return new CheckConnectionResponse { state = "disconnected" };
-                }
-                if (resp.state == "connected" || resp.state == "limited" || resp.state == "disconnected") return resp;
-                MCBLogger.LogWarning($"[MCB] Connection check returned unexpected state '{resp.state}'. Treating as disconnected.");
-                return new CheckConnectionResponse { state = "disconnected" };
+                text = await McbHttp.TextAsync(url, authToken, MCBRequestPolicy.Backend("Check connection"), GetTimeoutSeconds(NetworkRequestType.ConnectionCheck));
             }
-            catch (Exception ex)
+            catch (OrbitersHttpException ex)
             {
-                MCBLogger.LogWarning($"[MCB] Connection check error: {ex.Message}");
+                MCBLogger.LogWarning($"[MCB] Connection check failed: [{ex.StatusCode}] [url: {SanitizeUrlForLogs(url)}] {ex.Message} {(string.IsNullOrEmpty(ex.Body) ? string.Empty : "- " + ex.Body)}");
                 return new CheckConnectionResponse { state = "disconnected" };
             }
+
+            CheckConnectionResponse resp = null;
+            try { resp = JsonConvert.DeserializeObject<CheckConnectionResponse>(text); }
+            catch (Exception jex)
+            {
+                MCBLogger.LogWarning($"[MCB] Invalid connection check response JSON: {jex.Message}");
+                return new CheckConnectionResponse { state = "disconnected" };
+            }
+            if (resp == null || string.IsNullOrEmpty(resp.state))
+            {
+                MCBLogger.LogWarning("[MCB] Connection check response missing 'state'.");
+                return new CheckConnectionResponse { state = "disconnected" };
+            }
+            if (resp.state == "connected" || resp.state == "limited" || resp.state == "disconnected") return resp;
+            MCBLogger.LogWarning($"[MCB] Connection check returned unexpected state '{resp.state}'. Treating as disconnected.");
+            return new CheckConnectionResponse { state = "disconnected" };
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogWarning($"[MCB] Connection check error: {ex.Message}");
+            return new CheckConnectionResponse { state = "disconnected" };
         }
     }
 
@@ -855,7 +797,7 @@ public static class MCBDownloadTempFiles
     private const string PendingSessionKey = "MCB.DownloadTempFiles.Pending";
     private static readonly TimeSpan StaleAge = TimeSpan.FromDays(1);
     private static readonly (string prefix, string extension)[] StaleFiles =
-        { ("mcb_dl_", ".zip"), ("mcb_upload_", ".zip"), ("mcb_upload_body_", ".tmp"), ("mcb-rekey-", ".fbx"), ("mcb-logic-", ".unitypackage") };
+        { ("mcb_dl_", ".zip"), ("mcb_upload_", ".zip"), ("mcb-rekey-", ".fbx"), ("mcb-logic-", ".unitypackage") };
     private static readonly string[] StagingFolderPrefixes = { "mcb-mesh-delivery-", "mcb-source-support-" };
     // Tracked files and the request writing each (null once finished): another editor's downloads are never touched.
     private static readonly System.Collections.Generic.Dictionary<string, UnityWebRequest> Tracked =

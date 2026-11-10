@@ -474,6 +474,24 @@ public static partial class MCBConnectivityMonitor
 
     public static void ReportManagedUnityWebRequest(UnityWebRequest request, string requestUrl, MCBRequestPolicy policy)
     {
+        long code = request != null ? request.responseCode : 0;
+        Report(requestUrl, policy, IsUnityWebRequestSuccess(request), request != null && !IsConnectivityFailure(request) && code > 0, code,
+            request != null ? request.error : null);
+    }
+
+    /// <summary>
+    /// How a request sent through <see cref="McbHttp"/> ended: <paramref name="status"/> 0 when no answer came, a 2xx when
+    /// it succeeded; decided under <paramref name="policy"/> exactly as <see cref="ReportManagedUnityWebRequest"/> decides.
+    /// </summary>
+    internal static void ReportAnswer(string requestUrl, long status, string error, MCBRequestPolicy policy)
+    {
+        bool success = status >= 200 && status < 300;
+        Report(requestUrl, policy, success, status > 0, status, success ? null : error);
+    }
+
+    // answered: a server answered (any status); success: with a 2xx.
+    private static void Report(string requestUrl, MCBRequestPolicy policy, bool success, bool answered, long code, string error)
+    {
         policy = policy ?? MCBRequestPolicy.Backend(null);
         if (policy.failureScope == MCBRequestFailureScope.Diagnostics || policy.failureScope == MCBRequestFailureScope.LocalOnly)
         {
@@ -482,24 +500,22 @@ public static partial class MCBConnectivityMonitor
 
         if (policy.failureScope == MCBRequestFailureScope.Transfer)
         {
-            if (request != null && request.responseCode > 0)
+            if (code > 0)
             {
                 MarkServerReachable();
             }
             return;
         }
 
-        bool success = IsUnityWebRequestSuccess(request);
         if (policy.failureScope == MCBRequestFailureScope.Backend)
         {
-            if (success || (request != null && !IsConnectivityFailure(request) && request.responseCode > 0))
+            if (success || answered)
             {
                 MarkServerReachable();
                 return;
             }
 
-            string details = BuildFailedRequestDetails(policy.context, requestUrl, request != null ? request.responseCode : 0, request != null ? request.error : null);
-            ReportConnectivityFailure(requestUrl, details);
+            ReportConnectivityFailure(requestUrl, BuildFailedRequestDetails(policy.context, requestUrl, code, error));
             return;
         }
 
@@ -512,15 +528,14 @@ public static partial class MCBConnectivityMonitor
                 return;
             }
 
-            if (request != null && !IsConnectivityFailure(request) && request.responseCode > 0)
+            if (answered)
             {
                 MarkServerReachable();
-                ReportRequestWarning(policy, requestUrl, request.responseCode, request.error);
+                ReportRequestWarning(policy, requestUrl, code, error);
                 return;
             }
 
-            string details = BuildFailedRequestDetails(policy.context, requestUrl, request != null ? request.responseCode : 0, request != null ? request.error : null);
-            ReportConnectivityFailure(requestUrl, details);
+            ReportConnectivityFailure(requestUrl, BuildFailedRequestDetails(policy.context, requestUrl, code, error));
             return;
         }
 
@@ -530,7 +545,7 @@ public static partial class MCBConnectivityMonitor
             return;
         }
 
-        ReportRequestWarning(policy, requestUrl, request != null ? request.responseCode : 0, request != null ? request.error : null);
+        ReportRequestWarning(policy, requestUrl, code, error);
     }
 
     public static void ReportManagedHttpResponse(HttpResponseMessage response, string requestUrl, MCBRequestPolicy policy)
