@@ -18,7 +18,7 @@ public enum McbViewParts
     AvatarOptions = 1 << 6,
     Status = 1 << 7,
     AdjustMaterial = 1 << 8,
-    /// <summary>A download, fetch, delete, build or switch started or ended.</summary>
+    /// <summary>A download, delete, build or switch of the avatar started or ended.</summary>
     Busy = 1 << 9,
     All = ~0
 }
@@ -83,15 +83,17 @@ public sealed class McbViewRefresh
 /// it, the creator window and the compare window. Changes are announced once per frame with the union of what changed.
 /// </summary>
 /// <remarks>
-/// It holds the busy state of the operations for now; the rest of the session (versions, selection, account) moves here
-/// once the operations leave the inspector. Runtime state only: a domain reload ends the operations it describes.
+/// It holds the busy state of the operations on the avatar's files for now; the rest of the session (the fetched version
+/// lists and their fetch, selection, account) moves here once the operations leave the inspector, in one step: a fetch
+/// shared without its lists would stop one view from fetching without giving it the result. Runtime state only: a
+/// domain reload ends the operations it describes.
 /// </remarks>
 public sealed class McbAvatarViewModel
 {
     private static readonly Dictionary<int, McbAvatarViewModel> ByTarget = new Dictionary<int, McbAvatarViewModel>();
 
     private readonly McbViewRefresh announce;
-    private bool isFetching, isDownloading, isDeleting, isSubmitting, isApplying;
+    private bool isDownloading, isDeleting, isSubmitting, isApplying;
 
     private McbAvatarViewModel()
     {
@@ -114,13 +116,12 @@ public sealed class McbAvatarViewModel
     /// <summary>Raised on the frame after a change, with every part that changed since the last time.</summary>
     public event Action<McbViewParts> Changed;
 
-    public bool IsFetching { get => isFetching; set => Set(ref isFetching, value); }
     public bool IsDownloading { get => isDownloading; set => Set(ref isDownloading, value); }
     public bool IsDeleting { get => isDeleting; set => Set(ref isDeleting, value); }
     public bool IsSubmitting { get => isSubmitting; set => Set(ref isSubmitting, value); }
     public bool IsApplying { get => isApplying; set => Set(ref isApplying, value); }
 
-    public bool IsBusy => isFetching || isDownloading || isDeleting || isSubmitting || isApplying;
+    public bool IsBusy => isDownloading || isDeleting || isSubmitting || isApplying;
 
     /// <summary>Tells this avatar's views that something they show changed.</summary>
     public void MarkChanged(McbViewParts parts) => announce.Request(parts);

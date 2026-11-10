@@ -189,10 +189,26 @@ public class VersionActions
         }
     }
 
+    // A fetch asked for while one runs (a publication's, while the list was loading) is not dropped: the running one may
+    // predate what it must show, so it runs again once that one ends.
     private IEnumerator FetchVersionsCoroutine()
     {
         if (!editor.HasServerAccess) yield break;
-        if (editor.isFetching) yield break;
+        if (editor.isFetching)
+        {
+            editor.versionFetchQueued = true;
+            yield break;
+        }
+        do
+        {
+            editor.versionFetchQueued = false;
+            yield return FetchVersionsOnceCoroutine();
+        }
+        while (editor != null && editor.versionFetchQueued && editor.HasServerAccess);
+    }
+
+    private IEnumerator FetchVersionsOnceCoroutine()
+    {
         editor.isFetching = true;
         editor.warningsModule.Clear();
         editor.accessDeniedAssetId = null;

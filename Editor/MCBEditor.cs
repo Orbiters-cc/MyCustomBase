@@ -79,10 +79,23 @@ public class MCBEditor : UnityEditor.Editor
     public bool isAuthenticated;
     public string authToken;
     public bool fetchAttempted;
-    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these. They
-    // belong to the avatar, not to this inspector: every view of it (another inspector, the creator and compare windows)
-    // sees the same operation, and hears when one starts or ends.
-    public bool isFetching { get => ViewModel.IsFetching; set => ViewModel.IsFetching = value; }
+    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these. The four
+    // operations on the avatar's files belong to the avatar, not to this inspector: every view of it (another inspector,
+    // the creator and compare windows) sees the same operation, and hears when one starts or ends. A fetch fills this
+    // view's own version lists, so it stays this view's (until the lists move to the avatar's model with it).
+    public bool isFetching
+    {
+        get => fetching;
+        set
+        {
+            if (fetching == value) return;
+            fetching = value;
+            if (viewRefresh != null) RequestRefresh(McbViewParts.Versions);
+        }
+    }
+    [NonSerialized] private bool fetching;
+    /// <summary>A fetch was asked for while this view's fetch ran: it runs again when that one ends.</summary>
+    [NonSerialized] public bool versionFetchQueued;
     public bool isDownloading { get => ViewModel.IsDownloading; set => ViewModel.IsDownloading = value; }
     public bool isDeleting { get => ViewModel.IsDeleting; set => ViewModel.IsDeleting = value; }
     public bool isSubmitting { get => ViewModel.IsSubmitting; set => ViewModel.IsSubmitting = value; }
