@@ -26,6 +26,12 @@ public sealed class MCBProgressButtonElement : Button
     private Color displayedTrackColor;
     private bool wasRunning;
     private double lastUpdateTime;
+    // What the element shows now: a tick that changes nothing writes nothing (no style change, no relayout).
+    private bool shown;
+    private string shownText;
+    private bool shownEnabled;
+    private Color shownTrackColor, shownFillColor;
+    private float shownWidth;
 
     public MCBProgressButtonElement(Action clicked, Func<MCBProgressButtonData> dataProvider)
         : base(clicked)
@@ -89,12 +95,19 @@ public sealed class MCBProgressButtonElement : Button
         displayedFillColor = Color.Lerp(displayedFillColor, targetFillColor, colorSmoothing);
         displayedTrackColor = Color.Lerp(displayedTrackColor, targetTrackColor, colorSmoothing);
 
-        label.text = data.text ?? string.Empty;
-        SetEnabled(data.enabled);
-        track.style.backgroundColor = displayedTrackColor;
-        fill.style.backgroundColor = displayedFillColor;
-        fill.style.width = Length.Percent(Mathf.Clamp01(displayedProgress) * 100f);
+        string nextText = data.text ?? string.Empty;
+        float width = Mathf.Clamp01(displayedProgress) * 100f;
+        if (!shown || !string.Equals(shownText, nextText, StringComparison.Ordinal)) label.text = shownText = nextText;
+        if (!shown || shownEnabled != data.enabled) SetEnabled(shownEnabled = data.enabled);
+        if (!shown || !Same(shownTrackColor, displayedTrackColor)) track.style.backgroundColor = shownTrackColor = displayedTrackColor;
+        if (!shown || !Same(shownFillColor, displayedFillColor)) fill.style.backgroundColor = shownFillColor = displayedFillColor;
+        if (!shown || Mathf.Abs(shownWidth - width) > 0.01f) fill.style.width = Length.Percent(shownWidth = width);
+        shown = true;
         wasRunning = isRunning;
     }
+
+    // Below what a colour channel can show (1/255).
+    private static bool Same(Color a, Color b) =>
+        Mathf.Abs(a.r - b.r) < 0.001f && Mathf.Abs(a.g - b.g) < 0.001f && Mathf.Abs(a.b - b.b) < 0.001f && Mathf.Abs(a.a - b.a) < 0.001f;
 }
 #endif

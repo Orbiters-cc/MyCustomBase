@@ -97,7 +97,6 @@ public partial class AssetGalleryModule
     private readonly CustomBaseCreateForm customBaseCreateForm;
     private readonly PhotoshootPanel photoshootPanel;
 
-    private Vector2 scrollPosition;
     private string lastAvatarSignature;
     private string loadingAvatarSignature;
     private bool hasFetchedCompatibleAssets;
@@ -108,7 +107,6 @@ public partial class AssetGalleryModule
     private bool isCreatingCustomBase;
     private bool isSubmittingCustomBase;
     private string createError;
-    private Vector2 createFormScrollPosition;
     private Texture2D createThumbnail;
     private Texture2D createBanner;
     private bool isEditingSelectedAssetMedia;
@@ -143,7 +141,6 @@ public partial class AssetGalleryModule
     private string avatarBaseLoadError;
     private List<CreatorAvatarBaseOption> avatarBaseOptions = new List<CreatorAvatarBaseOption>();
     private VisualElement galleryRoot;
-    private VisualElement selectedAssetActionsRoot;
     private VisualElement commentsRoot;
     private string selectedAvatarBaseFilter;
     private string commentDraft = "";
@@ -214,11 +211,6 @@ public partial class AssetGalleryModule
         {
             module.BuildSelectedAssetBannerUIToolkit(root, selectedAsset);
         }
-
-        public void BuildActionsUIToolkit()
-        {
-            module.BuildSelectedAssetActionsUIToolkit();
-        }
     }
 
     private sealed class AssetInteractionPanel
@@ -282,17 +274,15 @@ public partial class AssetGalleryModule
         photoshootPanel = new PhotoshootPanel(this);
     }
 
-    public void AttachUIToolkit(VisualElement galleryRoot, VisualElement selectedAssetActionsRoot, VisualElement commentsRoot)
+    public void AttachUIToolkit(VisualElement galleryRoot, VisualElement commentsRoot)
     {
         this.galleryRoot = galleryRoot;
-        this.selectedAssetActionsRoot = selectedAssetActionsRoot;
         this.commentsRoot = commentsRoot;
     }
 
     public void DetachUIToolkit()
     {
         galleryRoot = null;
-        selectedAssetActionsRoot = null;
         commentsRoot = null;
         thumbnailImages.Clear();
         ownerAvatarImages.Clear();
@@ -311,7 +301,6 @@ public partial class AssetGalleryModule
     public void RefreshUIToolkit()
     {
         galleryBrowser.BuildUIToolkit();
-        selectedAssetPanel.BuildActionsUIToolkit();
         assetInteractionPanel.BuildCommentsUIToolkit();
     }
 

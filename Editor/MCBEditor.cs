@@ -32,7 +32,7 @@ public class MCBEditor : UnityEditor.Editor
 
     // --- Serialized Properties ---
     public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
-                               customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
+                               avatarLogicPrefabProp, customBlendshapesForCreatorProp,
                                modelFileBuildEntriesProp,
                                useAdvancedMeshReplacementForCreatorProp,
                                useHdiffFbxDeltaForCreatorProp,
@@ -59,8 +59,6 @@ public class MCBEditor : UnityEditor.Editor
     private VisualElement connectivityHost;
     private VisualElement statusHost;
     private VisualElement galleryHost;
-    private VisualElement selectedAssetActionsHost;
-    private VisualElement creatorHost;
     private VisualElement versionHost;
     private VisualElement avatarOptionsHost;
     private VisualElement adjustMaterialHost;
@@ -81,8 +79,30 @@ public class MCBEditor : UnityEditor.Editor
     public bool isAuthenticated;
     public string authToken;
     public bool fetchAttempted;
-    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these.
-    [NonSerialized] public bool isFetching, isDownloading, isDeleting, isSubmitting, isApplying;
+    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these. The four
+    // operations on the avatar's files belong to the avatar, not to this inspector: every view of it (another inspector,
+    // the creator and compare windows) sees the same operation, and hears when one starts or ends. A fetch fills this
+    // view's own version lists, so it stays this view's (until the lists move to the avatar's model with it).
+    public bool isFetching
+    {
+        get => fetching;
+        set
+        {
+            if (fetching == value) return;
+            fetching = value;
+            if (viewRefresh != null) RequestRefresh(McbViewParts.Versions);
+        }
+    }
+    [NonSerialized] private bool fetching;
+    /// <summary>A fetch was asked for while this view's fetch ran: it runs again when that one ends.</summary>
+    [NonSerialized] public bool versionFetchQueued;
+    public bool isDownloading { get => ViewModel.IsDownloading; set => ViewModel.IsDownloading = value; }
+    public bool isDeleting { get => ViewModel.IsDeleting; set => ViewModel.IsDeleting = value; }
+    public bool isSubmitting { get => ViewModel.IsSubmitting; set => ViewModel.IsSubmitting = value; }
+    public bool isApplying { get => ViewModel.IsApplying; set => ViewModel.IsApplying = value; }
+    [NonSerialized] private McbAvatarViewModel viewModel;
+    public McbAvatarViewModel ViewModel => viewModel ?? (viewModel = McbAvatarViewModel.For(customBaseTarget));
+    [NonSerialized] private McbViewRefresh viewRefresh;
     public string fetchError, submitError;
     public string accessDeniedAssetId;
     public string currentBaseFbxHash;
@@ -111,7 +131,6 @@ public class MCBEditor : UnityEditor.Editor
 
     // Runtime state for detection
     public string currentAppliedFbxHash;
-    public bool customWarningShown;
 
     public bool HasServerAccess
     {
@@ -142,6 +161,11 @@ public class MCBEditor : UnityEditor.Editor
         }
         EnsureSerializedDefaults();
         serializedObject = new SerializedObject(customBaseTarget);
+        viewModel = McbAvatarViewModel.For(customBaseTarget);
+        viewModel.Changed += OnViewModelChanged;
+        viewRefresh = new McbViewRefresh(RefreshSections);
+        // Views that act through an inspector of this avatar (the compare window) look for it again.
+        viewModel.MarkChanged(McbViewParts.Versions);
         fetchAttempted = false;
         
         // Initialize async services first
@@ -178,8 +202,6 @@ public class MCBEditor : UnityEditor.Editor
         // Load user custom versions
         userCustomVersions = UserCustomVersionService.Instance.GetAll();
         
-        // Initialize modules
-        creatorModule.Initialize();
         CheckAuthentication();
         AuthenticationService.Changed += SyncAuthentication;
         OrbitersEnvironment.Changed += SyncAuthentication;
@@ -211,6 +233,12 @@ public class MCBEditor : UnityEditor.Editor
         AuthenticationService.Changed -= SyncAuthentication;
         OrbitersEnvironment.Changed -= SyncAuthentication;
         asyncInitializationScheduled = false;
+        if (viewModel != null)
+        {
+            viewModel.Changed -= OnViewModelChanged;
+            viewModel.MarkChanged(McbViewParts.Versions);
+        }
+        viewRefresh?.Cancel();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
         creatorModule?.DetachUIToolkit();
@@ -227,8 +255,6 @@ public class MCBEditor : UnityEditor.Editor
         connectivityHost = null;
         statusHost = null;
         galleryHost = null;
-        selectedAssetActionsHost = null;
-        creatorHost = null;
         versionHost = null;
         avatarOptionsHost = null;
         adjustMaterialHost = null;
@@ -279,17 +305,9 @@ public class MCBEditor : UnityEditor.Editor
         galleryHost = new VisualElement();
         uiToolkitRoot.Add(galleryHost);
 
-        selectedAssetActionsHost = new VisualElement();
-        selectedAssetActionsHost.AddToClassList("mcb-selected-actions-host");
-        uiToolkitRoot.Add(selectedAssetActionsHost);
-
         statusHost = new VisualElement();
         statusHost.AddToClassList("mcb-status-host");
         uiToolkitRoot.Add(statusHost);
-
-        creatorHost = new VisualElement();
-        creatorHost.AddToClassList("mcb-creator-host");
-        uiToolkitRoot.Add(creatorHost);
 
         versionHost = new VisualElement();
         versionHost.AddToClassList("mcb-version-host");
@@ -313,12 +331,12 @@ public class MCBEditor : UnityEditor.Editor
         uiToolkitRoot.Add(bottomBarImGuiContainer);
 
         dependencyInstallerModule?.AttachUIToolkit(dependencyHost);
-        assetGalleryModule?.AttachUIToolkit(galleryHost, selectedAssetActionsHost, commentsHost);
-        creatorModule?.AttachUIToolkit(creatorHost);
+        assetGalleryModule?.AttachUIToolkit(galleryHost, commentsHost);
         versionModule?.AttachUIToolkit(versionHost);
         avatarOptionsModule?.AttachUIToolkit(avatarOptionsHost);
         // The modules only take their hosts: everything is built once, here (each used to build itself on attach, then again).
-        RefreshUiToolkitSections();
+        RequestRefresh(McbViewParts.All);
+        viewRefresh?.Flush();
         OrderUiToolkitLayers();
         dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(3000);
         // Shown again (an inactive docked tab selected): catch up with the project changes made while hidden.
@@ -327,12 +345,30 @@ public class MCBEditor : UnityEditor.Editor
         return uiToolkitRoot;
     }
 
-    public void RefreshUiToolkitSections()
+    /// <summary>Rebuilds every section on the next editor frame (once, however many changes ask for it before).</summary>
+    public void RefreshUiToolkitSections() => RequestRefresh(McbViewParts.All);
+
+    /// <summary>Rebuilds these sections on the next editor frame, together with whatever else was asked for by then.</summary>
+    public void RequestRefresh(McbViewParts parts)
     {
+        if (viewRefresh != null) viewRefresh.Request(parts);
+        else RefreshSections(parts);
+    }
+
+    // An operation of this avatar started or ended, here or in another view of it: the version section shows its state.
+    private void OnViewModelChanged(McbViewParts parts)
+    {
+        if ((parts & McbViewParts.Busy) != 0) RequestRefresh(McbViewParts.Versions);
+    }
+
+    private void RefreshSections(McbViewParts parts)
+    {
+        bool Has(McbViewParts part) => (parts & part) != 0;
+
         SyncAppliedCustomBaseName();
         if (uiToolkitRoot == null)
         {
-            if (creatorWindowAsset != null) creatorModule?.RefreshUIToolkit();
+            if (creatorWindowAsset != null && Has(McbViewParts.Creator)) creatorModule?.RefreshUIToolkit();
             return;
         }
 
@@ -344,12 +380,12 @@ public class MCBEditor : UnityEditor.Editor
             catch (Exception ex) { RecordUiException(ex); }
         }
 
-        Section(DrawVectorBannerUIToolkit);
-        Section(() => dependencyInstallerModule?.RefreshUIToolkit());
-        Section(RefreshConnectivityDiagnosticsUIToolkit);
-        Section(() => assetGalleryModule?.RefreshUIToolkit());
-        Section(() => creatorModule?.RefreshUIToolkit());
-        Section(() =>
+        if (Has(McbViewParts.Banner)) Section(DrawVectorBannerUIToolkit);
+        if (Has(McbViewParts.Dependencies)) Section(() => dependencyInstallerModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Connectivity)) Section(RefreshConnectivityDiagnosticsUIToolkit);
+        if (Has(McbViewParts.Gallery)) Section(() => assetGalleryModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Creator)) Section(() => creatorModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Versions)) Section(() =>
         {
             // The full version DTO is not Unity-serialized. Rehydrate it from local/server
             // metadata before both the action button and avatar options read the state.
@@ -358,10 +394,12 @@ public class MCBEditor : UnityEditor.Editor
                 !string.IsNullOrEmpty(customBaseTarget.appliedCustomBaseVersionString))
                 versionModule?.actions.UpdateAppliedVersionAndState();
             versionModule?.RefreshUIToolkit();
+            // Its versions or their applied state changed: the avatar's other views (the compare window) hear it.
+            ViewModel.MarkChanged(McbViewParts.Versions);
         });
-        Section(() => avatarOptionsModule?.RefreshUIToolkit());
-        Section(RefreshStatusMessagesUIToolkit);
-        Section(RefreshAdjustMaterialUIToolkit);
+        if (Has(McbViewParts.AvatarOptions)) Section(() => avatarOptionsModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Status)) Section(RefreshStatusMessagesUIToolkit);
+        if (Has(McbViewParts.AdjustMaterial)) Section(RefreshAdjustMaterialUIToolkit);
         Section(ApplyDependencyBlockerState);
         Section(OrderUiToolkitLayers);
         Section(() =>
@@ -379,9 +417,7 @@ public class MCBEditor : UnityEditor.Editor
         dependencyHost?.BringToFront();
         connectivityHost?.BringToFront();
         galleryHost?.BringToFront();
-        selectedAssetActionsHost?.BringToFront();
         statusHost?.BringToFront();
-        creatorHost?.BringToFront();
         versionHost?.BringToFront();
         avatarOptionsHost?.BringToFront();
         adjustMaterialHost?.BringToFront();
@@ -399,9 +435,7 @@ public class MCBEditor : UnityEditor.Editor
             connectivityHost.style.display = blocked || connectivityHost.childCount == 0 ? DisplayStyle.None : DisplayStyle.Flex;
         }
         if (galleryHost != null) galleryHost.style.display = contentDisplay;
-        if (selectedAssetActionsHost != null) selectedAssetActionsHost.style.display = contentDisplay;
         if (statusHost != null && blocked) statusHost.style.display = DisplayStyle.None;
-        if (creatorHost != null && blocked) creatorHost.style.display = DisplayStyle.None;
         if (versionHost != null && blocked) versionHost.style.display = DisplayStyle.None;
         if (avatarOptionsHost != null && blocked) avatarOptionsHost.style.display = DisplayStyle.None;
         if (adjustMaterialHost != null && blocked) adjustMaterialHost.style.display = DisplayStyle.None;
@@ -1498,8 +1532,6 @@ public class MCBEditor : UnityEditor.Editor
         baseFbxFilesProp = serializedObject.FindProperty("baseFbxFiles");
         blendShapeValuesProp = serializedObject.FindProperty("blendShapeValues");
         isCreatorModeProp = serializedObject.FindProperty("isCreatorMode");
-        customFbxForCreatorProp = serializedObject.FindProperty("customFbxForCreator");
-        customBaseAvatarForCreatorProp = serializedObject.FindProperty("customBaseAvatarForCreatorProp");
         modelFileBuildEntriesProp = serializedObject.FindProperty("modelFileBuildEntries");
         avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
         useAdvancedMeshReplacementForCreatorProp = serializedObject.FindProperty("useAdvancedMeshReplacementForCreator");
@@ -1543,7 +1575,7 @@ public class MCBEditor : UnityEditor.Editor
         int loops = Mathf.Clamp(customBaseTarget.pendingSceneMeshDotEffectLoops, 1, 8);
         customBaseTarget.pendingSceneMeshDotEffectLoops = 0;
         EditorUtility.SetDirty(customBaseTarget);
-        SceneMeshDotEffectService.PlayAvatarSweep(customBaseTarget.transform != null ? customBaseTarget.transform.root : null, loops);
+        SceneMeshDotEffectService.PlayAvatarSweep(customBaseTarget.transform != null ? AvatarPaths.Root(customBaseTarget) : null, loops);
     }
 
     /// <summary>Local version lists are served by the VersionRepository scan, which
@@ -1697,7 +1729,8 @@ public class MCBEditor : UnityEditor.Editor
             return new List<string>();
         }
 
-        Transform root = customBaseTarget.transform.root;
+        // The avatar (its descriptor), not the scene root it may share with other avatars.
+        Transform root = AvatarPaths.Root(customBaseTarget);
         int rootInstanceId = root != null ? root.GetInstanceID() : 0;
         string sharedCacheKey = BuildDetectedAvatarFbxCacheKey(rootInstanceId);
         if (!detectedAvatarFbxCacheDirty &&
@@ -1836,8 +1869,8 @@ public class MCBEditor : UnityEditor.Editor
         int rootInstanceId = 0;
         try
         {
-            rootInstanceId = customBaseTarget != null && customBaseTarget.transform != null && customBaseTarget.transform.root != null
-                ? customBaseTarget.transform.root.GetInstanceID()
+            rootInstanceId = customBaseTarget != null && customBaseTarget.transform != null
+                ? AvatarPaths.Root(customBaseTarget).GetInstanceID()
                 : 0;
         }
         catch

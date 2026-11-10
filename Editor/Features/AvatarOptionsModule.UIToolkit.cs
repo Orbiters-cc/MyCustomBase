@@ -8,6 +8,26 @@ using UnityEngine.UIElements;
 
 public partial class AvatarOptionsModule
 {
+    private readonly MCBEditor editor;
+    private readonly CustomVeinsDrawer customVeinsDrawer;
+    private readonly SlidersDrawer slidersDrawer;
+    private readonly BlendshapeDrawer blendshapeDrawer;
+    private readonly ReFitDrawer refitDrawer;
+
+    public AvatarOptionsModule(MCBEditor editor)
+    {
+        this.editor = editor;
+        customVeinsDrawer = new CustomVeinsDrawer(editor);
+        slidersDrawer = new SlidersDrawer(editor);
+        blendshapeDrawer = new BlendshapeDrawer(editor, slidersDrawer.RequestApplyDebounced);
+        refitDrawer = new ReFitDrawer(editor);
+    }
+
+    public void OnPlayModeStateChanged(PlayModeStateChange state)
+    {
+        slidersDrawer.OnPlayModeStateChanged(state);
+    }
+
     private VisualElement avatarOptionsRoot;
     private IVisualElementScheduledItem avatarOptionsRefreshSchedule;
 

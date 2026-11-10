@@ -100,17 +100,6 @@ public partial class AssetGalleryModule
                 : "Loading banner...");
     }
 
-    private void BuildSelectedAssetActionsUIToolkit()
-    {
-        if (selectedAssetActionsRoot == null)
-        {
-            return;
-        }
-
-        selectedAssetActionsRoot.Clear();
-        selectedAssetActionsRoot.style.display = DisplayStyle.None;
-    }
-
     private void ApplySelectedAssetBannerTexture(Texture2D texture)
     {
         if (selectedAssetBannerImage == null || texture == null)
@@ -279,38 +268,6 @@ public partial class AssetGalleryModule
         editor.Repaint();
     }
 
-    public void DrawSelectedAssetHeader()
-    {
-        var selectedAsset = SelectedAsset;
-        if (selectedAsset == null)
-        {
-            return;
-        }
-
-        using (new EditorGUILayout.VerticalScope("box"))
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                var backStyle = new GUIStyle(EditorStyles.label)
-                {
-                    fontSize = 11,
-                    normal = { textColor = new Color(0.75f, 0.85f, 1f) },
-                    alignment = TextAnchor.MiddleLeft
-                };
-                if (GUILayout.Button("\u2190 Back to custom bases", backStyle, GUILayout.Width(150f), GUILayout.Height(22f)))
-                {
-                    SelectedAsset = null;
-                    EditorPrefs.DeleteKey(SelectedAssetIdPrefKey);
-                    editor.Repaint();
-                    GUIUtility.ExitGUI();
-                }
-
-                GUILayout.Space(10f);
-                EditorGUILayout.LabelField(selectedAsset.name ?? "Unnamed asset", EditorStyles.boldLabel);
-            }
-        }
-    }
-
     // thumbnail/banner: the shots that request uploaded (null, or destroyed when the user left that edit meanwhile).
     private void ApplySelectedAssetMediaUpdate(CreatorAssetCreateResponseAsset updatedAsset, Texture2D thumbnail, Texture2D banner)
     {
@@ -415,7 +372,7 @@ public partial class AssetGalleryModule
         {
             if (refreshVersions)
             {
-                SceneMeshDotEffectService.PlayAvatarSweep(editor.customBaseTarget != null ? editor.customBaseTarget.transform.root : null, 1);
+                SceneMeshDotEffectService.PlayAvatarSweep(editor.customBaseTarget != null ? AvatarPaths.Root(editor.customBaseTarget) : null, 1);
             }
 
             commentDraft = "";

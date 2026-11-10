@@ -4,37 +4,24 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
-using UnityEditorInternal;
 using UnityEngine;
 using System;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
-using AutocompleteSearchField;
 
 // Handles all UI and logic for the Creator Mode feature.
 public partial class CreatorModeModule
 {
     private const string InitialDefaultAviVersion = "1.0.0";
     private const long MaxVersionPackageUploadBytes = 600L * 1024L * 1024L;
-    private static Dictionary<string, List<AnimationClip>> animationClipsByNameCache;
-    private static double animationClipsByNameCacheTimestamp;
-    private static bool animationClipProjectChangedHooked;
 
     private readonly MCBEditor editor;
     private readonly NetworkService networkService;
     private readonly FileManagerService fileManagerService;
-    private ReorderableList blendshapeList;
-    private AutocompleteSearchField.AutocompleteSearchField blendshapeSearchField;
-    private readonly Dictionary<string, AutocompleteSearchField.AutocompleteSearchField> correctiveSearchFields
-        = new Dictionary<string, AutocompleteSearchField.AutocompleteSearchField>();
-    private readonly Dictionary<string, string> pendingCorrectiveValues = new Dictionary<string, string>();
-    private readonly HashSet<string> activeCorrectiveFieldKeys = new HashSet<string>(StringComparer.Ordinal);
-    private GUIStyle clippedMiniLabelStyle;
     private string cachedCustomFbxSignature;
     private List<string> cachedCustomFbxBlendshapeNames = new List<string>();
 
     // UI State
-    private bool creatorModeFoldout = true;
     private bool creatorBlendshapeEditorFoldout;
     private int newVersionMajor = 0, newVersionMinor = 1, newVersionPatch = 0;
     private Scope newVersionScope = Scope.BETA;
@@ -48,7 +35,6 @@ public partial class CreatorModeModule
 
     private List<CustomBaseVersion> compatibleParentVersions;
     private List<string> parentVersionDisplayOptions;
-    private string[] parentVersionDisplayOptionsArray = Array.Empty<string>();
     private int defaultParentIndex;
     private int selectedParentVersionIndex = -1;
     private CustomBaseVersion selectedParentVersionObject = null;
@@ -60,388 +46,13 @@ public partial class CreatorModeModule
     private string autoAssignedVeinsTexturePath;
     private CustomBaseVersion lastParentVersionForVeins;
     private bool isRestoringFromVersionState;
-    private const float BlendshapeNameColumn = 0.35f;
-    private const float BlendshapeValueColumn = 0.16f;
-    private const float BlendshapeSliderColumn = 0.10f;
-    private const float BlendshapeDefaultColumn = 0.10f;
     
     public CreatorModeModule(MCBEditor editor)
     {
         this.editor = editor;
         this.networkService = new NetworkService();
         this.fileManagerService = new FileManagerService();
-        EnsureAnimationClipProjectChangedHook();
         creatorBlendshapeEditorFoldout = EditorPrefs.GetBool("MCB_CreatorMode_BlendshapeEditorFoldout", false);
-    }
-
-    public void Initialize()
-    {
-        blendshapeList = new ReorderableList(editor.serializedObject, editor.customBlendshapesForCreatorProp, true, true, false, true);
-        
-        blendshapeList.drawHeaderCallback = (Rect rect) =>
-        {
-            float nameWidth = rect.width * BlendshapeNameColumn;
-            float defaultValWidth = rect.width * BlendshapeValueColumn;
-            float sliderWidth = rect.width * BlendshapeSliderColumn;
-            float isDefaultWidth = rect.width * BlendshapeDefaultColumn;
-            float correctiveWidth = rect.width - nameWidth - defaultValWidth - sliderWidth - isDefaultWidth;
-            
-            EditorGUI.LabelField(new Rect(rect.x, rect.y, nameWidth, rect.height), "Blendshape Name");
-            EditorGUI.LabelField(new Rect(rect.x + nameWidth, rect.y, defaultValWidth, rect.height), "Value");
-            EditorGUI.LabelField(new Rect(rect.x + nameWidth + defaultValWidth, rect.y, sliderWidth, rect.height), "Slider");
-            EditorGUI.LabelField(new Rect(rect.x + nameWidth + defaultValWidth + sliderWidth, rect.y, isDefaultWidth, rect.height), "Default");
-            EditorGUI.LabelField(new Rect(rect.x + nameWidth + defaultValWidth + sliderWidth + isDefaultWidth, rect.y, correctiveWidth, rect.height), "Correctives");
-        };
-        blendshapeList.drawElementCallback = (Rect rect, int index, bool isActive, bool isFocused) =>
-        {
-            var element = blendshapeList.serializedProperty.GetArrayElementAtIndex(index);
-            rect.y += 2;
-            float spacing = 5f;
-            float nameWidth = rect.width * BlendshapeNameColumn - spacing;
-            float defaultValWidth = rect.width * BlendshapeValueColumn - spacing;
-            float sliderWidth = rect.width * BlendshapeSliderColumn - spacing;
-            float isDefaultWidth = rect.width * BlendshapeDefaultColumn - spacing;
-            float correctiveWidth = rect.width - nameWidth - defaultValWidth - sliderWidth - isDefaultWidth - spacing * 4f;
-            
-            var nameProp = element.FindPropertyRelative("name");
-            var defaultValueProp = element.FindPropertyRelative("defaultValue");
-            var isSliderProp = element.FindPropertyRelative("isSlider");
-            var isSliderDefaultProp = element.FindPropertyRelative("isSliderDefault");
-            
-            float currentX = rect.x;
-            EditorGUI.PropertyField(new Rect(currentX, rect.y, nameWidth, EditorGUIUtility.singleLineHeight), nameProp, GUIContent.none);
-            currentX += nameWidth + spacing;
-            EditorGUI.PropertyField(new Rect(currentX, rect.y, defaultValWidth, EditorGUIUtility.singleLineHeight), defaultValueProp, GUIContent.none);
-            currentX += defaultValWidth + spacing;
-            
-            isSliderProp.boolValue = EditorGUI.Toggle(new Rect(currentX + (sliderWidth - 16f) / 2f, rect.y, 16f, EditorGUIUtility.singleLineHeight), isSliderProp.boolValue);
-            currentX += sliderWidth + spacing;
-
-            using (new EditorGUI.DisabledScope(!isSliderProp.boolValue))
-            {
-                isSliderDefaultProp.boolValue = EditorGUI.Toggle(new Rect(currentX + (isDefaultWidth - 16f) / 2f, rect.y, 16f, EditorGUIUtility.singleLineHeight), isSliderDefaultProp.boolValue);
-                if (!isSliderProp.boolValue) isSliderDefaultProp.boolValue = false;
-            }
-            currentX += isDefaultWidth + spacing;
-
-            if (GUI.Button(new Rect(currentX, rect.y, correctiveWidth, EditorGUIUtility.singleLineHeight), "add fixes"))
-            {
-                var correctiveProp = element.FindPropertyRelative("correctiveBlendshapes");
-                AddCorrectivePair(correctiveProp);
-                editor.serializedObject.ApplyModifiedProperties();
-            }
-        };
-        
-        // Initialize the autocomplete search field for blendshapes
-        blendshapeSearchField = new AutocompleteSearchField.AutocompleteSearchField();
-        blendshapeSearchField.onInputChanged = OnBlendshapeSearchInputChanged;
-        blendshapeSearchField.onConfirm = OnBlendshapeSearchConfirm;
-    }
-
-    public void Draw()
-    {
-        EditorGUILayout.PropertyField(editor.isCreatorModeProp, new GUIContent("Enable Creator Mode"));
-        if (!editor.isCreatorModeProp.boolValue) return;
-
-        creatorModeFoldout = EditorGUILayout.Foldout(creatorModeFoldout, "Creator Mode", true, EditorStyles.foldoutHeader);
-        if (!creatorModeFoldout) return;
-
-        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-        using (new EditorGUI.DisabledScope(editor.isSubmitting))
-        {
-            PopulateParentVersionDropdown();
-            
-            // Auto-populate fields if an unsubmitted version is selected
-            if (editor.selectedVersionForAction != previouslySelectedVersion)
-            {
-                if (editor.selectedVersionForAction != null && editor.selectedVersionForAction.isUnsubmitted)
-                {
-                    PopulateFieldsFromVersion(editor.selectedVersionForAction);
-                }
-                previouslySelectedVersion = editor.selectedVersionForAction;
-            }
-            
-            DrawParentVersionDropdown();
-            DrawParentBlendshapeImportControls();
-            
-            DrawModelFileBuildEntries();
-            EditorGUILayout.PropertyField(editor.avatarLogicPrefabProp, new GUIContent("Avatar Logic Prefab"));
-            DrawCustomVeinsSection();
-            DrawDynamicNormalsSection();
-            DrawSuggestRealisticSection();
-            
-            EditorGUILayout.Space();
-            
-            // vertical group with helpbox style
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            EditorGUI.BeginChangeCheck();
-            creatorBlendshapeEditorFoldout = EditorGUILayout.Foldout(
-                creatorBlendshapeEditorFoldout,
-                "Blendshape And Correctives Editor",
-                true);
-            if (EditorGUI.EndChangeCheck())
-            {
-                EditorPrefs.SetBool("MCB_CreatorMode_BlendshapeEditorFoldout", creatorBlendshapeEditorFoldout);
-            }
-
-            if (creatorBlendshapeEditorFoldout)
-            {
-                blendshapeList.DoLayoutList();
-
-                if (blendshapeSearchField != null)
-                {
-                    EditorGUILayout.LabelField("Search and Add Blendshapes:", EditorStyles.miniBoldLabel);
-                    blendshapeSearchField.OnGUI();
-                }
-
-                DrawBlendshapeCorrectivesSection();
-            }
-            
-            EditorGUILayout.EndVertical();  
-            
-            EditorGUILayout.Space();
-
-            DrawAdvancedMeshReplacementToggle();
-            DrawHdiffFbxDeltaToggle();
-            EditorGUILayout.LabelField("New Version Details:", EditorStyles.miniBoldLabel);
-            DrawVersionFields();
-            
-            string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
-            bool isVersionValid = IsNewVersionValid(newVersionString);
-            if (!isVersionValid)
-            {
-                string baseVer = selectedParentVersionObject?.version ?? "the base version";
-                EditorGUILayout.HelpBox($"New version must be higher than the selected parent version (v{baseVer}).", MessageType.Warning);
-            }
-
-            EditorGUILayout.LabelField("Version Title:", EditorStyles.miniBoldLabel);
-            newVersionTitle = EditorGUILayout.TextField(newVersionTitle);
-
-            EditorGUILayout.LabelField("Changelog (optional):", EditorStyles.miniBoldLabel);
-            bool requiresParentVersion = RequiresParentVersion();
-            newChangelog = EditorGUILayout.TextArea(newChangelog, GUILayout.Height(80));
-            bool hasRequiredVersionMetadata = HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newVersionTitle, requiresParentVersion ? selectedParentVersionObject?.defaultAviVersion : InitialDefaultAviVersion, out string metadataValidationMessage);
-            if (!hasRequiredVersionMetadata)
-            {
-                EditorGUILayout.HelpBox(metadataValidationMessage, MessageType.Warning);
-            }
-
-            EditorGUILayout.Space();
-            bool hasCustomVeinsPayload = editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null;
-            bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue || editor.includeDynamicNormalsFlexingForCreatorProp.boolValue || HasTypedCustomization();
-            bool hasSuggestRealisticPayload = HasSuggestRealisticPayload();
-            bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
-                                     editor.avatarLogicPrefabProp.objectReferenceValue != null ||
-                                     hasCustomVeinsPayload ||
-                                     hasDynamicNormalsPayload ||
-                                     hasSuggestRealisticPayload ||
-                                     editor.customBlendshapesForCreatorProp.arraySize > 0;
-            bool canSubmit = AreModelFileBuildEntriesValid() &&
-                              hasVersionPayload &&
-                              (!requiresParentVersion || selectedParentVersionObject != null) &&
-                              isVersionValid &&
-                              hasRequiredVersionMetadata;
-            if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
-            {
-                canSubmit = false;
-            }
-            if (editor.includeSuggestRealisticForCreatorProp != null &&
-                editor.includeSuggestRealisticForCreatorProp.boolValue &&
-                GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count == 0)
-            {
-                canSubmit = false;
-            }
-             
-            bool hasPendingBuild = HasBuiltPendingVersion;
-            EditorGUILayout.BeginHorizontal();
-
-            // Build Button (green until a build exists, then grayed out)
-            using (new EditorGUI.DisabledScope(!canSubmit || hasPendingBuild || editor.isSubmitting))
-            {
-                GUI.backgroundColor = hasPendingBuild ? Color.white : Color.green;
-                if (GUILayout.Button(editor.isSubmitting ? "Working..." : "Build Version", GUILayout.Height(30)))
-                {
-                    ConfirmAndBuild();
-                }
-                GUI.backgroundColor = Color.white;
-            }
-
-            // Publish Button (only shown once the version has been built)
-            if (hasPendingBuild)
-            {
-                using (new EditorGUI.DisabledScope(editor.isSubmitting))
-                {
-                    GUI.backgroundColor = Color.green;
-                    if (GUILayout.Button(editor.isSubmitting ? "Working..." : "Publish", GUILayout.Height(30)))
-                    {
-                        string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
-                        if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Mixer Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
-                        {
-                            EditorCoroutineUtility.StartCoroutineOwnerless(PublishBuiltVersionCoroutine());
-                        }
-                    }
-                    GUI.backgroundColor = Color.white;
-                }
-            }
-
-            EditorGUILayout.EndHorizontal();
-        }
-        
-        if (!string.IsNullOrEmpty(editor.submitError))
-        {
-            EditorGUILayout.HelpBox("Submission Error: " + editor.submitError, MessageType.Error);
-        }
-        
-        EditorGUILayout.EndVertical();
-    }
-
-    private void DrawAdvancedMeshReplacementToggle()
-    {
-        if (!FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) ||
-            editor.useAdvancedMeshReplacementForCreatorProp == null)
-        {
-            return;
-        }
-
-        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-        {
-            EditorGUILayout.PropertyField(
-                editor.useAdvancedMeshReplacementForCreatorProp,
-                new GUIContent(
-                    "Use Advanced Mesh Replacement",
-                    "Submit model edits as an encrypted native Unity mesh payload instead of an encrypted replacement FBX."));
-
-            if (editor.useAdvancedMeshReplacementForCreatorProp.boolValue)
-            {
-                EditorGUILayout.HelpBox(
-                    "MCB builds the available LZ4 and Zstd options automatically. Each user downloads one option, selected for their connection and computer. Meshes and skin weights are preserved exactly.",
-                    MessageType.Info);
-            }
-        }
-    }
-
-    private void DrawHdiffFbxDeltaToggle()
-    {
-        if (editor.useHdiffFbxDeltaForCreatorProp == null)
-        {
-            return;
-        }
-
-        bool advancedMeshEnabled = FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
-                                   editor.useAdvancedMeshReplacementForCreatorProp != null &&
-                                   editor.useAdvancedMeshReplacementForCreatorProp.boolValue;
-
-        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-        {
-            using (new EditorGUI.DisabledScope(advancedMeshEnabled))
-            {
-                EditorGUILayout.PropertyField(
-                    editor.useHdiffFbxDeltaForCreatorProp,
-                    new GUIContent(
-                        "Use HDiff FBX Deltas",
-                        "Build normal FBX replacements as HDiff binary deltas when this reduces the uploaded patch size. Falls back to XOR when HDiff is unavailable, fails, or is too large."));
-            }
-
-            if (advancedMeshEnabled)
-            {
-                EditorGUILayout.HelpBox(
-                    "Advanced Mesh Replacement uses native mesh payloads instead of FBX replacement deltas.",
-                    MessageType.Info);
-            }
-        }
-    }
-
-    private void OnBlendshapeSearchInputChanged(string searchString)
-    {
-        blendshapeSearchField.ClearResults();
-        
-        if (string.IsNullOrEmpty(searchString))
-            return;
-        
-        var allBlendshapes = GetAllBlendshapeNamesFromCustomFbx();
-        var existingBlendshapeNames = editor.customBaseTarget.customBlendshapesForCreator.Select(e => e.name);
-        var availableBlendshapes = allBlendshapes.Except(existingBlendshapeNames).OrderBy(s => s);
-
-        // Filter blendshapes that contain the search string (case-insensitive)
-        foreach (var shapeName in availableBlendshapes)
-        {
-            if (shapeName.IndexOf(searchString, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                blendshapeSearchField.AddResult(shapeName);
-            }
-        }
-    }
-
-    private void DrawModelFileBuildEntries()
-    {
-        SyncModelFileBuildEntryCount();
-
-        EditorGUILayout.LabelField("Target Model Files", EditorStyles.miniBoldLabel);
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
-        {
-            var targetFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-            string targetLabel = targetFbx != null ? AssetDatabase.GetAssetPath(targetFbx) : $"Target FBX {i + 1}";
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
-            var customFbxProp = entry.FindPropertyRelative("customFbx");
-            var externalCustomFbxProp = entry.FindPropertyRelative("externalCustomFbxPath");
-            var avatarProp = entry.FindPropertyRelative("customBaseAvatar");
-
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-            {
-                EditorGUILayout.LabelField(targetLabel, EditorStyles.miniBoldLabel);
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUILayout.PropertyField(customFbxProp, new GUIContent("Custom FBX (Transformed)"));
-                    var customFbx = customFbxProp.objectReferenceValue as GameObject;
-                    using (new EditorGUI.DisabledScope(targetFbx == null || customFbx == null))
-                    {
-                        if (GUILayout.Button("Apply", GUILayout.Width(80f)))
-                        {
-                            editor.serializedObject.ApplyModifiedProperties();
-                            ApplyCustomFbxForModelEntry(targetFbx, customFbx);
-                        }
-                    }
-                }
-                if (externalCustomFbxProp != null && !string.IsNullOrWhiteSpace(externalCustomFbxProp.stringValue))
-                {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        EditorGUILayout.PrefixLabel("External Blender FBX");
-                        EditorGUILayout.SelectableLabel(externalCustomFbxProp.stringValue, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight));
-                        if (GUILayout.Button("Clear", GUILayout.Width(60f)))
-                        {
-                            externalCustomFbxProp.stringValue = "";
-                        }
-                    }
-                }
-
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUILayout.PropertyField(avatarProp, new GUIContent("Custom Base Avatar (Transformed, Optional)", CustomAvatarGuidance));
-                    var customFbx = customFbxProp.objectReferenceValue as GameObject;
-                    var avatar = avatarProp.objectReferenceValue as Avatar;
-                    using (new EditorGUI.DisabledScope(targetFbx == null || !AvatarDefinitionGenerationService.HasGenerationSource(customFbx, externalCustomFbxProp?.stringValue)))
-                    {
-                        string generateButtonText = avatar == null ? "Generate" : "Update";
-                        if (GUILayout.Button(generateButtonText, GUILayout.Width(80f)))
-                        {
-                            editor.serializedObject.ApplyModifiedProperties();
-                            GenerateAvatarForModelEntry(targetFbx, customFbx, avatarProp, externalCustomFbxProp?.stringValue);
-                        }
-                    }
-
-                    using (new EditorGUI.DisabledScope(targetFbx == null || avatar == null))
-                    {
-                        if (GUILayout.Button("Apply", GUILayout.Width(80f)))
-                        {
-                            editor.serializedObject.ApplyModifiedProperties();
-                            ApplyCustomAvatarForModelEntry(targetFbx, customFbx, avatar);
-                        }
-                    }
-                }
-                EditorGUILayout.HelpBox(CustomAvatarGuidance, MessageType.Info);
-            }
-        }
     }
 
     private void ApplyCustomFbxForModelEntry(GameObject targetFbx, GameObject customFbx)
@@ -778,177 +389,11 @@ public partial class CreatorModeModule
         element.FindPropertyRelative("isSliderDefault").boolValue = false;
         element.FindPropertyRelative("correctiveBlendshapes").arraySize = 0;
         editor.serializedObject.ApplyModifiedProperties();
-
-        // Clear the search field
-        blendshapeSearchField.searchString = "";
-        blendshapeSearchField.ClearResults();
-    }
-
-    private void DrawBlendshapeCorrectivesSection()
-    {
-        EditorGUILayout.Space(8f);
-        EditorGUILayout.LabelField("Blendshape Correctives", EditorStyles.miniBoldLabel);
-        activeCorrectiveFieldKeys.Clear();
-
-        var blendshapesProp = editor.customBlendshapesForCreatorProp;
-        if (blendshapesProp == null || blendshapesProp.arraySize == 0)
-        {
-            ClearAllCorrectiveSearchFields();
-            EditorGUILayout.HelpBox("Add blendshapes above to create corrective links.", MessageType.None);
-            return;
-        }
-
-        bool drewOne = false;
-        for (int i = 0; i < blendshapesProp.arraySize; i++)
-        {
-            var blendshapeElement = blendshapesProp.GetArrayElementAtIndex(i);
-            var correctiveProp = blendshapeElement.FindPropertyRelative("correctiveBlendshapes");
-            if (correctiveProp == null || correctiveProp.arraySize == 0) continue;
-
-            drewOne = true;
-            string title = blendshapeElement.FindPropertyRelative("name").stringValue;
-            if (string.IsNullOrWhiteSpace(title)) title = "(Unnamed Blendshape)";
-
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
-            if (GUILayout.Button("Delete", GUILayout.Width(70f)))
-            {
-                correctiveProp.arraySize = 0;
-                editor.serializedObject.ApplyModifiedProperties();
-                EditorGUILayout.EndHorizontal();
-                EditorGUILayout.EndVertical();
-                continue;
-            }
-            EditorGUILayout.EndHorizontal();
-
-            for (int j = 0; j < correctiveProp.arraySize; j++)
-            {
-                var item = correctiveProp.GetArrayElementAtIndex(j);
-                var toFixTypeProp = item.FindPropertyRelative("toFixType");
-                var toFixProp = item.FindPropertyRelative("toFix");
-                var fixedByTypeProp = item.FindPropertyRelative("fixedByType");
-                var fixedByProp = item.FindPropertyRelative("fixedBy");
-                string keyPrefix = $"corrective_{i}_{j}";
-                activeCorrectiveFieldKeys.Add(keyPrefix + "_toFix");
-                activeCorrectiveFieldKeys.Add(keyPrefix + "_fixing");
-                float indentPadding = EditorGUI.indentLevel * 15f;
-                float availableWidth = EditorGUIUtility.currentViewWidth - indentPadding - 110f;
-                float fieldWidth = Mathf.Clamp((availableWidth - 28f - 4f) * 0.5f, 95f, 260f);
-
-                EditorGUILayout.BeginHorizontal();
-                DrawCorrectiveTargetField(
-                    toFixTypeProp,
-                    toFixProp,
-                    keyPrefix + "_toFix",
-                    "to fix",
-                    true,
-                    GUILayout.Width(fieldWidth)
-                );
-                GUILayout.Space(4f);
-                DrawCorrectiveTargetField(
-                    fixedByTypeProp,
-                    fixedByProp,
-                    keyPrefix + "_fixing",
-                    "fixing",
-                    false,
-                    GUILayout.Width(fieldWidth)
-                );
-                if (GUILayout.Button("-", GUILayout.Width(24f)))
-                {
-                    correctiveProp.DeleteArrayElementAtIndex(j);
-                    editor.serializedObject.ApplyModifiedProperties();
-                    EditorGUILayout.EndHorizontal();
-                    break;
-                }
-                EditorGUILayout.EndHorizontal();
-            }
-
-            if (GUILayout.Button("Add", GUILayout.Width(80f)))
-            {
-                AddCorrectivePair(correctiveProp);
-                editor.serializedObject.ApplyModifiedProperties();
-            }
-
-            EditorGUILayout.EndVertical();
-        }
-
-        PruneStaleCorrectiveSearchFields();
-
-        if (!drewOne)
-        {
-            EditorGUILayout.HelpBox("Use 'add corrective blendshapes' in the table to create entries.", MessageType.None);
-        }
-
-        EditorGUILayout.HelpBox(
-            "The fixing target activation is proportional to the fixed blendshape and the blendshape needing correction.",
-            MessageType.Info
-        );
-    }
-
-    private void DrawCorrectiveTargetField(
-        SerializedProperty typeProp,
-        SerializedProperty stringProp,
-        string fieldKey,
-        string labelSuffix,
-        bool typeBeforeLabel,
-        params GUILayoutOption[] layout
-    )
-    {
-        EditorGUILayout.BeginVertical(layout);
-        var clippedMiniLabel = GetClippedMiniLabelStyle();
-
-        CorrectiveActivationType currentType = CorrectiveActivationType.Blendshape;
-        if (typeProp != null)
-        {
-            typeProp.enumValueIndex = Mathf.Clamp(typeProp.enumValueIndex, 0, Enum.GetValues(typeof(CorrectiveActivationType)).Length - 1);
-            currentType = (CorrectiveActivationType)typeProp.enumValueIndex;
-        }
-
-        EditorGUILayout.BeginHorizontal();
-        if (typeBeforeLabel)
-        {
-            var newType = (CorrectiveActivationType)EditorGUILayout.EnumPopup(currentType, GUILayout.Width(92f));
-            EditorGUILayout.LabelField(labelSuffix, clippedMiniLabel);
-            currentType = ApplyCorrectiveTypeChange(typeProp, stringProp, fieldKey, currentType, newType);
-        }
-        else
-        {
-            EditorGUILayout.LabelField(labelSuffix, clippedMiniLabel, GUILayout.Width(42f));
-            var newType = (CorrectiveActivationType)EditorGUILayout.EnumPopup(currentType, GUILayout.Width(92f));
-            currentType = ApplyCorrectiveTypeChange(typeProp, stringProp, fieldKey, currentType, newType);
-        }
-        EditorGUILayout.EndHorizontal();
-
-        if (currentType == CorrectiveActivationType.Blendshape)
-        {
-            var searchField = GetOrCreateCorrectiveSearchField(fieldKey);
-            string currentValue = stringProp != null ? (stringProp.stringValue ?? string.Empty) : string.Empty;
-            if (searchField.searchString != currentValue)
-            {
-                searchField.searchString = currentValue;
-            }
-
-            searchField.OnGUI();
-
-            if (pendingCorrectiveValues.TryGetValue(fieldKey, out var pending))
-            {
-                if (stringProp != null) stringProp.stringValue = pending ?? string.Empty;
-                pendingCorrectiveValues.Remove(fieldKey);
-            }
-        }
-        else
-        {
-            DrawAnimationClipNameField(stringProp);
-        }
-
-        EditorGUILayout.EndVertical();
     }
 
     private CorrectiveActivationType ApplyCorrectiveTypeChange(
         SerializedProperty typeProp,
         SerializedProperty stringProp,
-        string fieldKey,
         CorrectiveActivationType currentType,
         CorrectiveActivationType newType)
     {
@@ -959,67 +404,10 @@ public partial class CreatorModeModule
         {
             stringProp.stringValue = string.Empty;
         }
-        pendingCorrectiveValues.Remove(fieldKey);
-        if (correctiveSearchFields.TryGetValue(fieldKey, out var existing))
-        {
-            existing.searchString = string.Empty;
-            existing.ClearResults();
-        }
         return newType;
     }
 
-    private static void DrawAnimationClipNameField(SerializedProperty stringProp)
-    {
-        string currentName = stringProp != null ? (stringProp.stringValue ?? string.Empty) : string.Empty;
-        var currentClip = FindAnimationClipsByName(currentName).FirstOrDefault();
-        EditorGUILayout.BeginHorizontal();
-        string nextName = EditorGUILayout.DelayedTextField(currentName);
-        var selectedClip = EditorGUILayout.ObjectField(currentClip, typeof(AnimationClip), false, GUILayout.Width(130f)) as AnimationClip;
-        EditorGUILayout.EndHorizontal();
-
-        if (stringProp == null) return;
-
-        if (selectedClip != null)
-        {
-            stringProp.stringValue = selectedClip != null ? selectedClip.name : string.Empty;
-            return;
-        }
-
-        if (!string.Equals(nextName, currentName, StringComparison.Ordinal))
-        {
-            stringProp.stringValue = nextName ?? string.Empty;
-        }
-    }
-
-    private void DrawParentBlendshapeImportControls()
-    {
-        if (selectedParentVersionObject == null || selectedParentVersionObject.customBlendshapes == null ||
-            selectedParentVersionObject.customBlendshapes.Length == 0)
-        {
-            return;
-        }
-
-        EditorGUILayout.BeginHorizontal();
-        GUILayout.Space(EditorGUI.indentLevel * 15f);
-        if (GUILayout.Button(
-                new GUIContent("Import Parent Blendshapes",
-                    "Copy parent version blendshapes and correctives into Creator Mode."),
-                GUILayout.Width(220f)))
-        {
-            ImportBlendshapesFromParent(selectedParentVersionObject);
-        }
-
-        EditorGUILayout.EndHorizontal();
-    }
-
-    private static List<AnimationClip> FindAnimationClipsByName(string clipName)
-    {
-        if (string.IsNullOrWhiteSpace(clipName)) return new List<AnimationClip>();
-        var lookup = GetAnimationClipsByNameLookupCached();
-        return lookup.TryGetValue(clipName, out var clips) && clips != null
-            ? clips
-            : new List<AnimationClip>();
-    }
+    private static List<AnimationClip> FindAnimationClipsByName(string clipName) => AnimationClipLookup.Find(clipName);
 
     private static List<string> CollectAnimationAssetPathsFromFixedBy(IEnumerable<CustomBlendshapeEntry> customBlendshapeEntries)
     {
@@ -1046,74 +434,6 @@ public partial class CreatorModeModule
         }
 
         return paths.ToList();
-    }
-
-    private AutocompleteSearchField.AutocompleteSearchField GetOrCreateCorrectiveSearchField(string fieldKey)
-    {
-        if (correctiveSearchFields.TryGetValue(fieldKey, out var existing))
-        {
-            return existing;
-        }
-
-        var field = new AutocompleteSearchField.AutocompleteSearchField();
-        field.onInputChanged = input =>
-        {
-            pendingCorrectiveValues[fieldKey] = input ?? string.Empty;
-            field.ClearResults();
-            if (string.IsNullOrWhiteSpace(input)) return;
-
-            foreach (var name in GetAllBlendshapeNamesFromCustomFbx())
-            {
-                if (name.IndexOf(input, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    field.AddResult(name);
-                }
-            }
-        };
-        field.onConfirm = selected =>
-        {
-            pendingCorrectiveValues[fieldKey] = selected ?? string.Empty;
-        };
-
-        correctiveSearchFields[fieldKey] = field;
-        return field;
-    }
-
-    private GUIStyle GetClippedMiniLabelStyle()
-    {
-        if (clippedMiniLabelStyle != null) return clippedMiniLabelStyle;
-        clippedMiniLabelStyle = new GUIStyle(EditorStyles.miniLabel)
-        {
-            clipping = TextClipping.Clip,
-            wordWrap = false
-        };
-        return clippedMiniLabelStyle;
-    }
-
-    private void PruneStaleCorrectiveSearchFields()
-    {
-        if (correctiveSearchFields.Count == 0 && pendingCorrectiveValues.Count == 0) return;
-
-        var keysToRemove = new List<string>();
-        foreach (var key in correctiveSearchFields.Keys)
-        {
-            if (!activeCorrectiveFieldKeys.Contains(key))
-            {
-                keysToRemove.Add(key);
-            }
-        }
-
-        for (int i = 0; i < keysToRemove.Count; i++)
-        {
-            correctiveSearchFields.Remove(keysToRemove[i]);
-            pendingCorrectiveValues.Remove(keysToRemove[i]);
-        }
-    }
-
-    private void ClearAllCorrectiveSearchFields()
-    {
-        if (correctiveSearchFields.Count > 0) correctiveSearchFields.Clear();
-        if (pendingCorrectiveValues.Count > 0) pendingCorrectiveValues.Clear();
     }
 
     private IEnumerable<string> GetAllBlendshapeNamesFromCustomFbx()
@@ -1173,55 +493,6 @@ public partial class CreatorModeModule
         return cachedCustomFbxBlendshapeNames;
     }
 
-    private static Dictionary<string, List<AnimationClip>> GetAnimationClipsByNameLookupCached()
-    {
-        EnsureAnimationClipProjectChangedHook();
-
-        if (animationClipsByNameCache != null)
-        {
-            return animationClipsByNameCache;
-        }
-
-        var lookup = new Dictionary<string, List<AnimationClip>>(StringComparer.Ordinal);
-        string[] guids = AssetDatabase.FindAssets("t:AnimationClip");
-        for (int i = 0; i < guids.Length; i++)
-        {
-            string path = AssetDatabase.GUIDToAssetPath(guids[i]);
-            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(path);
-            if (clip == null || string.IsNullOrWhiteSpace(clip.name)) continue;
-
-            if (!lookup.TryGetValue(clip.name, out var list))
-            {
-                list = new List<AnimationClip>();
-                lookup[clip.name] = list;
-            }
-
-            list.Add(clip);
-        }
-
-        foreach (var pair in lookup)
-        {
-            pair.Value.Sort((a, b) => string.CompareOrdinal(AssetDatabase.GetAssetPath(a), AssetDatabase.GetAssetPath(b)));
-        }
-
-        animationClipsByNameCache = lookup;
-        animationClipsByNameCacheTimestamp = EditorApplication.timeSinceStartup;
-        return animationClipsByNameCache;
-    }
-
-    private static void EnsureAnimationClipProjectChangedHook()
-    {
-        if (animationClipProjectChangedHooked) return;
-        animationClipProjectChangedHooked = true;
-        EditorApplication.projectChanged += ClearAnimationClipLookupCache;
-    }
-
-    private static void ClearAnimationClipLookupCache()
-    {
-        animationClipsByNameCache = null;
-        animationClipsByNameCacheTimestamp = 0d;
-    }
-
     private static void AddCorrectivePair(
         SerializedProperty correctiveProp,
         CorrectiveActivationType toFixType = CorrectiveActivationType.Blendshape,
@@ -1237,184 +508,6 @@ public partial class CreatorModeModule
         row.FindPropertyRelative("toFix").stringValue = toFix ?? string.Empty;
         row.FindPropertyRelative("fixedByType").enumValueIndex = (int)fixedByType;
         row.FindPropertyRelative("fixedBy").stringValue = fixedBy ?? string.Empty;
-    }
-
-    private void DrawParentVersionDropdown()
-    {
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Parent Version:", GUILayout.Width(100));
-
-        if (parentVersionDisplayOptions == null || parentVersionDisplayOptions.Count == 0)
-        {
-            EditorGUILayout.Popup(0, new[] { "First version" });
-            EditorGUILayout.EndHorizontal();
-            HandleParentVersionChanged(null);
-            return;
-        }
-
-        int currentParentPopupIndex = (selectedParentVersionIndex == -1) ? defaultParentIndex : selectedParentVersionIndex;
-
-        EditorGUI.BeginChangeCheck();
-        int newParentIndex = EditorGUILayout.Popup(currentParentPopupIndex, parentVersionDisplayOptionsArray);
-        if (EditorGUI.EndChangeCheck())
-        {
-            selectedParentVersionIndex = newParentIndex;
-            if (selectedParentVersionIndex >= 0 && selectedParentVersionIndex < compatibleParentVersions.Count)
-            {
-                selectedParentVersionObject = compatibleParentVersions[selectedParentVersionIndex];
-                SetDefaultVersionNumbers(selectedParentVersionObject);
-            }
-            else
-            {
-                selectedParentVersionObject = null;
-                SetDefaultVersionNumbers(null);
-            }
-        }
-        else if (selectedParentVersionIndex == -1 && defaultParentIndex != -1)
-        {
-            // Initialize on first draw only
-            selectedParentVersionIndex = defaultParentIndex;
-            selectedParentVersionObject = compatibleParentVersions[defaultParentIndex];
-            SetDefaultVersionNumbers(selectedParentVersionObject);
-        }
-        EditorGUILayout.EndHorizontal();
-        HandleParentVersionChanged(selectedParentVersionObject);
-    }
-
-    private void DrawCustomVeinsSection()
-    {
-        var includeProp = editor.includeCustomVeinsForCreatorProp;
-        var textureProp = editor.customVeinsNormalMapProp;
-
-        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-        EditorGUI.BeginChangeCheck();
-        bool includeVeins = EditorGUILayout.ToggleLeft(new GUIContent("Include custom veins"), includeProp.boolValue);
-        if (EditorGUI.EndChangeCheck())
-        {
-            includeProp.boolValue = includeVeins;
-            if (!includeVeins)
-            {
-                textureProp.objectReferenceValue = null;
-                autoAssignedVeinsTexturePath = null;
-            }
-        }
-
-        if (includeProp.boolValue)
-        {
-            DrawVeinsTextureField(textureProp);
-            if (textureProp.objectReferenceValue == null)
-            {
-                EditorGUILayout.HelpBox("Assign a normal map texture to include custom veins.", MessageType.Warning);
-            }
-            else
-            {
-                DrawCustomVeinsImportWarning(textureProp.objectReferenceValue as Texture2D);
-            }
-        }
-
-        EditorGUILayout.EndVertical();
-    }
-
-    private void DrawDynamicNormalsSection()
-    {
-        var includeBodyProp = editor.includeDynamicNormalsBodyForCreatorProp;
-        var includeFlexingProp = editor.includeDynamicNormalsFlexingForCreatorProp;
-
-        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-        // Enable dynamic normals for body checkbox
-        EditorGUI.BeginChangeCheck();
-        bool includeBody = EditorGUILayout.ToggleLeft(new GUIContent("Enable dynamic normals for body"), includeBodyProp.boolValue);
-        if (EditorGUI.EndChangeCheck())
-        {
-            includeBodyProp.boolValue = includeBody;
-        }
-
-        // Info bubble under first checkbox
-        EditorGUILayout.HelpBox("Don't use if muscles normal is already baked in the mesh.\nWill apply to all blendshapes containing \"muscle\" in the name.", MessageType.Info);
-
-        EditorGUILayout.Space(5);
-
-        // Enable dynamic normals for flexings checkbox
-        EditorGUI.BeginChangeCheck();
-        bool includeFlexing = EditorGUILayout.ToggleLeft(new GUIContent("Enable dynamic normals for flexings"), includeFlexingProp.boolValue);
-        if (EditorGUI.EndChangeCheck())
-        {
-            includeFlexingProp.boolValue = includeFlexing;
-        }
-
-        // Info bubble under second checkbox
-        EditorGUILayout.HelpBox("Allows for the flexed muscles to be more visible.\nWill apply to all blendshapes containing \"flex\" in the name.", MessageType.Info);
-
-        EditorGUILayout.EndVertical();
-    }
-
-    private void DrawSuggestRealisticSection()
-    {
-        var includeProp = editor.includeSuggestRealisticForCreatorProp;
-        var pathsProp = editor.suggestRealisticMeshPathsForCreatorProp;
-        if (includeProp == null || pathsProp == null)
-        {
-            return;
-        }
-
-        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-        EditorGUI.BeginChangeCheck();
-        bool includeSuggestRealistic = EditorGUILayout.ToggleLeft(new GUIContent(
-            "Suggest realistic",
-            "Warn users when selected Poiyomi mesh materials use Texture Ramp lighting and offer to switch them to Realistic."), includeProp.boolValue);
-        if (EditorGUI.EndChangeCheck())
-        {
-            includeProp.boolValue = includeSuggestRealistic;
-            if (!includeSuggestRealistic)
-            {
-                pathsProp.ClearArray();
-            }
-        }
-
-        if (includeProp.boolValue)
-        {
-            var options = GetSuggestRealisticMeshOptions();
-            if (options.Count == 0)
-            {
-                EditorGUILayout.HelpBox("No skinned mesh renderers were found in the targeted FBXs on this avatar.", MessageType.Warning);
-            }
-            else
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUILayout.LabelField("Target meshes", EditorStyles.miniBoldLabel);
-                    if (GUILayout.Button("All", GUILayout.Width(48f)))
-                    {
-                        SetSerializedStringList(pathsProp, options.Select(option => option.avatarPath));
-                    }
-                    if (GUILayout.Button("None", GUILayout.Width(56f)))
-                    {
-                        pathsProp.ClearArray();
-                    }
-                }
-
-                foreach (var option in options)
-                {
-                    bool selected = SerializedStringListContains(pathsProp, option.avatarPath);
-                    EditorGUI.BeginChangeCheck();
-                    bool nextSelected = EditorGUILayout.ToggleLeft(new GUIContent(option.Label, option.Tooltip), selected);
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        SetSerializedStringListContains(pathsProp, option.avatarPath, nextSelected);
-                    }
-                }
-
-                if (GetSerializedStringList(pathsProp).Count == 0)
-                {
-                    EditorGUILayout.HelpBox("Select at least one mesh for the suggestRealistic guardrail.", MessageType.Warning);
-                }
-            }
-        }
-
-        EditorGUILayout.EndVertical();
     }
 
     private List<SuggestRealisticMeshOption> GetSuggestRealisticMeshOptions()
@@ -1602,51 +695,6 @@ public partial class CreatorModeModule
         }
     }
 
-    private void DrawVeinsTextureField(SerializedProperty textureProp)
-    {
-        UnityEngine.Object currentTexture = textureProp.objectReferenceValue;
-        EditorGUI.indentLevel++;
-        EditorGUIUtility.SetIconSize(new Vector2(64f, 64f));
-        Texture2D newTexture = (Texture2D)EditorGUILayout.ObjectField(new GUIContent("Custom veins", "Normal map applied to the veins detail layer."), currentTexture, typeof(Texture2D), false, GUILayout.Height(64f));
-        EditorGUIUtility.SetIconSize(Vector2.zero);
-        EditorGUI.indentLevel--;
-
-        if (!Equals(newTexture, currentTexture))
-        {
-            textureProp.objectReferenceValue = newTexture;
-            string selectedPath = AssetDatabase.GetAssetPath(newTexture);
-            string parentPath = MCBUtils.GetVersionVeinsTexturePath(selectedParentVersionObject);
-            autoAssignedVeinsTexturePath = (!string.IsNullOrEmpty(selectedPath) && selectedPath == parentPath) ? selectedPath : null;
-        }
-    }
-
-    private void DrawCustomVeinsImportWarning(Texture2D texture)
-    {
-        if (texture == null) return;
-
-        string assetPath = AssetDatabase.GetAssetPath(texture);
-        if (string.IsNullOrWhiteSpace(assetPath)) return;
-
-        if (TryGetCustomVeinsTextureImporter(assetPath, out var importer) && IsValidCustomVeinsNormalMapImport(importer))
-        {
-            return;
-        }
-
-        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-        EditorGUILayout.HelpBox("This texture is not marked as a normal map", MessageType.Warning);
-
-        using (new EditorGUILayout.HorizontalScope())
-        {
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Fix Now", GUILayout.Width(90f)))
-            {
-                FixCustomVeinsNormalMapImport(assetPath);
-            }
-        }
-
-        EditorGUILayout.EndVertical();
-    }
-
     private static bool TryGetCustomVeinsTextureImporter(string assetPath, out TextureImporter importer)
     {
         importer = null;
@@ -1822,7 +870,6 @@ public partial class CreatorModeModule
         editor.customBaseTarget.customBlendshapesForCreator = imported;
         EditorUtility.SetDirty(editor.customBaseTarget);
         editor.serializedObject.Update();
-        ClearAllCorrectiveSearchFields();
     }
 
     private static void CopyCorrectivesToSerialized(SerializedProperty blendshapeElement, CorrectiveBlendshapeEntry[] source)
@@ -1838,19 +885,6 @@ public partial class CreatorModeModule
             if (corrective == null) continue;
             AddCorrectivePair(correctiveProp, corrective.toFixType, corrective.toFix, corrective.fixedByType, corrective.fixedBy);
         }
-    }
-
-    private void DrawVersionFields()
-    {
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Version:", GUILayout.Width(50));
-        newVersionMajor = EditorGUILayout.IntField(newVersionMajor, GUILayout.Width(40));
-        EditorGUILayout.LabelField(".", GUILayout.Width(10));
-        newVersionMinor = EditorGUILayout.IntField(newVersionMinor, GUILayout.Width(40));
-        EditorGUILayout.LabelField(".", GUILayout.Width(10));
-        newVersionPatch = EditorGUILayout.IntField(newVersionPatch, GUILayout.Width(40));
-        newVersionScope = (Scope)EditorGUILayout.EnumPopup("", newVersionScope, GUILayout.Width(100));
-        EditorGUILayout.EndHorizontal();
     }
     
     private void SetDefaultVersionNumbers(CustomBaseVersion baseVersionObject)
@@ -1877,7 +911,6 @@ public partial class CreatorModeModule
                 editor.GetSelectedAsset()?.id ?? 0, editor.serverVersions, editor.importedVersions, applied)
             .OrderByDescending(v => editor.ParseVersion(v.version)).ToList();
         parentVersionDisplayOptions = compatibleParentVersions.Select(v => $"{v.version} ({v.scope})").ToList();
-        parentVersionDisplayOptionsArray = parentVersionDisplayOptions.ToArray();
         defaultParentIndex = compatibleParentVersions.FindIndex(v => v.Equals(applied));
         if (defaultParentIndex < 0) defaultParentIndex = compatibleParentVersions.Count > 0 ? 0 : -1;
         // A refresh can reorder or replace DTOs without changing the selected version.
@@ -2450,7 +1483,6 @@ public partial class CreatorModeModule
         {
             isRestoringFromVersionState = false;
         }
-        ClearAllCorrectiveSearchFields();
     }
 
     // Filling replaces what the form holds: asked first, as Build and Publish are, unless the form holds nothing of its own.

@@ -98,22 +98,11 @@ public class AdvancedModeModule
         EditorIssueReporter.RefreshListener();
     }
 
-    public void Draw()
-    {
-        EditorGUILayout.Space();
-
-        if (GUILayout.Button("Advanced Options", GUILayout.Width(140f)))
-        {
-            MCBAdvancedModeWindow.Open(editor, this);
-        }
-    }
-
     // Small accessories (piercings, studs) follow the body's blendshapes at build: Toolkit's Follow Body Blendshapes on
     // the avatar root, in "small accessories" mode. The toggle adds or removes that component.
     private void DrawKeepAccessoriesOnBody()
     {
-        var root = editor.customBaseTarget.GetComponentInParent<VRC.SDK3.Avatars.Components.VRCAvatarDescriptor>(true);
-        var avatar = root != null ? root.gameObject : editor.customBaseTarget.transform.root.gameObject;
+        var avatar = AvatarPaths.Root(editor.customBaseTarget).gameObject;
         var follow = avatar.GetComponent<Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow>();
         bool on = follow != null && follow.scope == Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow.Scope.SmallAccessories;
         var label = new GUIContent(
@@ -388,7 +377,7 @@ public class AdvancedModeModule
                             EditorGUI.indentLevel++;
                             foreach (var blendshape in activeBlendshapes)
                             {
-                                EditorGUILayout.LabelField("â€¢ " + blendshape);
+                                EditorGUILayout.LabelField("• " + blendshape);
                             }
                             EditorGUI.indentLevel--;
                         }
@@ -538,7 +527,6 @@ public class AdvancedModeModule
                         if (feature.Key == FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION && !next)
                         {
                             editor.selectedCustomVersionForAction = null;
-                            editor.customWarningShown = false;
                             editor.currentIsCustom = false; // hide current custom UI marks
                             editor.Repaint();
                         }

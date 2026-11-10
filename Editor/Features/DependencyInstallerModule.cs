@@ -114,44 +114,6 @@ public class DependencyInstallerModule
         actionRow.Add(installButton);
     }
 
-    public bool DrawFallbackIfBlocked()
-    {
-        RefreshStatuses();
-        if (!HasBlockingRequiredDependencies)
-        {
-            return false;
-        }
-
-        EditorGUILayout.Space(10);
-        EditorGUILayout.HelpBox(
-            BuildTitle() + "\n\nInstall the required VPM packages to continue. MCB will add the configured repositories if they are missing, then resolve the project packages.",
-            MessageType.Error);
-
-        foreach (var dependency in missingRequiredDependencies)
-        {
-            string line = dependency.DisplayName + " (" + dependency.Id + ")";
-            if (!string.IsNullOrWhiteSpace(dependency.VersionRange))
-            {
-                line += " " + dependency.VersionRange;
-            }
-
-            EditorGUILayout.LabelField(line, EditorStyles.wordWrappedMiniLabel);
-        }
-
-        using (new EditorGUI.DisabledScope(VpmDependencies.IsInstalling))
-        {
-            string label = VpmDependencies.IsInstalling
-                ? "Installing..."
-                : VpmDependencies.InstallLabel(missingRequiredDependencies);
-            if (GUILayout.Button(label, GUILayout.Height(30f)))
-            {
-                InstallMissingRequiredDependencies();
-            }
-        }
-
-        return true;
-    }
-
     private void RefreshStatuses()
     {
         missingRequiredDependencies = McbDependencies.Vpm.MissingRequired();

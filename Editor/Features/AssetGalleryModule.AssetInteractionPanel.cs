@@ -214,11 +214,33 @@ public partial class AssetGalleryModule
                             .Where(item => item != null && string.Equals(item.type, InteractionTypes.COMMENT, StringComparison.OrdinalIgnoreCase))
                             .ToList();
                     }
-                    editor.RefreshUiToolkitSections();
-                    editor.Repaint();
+                    ShowLoadedInteractions(assetId, state);
                 }));
 
         return state;
+    }
+
+    // Every card loads its own interactions (the server answers per asset). An answer only changes the card's two
+    // counts and, for the selected asset, its like button and comments: those are updated in place instead of
+    // rebuilding the inspector, which with N cards cost N rebuilds of N cards.
+    private void ShowLoadedInteractions(int assetId, AssetInteractionState state)
+    {
+        // An answer for an account that has signed out since belongs to no card any more.
+        if (!ReferenceEquals(GetInteractionState(assetId, false), state)) return;
+
+        UpdateLikeCountLabels(assetId, state.likeCount);
+        if (commentCountLabels.TryGetValue(assetId, out var commentLabel) && commentLabel != null)
+        {
+            commentLabel.text = state.commentCount.ToString();
+        }
+
+        if (SelectedAsset != null && SelectedAsset.id == assetId)
+        {
+            UpdateSelectedAssetLikeVisual(assetId, state);
+            BuildCommentsUIToolkit();
+        }
+
+        editor.Repaint();
     }
 
     private AssetInteractionState GetInteractionState(int assetId, bool create)

@@ -147,6 +147,32 @@ internal sealed class MeshSource
         return true;
     }
 
+    // Which points share a position (a UV seam): it depends only on Points, so it is worked out once per mesh, not on
+    // every comparison and reference switch. A reference is assigned whole, so two worker threads at worst build it twice.
+    private sealed class Weld
+    {
+        public int[] Ids;
+        public int Count;
+    }
+
+    private Weld weld;
+
+    private Weld WeldMap()
+    {
+        var cached = weld;
+        if (cached != null && cached.Ids.Length == Points.Length) return cached;
+        var ids = new Dictionary<Vector3, int>();
+        var map = new Weld { Ids = new int[Points.Length] };
+        for (int i = 0; i < map.Ids.Length; i++)
+        {
+            if (!ids.TryGetValue(Points[i], out int id)) ids[Points[i]] = id = ids.Count;
+            map.Ids[i] = id;
+        }
+        map.Count = ids.Count;
+        weld = map;
+        return map;
+    }
+
     /// <summary>Per drawable vertex, from per point values.</summary>
     public T[] Map<T>(T[] perPoint)
     {
@@ -171,14 +197,9 @@ internal sealed class MeshSource
         }
         else
         {
-            var ids = new Dictionary<Vector3, int>();
-            weld = new int[weightedPoints.Length];
-            for (int i = 0; i < weld.Length; i++)
-            {
-                if (!ids.TryGetValue(Points[i], out int id)) ids[Points[i]] = id = ids.Count;
-                weld[i] = id;
-            }
-            count = ids.Count;
+            var map = WeldMap();
+            weld = map.Ids;
+            count = map.Count;
         }
 
         var sums = new Vector3[count];
@@ -506,6 +527,7 @@ internal sealed class VersionMeshComparison : IDisposable
         PreviousProblem = problem;
         PreviousVersion = null;
         PreviousOnAvatar = false;
+        offered.Clear();
         if (targets == null) return;
         foreach (var fbx in targets)
         {
@@ -553,6 +575,18 @@ internal sealed class VersionMeshComparison : IDisposable
     /// other meshes than this version and than the other references offered.
     /// </summary>
     public bool Offers(CompareReference reference)
+    {
+        // Each answer is a pass over every part's points; the window asks for all three after every comparison.
+        if (offered.TryGetValue(reference, out bool known)) return known;
+        bool offers = OffersUncached(reference);
+        offered[reference] = offers;
+        return offers;
+    }
+
+    // Answers of Offers for the sources and previous version loaded now (cleared when either changes).
+    private readonly Dictionary<CompareReference, bool> offered = new Dictionary<CompareReference, bool>();
+
+    private bool OffersUncached(CompareReference reference)
     {
         switch (reference)
         {
@@ -643,6 +677,7 @@ internal sealed class VersionMeshComparison : IDisposable
         Dictionary<VersionActions.VersionModelPatch, NativeMeshPayloadService.PreparedPayloadAssetData> prepared)
     {
         sources.Clear();
+        offered.Clear();
         var byKey = new Dictionary<string, PartSources>(StringComparer.Ordinal);
         var rendererOf = new Dictionary<string, SkinnedMeshRenderer>(StringComparer.Ordinal);
         // The original model's own slot names of each renderer's mesh, for a version's mesh that keeps the original's slots.
@@ -953,6 +988,22 @@ internal sealed class VersionMeshComparison : IDisposable
         bool layoutChanged = parts.Any(p => weighted[p].before == null || weighted[p].after == null);
         var beforeUnion = layoutChanged ? Union(parts.Where(p => weighted[p].before != null).Select(p => (weighted[p].before, p.Before.Triangles))) : default;
         var afterUnion = layoutChanged ? Union(parts.Where(p => weighted[p].after != null).Select(p => (weighted[p].after, p.After.Triangles))) : default;
+        bool SameTopology(ComparedPart part) => part.Before.FromFile == part.After.FromFile && weighted[part].before.Length == weighted[part].after.Length;
+        // Measured against a union, every part's points are searched in one call per side: the union's surface grid is
+        // built twice in all, instead of twice per part (each point's distance does not depend on the other points). A
+        // union without triangles is measured point to point, where the query's own length matters: per part then.
+        var toBeforeUnion = new Dictionary<ComparedPart, float[]>();
+        var toAfterUnion = new Dictionary<ComparedPart, float[]>();
+        if (layoutChanged)
+        {
+            var measured = parts.Where(p => weighted[p].before != null && weighted[p].after != null && !SameTopology(p)).ToList();
+            if (beforeUnion.triangles.Length >= 3)
+                SplitByPart(measured, MeshComparison.SurfaceDistances(beforeUnion.points, beforeUnion.triangles,
+                    Concat(measured.Select(p => weighted[p].after)), size), p => weighted[p].after.Length, toBeforeUnion);
+            if (afterUnion.triangles.Length >= 3)
+                SplitByPart(measured, MeshComparison.SurfaceDistances(afterUnion.points, afterUnion.triangles,
+                    Concat(measured.Select(p => weighted[p].before)), size), p => weighted[p].before.Length, toAfterUnion);
+        }
 
         // Parts one by one: each search already uses half the cores, the other half keeps the editor smooth.
         foreach (var part in parts)
@@ -973,12 +1024,12 @@ internal sealed class VersionMeshComparison : IDisposable
                 continue;
             }
 
-            bool sameTopology = part.Before.FromFile == part.After.FromFile && b.Length == a.Length;
+            bool sameTopology = SameTopology(part);
             part.AfterDistances = sameTopology ? MeshComparison.Distances(b, a, size)
-                : layoutChanged ? MeshComparison.SurfaceDistances(beforeUnion.points, beforeUnion.triangles, a, size)
+                : layoutChanged ? toBeforeUnion.TryGetValue(part, out var toBefore) ? toBefore : MeshComparison.SurfaceDistances(beforeUnion.points, beforeUnion.triangles, a, size)
                 : MeshComparison.SurfaceDistances(b, part.Before.Triangles, a, size);
             part.BeforeDistances = sameTopology ? part.AfterDistances
-                : layoutChanged ? MeshComparison.SurfaceDistances(afterUnion.points, afterUnion.triangles, b, size)
+                : layoutChanged ? toAfterUnion.TryGetValue(part, out var toAfter) ? toAfter : MeshComparison.SurfaceDistances(afterUnion.points, afterUnion.triangles, b, size)
                 : MeshComparison.SurfaceDistances(a, part.After.Triangles, b, size);
             // Measured to the other surface, a re-exported mesh is never exactly on it: allow for that.
             float moved = sameTopology ? threshold : Mathf.Max(threshold, size * 5e-4f);
@@ -1036,6 +1087,26 @@ internal sealed class VersionMeshComparison : IDisposable
         MaxDistance = max;
         Threshold = threshold;
         return parts;
+    }
+
+    private static Vector3[] Concat(IEnumerable<Vector3[]> pieces)
+    {
+        var all = new List<Vector3>();
+        foreach (var piece in pieces) all.AddRange(piece);
+        return all.ToArray();
+    }
+
+    // The distances of a concatenated query, back to the part each point came from.
+    private static void SplitByPart(List<ComparedPart> parts, float[] distances, Func<ComparedPart, int> length, Dictionary<ComparedPart, float[]> into)
+    {
+        int offset = 0;
+        foreach (var part in parts)
+        {
+            var slice = new float[length(part)];
+            Array.Copy(distances, offset, slice, 0, slice.Length);
+            offset += slice.Length;
+            into[part] = slice;
+        }
     }
 
     // GeometryUtility.CalculateBounds only runs on the main thread.

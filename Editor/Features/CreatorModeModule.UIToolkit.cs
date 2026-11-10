@@ -54,14 +54,6 @@ public partial class CreatorModeModule
         public bool hasRequiredVersionMetadata;
         public string metadataWarning;
         public bool canAttemptSubmit;
-        public bool canSubmit;
-    }
-
-    public void AttachUIToolkit(VisualElement root)
-    {
-        // The inspector keeps the version timeline; the form lives only in its window.
-        root.Clear();
-        root.style.display = DisplayStyle.None;
     }
 
     public void DetachUIToolkit()
@@ -98,6 +90,8 @@ public partial class CreatorModeModule
     private void BuildCreatorModeUIToolkit()
     {
         creatorRoot.Clear();
+        blendshapeEditorCard = null;
+        refreshSubmissionValidation = null;
         creatorRoot.AddToClassList("mcb-creator");
         creatorRoot.AddToClassList("mcb-creator--window");
 
@@ -133,8 +127,6 @@ public partial class CreatorModeModule
             hasAttemptedToolkitSubmit = false;
             wasToolkitCreatorModeVisible = true;
         }
-
-        creatorModeFoldout = true;
 
         if (creatorWindow.showBuildSuccess)
         {
@@ -296,7 +288,7 @@ public partial class CreatorModeModule
         var importButton = CreateTextButton(
             "Import Parent Blendshapes",
             "Copy parent version blendshapes and correctives into Creator Mode.",
-            () => ApplyCreatorChange(() => ImportBlendshapesFromParent(selectedParentVersionObject)));
+            () => ApplyBlendshapeChange(() => ImportBlendshapesFromParent(selectedParentVersionObject)));
         importButton.AddToClassList("mcb-creator-blendshapes__import-button");
         return importButton;
     }
@@ -561,7 +553,7 @@ public partial class CreatorModeModule
         var actions = CreateCreatorRow();
         actions.Add(CreateTextButton("Build rig on this avatar", "Adds the contacts and a VRCFury controller to the avatar in the scene, to try the correctives in Gesture Manager or VRChat.", () =>
         {
-            var avatar = customBase.transform.root.gameObject;
+            var avatar = AvatarPaths.Root(customBase).gameObject;
             var renderers = avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true)
                 .GroupBy(renderer => renderer.name).ToDictionary(group => group.Key, group => group.First());
             var result = MuscleDriverGenerator.Generate(avatar, set, renderers,
@@ -573,7 +565,7 @@ public partial class CreatorModeModule
         }));
         actions.Add(CreateTextButton("Remove rig", "Removes the XMuscles contacts and controller from the avatar in the scene.", () =>
         {
-            MuscleDriverGenerator.Remove(customBase.transform.root.gameObject);
+            MuscleDriverGenerator.Remove(AvatarPaths.Root(customBase).gameObject);
             xmusclesMessage = null;
             RefreshEditorUi();
         }));
@@ -818,7 +810,7 @@ public partial class CreatorModeModule
         toggleArea.RegisterCallback<ClickEvent>(_ =>
         {
             creatorBlendshapeEditorFoldout = !creatorBlendshapeEditorFoldout;
-            RefreshCreatorUi();
+            RefreshBlendshapeEditor();
         });
         foldoutHeader.Add(toggleArea);
 
@@ -838,6 +830,46 @@ public partial class CreatorModeModule
         }
 
         root.Add(card);
+        blendshapeEditorCard = card;
+    }
+
+    // A change inside the blendshape card (a checkbox, a move, a corrective) rebuilds that card and the submission
+    // checks, not the whole form: the other sections keep their focus, scroll and hover.
+    private VisualElement blendshapeEditorCard;
+    private Action refreshSubmissionValidation;
+
+    private void ApplyBlendshapeChange(Action change)
+    {
+        ApplyCreatorChange(change, false);
+        RefreshBlendshapeEditor();
+    }
+
+    private void RefreshBlendshapeEditor()
+    {
+        var card = blendshapeEditorCard;
+        var parent = card?.parent;
+        if (parent == null || creatorRoot == null || card.panel == null)
+        {
+            RefreshCreatorUi();
+            return;
+        }
+
+        int index = parent.IndexOf(card);
+        var built = new VisualElement();
+        // As around the whole form's build (RefreshUIToolkit): the card's fields read and may clamp properties.
+        editor.serializedObject.Update();
+        try
+        {
+            BuildBlendshapeEditorUIToolkit(built);
+        }
+        finally
+        {
+            editor.serializedObject.ApplyModifiedProperties();
+        }
+        card.RemoveFromHierarchy();
+        parent.Insert(index, blendshapeEditorCard);
+        refreshSubmissionValidation?.Invoke();
+        editor.Repaint();
     }
 
     private int GetExposedBlendshapeCount()
@@ -907,7 +939,7 @@ public partial class CreatorModeModule
             var upButton = CreateIconButton(
                 "Move this blendshape up.",
                 new MCBCreatorChevronIconElement(true),
-                () => ApplyCreatorChange(() => blendshapesProp.MoveArrayElement(index, index - 1)));
+                () => ApplyBlendshapeChange(() => blendshapesProp.MoveArrayElement(index, index - 1)));
             upButton.AddToClassList("mcb-creator-table__icon-button");
             upButton.AddToClassList("mcb-creator-table__reorder-button");
             upButton.AddToClassList("mcb-creator-table__reorder-button--up");
@@ -917,7 +949,7 @@ public partial class CreatorModeModule
             var downButton = CreateIconButton(
                 "Move this blendshape down.",
                 new MCBCreatorChevronIconElement(false),
-                () => ApplyCreatorChange(() => blendshapesProp.MoveArrayElement(index, index + 1)));
+                () => ApplyBlendshapeChange(() => blendshapesProp.MoveArrayElement(index, index + 1)));
             downButton.AddToClassList("mcb-creator-table__icon-button");
             downButton.AddToClassList("mcb-creator-table__reorder-button");
             downButton.AddToClassList("mcb-creator-table__reorder-button--down");
@@ -939,7 +971,7 @@ public partial class CreatorModeModule
 
             var sliderToggle = CreateCheckboxButton("Use this blendshape as a slider.", isSliderProp.boolValue, true, value =>
             {
-                ApplyCreatorChange(() =>
+                ApplyBlendshapeChange(() =>
                 {
                     isSliderProp.boolValue = value;
                     if (!value)
@@ -954,7 +986,7 @@ public partial class CreatorModeModule
 
             var defaultToggle = CreateCheckboxButton("Enable this slider by default.", isSliderDefaultProp.boolValue, isSliderProp.boolValue, value =>
             {
-                ApplyCreatorChange(() => isSliderDefaultProp.boolValue = value);
+                ApplyBlendshapeChange(() => isSliderDefaultProp.boolValue = value);
             });
             defaultToggle.AddToClassList("mcb-creator-table__toggle");
             defaultToggle.AddToClassList("mcb-creator-table__default-toggle");
@@ -962,7 +994,7 @@ public partial class CreatorModeModule
 
             var addFixesButton = CreateTextButton("add fixes", null, () =>
             {
-                ApplyCreatorChange(() => AddCorrectivePair(correctiveProp));
+                ApplyBlendshapeChange(() => AddCorrectivePair(correctiveProp));
             });
             addFixesButton.AddToClassList("mcb-creator-table__correctives");
             addFixesButton.AddToClassList("mcb-creator-table__mini-button");
@@ -971,7 +1003,7 @@ public partial class CreatorModeModule
             var deleteButton = CreateIconButton(
                 "Delete this blendshape.",
                 new MCBInteractionIconElement(MCBInteractionIconKind.Delete),
-                () => ApplyCreatorChange(() => blendshapesProp.DeleteArrayElementAtIndex(index)));
+                () => ApplyBlendshapeChange(() => blendshapesProp.DeleteArrayElementAtIndex(index)));
             deleteButton.AddToClassList("mcb-creator-table__delete");
             deleteButton.AddToClassList("mcb-creator-table__icon-button");
             deleteButton.AddToClassList("mcb-creator-table__delete-button");
@@ -1002,7 +1034,7 @@ public partial class CreatorModeModule
                 {
                     blendshapeSearchText = string.Empty;
                     OnBlendshapeSearchConfirm(selected);
-                    RefreshCreatorUi();
+                    RefreshBlendshapeEditor();
                 });
                 button.AddToClassList("mcb-creator__suggestion");
                 suggestionRow.Add(button);
@@ -1048,7 +1080,6 @@ public partial class CreatorModeModule
         var blendshapesProp = editor.customBlendshapesForCreatorProp;
         if (blendshapesProp == null || blendshapesProp.arraySize == 0)
         {
-            ClearAllCorrectiveSearchFields();
             root.Add(CreateHelpBox("Add blendshapes above to create corrective links.", HelpBoxMessageType.None));
             return;
         }
@@ -1080,7 +1111,7 @@ public partial class CreatorModeModule
             titleRow.Add(titleLabel);
             var deleteButton = CreateTextButton("Delete", null, () =>
             {
-                ApplyCreatorChange(() => correctiveProp.arraySize = 0);
+                ApplyBlendshapeChange(() => correctiveProp.arraySize = 0);
             });
             deleteButton.AddToClassList("mcb-creator__compact-button");
             deleteButton.AddToClassList("mcb-creator-corrective__compact-button");
@@ -1115,7 +1146,7 @@ public partial class CreatorModeModule
                 var removeButton = CreateIconButton(
                     "Delete this corrective link.",
                     new MCBInteractionIconElement(MCBInteractionIconKind.Delete),
-                    () => ApplyCreatorChange(() => correctiveProp.DeleteArrayElementAtIndex(correctiveIndex)));
+                    () => ApplyBlendshapeChange(() => correctiveProp.DeleteArrayElementAtIndex(correctiveIndex)));
                 removeButton.AddToClassList("mcb-creator-corrective__remove");
                 removeButton.AddToClassList("mcb-creator-table__icon-button");
                 row.Add(removeButton);
@@ -1124,7 +1155,7 @@ public partial class CreatorModeModule
 
             var addButton = CreateTextButton("Add", null, () =>
             {
-                ApplyCreatorChange(() => AddCorrectivePair(correctiveProp));
+                ApplyBlendshapeChange(() => AddCorrectivePair(correctiveProp));
             });
             addButton.AddToClassList("mcb-creator__compact-button");
             addButton.AddToClassList("mcb-creator-corrective__compact-button");
@@ -1167,9 +1198,9 @@ public partial class CreatorModeModule
         typeField.AddToClassList("mcb-creator-corrective__type");
         typeField.RegisterValueChangedCallback(evt =>
         {
-            ApplyCreatorChange(() =>
+            ApplyBlendshapeChange(() =>
             {
-                ApplyCorrectiveTypeChange(typeProp, stringProp, fieldKey, currentType, (CorrectiveActivationType)evt.newValue);
+                ApplyCorrectiveTypeChange(typeProp, stringProp, currentType, (CorrectiveActivationType)evt.newValue);
             });
         });
         var label = CreateMutedLabel(labelSuffix);
@@ -1283,7 +1314,7 @@ public partial class CreatorModeModule
         clipField.AddToClassList("mcb-creator__object-field");
         clipField.RegisterValueChangedCallback(evt =>
         {
-            ApplyCreatorChange(() =>
+            ApplyBlendshapeChange(() =>
             {
                 if (stringProp != null)
                 {
@@ -1347,6 +1378,7 @@ public partial class CreatorModeModule
         {
             UpdateSubmissionValidation(versionWarningBox, metadataWarningBox, buildButton, publishButton);
         };
+        refreshSubmissionValidation = refreshValidation;
 
         var versionRow = CreateCreatorRow();
         versionRow.AddToClassList("mcb-creator-version");
@@ -1412,7 +1444,7 @@ public partial class CreatorModeModule
             hasAttemptedToolkitSubmit = true;
             refreshValidation();
             CreatorSubmissionValidation validation = GetCreatorSubmissionValidation();
-            if (!validation.canSubmit)
+            if (!validation.canAttemptSubmit)
             {
                 return;
             }
@@ -1527,12 +1559,10 @@ public partial class CreatorModeModule
                                 (!requiresParentVersion || selectedParentVersionObject != null) &&
                                 isVersionValid &&
                                 hasRequiredVersionMetadata;
-        bool canSubmit = canAttemptSubmit && hasRequiredVersionMetadata;
 
         if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
         {
             canAttemptSubmit = false;
-            canSubmit = false;
         }
 
         if (editor.includeSuggestRealisticForCreatorProp != null &&
@@ -1540,7 +1570,6 @@ public partial class CreatorModeModule
             GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count == 0)
         {
             canAttemptSubmit = false;
-            canSubmit = false;
         }
 
         return new CreatorSubmissionValidation
@@ -1550,8 +1579,7 @@ public partial class CreatorModeModule
             versionWarning = $"New version must be higher than the selected parent version (v{baseVer}).",
             hasRequiredVersionMetadata = hasRequiredVersionMetadata,
             metadataWarning = metadataValidationMessage,
-            canAttemptSubmit = canAttemptSubmit,
-            canSubmit = canSubmit
+            canAttemptSubmit = canAttemptSubmit
         };
     }
 

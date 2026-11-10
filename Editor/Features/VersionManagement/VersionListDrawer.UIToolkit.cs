@@ -10,6 +10,65 @@ using Orbiters.Toolkit.Editor;
 
 public partial class VersionListDrawer
 {
+    private readonly MCBEditor editor;
+    private readonly VersionActions actions;
+    private readonly NetworkService networkService = new NetworkService();
+    
+    // UI State
+    private static readonly Color AccentGreen = new Color32(0, 218, 109, 255);
+    private static Dictionary<string, bool> individualChangelogStates = new Dictionary<string, bool>();
+    private static bool isListCollapsed = true;
+    private static string editingVersionKey;
+    private static string editingVersionTitleDraft = "";
+    private static string editingVersionChangelogDraft = "";
+    private static bool isUpdatingVersionMetadata;
+    private static string versionMetadataUpdateError;
+    
+    // Special reset version identifier
+    public static readonly CustomBaseVersion RESET_VERSION = new CustomBaseVersion
+    {
+        version = "Base Default",
+        scope = Scope.PUBLIC,
+        changelog = "Reset to the original avatar configuration without any custom base modifications."
+    };
+    
+    // Cached textures for collapse/expand icons
+    private static Texture2D collapseIcon;
+    private static Texture2D expandIcon;
+
+    public VersionListDrawer(MCBEditor editor, VersionActions actions)
+    {
+        this.editor = editor;
+        this.actions = actions;
+        LoadIcons();
+    }
+    
+    private void LoadIcons()
+    {
+        if (collapseIcon == null)
+            collapseIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/collapse.png");
+        if (expandIcon == null)
+            expandIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Packages/orbiters.mcb/Editor/expand.png");
+    }
+
+    private static string GetInitials(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "?";
+        string[] parts = name.Split(new[] { ' ', '\t', '\n', '\r', '_' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1) return parts[0].Substring(0, Math.Min(2, parts[0].Length)).ToUpperInvariant();
+        string a = parts[0].Substring(0, 1);
+        string b = parts[parts.Length - 1].Substring(0, 1);
+        return (a + b).ToUpperInvariant();
+    }
+
+    private Color GetColorForScope(Scope scope) => scope switch
+    {
+        Scope.PUBLIC => AccentGreen,
+        Scope.BETA => Color.yellow,
+        Scope.ALPHA => Color.red,
+        _ => Color.magenta
+    };
+
     public void BuildUIToolkit(VisualElement root)
     {
         if (root == null)
@@ -20,14 +79,13 @@ public partial class VersionListDrawer
         root.Clear();
         root.AddToClassList("mcb-version-list");
 
+        // Shown for as long as the avatar wears an unsupported custom base (it used to vanish on the next rebuild).
         if (FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION) &&
-            editor.currentIsCustom &&
-            !editor.customWarningShown)
+            editor.currentIsCustom)
         {
             root.Add(CreateHelpBox(
                 "The current custom version of your avatar base is not supported. If you update it to one of the custom base versions, you may lose some custom features or blendshapes of your custom base.",
                 HelpBoxMessageType.Warning));
-            editor.customWarningShown = true;
         }
 
         var allVersions = editor.GetAllVersions() ?? new List<CustomBaseVersion>();
@@ -390,6 +448,7 @@ public partial class VersionListDrawer
 
             evt.StopPropagation();
             evt.PreventDefault();
+            item.EnableInClassList("mcb-version-item--selected", !isSelected);
             RefreshVersionUi();
         });
 
@@ -476,19 +535,11 @@ public partial class VersionListDrawer
         card.Add(content);
 
         string effectiveChangelog = changelogTextOverride ?? ver?.changelog;
-        bool shouldShowChangelog = false;
-        if (displayAllChangelogs)
-        {
-            shouldShowChangelog = !string.IsNullOrEmpty(effectiveChangelog);
-        }
-        else
-        {
-            string changelogKey = changelogKeyOverride ?? (ver == RESET_VERSION ? "reset_base" : $"{ver?.version}_{ver?.scope}");
-            shouldShowChangelog = !string.IsNullOrEmpty(changelogKey) &&
-                                  individualChangelogStates.ContainsKey(changelogKey) &&
-                                  individualChangelogStates[changelogKey] &&
-                                  !string.IsNullOrEmpty(effectiveChangelog);
-        }
+        string changelogKey = changelogKeyOverride ?? (ver == RESET_VERSION ? "reset_base" : $"{ver?.version}_{ver?.scope}");
+        bool shouldShowChangelog = !string.IsNullOrEmpty(changelogKey) &&
+                                   individualChangelogStates.ContainsKey(changelogKey) &&
+                                   individualChangelogStates[changelogKey] &&
+                                   !string.IsNullOrEmpty(effectiveChangelog);
 
         if (shouldShowChangelog)
         {
@@ -533,6 +584,7 @@ public partial class VersionListDrawer
 
                 evt.StopPropagation();
                 evt.PreventDefault();
+                item.EnableInClassList("mcb-version-item--selected", !isSelected);
                 RefreshVersionUi();
             });
         }
@@ -902,9 +954,22 @@ public partial class VersionListDrawer
 
         string token = editor.authToken;
         string url = $"{MCBUtils.getApiUrl("creator")}/assets/{ver.assetId}/versions/{ver.id}";
-        var result = await networkService.UpdateCreatorVersionMetadataAsync(url, token, nextTitle, editingVersionChangelogDraft ?? string.Empty);
+        (bool success, CustomBaseVersion version, string error) result;
+        try
+        {
+            result = await networkService.UpdateCreatorVersionMetadataAsync(url, token, nextTitle, editingVersionChangelogDraft ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            // The edit stays open with the error: Save, Cancel and Edit must not stay disabled until a reload.
+            MCBLogger.LogWarning($"[MCB] Could not save the version details: {ex.Message}");
+            result = (false, null, ex.Message);
+        }
+        finally
+        {
+            isUpdatingVersionMetadata = false;
+        }
 
-        isUpdatingVersionMetadata = false;
         if (!result.success)
         {
             versionMetadataUpdateError = result.error;
@@ -1189,9 +1254,11 @@ public partial class VersionListDrawer
         return false;
     }
 
+    // Rebuilt once on the next frame, however many rows, user infos and avatars ask in between; a clicked row shows its
+    // selection at once (its class is set where it is clicked).
     private void RefreshVersionUi()
     {
-        editor.versionModule?.RefreshUIToolkit();
+        editor.RequestRefresh(McbViewParts.Versions);
         editor.Repaint();
     }
 }
