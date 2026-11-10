@@ -158,7 +158,7 @@ public static class ContentHash
     public static string Proof(string path, Operation operation = null)
     {
         string full = FullPath(path);
-        if (full == null || !Stamp(full, out var stamp)) return null;
+        if (full == null || !Stamp(full, out var stamp, operation)) return null;
         if (operation != null && operation.TryGet(full, stamp, out string proven)) return proven;
         string hash = ReadStable(full, null, false, operation: operation);
         return hash;
@@ -173,7 +173,7 @@ public static class ContentHash
     {
         if (string.IsNullOrWhiteSpace(expectedHash)) return false;
         string full = FullPath(path);
-        if (full == null || !Stamp(full, out var stamp)) return false;
+        if (full == null || !Stamp(full, out var stamp, operation)) return false;
         if (expectedLength >= 0 && stamp.length != expectedLength) return false;
         string hash;
         try { hash = Proof(full, operation); }
@@ -185,7 +185,7 @@ public static class ContentHash
     public static bool SameContent(string first, string second, Operation operation = null)
     {
         string a = FullPath(first), b = FullPath(second);
-        if (a == null || b == null || !Stamp(a, out var stampA) || !Stamp(b, out var stampB) || stampA.length != stampB.length) return false;
+        if (a == null || b == null || !Stamp(a, out var stampA, operation) || !Stamp(b, out var stampB, operation) || stampA.length != stampB.length) return false;
         if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
         try
         {
@@ -267,10 +267,12 @@ public static class ContentHash
         catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is PathTooLongException) { return null; }
     }
 
-    // The file's stamp; a missing file loses its advisory entry.
-    static bool Stamp(string full, out CachedFileStamp stamp)
+    // The file's stamp; a missing file loses its advisory entry, and its proof in the operation (a file deleted and
+    // restored with the same stamp must be read again).
+    static bool Stamp(string full, out CachedFileStamp stamp, Operation operation = null)
     {
         if (CachedFileStamp.TryRead(full, out stamp)) return true;
+        operation?.Remove(full);
         bool had;
         lock (gate) had = known.Remove(full);
         if (had) PersistentCache.Existing?.InvalidateHash(full);
@@ -304,10 +306,10 @@ public static class ContentHash
         {
             for (int attempt = 0; attempt < attempts; attempt++)
             {
-                if (!Stamp(full, out var before)) throw new FileNotFoundException("The file vanished before it was read.", full);
+                if (!Stamp(full, out var before, operation)) throw new FileNotFoundException("The file vanished before it was read.", full);
                 long started = DateTime.UtcNow.Ticks;
                 string hash = MCBHashing.HashFile(full, progress);
-                if (!Stamp(full, out var after)) throw new FileNotFoundException("The file vanished while it was read.", full);
+                if (!Stamp(full, out var after, operation)) throw new FileNotFoundException("The file vanished while it was read.", full);
                 if (!after.Equals(before)) continue;
                 operation?.Put(full, before, hash);
                 StoreAdvisory(full, before, hash, started, persist);

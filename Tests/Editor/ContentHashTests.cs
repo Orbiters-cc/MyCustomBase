@@ -300,4 +300,19 @@ public sealed class ContentHashTests
             Assert.AreEqual(Reference(A), ContentHash.Proof(path, operation), "The operation's entry went too: the bytes are read.");
         }
     }
+
+    [Test] public void AFileDeletedAndRestoredInsideAnOperationIsReadAgain()
+    {
+        string path = Settled("model.fbx", A);
+        using (var operation = new ContentHash.Operation())
+        {
+            Assert.AreEqual(Reference(A), ContentHash.Proof(path, operation));
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            File.Delete(path);
+            Assert.IsNull(ContentHash.Proof(path, operation));
+            File.WriteAllBytes(path, B);
+            File.SetLastWriteTimeUtc(path, written); // the very stamp the operation proved A at
+            Assert.AreEqual(Reference(B), ContentHash.Proof(path, operation));
+        }
+    }
 }
