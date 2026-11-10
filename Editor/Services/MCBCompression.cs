@@ -42,29 +42,53 @@ public static class MCBCompression
     {
         if (input == null || count < 0 || count > input.Length || count > MaxDecodedBytes) throw new InvalidDataException("Mesh payload exceeds the supported size.");
         ValidateCodec(codec);
-        int largest = Math.Min(BlockBytes, Math.Max(1, count));
-        int largestBound = codec == Lz4 ? LZ4_compressBound(largest) : checked((int)ZSTD_compressBound((UIntPtr)(uint)largest).ToUInt64());
-        byte[] block = ArrayPool<byte>.Shared.Rent(largestBound + 4);
+        int largestBound = Bound(codec, Math.Min(BlockBytes, Math.Max(1, count)));
+        int blockCount = (count + BlockBytes - 1) / BlockBytes;
+        // Blocks are independent: a few are compressed at once, then written in order (the same bytes as one at a time).
+        int workers = Math.Max(1, Math.Min(Math.Min(Workers, blockCount), 8));
+        var blocks = new byte[workers][];
+        var sizes = new int[workers];
         try
         {
+            for (int i = 0; i < workers; i++) blocks[i] = ArrayPool<byte>.Shared.Rent(largestBound + 4);
             long written = 12;
-            WriteInt(output, block, Magic); WriteInt(output, block, count); WriteInt(output, block, BlockBytes);
-            for (int offset = 0; offset < count; offset += BlockBytes) {
+            WriteInt(output, blocks[0], Magic); WriteInt(output, blocks[0], count); WriteInt(output, blocks[0], BlockBytes);
+            for (int first = 0; first < blockCount; first += workers) {
                 cancellation.ThrowIfCancellationRequested();
-                int length = Math.Min(BlockBytes, count - offset);
-                int bound = codec == Lz4 ? LZ4_compressBound(length) : checked((int)ZSTD_compressBound((UIntPtr)(uint)length).ToUInt64());
-                // The block goes after its four-byte size, so both leave in one write.
-                int size = Pin(input, offset, block, 4, (src, dst) => codec == Lz4
-                    ? LZ4_compress_default(src, dst, length, bound)
-                    : CheckedSize(ZSTD_compress(dst, (UIntPtr)(uint)bound, src, (UIntPtr)(uint)length, 9)));
-                if (size <= 0) throw new InvalidDataException("Mesh compression failed.");
-                BinaryPrimitives.WriteInt32LittleEndian(block, size);
-                output.Write(block, 0, size + 4);
-                written += size + 4;
+                int batch = Math.Min(workers, blockCount - first);
+                Run(batch, i => {
+                    int offset = (first + i) * BlockBytes, length = Math.Min(BlockBytes, count - offset), bound = Bound(codec, length);
+                    // The block goes after its four-byte size, so both leave in one write.
+                    sizes[i] = Pin(input, offset, blocks[i], 4, (src, dst) => codec == Lz4
+                        ? LZ4_compress_default(src, dst, length, bound)
+                        : CheckedSize(ZSTD_compress(dst, (UIntPtr)(uint)bound, src, (UIntPtr)(uint)length, 9)));
+                });
+                for (int i = 0; i < batch; i++) {
+                    if (sizes[i] <= 0) throw new InvalidDataException("Mesh compression failed.");
+                    BinaryPrimitives.WriteInt32LittleEndian(blocks[i], sizes[i]);
+                    output.Write(blocks[i], 0, sizes[i] + 4);
+                    written += sizes[i] + 4;
+                }
             }
             return written;
         }
-        finally { ArrayPool<byte>.Shared.Return(block); }
+        finally { foreach (var block in blocks) if (block != null) ArrayPool<byte>.Shared.Return(block); }
+    }
+
+    static int Workers => Math.Max(1, Environment.ProcessorCount - 1);
+
+    static int Bound(string codec, int length) =>
+        codec == Lz4 ? LZ4_compressBound(length) : checked((int)ZSTD_compressBound((UIntPtr)(uint)length).ToUInt64());
+
+    // Runs the batch on worker threads (inline for one), rethrowing the first failure as itself.
+    static void Run(int count, Action<int> body)
+    {
+        if (count == 1) { body(0); return; }
+        try { System.Threading.Tasks.Parallel.For(0, count, body); }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+        }
     }
 
     static void WriteInt(Stream output, byte[] scratch, int value)
@@ -83,7 +107,7 @@ public static class MCBCompression
 
     /// <summary>
     /// Decodes a container read forward from <paramref name="input"/>, which holds exactly <paramref name="inputLength"/>
-    /// bytes, one block at a time: only the decoded payload and one encoded block are in memory. Accepts and rejects the
+    /// bytes, a few blocks at a time: only the decoded payload and those encoded blocks are in memory. Accepts and rejects the
     /// same containers as <see cref="Decode(byte[], string, CancellationToken)"/>.
     /// </summary>
     public static byte[] Decode(Stream input, long inputLength, string codec, CancellationToken cancellation = default)
@@ -97,37 +121,49 @@ public static class MCBCompression
         if (length < 0 || length > MaxDecodedBytes || blockSize != BlockBytes) throw new InvalidDataException("Invalid decompressed mesh size.");
         var output = new byte[length];
         long consumed = 12;
-        byte[] block = null;
+        int blockCount = (length + blockSize - 1) / blockSize;
+        // Read in order (each block checked before the next is read), then a few decoded at once.
+        int workers = Math.Max(1, Math.Min(Math.Min(Workers, blockCount), 8));
+        var blocks = new byte[workers][];
+        var encodedSizes = new int[workers];
         try
         {
-            for (int offset = 0; offset < length; offset += blockSize) {
+            for (int first = 0; first < blockCount; first += workers) {
                 cancellation.ThrowIfCancellationRequested();
-                if (inputLength - consumed < 4) throw new InvalidDataException("Truncated mesh block.");
-                ReadExactly(input, header, 4);
-                consumed += 4;
-                int encodedSize = BinaryPrimitives.ReadInt32LittleEndian(header), expected = Math.Min(blockSize, length - offset);
-                int bound = codec == Lz4 ? LZ4_compressBound(expected) : checked((int)ZSTD_compressBound((UIntPtr)(uint)expected).ToUInt64());
-                if (encodedSize <= 0 || encodedSize > bound || encodedSize > inputLength - consumed) throw new InvalidDataException("Invalid mesh block size.");
-                if (block == null || block.Length < encodedSize)
-                {
-                    if (block != null) ArrayPool<byte>.Shared.Return(block);
-                    block = ArrayPool<byte>.Shared.Rent(Math.Max(encodedSize, bound));
+                int batch = Math.Min(workers, blockCount - first);
+                for (int i = 0; i < batch; i++) {
+                    int offset = (first + i) * blockSize;
+                    if (inputLength - consumed < 4) throw new InvalidDataException("Truncated mesh block.");
+                    ReadExactly(input, header, 4);
+                    consumed += 4;
+                    int encodedSize = BinaryPrimitives.ReadInt32LittleEndian(header), expected = Math.Min(blockSize, length - offset);
+                    int bound = Bound(codec, expected);
+                    if (encodedSize <= 0 || encodedSize > bound || encodedSize > inputLength - consumed) throw new InvalidDataException("Invalid mesh block size.");
+                    if (blocks[i] == null || blocks[i].Length < encodedSize)
+                    {
+                        if (blocks[i] != null) ArrayPool<byte>.Shared.Return(blocks[i]);
+                        blocks[i] = ArrayPool<byte>.Shared.Rent(Math.Max(encodedSize, bound));
+                    }
+                    ReadExactly(input, blocks[i], encodedSize);
+                    consumed += encodedSize;
+                    encodedSizes[i] = encodedSize;
                 }
-                ReadExactly(input, block, encodedSize);
-                consumed += encodedSize;
-                var src = GCHandle.Alloc(block, GCHandleType.Pinned);
-                try {
-                    var dst = GCHandle.Alloc(output, GCHandleType.Pinned);
+                Run(batch, i => {
+                    int offset = (first + i) * blockSize, expected = Math.Min(blockSize, length - offset), encodedSize = encodedSizes[i];
+                    var src = GCHandle.Alloc(blocks[i], GCHandleType.Pinned);
                     try {
-                        IntPtr inputPtr = src.AddrOfPinnedObject(), outputPtr = IntPtr.Add(dst.AddrOfPinnedObject(), offset);
-                        int decoded = codec == Lz4 ? LZ4_decompress_safe(inputPtr, outputPtr, encodedSize, expected)
-                            : CheckedSize(ZSTD_decompress(outputPtr, (UIntPtr)(uint)expected, inputPtr, (UIntPtr)(uint)encodedSize));
-                        if (decoded != expected) throw new InvalidDataException("Mesh block length does not match its header.");
-                    } finally { dst.Free(); }
-                } finally { src.Free(); }
+                        var dst = GCHandle.Alloc(output, GCHandleType.Pinned);
+                        try {
+                            IntPtr inputPtr = src.AddrOfPinnedObject(), outputPtr = IntPtr.Add(dst.AddrOfPinnedObject(), offset);
+                            int decoded = codec == Lz4 ? LZ4_decompress_safe(inputPtr, outputPtr, encodedSize, expected)
+                                : CheckedSize(ZSTD_decompress(outputPtr, (UIntPtr)(uint)expected, inputPtr, (UIntPtr)(uint)encodedSize));
+                            if (decoded != expected) throw new InvalidDataException("Mesh block length does not match its header.");
+                        } finally { dst.Free(); }
+                    } finally { src.Free(); }
+                });
             }
         }
-        finally { if (block != null) ArrayPool<byte>.Shared.Return(block); }
+        finally { foreach (var block in blocks) if (block != null) ArrayPool<byte>.Shared.Return(block); }
         if (consumed != inputLength || input.ReadByte() >= 0) throw new InvalidDataException("Unexpected trailing mesh data.");
         return output;
     }
