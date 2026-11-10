@@ -443,8 +443,8 @@ public static partial class NativeMeshPipelineBenchmark
         if (string.IsNullOrEmpty(scratch) || !scratch.StartsWith(ScratchRoot + "/", StringComparison.Ordinal)) return;
         if (AssetDatabase.IsValidFolder(scratch)) AssetDatabase.DeleteAsset(scratch);
     }
-    static string Hash(byte[] bytes) { using (var sha = SHA256.Create()) return Hex(sha.ComputeHash(bytes)); }
-    static string HashFile(string path) { using (var sha = SHA256.Create()) using (var s = File.OpenRead(path)) return Hex(sha.ComputeHash(s)); }
-    static string Hex(byte[] bytes) => BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+    static string Hash(byte[] bytes) => MCBHashing.HashBytes(bytes);
+    static string HashFile(string path) => MCBHashing.HashFile(path);
+    static string Hex(byte[] bytes) => MCBHashing.Hex(bytes);
 }
 #endif

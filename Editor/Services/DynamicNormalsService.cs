@@ -175,7 +175,6 @@ public class DynamicNormalsService
         if (AssetDatabase.DeleteAsset(normalizedPath))
         {
             MCBLogger.Log($"[DynamicNormals] Deleted current dynamic normals asset at: {normalizedPath}");
-            AssetDatabase.SaveAssets();
         }
         else
         {
@@ -324,7 +323,6 @@ public class DynamicNormalsService
             if (deleted)
             {
                 MCBLogger.Log($"[DynamicNormals] Deleted dynamic normals asset at: {assetPath}");
-                AssetDatabase.SaveAssets();
             }
             else
             {

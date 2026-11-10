@@ -35,8 +35,7 @@ public static partial class MCBReFitIntegration
 
     private static string CacheKey(string value)
     {
-        using (var hash = SHA256.Create())
-            return MCBUtils.PathHash(BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(value ?? ""))).Replace("-", "").ToLowerInvariant());
+        return MCBUtils.PathHash(MCBHashing.HashString(value));
     }
 
     // Accessories may share a name with a sibling. A renderer is identified by its name path plus its sibling ordinals

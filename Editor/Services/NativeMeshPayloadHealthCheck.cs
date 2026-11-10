@@ -82,7 +82,7 @@ public static class NativeMeshPayloadHealthCheck
             ThrowIf(buildResult.payloadBytes > 1024 * 1024, "Synthetic native mesh payload is unexpectedly large.");
             ThrowIf(!string.Equals(buildResult.payloadCompression, NativeMeshPayloadService.PayloadCompressionNone, StringComparison.Ordinal), "Synthetic payload should default to uncompressed native mesh format.");
             ThrowIf(!File.Exists(binPath) || new FileInfo(binPath).Length == 0, "Encrypted payload file was not written.");
-            ThrowIf(!string.Equals(buildResult.binHash, fileManager.CalculateFileHash(binPath), StringComparison.OrdinalIgnoreCase), "Streaming bin hash does not match file hash.");
+            ThrowIf(!string.Equals(buildResult.binHash, MCBHashing.HashFile(binPath), StringComparison.OrdinalIgnoreCase), "Streaming bin hash does not match file hash.");
 
             var patchFile = new ModelFileData
             {

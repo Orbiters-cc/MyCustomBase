@@ -248,7 +248,7 @@ public class AnimationPositionOffsetService
                 continue;
             }
 
-            string baseHash = PersistentCache.Instance.GetCachedHash(fullPath);
+            string baseHash = ContentHash.GetIfCached(fullPath);
             if (string.IsNullOrWhiteSpace(baseHash)) continue;
 
             var cached = PersistentCache.Instance.GetCachedVersions(baseHash, null, customBase.appliedCustomBaseAssetId, customBase.appliedCustomBaseSourceVersionKey);

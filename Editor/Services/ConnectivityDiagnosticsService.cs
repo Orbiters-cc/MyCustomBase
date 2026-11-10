@@ -371,13 +371,9 @@ public static partial class MCBConnectivityMonitor
         CanReachServer = SessionState.GetBool(ReachabilityKey, false);
         FailureReport = SessionState.GetString(FailureReportKey, string.Empty);
         LastCheckedUrl = SessionState.GetString(LastUrlKey, string.Empty);
-        EditorApplication.delayCall += OnInitialDelayCall;
+        // No probe here: a domain reload keeps the session's result. The first MCB surface that needs the server starts
+        // one (EnsureCheckStarted), failed requests report themselves, and an offline result is retried by PollRecovery.
         EditorApplication.update += PollRecovery;
-    }
-
-    private static void OnInitialDelayCall()
-    {
-        EnsureCheckStarted(AuthenticationService.GetAuth()?.token, force: true);
     }
 
     public static void EnsureCheckStarted(string authToken = null, bool force = false)

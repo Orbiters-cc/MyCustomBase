@@ -156,25 +156,14 @@ public class MaterialService
         return applied.Length > 0 && FileHash(path) == applied;
     }
 
-    private static readonly Dictionary<string, (long length, DateTime written, string hash)> fileHashes =
-        new Dictionary<string, (long, DateTime, string)>(StringComparer.OrdinalIgnoreCase);
-
-    // SHA-256 of a file, cached while it keeps its size and write time; null when it cannot be read (veins are then not
-    // recognised by content, and apply or reset goes on).
+    // SHA-256 of a file, in base64 (the form the materials' tags already hold); null when it cannot be read (veins are then
+    // not recognised by content, and apply or reset goes on).
     private static string FileHash(string unityPath)
     {
         try
         {
-            var file = new FileInfo(Path.GetFullPath(unityPath));
-            if (!file.Exists) return null;
-            if (fileHashes.TryGetValue(file.FullName, out var cached) && cached.length == file.Length && cached.written == file.LastWriteTimeUtc)
-                return cached.hash;
-            string hash;
-            using (var sha = MCBHashing.CreateSha256())
-            using (var stream = file.OpenRead())
-                hash = Convert.ToBase64String(sha.ComputeHash(stream));
-            fileHashes[file.FullName] = (file.Length, file.LastWriteTimeUtc, hash);
-            return hash;
+            string hash = ContentHash.Proof(unityPath);
+            return hash == null ? null : Convert.ToBase64String(MCBHashing.FromHex(hash));
         }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is NotSupportedException)
         {

@@ -40,7 +40,7 @@ public static partial class MCBReFitIntegration
         string fbxPath = AssetDatabase.GetAssetPath(source.sourceAvatar);
         string fullPath = Path.GetFullPath(fbxPath);
         string backup = FileManagerService.GetOriginalBasePath(fullPath);
-        if (!File.Exists(backup) || SameContent(fullPath, backup))
+        if (!File.Exists(backup) || ContentHash.SameContent(fullPath, backup))
             return new CustomBaseOriginal { Avatar = source.sourceAvatar, Body = source.renderer };
         return ImportOriginal(fbxPath, backup, AnimationUtility.CalculateTransformPath(source.renderer.transform, source.sourceAvatar.transform));
     }
@@ -50,7 +50,7 @@ public static partial class MCBReFitIntegration
 
     private static CustomBaseOriginal ImportOriginal(string fbxPath, string backup, string bodyPath)
     {
-        string hash = MCBUtils.CalculateFileHash(backup);
+        string hash = ContentHash.Proof(backup);
         if (string.IsNullOrEmpty(hash)) throw new FileNotFoundException("The original base backup could not be read.", backup);
         string folder = OriginalImportFolder + "/" + hash.Substring(0, 16);
         AcquireOriginalImport(folder);
@@ -96,9 +96,6 @@ public static partial class MCBReFitIntegration
             throw new InvalidOperationException("The original base backup of " + Path.GetFileName(fbxPath) + " has no body at " + bodyPath + ".");
         return new CustomBaseOriginal { Avatar = avatar, Body = body, Cleanup = () => ReleaseOriginalImport(folder) };
     }
-
-    private static bool SameContent(string a, string b) =>
-        new FileInfo(a).Length == new FileInfo(b).Length && MCBUtils.CalculateFileHash(a) == MCBUtils.CalculateFileHash(b);
 
     private static SourceBodyReference ResolveSourceBodyRenderer(MyCustomBase target, Mesh baseMesh, string targetRendererName)
     {

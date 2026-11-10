@@ -874,7 +874,7 @@ public static partial class AvatarDefinitionGenerationService
                 existing.name = copy.name;
                 EditorUtility.SetDirty(existing);
                 UnityEngine.Object.DestroyImmediate(copy);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(existing);
                 AssetDatabase.ImportAsset(normalizedOutputPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
                 return AssetDatabase.LoadAssetAtPath<Avatar>(normalizedOutputPath);
             }
@@ -889,7 +889,7 @@ public static partial class AvatarDefinitionGenerationService
         }
 
         AssetDatabase.CreateAsset(copy, normalizedOutputPath);
-        AssetDatabase.SaveAssets();
+        AssetDatabase.SaveAssetIfDirty(copy);
         AssetDatabase.ImportAsset(normalizedOutputPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
         return AssetDatabase.LoadAssetAtPath<Avatar>(normalizedOutputPath);
     }

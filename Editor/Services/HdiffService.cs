@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using UnityEditor;
 using UnityEngine;
 
@@ -144,7 +145,7 @@ public static class HdiffService
             {
                 HdiffPatchResult check = MCBHdiffPatchWrapper.ApplyPatch(baseFbxPath, tempHdiffPath, roundTripPath);
                 if (check != HdiffPatchResult.HPATCH_SUCCESS ||
-                    !string.Equals(fileManagerService.CalculateFileHash(roundTripPath), fileManagerService.CalculateFileHash(modifiedFbxPath), StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(MCBHashing.HashFile(roundTripPath), ContentHash.Proof(modifiedFbxPath), StringComparison.OrdinalIgnoreCase))
                 {
                     failureReason = "HDiff patch did not reproduce the modified FBX (" + check + ").";
                     return false;
@@ -155,12 +156,8 @@ public static class HdiffService
                 DeleteTempFile(roundTripPath);
             }
 
-            byte[] baseData = File.ReadAllBytes(baseFbxPath);
-            byte[] hdiffData = File.ReadAllBytes(tempHdiffPath);
-            byte[] encryptedData = fileManagerService.XorTransform(baseData, hdiffData);
-
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputBinPath)));
-            File.WriteAllBytes(outputBinPath, encryptedData);
+            MCBXor.TransformFile(baseFbxPath, tempHdiffPath, outputBinPath);
 
             info = new BuildInfo
             {
@@ -212,10 +209,7 @@ public static class HdiffService
         string tempHdiffPath = CreateTempWorkPath(".hdiff");
         try
         {
-            byte[] baseData = File.ReadAllBytes(baseFbxPath);
-            byte[] binData = File.ReadAllBytes(binPath);
-            byte[] hdiffData = fileManagerService.XorTransform(baseData, binData);
-            File.WriteAllBytes(tempHdiffPath, hdiffData);
+            MCBXor.TransformFile(baseFbxPath, binPath, tempHdiffPath);
 
             string compressionType = null;
             ulong oldSize = 0;
@@ -246,7 +240,7 @@ public static class HdiffService
             {
                 baseBytes = oldSize,
                 outputBytes = newSize,
-                patchBytes = binData.LongLength,
+                patchBytes = new FileInfo(binPath).Length,
                 compressionType = compressionType
             };
         }
@@ -256,10 +250,10 @@ public static class HdiffService
         }
     }
 
+    /// <summary>Usable from worker threads: the project folder is the editor's working directory.</summary>
     public static string CreateTempWorkPath(string extension)
     {
-        string projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        string tempFolder = Path.Combine(projectPath, "Library", "MCB", "HdiffTemp");
+        string tempFolder = Path.GetFullPath(Path.Combine("Library", "MCB", "HdiffTemp"));
         Directory.CreateDirectory(tempFolder);
         string safeExtension = string.IsNullOrWhiteSpace(extension) ? ".tmp" : extension;
         if (!safeExtension.StartsWith(".", StringComparison.Ordinal))
@@ -384,7 +378,7 @@ internal static class MCBHdiffPatchTrust
         }
 
         string normalizedPath = Path.GetFullPath(path);
-        string projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string projectPath = Path.GetFullPath("."); // the editor's working directory: readable from worker threads
         bool isTrustedPath = GetCandidatePaths(projectPath, fileName)
             .Any(candidate => PathsEqual(candidate, normalizedPath));
 
@@ -442,7 +436,8 @@ internal static class MCBHdiffPatchTrust
             return false;
         }
 
-        actualHash = ComputeSha256(path);
+        // Pins the native library about to be loaded: always read, never a cached hash.
+        actualHash = MCBHashing.HashFile(path).ToUpperInvariant();
         return string.Equals(actualHash, normalizedExpectedHash, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -463,16 +458,6 @@ internal static class MCBHdiffPatchTrust
             ? null
             : hash.Trim().Replace("-", string.Empty).ToUpperInvariant();
     }
-
-    private static string ComputeSha256(string path)
-    {
-        using (var stream = File.OpenRead(path))
-        using (var sha256 = SHA256.Create())
-        {
-            byte[] hash = sha256.ComputeHash(stream);
-            return BitConverter.ToString(hash).Replace("-", string.Empty);
-        }
-    }
 #endif
 }
 
@@ -484,9 +469,6 @@ internal static class MCBHdiffPatchWrapper
 
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint dwFlags);
-
-    [DllImport("kernel32", SetLastError = true)]
-    private static extern bool FreeLibrary(IntPtr hModule);
 
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
     private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
@@ -525,6 +507,7 @@ internal static class MCBHdiffPatchWrapper
         IntPtr diffFileName,
         IntPtr outNewPath);
 
+    private static readonly object NativeGate = new object();
     private static bool s_dllsLoaded;
     private static IntPtr s_hdiffzHandle = IntPtr.Zero;
     private static IntPtr s_hpatchzHandle = IntPtr.Zero;
@@ -580,6 +563,8 @@ internal static class MCBHdiffPatchWrapper
 #if UNITY_EDITOR_WIN
         EnsureDllsLoaded();
 
+        // The native callbacks go through static slots: one HDiff call at a time, whichever thread makes it.
+        Monitor.Enter(NativeGate);
         s_hdiffLogCallback = logCallback;
         s_hdiffErrorCallback = errorCallback;
         try
@@ -606,6 +591,7 @@ internal static class MCBHdiffPatchWrapper
         {
             s_hdiffLogCallback = null;
             s_hdiffErrorCallback = null;
+            Monitor.Exit(NativeGate);
         }
 #else
         throw new PlatformNotSupportedException("HDiff creation requires the Windows Editor native HDiffPatch DLLs.");
@@ -622,6 +608,7 @@ internal static class MCBHdiffPatchWrapper
 #if UNITY_EDITOR_WIN
         EnsurePatchExportsLoaded();
 
+        Monitor.Enter(NativeGate);
         s_hpatchLogCallback = logCallback;
         s_hpatchErrorCallback = errorCallback;
         try
@@ -635,6 +622,7 @@ internal static class MCBHdiffPatchWrapper
         {
             s_hpatchLogCallback = null;
             s_hpatchErrorCallback = null;
+            Monitor.Exit(NativeGate);
         }
 #else
         throw new PlatformNotSupportedException("HDiff apply requires the Windows Editor native HDiffPatch DLLs.");
@@ -735,38 +723,6 @@ internal static class MCBHdiffPatchWrapper
         return true;
     }
 
-    public static void FreeDlls()
-    {
-#if UNITY_EDITOR_WIN
-        try
-        {
-            if (s_hdiffzHandle != IntPtr.Zero)
-            {
-                FreeLibrary(s_hdiffzHandle);
-                s_hdiffzHandle = IntPtr.Zero;
-            }
-
-            if (s_hpatchzHandle != IntPtr.Zero)
-            {
-                FreeLibrary(s_hpatchzHandle);
-                s_hpatchzHandle = IntPtr.Zero;
-            }
-
-            s_registerDelegateHdiffz = null;
-            s_registerErrorDelegateHdiffz = null;
-            s_hdiffUnity = null;
-            s_registerDelegateHpatchz = null;
-            s_registerErrorDelegateHpatchz = null;
-            s_hpatchUnity = null;
-            s_dllsLoaded = false;
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning("[HdiffService] Error freeing HDiff DLLs: " + ex.Message);
-        }
-#endif
-    }
-
 #if UNITY_EDITOR_WIN
     private static void EnsureDllsLoaded()
     {
@@ -777,7 +733,7 @@ internal static class MCBHdiffPatchWrapper
             return;
         }
 
-        string projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string projectPath = Path.GetFullPath("."); // the editor's working directory: readable from worker threads
         string libraryDir = Path.Combine(projectPath, "Library", "MCB", "Hdiff");
         string hdiffzPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hdiffz.dll");
         string hpatchzPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hpatchz.dll");

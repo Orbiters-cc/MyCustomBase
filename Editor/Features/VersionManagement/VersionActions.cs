@@ -357,7 +357,7 @@ public class VersionActions
         // asset's source mapping is loaded. Never use that stale UI hash to download.
         string requestedSourcePath = GetCurrentFBXPath();
         string requestedToken = editor.authToken;
-        var sourceHashesTask = AsyncHashService.Instance.CalculateFBXHashesAsync(requestedSourcePath);
+        var sourceHashesTask = FileManagerService.HashModelAndBackupAsync(requestedSourcePath);
         while (!sourceHashesTask.IsCompleted) yield return null;
         var sourceHashes = sourceHashesTask.Result;
         RefreshOriginalBackup(requestedSourcePath, version);
@@ -571,7 +571,7 @@ public class VersionActions
                         string path = VersionStorage.ContainedPath(staging, file.path);
                         if (!File.Exists(path)) throw new InvalidDataException("Downloaded version is missing a required file.");
                         if (!string.IsNullOrWhiteSpace(file.hash) &&
-                            !string.Equals(fileManagerService.CalculateFileHash(path), file.hash, StringComparison.OrdinalIgnoreCase))
+                            !ContentHash.Verify(path, file.hash))
                             throw new InvalidDataException("Downloaded version failed file integrity verification.");
                     }
                     VersionRepository.SaveVersionJson(staging, version);
@@ -2017,7 +2017,8 @@ public class VersionActions
             File.WriteAllBytes(tempOutputPath, transformedData);
             if (!string.IsNullOrWhiteSpace(patchFile?.outputHash))
             {
-                string actualOutputHash = fileManagerService.CalculateFileHash(tempOutputPath);
+                string actualOutputHash = MCBHashing.HashFile(tempOutputPath);
+                ContentHash.Remember(tempOutputPath, actualOutputHash);
                 if (!string.Equals(actualOutputHash, patchFile.outputHash, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidDataException(
@@ -2064,7 +2065,8 @@ public class VersionActions
 
             if (!string.IsNullOrWhiteSpace(patchFile.outputHash))
             {
-                string actualOutputHash = fileManagerService.CalculateFileHash(tempOutputPath);
+                string actualOutputHash = MCBHashing.HashFile(tempOutputPath);
+                ContentHash.Remember(tempOutputPath, actualOutputHash);
                 if (!string.Equals(actualOutputHash, patchFile.outputHash, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidDataException(
@@ -2125,7 +2127,7 @@ public class VersionActions
         string originalFbxPath = FileManagerService.GetOriginalBasePath(fbxPath);
         if (!File.Exists(originalFbxPath))
         {
-            string currentHash = fileManagerService.CalculateFileHash(fbxPath);
+            string currentHash = ContentHash.Proof(fbxPath);
             bool currentMatchesReference = string.Equals(currentHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase);
             if (!currentMatchesReference)
             {
@@ -2146,7 +2148,7 @@ public class VersionActions
             throw new FileNotFoundException($"Apply failed: original FBX key file could not be prepared for {operation}.", originalFbxPath);
         }
 
-        string originalHash = fileManagerService.CalculateFileHash(originalFbxPath);
+        string originalHash = ContentHash.Proof(originalFbxPath);
         if (!string.Equals(originalHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
@@ -2172,7 +2174,7 @@ public class VersionActions
             throw new InvalidDataException("HDiff patch is missing source file hash metadata.");
         }
 
-        string actualHash = fileManagerService.CalculateFileHash(originalFbxPath);
+        string actualHash = ContentHash.Proof(originalFbxPath);
         if (!string.Equals(actualHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
@@ -3254,9 +3256,8 @@ public class VersionActions
         }
 
         // Try to get cached hashes first (non-blocking)
-        var hashService = AsyncHashService.Instance;
-        string cachedCurrentHash = hashService.GetHashIfCached(path);
-        bool allCurrentHashesCached = paths.All(targetPath => !string.IsNullOrEmpty(hashService.GetHashIfCached(targetPath)));
+        string cachedCurrentHash = ContentHash.GetIfCached(path);
+        bool allCurrentHashesCached = paths.All(targetPath => !string.IsNullOrEmpty(ContentHash.GetIfCached(targetPath)));
         
         string originalPath = path + FileManagerService.OriginalSuffix;
         string cachedOriginalHash = null;
@@ -3264,7 +3265,7 @@ public class VersionActions
         
         if (hasBackup)
         {
-            cachedOriginalHash = hashService.GetHashIfCached(originalPath);
+            cachedOriginalHash = ContentHash.GetIfCached(originalPath);
         }
 
         // Use cached hashes if available, otherwise start async calculation
@@ -3289,15 +3290,15 @@ public class VersionActions
                 {
                     foreach (string targetPath in paths)
                     {
-                        await hashService.CalculateFileHashAsync(targetPath, null, true);
+                        await ContentHash.GetAsync(targetPath);
                     }
 
-                    string currentHash = await hashService.CalculateFileHashAsync(path, null, true);
+                    string currentHash = await ContentHash.GetAsync(path);
                     string originalHash = null;
                     
                     if (hasBackup)
                     {
-                        originalHash = await hashService.CalculateFileHashAsync(originalPath, null, true);
+                        originalHash = await ContentHash.GetAsync(originalPath);
                     }
                     
                     // Update on main thread when calculation completes
@@ -3338,18 +3339,16 @@ public class VersionActions
             yield break;
         }
 
-        var hashService = AsyncHashService.Instance;
-
         // Invalidate caches for current and backup FBX files
         foreach (string targetPath in paths)
         {
-            hashService.InvalidateHashCache(targetPath);
+            ContentHash.Forget(targetPath);
         }
         string originalPath = path + FileManagerService.OriginalSuffix;
         bool hasBackup = File.Exists(originalPath);
         if (hasBackup)
         {
-            hashService.InvalidateHashCache(originalPath);
+            ContentHash.Forget(originalPath);
         }
         MCBLogger.Log($"[VersionApplyProfile] Invalidated FBX hash cache: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms paths={paths.Count}");
         step.Restart();
@@ -3363,9 +3362,9 @@ public class VersionActions
         step.Restart();
 
         // Calculate hashes
-        var currentHashTask = hashService.CalculateFileHashFreshAsync(Path.GetFullPath(path));
+        var currentHashTask = ContentHash.GetFreshAsync(Path.GetFullPath(path));
         var originalHashTask = hasBackup
-            ? hashService.CalculateFileHashFreshAsync(Path.GetFullPath(originalPath))
+            ? ContentHash.GetFreshAsync(Path.GetFullPath(originalPath))
             : null;
         while (!currentHashTask.IsCompleted || (originalHashTask != null && !originalHashTask.IsCompleted))
         {
@@ -3389,7 +3388,7 @@ public class VersionActions
 
         foreach (string targetPath in paths.Skip(1))
         {
-            var targetHashTask = hashService.CalculateFileHashFreshAsync(targetPath);
+            var targetHashTask = ContentHash.GetFreshAsync(targetPath);
             while (!targetHashTask.IsCompleted)
             {
                 if (fbxHashRecalculationGeneration != expectedHashGeneration ||
@@ -3431,8 +3430,7 @@ public class VersionActions
             string path = GetCurrentFBXPath();
             if (!string.IsNullOrEmpty(path))
             {
-                var hashService = AsyncHashService.Instance;
-                currentFileHash = hashService.GetHashIfCached(path);
+                currentFileHash = ContentHash.GetIfCached(path);
             }
 
             if (string.IsNullOrEmpty(currentFileHash))
@@ -4079,7 +4077,6 @@ public class VersionActions
     private Dictionary<string, string> GetCurrentTargetHashes(string currentFileHash)
     {
         var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var hashService = AsyncHashService.Instance;
         var paths = GetCurrentFBXPaths();
 
         for (int i = 0; i < paths.Count; i++)
@@ -4088,7 +4085,7 @@ public class VersionActions
             string hash = i == 0 ? currentFileHash : null;
             if (string.IsNullOrWhiteSpace(hash))
             {
-                hash = hashService.GetHashIfCached(path);
+                hash = ContentHash.GetIfCached(path);
             }
 
             if (!string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(hash))

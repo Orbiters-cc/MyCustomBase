@@ -54,9 +54,9 @@ public static class MCBCrossVersionReuseBenchmark
                     var template = new ModelFileData { path = "mesh.bin", role = "PATCH", type = "BIN", sourceModelFileId = 1,
                         transform = NativeMeshPayloadService.TransformName, metadata = new Dictionary<string, object> { { "sourcePath", source } } };
                     version = new CustomBaseVersion { assetId = 999996, version = "reuse-" + name, defaultAviVersion = "1", scope = Scope.PUBLIC,
-                        defaultAviHash = new[] { MCBUtils.CalculateFileHash(source) },
+                        defaultAviHash = new[] { ContentHash.Proof(source) },
                         extraCustomization = new object[] { NativeMeshPayloadService.ExtraCustomizationKey },
-                        sourceFiles = new[] { new ModelFileData { id = 1, path = source, type = "FBX", role = "SOURCE", hash = MCBUtils.CalculateFileHash(source), smrPaths = paths } },
+                        sourceFiles = new[] { new ModelFileData { id = 1, path = source, type = "FBX", role = "SOURCE", hash = ContentHash.Proof(source), smrPaths = paths } },
                         versionFiles = NativeMeshPayloadService.ExpandRendererParts(new List<ModelFileData> { template },
                             new[] { new FileManagerService.ModelFilePackageEntry { binUnityPath = "mesh.bin", payloadParts = build.parts } }) };
                 } else {

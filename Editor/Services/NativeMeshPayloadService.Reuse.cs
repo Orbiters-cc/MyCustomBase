@@ -12,11 +12,6 @@ using UnityEditor;
 
 public static partial class NativeMeshPayloadService
 {
-    internal static string HashBytes(byte[] bytes)
-    {
-        using (var sha = MCBHashing.CreateSha256()) return BytesToHex(sha.ComputeHash(bytes));
-    }
-
     internal static string GetPayloadIdentity(ModelFileData patch)
     {
         if (patch?.metadata != null && patch.metadata.TryGetValue("contentHash", out var value))

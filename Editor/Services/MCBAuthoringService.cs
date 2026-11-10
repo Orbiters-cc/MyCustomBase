@@ -312,7 +312,7 @@ public static class MCBAuthoringService
         {
             if (File.Exists(fullPath))
             {
-                if (MCBUtils.CalculateFileHash(fullPath) != MCBUtils.CalculateFileHash(externalPath)) throw new IOException("Destination already contains a different FBX. Choose a new path.");
+                if (!ContentHash.SameContent(fullPath, externalPath)) throw new IOException("Destination already contains a different FBX. Choose a new path.");
             }
             else
             {
@@ -349,7 +349,7 @@ public static class MCBAuthoringService
         foreach (var path in registration.localSourceModels ?? Array.Empty<string>()) Model(path);
         var matches = AvatarBaseSourceMatcher.MatchOneToOne(
             registration.sourceFiles.Select(f => new AvatarBaseSourceMatcher.SourceFile { path = f.path, hash = f.hash }),
-            (registration.localSourceModels ?? Array.Empty<string>()).Select(p => new AvatarBaseSourceMatcher.LocalFile { path = p, hash = MCBUtils.CalculateFileHash(p) }));
+            (registration.localSourceModels ?? Array.Empty<string>()).Select(p => new AvatarBaseSourceMatcher.LocalFile { path = p, hash = ContentHash.Proof(p) }));
         if (matches == null) throw new ArgumentException("The scene source models must match the exact original files before registration.");
         foreach (var file in registration.sourceFiles.Concat((registration.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>()).SelectMany(v => v.sourceFiles)))
         { OriginalBaseLibrary.Resolve(file); yield return null; }

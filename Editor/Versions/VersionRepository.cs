@@ -367,7 +367,7 @@ public static class VersionRepository
             {
                 result.missingOutputs.Add(output.path);
             }
-            else if (!string.Equals(MCBUtils.CalculateFileHash(fullPath), output.hash, StringComparison.OrdinalIgnoreCase))
+            else if (!ContentHash.Verify(fullPath, output.hash, output.bytes > 0 ? output.bytes : -1))
             {
                 result.modifiedOutputs.Add(output.path);
             }
@@ -392,8 +392,7 @@ public static class VersionRepository
             try { fullPath = Path.GetFullPath(MCBUtils.ToUnityPath(input.path)); }
             catch { result.driftedInputs.Add(input.path); continue; }
 
-            if (!File.Exists(fullPath) ||
-                !string.Equals(MCBUtils.CalculateFileHash(fullPath), input.hash, StringComparison.OrdinalIgnoreCase))
+            if (!ContentHash.Verify(fullPath, input.hash))
             {
                 result.driftedInputs.Add(input.path);
             }
@@ -643,7 +642,8 @@ public static class VersionRepository
         CustomBaseVersion metadata,
         bool unsubmitted,
         string formSignature,
-        List<VersionManifestInput> inputs)
+        List<VersionManifestInput> inputs,
+        ContentHash.Operation operation = null)
     {
         var manifest = new VersionManifest
         {
@@ -669,7 +669,7 @@ public static class VersionRepository
             manifest.outputs.Add(new VersionManifestFile
             {
                 path = relative,
-                hash = MCBUtils.CalculateFileHash(file),
+                hash = ContentHash.Proof(file, operation),
                 bytes = new FileInfo(file).Length
             });
         }
