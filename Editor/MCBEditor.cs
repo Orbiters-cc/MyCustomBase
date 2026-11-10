@@ -81,8 +81,17 @@ public class MCBEditor : UnityEditor.Editor
     public bool isAuthenticated;
     public string authToken;
     public bool fetchAttempted;
-    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these.
-    [NonSerialized] public bool isFetching, isDownloading, isDeleting, isSubmitting, isApplying;
+    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these. They
+    // belong to the avatar, not to this inspector: every view of it (another inspector, the creator and compare windows)
+    // sees the same operation, and hears when one starts or ends.
+    public bool isFetching { get => ViewModel.IsFetching; set => ViewModel.IsFetching = value; }
+    public bool isDownloading { get => ViewModel.IsDownloading; set => ViewModel.IsDownloading = value; }
+    public bool isDeleting { get => ViewModel.IsDeleting; set => ViewModel.IsDeleting = value; }
+    public bool isSubmitting { get => ViewModel.IsSubmitting; set => ViewModel.IsSubmitting = value; }
+    public bool isApplying { get => ViewModel.IsApplying; set => ViewModel.IsApplying = value; }
+    [NonSerialized] private McbAvatarViewModel viewModel;
+    public McbAvatarViewModel ViewModel => viewModel ?? (viewModel = McbAvatarViewModel.For(customBaseTarget));
+    [NonSerialized] private McbViewRefresh viewRefresh;
     public string fetchError, submitError;
     public string accessDeniedAssetId;
     public string currentBaseFbxHash;
@@ -142,6 +151,9 @@ public class MCBEditor : UnityEditor.Editor
         }
         EnsureSerializedDefaults();
         serializedObject = new SerializedObject(customBaseTarget);
+        viewModel = McbAvatarViewModel.For(customBaseTarget);
+        viewModel.Changed += OnViewModelChanged;
+        viewRefresh = new McbViewRefresh(RefreshSections);
         fetchAttempted = false;
         
         // Initialize async services first
@@ -209,6 +221,8 @@ public class MCBEditor : UnityEditor.Editor
         AuthenticationService.Changed -= SyncAuthentication;
         OrbitersEnvironment.Changed -= SyncAuthentication;
         asyncInitializationScheduled = false;
+        if (viewModel != null) viewModel.Changed -= OnViewModelChanged;
+        viewRefresh?.Cancel();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
         creatorModule?.DetachUIToolkit();
@@ -316,7 +330,8 @@ public class MCBEditor : UnityEditor.Editor
         versionModule?.AttachUIToolkit(versionHost);
         avatarOptionsModule?.AttachUIToolkit(avatarOptionsHost);
         // The modules only take their hosts: everything is built once, here (each used to build itself on attach, then again).
-        RefreshUiToolkitSections();
+        RequestRefresh(McbViewParts.All);
+        viewRefresh?.Flush();
         OrderUiToolkitLayers();
         dynamicUiSchedule = uiToolkitRoot.schedule.Execute(() => assetGalleryModule?.UpdateDynamicUiContent()).Every(3000);
         // Shown again (an inactive docked tab selected): catch up with the project changes made while hidden.
@@ -325,12 +340,30 @@ public class MCBEditor : UnityEditor.Editor
         return uiToolkitRoot;
     }
 
-    public void RefreshUiToolkitSections()
+    /// <summary>Rebuilds every section on the next editor frame (once, however many changes ask for it before).</summary>
+    public void RefreshUiToolkitSections() => RequestRefresh(McbViewParts.All);
+
+    /// <summary>Rebuilds these sections on the next editor frame, together with whatever else was asked for by then.</summary>
+    public void RequestRefresh(McbViewParts parts)
     {
+        if (viewRefresh != null) viewRefresh.Request(parts);
+        else RefreshSections(parts);
+    }
+
+    // An operation of this avatar started or ended, here or in another view of it: the version section shows its state.
+    private void OnViewModelChanged(McbViewParts parts)
+    {
+        if ((parts & McbViewParts.Busy) != 0) RequestRefresh(McbViewParts.Versions);
+    }
+
+    private void RefreshSections(McbViewParts parts)
+    {
+        bool Has(McbViewParts part) => (parts & part) != 0;
+
         SyncAppliedCustomBaseName();
         if (uiToolkitRoot == null)
         {
-            if (creatorWindowAsset != null) creatorModule?.RefreshUIToolkit();
+            if (creatorWindowAsset != null && Has(McbViewParts.Creator)) creatorModule?.RefreshUIToolkit();
             return;
         }
 
@@ -342,12 +375,12 @@ public class MCBEditor : UnityEditor.Editor
             catch (Exception ex) { RecordUiException(ex); }
         }
 
-        Section(DrawVectorBannerUIToolkit);
-        Section(() => dependencyInstallerModule?.RefreshUIToolkit());
-        Section(RefreshConnectivityDiagnosticsUIToolkit);
-        Section(() => assetGalleryModule?.RefreshUIToolkit());
-        Section(() => creatorModule?.RefreshUIToolkit());
-        Section(() =>
+        if (Has(McbViewParts.Banner)) Section(DrawVectorBannerUIToolkit);
+        if (Has(McbViewParts.Dependencies)) Section(() => dependencyInstallerModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Connectivity)) Section(RefreshConnectivityDiagnosticsUIToolkit);
+        if (Has(McbViewParts.Gallery)) Section(() => assetGalleryModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Creator)) Section(() => creatorModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Versions)) Section(() =>
         {
             // The full version DTO is not Unity-serialized. Rehydrate it from local/server
             // metadata before both the action button and avatar options read the state.
@@ -357,9 +390,9 @@ public class MCBEditor : UnityEditor.Editor
                 versionModule?.actions.UpdateAppliedVersionAndState();
             versionModule?.RefreshUIToolkit();
         });
-        Section(() => avatarOptionsModule?.RefreshUIToolkit());
-        Section(RefreshStatusMessagesUIToolkit);
-        Section(RefreshAdjustMaterialUIToolkit);
+        if (Has(McbViewParts.AvatarOptions)) Section(() => avatarOptionsModule?.RefreshUIToolkit());
+        if (Has(McbViewParts.Status)) Section(RefreshStatusMessagesUIToolkit);
+        if (Has(McbViewParts.AdjustMaterial)) Section(RefreshAdjustMaterialUIToolkit);
         Section(ApplyDependencyBlockerState);
         Section(OrderUiToolkitLayers);
         Section(() =>

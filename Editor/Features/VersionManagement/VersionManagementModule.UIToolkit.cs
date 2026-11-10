@@ -161,27 +161,16 @@ public partial class VersionManagementModule
     }
 
     private VisualElement versionRoot;
-    private IVisualElementScheduledItem versionRefreshSchedule;
 
+    // The section is rebuilt when a fetch, download, delete or switch starts or ends (the avatar's view model announces
+    // it, MCBEditor.OnViewModelChanged), instead of every half second while one runs.
     public void AttachUIToolkit(VisualElement root)
     {
         versionRoot = root;
-
-        versionRefreshSchedule?.Pause();
-        versionRefreshSchedule = versionRoot?.schedule.Execute(() =>
-        {
-            bool downloadOnlyRefresh = editor.isDownloading && !editor.isApplying && !actions.ApplyProgress.IsRunning;
-            if (editor.isFetching || editor.isDeleting || downloadOnlyRefresh)
-            {
-                RefreshUIToolkit();
-            }
-        }).Every(500);
     }
 
     public void DetachUIToolkit()
     {
-        versionRefreshSchedule?.Pause();
-        versionRefreshSchedule = null;
         versionRoot = null;
     }
 
