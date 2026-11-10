@@ -15,8 +15,10 @@ using VRC.SDK3.Avatars.ScriptableObjects;
 /// <summary>
 /// Releases a creator distributed before MCB (a custom FBX in an avatar project) and the migration of avatars built from
 /// them: the avatar's renderers go back to the original base model so MCB versions apply as on any default base, and the
-/// release's own setup (objects, FX layers, parameters) that MCB versions replace is removed. The user's FX controller,
-/// expression parameters and menus are copied, never edited.
+/// release's own setup that MCB versions replace is taken out (objects switched off, FX layers and parameters removed
+/// from copies of the user's FX controller, expression parameters and menus, which are never edited). What the avatar
+/// had is recorded on its MCB components: it is the person's original base, and <see cref="RestoreOriginal"/> brings it
+/// back when they go back to the original base after a version.
 /// </summary>
 public static class LegacyMigrationService
 {
@@ -109,9 +111,9 @@ public static class LegacyMigrationService
 
     /// <summary>
     /// Migrates the avatar from a legacy release, as one Undo step: renderers from the legacy model use the original base
-    /// model's meshes and bones again (blendshape weights kept by name), the release's objects are removed, and copies of
-    /// the FX controller, expression parameters and menus without its layers and parameters replace the originals on the
-    /// avatar descriptor. The original base model must be imported in the project.
+    /// model's meshes and bones again (blendshape weights kept by name), the release's objects are switched off and left
+    /// out of builds (EditorOnly), and copies of the FX controller, expression parameters and menus without its layers and
+    /// parameters replace the originals on the avatar descriptor. The original base model must be imported in the project.
     /// </summary>
     public static object Migrate(Transform avatar, IList<Match> matches)
     {
@@ -168,6 +170,18 @@ public static class LegacyMigrationService
                 if (!legacyWeights.ContainsKey(shape)) legacyWeights[shape] = plan.renderer.GetBlendShapeWeight(i);
             }
         RememberLegacyShapes(avatar, match.assetId, legacyWeights);
+        var record = new LegacyOriginal { migrated = true, assetId = match.assetId, label = match.legacyRelease.label };
+        foreach (var plan in plans)
+        {
+            var state = new LegacyRendererState { renderer = plan.renderer, name = plan.renderer.name, mesh = plan.renderer.sharedMesh, bones = plan.renderer.bones,
+                rootBone = plan.renderer.rootBone, bounds = plan.renderer.localBounds, materials = plan.renderer.sharedMaterials };
+            for (int i = 0; i < state.mesh.blendShapeCount; i++) { state.shapes.Add(state.mesh.GetBlendShapeName(i)); state.weights.Add(plan.renderer.GetBlendShapeWeight(i)); }
+            record.renderers.Add(state);
+        }
+        var posed = new HashSet<Transform>();
+        foreach (var bone in record.renderers.SelectMany(r => r.bones.Append(r.rootBone)))
+            for (var t = bone; t != null && t != avatar && t.IsChildOf(avatar) && posed.Add(t); t = t.parent)
+                record.bones.Add(new LegacyBonePose { bone = t, position = t.localPosition, rotation = t.localRotation, scale = t.localScale });
         foreach (var plan in plans)
         {
             var weights = new Dictionary<string, float>(StringComparer.Ordinal);
@@ -205,19 +219,133 @@ public static class LegacyMigrationService
         {
             var target = avatar.Find(path);
             if (target == null || target == avatar) continue;
-            // An object a prefab instance owns cannot be removed from the instance: unpack it first (part of the step).
-            while (PrefabUtility.IsPartOfPrefabInstance(target.gameObject) && !PrefabUtility.IsAddedGameObjectOverride(target.gameObject))
-                PrefabUtility.UnpackPrefabInstance(PrefabUtility.GetOutermostPrefabInstanceRoot(target.gameObject), PrefabUnpackMode.OutermostRoot, InteractionMode.UserAction);
-            Undo.DestroyObjectImmediate(target.gameObject);
+            // Kept on the avatar, switched off and out of every build (EditorOnly): they are part of what the person had,
+            // and going back to the original base switches them on again with every reference to them intact.
+            record.objects.Add(new LegacyObjectState { target = target.gameObject, active = target.gameObject.activeSelf, tag = target.gameObject.tag });
+            Undo.RecordObject(target.gameObject, "Switch off " + match.legacyRelease.label + " object");
+            target.gameObject.SetActive(false);
+            target.gameObject.tag = "EditorOnly";
             removedObjects.Add(path);
         }
-        var assets = CleanDescriptor(avatar, cleanup, match.legacyRelease.label);
+        var owners = avatar.GetComponentsInChildren<MyCustomBase>(true);
+        // Copies an earlier migration of this avatar made are used again: what the person changed in them since stays.
+        var earlier = owners.SelectMany(o => o.legacyOriginal?.assets ?? new List<LegacyAssetSwap>()).Where(s => s != null && s.original != null && s.copy != null).ToList();
+        var assets = CleanDescriptor(avatar, cleanup, match.legacyRelease.label, earlier, record.assets);
+        foreach (var owner in owners)
+        {
+            Undo.RecordObject(owner, "Remember " + match.legacyRelease.label);
+            owner.legacyOriginal = new LegacyOriginal { migrated = true, assetId = record.assetId, label = record.label, renderers = record.renderers.ToList(),
+                objects = record.objects.ToList(), bones = record.bones.ToList(), assets = record.assets.ToList(), baseModels = (owner.baseFbxFiles ?? new List<GameObject>()).Where(m => m != null).ToList() };
+            EditorUtility.SetDirty(owner);
+        }
         PointBaseModelsAtOriginal(avatar, legacyPaths, original);
         Undo.CollapseUndoOperations(group);
         UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(avatar.gameObject.scene);
         AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
         return new { release = match.legacyRelease.label, original = originalPath, renderers = plans.Select(p => AnimationUtility.CalculateTransformPath(p.renderer.transform, avatar)).ToArray(),
             unmatched, removedObjects, assets };
+    }
+
+    /// <summary>
+    /// Brings back what the avatar had before its migration (the person's original base), once a version is reset: the
+    /// legacy model's meshes, bones and materials on its renderers, its objects switched on again, and the avatar
+    /// descriptor's own FX controller, expression parameters and menus. Blendshapes keep the person's current value by
+    /// name, then the value remembered for the asset (the release's own shapes), then the value from before the migration.
+    /// Returns the release's label, or null when the avatar has nothing to restore.
+    /// </summary>
+    public static string RestoreOriginal(Transform avatar)
+    {
+        if (avatar == null) return null;
+        var owners = avatar.GetComponentsInChildren<MyCustomBase>(true).Where(o => o.legacyOriginal != null && o.legacyOriginal.migrated).ToList();
+        if (owners.Count == 0) return null;
+        var record = owners[0].legacyOriginal;
+        string step = "Restore " + record.label;
+        var remembered = new Dictionary<string, float>(StringComparer.Ordinal);
+        var memory = owners[0].blendshapeMemory.FirstOrDefault(m => m.assetId == record.assetId);
+        for (int i = 0; memory != null && i < memory.names.Count && i < memory.values.Count; i++) remembered[memory.names[i]] = memory.values[i];
+        foreach (var state in record.renderers)
+        {
+            var renderer = state.renderer;
+            if (renderer == null || state.mesh == null) continue;
+            var current = new Dictionary<string, float>(StringComparer.Ordinal);
+            if (renderer.sharedMesh != null)
+                for (int i = 0; i < renderer.sharedMesh.blendShapeCount; i++) current[renderer.sharedMesh.GetBlendShapeName(i)] = renderer.GetBlendShapeWeight(i);
+            var materials = renderer.sharedMaterials;
+            Undo.RecordObject(renderer, step);
+            renderer.sharedMesh = state.mesh;
+            if (state.bones != null && state.bones.Length > 0) renderer.bones = state.bones;
+            if (state.rootBone != null) renderer.rootBone = state.rootBone;
+            renderer.localBounds = state.bounds;
+            var before = state.materials ?? new Material[0];
+            renderer.sharedMaterials = Enumerable.Range(0, state.mesh.subMeshCount)
+                .Select(i => i < before.Length && before[i] != null ? before[i] : materials.ElementAtOrDefault(i)).ToArray();
+            for (int i = 0; i < state.mesh.blendShapeCount; i++)
+            {
+                string shape = state.mesh.GetBlendShapeName(i);
+                int saved = state.shapes.IndexOf(shape);
+                renderer.SetBlendShapeWeight(i, current.TryGetValue(shape, out float now) ? now
+                    : remembered.TryGetValue(shape, out float kept) ? kept
+                    : saved >= 0 && saved < state.weights.Count ? state.weights[saved] : 0f);
+            }
+            if (!string.IsNullOrEmpty(state.name) && renderer.name != state.name)
+            {
+                Undo.RecordObject(renderer.gameObject, step);
+                renderer.name = state.name;
+            }
+            EditorUtility.SetDirty(renderer);
+        }
+        foreach (var pose in record.bones)
+        {
+            if (pose.bone == null) continue;
+            Undo.RecordObject(pose.bone, step);
+            pose.bone.localPosition = pose.position;
+            pose.bone.localRotation = pose.rotation;
+            pose.bone.localScale = pose.scale;
+        }
+        foreach (var state in record.objects)
+        {
+            if (state.target == null) continue;
+            Undo.RecordObject(state.target, step);
+            state.target.SetActive(state.active);
+            state.target.tag = string.IsNullOrEmpty(state.tag) ? "Untagged" : state.tag;
+        }
+        var originals = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
+        foreach (var swap in record.assets) if (swap != null && swap.original != null && swap.copy != null) originals[swap.copy] = swap.original;
+        var descriptor = avatar.GetComponent<VRCAvatarDescriptor>();
+        if (descriptor != null && originals.Count > 0)
+        {
+            Undo.RecordObject(descriptor, step);
+            for (int i = 0; i < descriptor.baseAnimationLayers.Length; i++)
+            {
+                var layer = descriptor.baseAnimationLayers[i];
+                if (layer.animatorController == null || !originals.TryGetValue(layer.animatorController, out var controller)) continue;
+                layer.animatorController = controller as RuntimeAnimatorController;
+                descriptor.baseAnimationLayers[i] = layer;
+            }
+            if (descriptor.expressionParameters != null && originals.TryGetValue(descriptor.expressionParameters, out var parameters))
+                descriptor.expressionParameters = parameters as VRCExpressionParameters;
+            if (descriptor.expressionsMenu != null && originals.TryGetValue(descriptor.expressionsMenu, out var menu))
+                descriptor.expressionsMenu = menu as VRCExpressionsMenu;
+            EditorUtility.SetDirty(descriptor);
+            var animator = avatar.GetComponent<Animator>();
+            if (animator != null && animator.runtimeAnimatorController != null && originals.TryGetValue(animator.runtimeAnimatorController, out var played))
+            {
+                Undo.RecordObject(animator, step);
+                animator.runtimeAnimatorController = played as RuntimeAnimatorController;
+            }
+        }
+        foreach (var owner in owners)
+        {
+            var models = owner.legacyOriginal.baseModels.Where(m => m != null).ToList();
+            if (models.Count > 0) FileManagerService.SetCreatorSourceFiles(owner, models);
+            Undo.RecordObject(owner, step);
+            // The copies stay known: the next migration uses them again.
+            owner.legacyOriginal = new LegacyOriginal { assetId = record.assetId, label = record.label, assets = owner.legacyOriginal.assets };
+            EditorUtility.SetDirty(owner);
+        }
+        UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(avatar.gameObject.scene);
+        AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
+        return record.label;
     }
 
     /// <summary>
@@ -321,7 +449,7 @@ public static class LegacyMigrationService
     }
 
     // Copies of the FX controller, parameters and menus without the release's layers and parameters, on the descriptor.
-    private static object CleanDescriptor(Transform avatar, Cleanup cleanup, string label)
+    private static object CleanDescriptor(Transform avatar, Cleanup cleanup, string label, List<LegacyAssetSwap> earlier, List<LegacyAssetSwap> swaps)
     {
         var descriptor = avatar.GetComponent<VRCAvatarDescriptor>();
         // Names are compared trimmed: authored layer names can carry stray spaces the release list does not keep.
@@ -329,12 +457,14 @@ public static class LegacyMigrationService
         var parameters = new HashSet<string>((cleanup.parameters ?? new List<string>()).Select(n => n.Trim()), StringComparer.Ordinal);
         if (descriptor == null || layers.Count == 0 && parameters.Count == 0) return null;
         string folder = MCBUtils.ToUnityPath(Path.Combine(MigratedFolder, Safe(avatar.name) + " " + DateTime.Now.ToString("yyyyMMdd-HHmmss")));
-        EnsureFolder(folder);
         var copies = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
         T Copy<T>(T asset) where T : UnityEngine.Object
         {
             if (asset == null) return null;
             if (copies.TryGetValue(asset, out var known)) return (T)known;
+            var reused = earlier.Select(s => s.original == asset ? s.copy as T : null).FirstOrDefault(c => c != null);
+            if (reused != null) { copies[asset] = reused; return reused; }
+            EnsureFolder(folder);
             string source = AssetDatabase.GetAssetPath(asset);
             string destination = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + Path.GetFileNameWithoutExtension(source) + " (MCB)" + Path.GetExtension(source));
             if (!AssetDatabase.CopyAsset(source, destination)) throw new IOException("Could not copy " + source);
@@ -391,6 +521,7 @@ public static class LegacyMigrationService
         }
         EditorUtility.SetDirty(descriptor);
         AssetDatabase.SaveAssets();
+        swaps.AddRange(copies.Where(p => p.Key != null && p.Value != null).Select(p => new LegacyAssetSwap { original = p.Key, copy = p.Value }));
         return new { folder, removedLayers, removedParameters, copies = copies.Values.Select(AssetDatabase.GetAssetPath).ToArray() };
     }
 

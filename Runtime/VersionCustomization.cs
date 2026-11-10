@@ -217,6 +217,27 @@ public sealed class RendererLayoutConfiguration
 [Serializable] public sealed class MeshBlendshapeSelection { public string mesh = "Body"; public List<string> names = new List<string>(); }
 // A custom base's blendshape values the user set, kept per asset while the avatar is back on its original base.
 [Serializable] public sealed class BlendshapeMemory { public int assetId; public List<string> names = new List<string>(); public List<float> values = new List<float>(); }
+// What an avatar made with a release from before MCB had before its migration. It is the person's original base: going
+// back to the original base after a version restores it (LegacyMigrationService.RestoreOriginal).
+[Serializable] public sealed class LegacyRendererState
+{
+    public SkinnedMeshRenderer renderer; public string name; public Mesh mesh; public Transform[] bones; public Transform rootBone;
+    public Bounds bounds; public Material[] materials; public List<string> shapes = new List<string>(); public List<float> weights = new List<float>();
+}
+[Serializable] public sealed class LegacyObjectState { public GameObject target; public bool active; public string tag; }
+[Serializable] public sealed class LegacyBonePose { public Transform bone; public Vector3 position; public Quaternion rotation; public Vector3 scale; }
+// An asset of the avatar descriptor and the migration's cleaned copy of it (kept after a restore: the next migration reuses it).
+[Serializable] public sealed class LegacyAssetSwap { public UnityEngine.Object original; public UnityEngine.Object copy; }
+[Serializable] public sealed class LegacyOriginal
+{
+    public bool migrated; public int assetId; public string label;
+    public List<LegacyRendererState> renderers = new List<LegacyRendererState>();
+    public List<LegacyObjectState> objects = new List<LegacyObjectState>();
+    // The legacy renderers' bones and their parents, as posed before the migration: a reset poses them as the original model.
+    public List<LegacyBonePose> bones = new List<LegacyBonePose>();
+    public List<LegacyAssetSwap> assets = new List<LegacyAssetSwap>();
+    public List<GameObject> baseModels = new List<GameObject>();
+}
 // The user's modes per asset. Options the user has seen keep their choice; newer options start with their default.
 [Serializable] public sealed class ModeChoice { public int assetId; public List<string> enabled = new List<string>(); public List<string> known = new List<string>(); }
 [Serializable] public sealed class ModeOriginalObject { public GameObject target; public bool active; }

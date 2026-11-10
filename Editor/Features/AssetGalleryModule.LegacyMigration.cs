@@ -55,8 +55,9 @@ public partial class AssetGalleryModule
         title.AddToClassList("mcb-legacy-notice__title");
         notice.Add(title);
         var text = CreateLabel("This avatar was made with " + match.legacyRelease.label + ", released before MCB. Migrate it to receive the "
-            + match.assetName + " versions: its body goes back to the original base model, and the old setup that the versions replace "
-            + "is removed (your FX controller, parameters and menus are copied first). Undo restores everything.", 11, FontStyle.Normal, new Color(0.72f, 0.72f, 0.72f));
+            + match.assetName + " versions: the old setup that the versions replace is switched off (your FX controller, parameters and "
+            + "menus are copied first). Going back to the original base brings " + match.legacyRelease.label + " back as it is now.",
+            11, FontStyle.Normal, new Color(0.72f, 0.72f, 0.72f));
         text.AddToClassList("mcb-legacy-notice__text");
         notice.Add(text);
         var row = CreateRow();

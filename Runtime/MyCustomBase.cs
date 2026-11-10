@@ -172,6 +172,7 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public List<GameObject> versionOriginalModels = new List<GameObject>();
     [HideInInspector] public List<ModeChoice> modeChoices = new List<ModeChoice>();
     [HideInInspector] public List<BlendshapeMemory> blendshapeMemory = new List<BlendshapeMemory>();
+    [HideInInspector] public LegacyOriginal legacyOriginal = new LegacyOriginal();
     // Physic of versions that support it (secondary-motion PhysBones). Off: the build strips those bones instead.
     [HideInInspector] public bool physicEnabled;
     // Squishy chains of versions that support them. Off: the build strips those bones instead.

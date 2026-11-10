@@ -1219,6 +1219,26 @@ public class VersionActions
             if (rebound > 0) MCBLogger.Log($"[MCB] {rebound} mesh(es) skinned to those bones (clothing, hoodies) kept their place: copies in {AccessoryPlacements.ReboundFolder}.");
         }
         catch (Exception ex) { MCBLogger.LogWarning("[MCB] Objects on the armature could not keep their place: " + ex.Message); }
+        // An avatar migrated from a release made before MCB: that release is the person's original base, not the model the
+        // migration put under it.
+        if (isReset)
+            try
+            {
+                string restored = LegacyMigrationService.RestoreOriginal(root);
+                if (restored != null)
+                {
+                    editor.serializedObject.Update();
+                    UpdateCurrentBaseFbxHash();
+                    editor.RefreshUiToolkitSections();
+                    MCBLogger.Log($"[MCB] The avatar is back on {restored}, as before its migration.");
+                }
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogWarning("[MCB] The release from before MCB could not be restored: " + ex);
+                editor.warningsModule?.AddWarning("The avatar is on its original base model, but what it had before its migration could not be restored: "
+                    + ex.Message, MessageType.Warning, "Reset");
+            }
         if (before == null) return;
         try
         {
