@@ -195,24 +195,28 @@ public class VersionCustomizationTests
         Assert.That(locks, Is.GreaterThan(Order("BlendShapeLinkPostVrcfuryHook")));
         foreach (string link in new[] { "RefitLinkHook", "SurfaceFollowHook", "AttachmentFinishHook" })
             Assert.That(locks, Is.LessThan(Order(link)), link + " copies body curves: it must see the locked ones.");
-        // The apply shares the accessories' phase now: after them in it.
+        // The apply has the phase after the accessories'.
         Assert.That(apply, Is.GreaterThanOrEqualTo(Order("AttachmentFinishHook")), "Pruning stays after every animation-adding step.");
         var steps = Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Select(s => s.GetType().Name).ToList();
         foreach (string before in new[] { "SurfaceFollowHook", "AttachmentFinishHook" })
             Assert.That(steps.IndexOf("VersionCustomizationApplyHook"), Is.GreaterThan(steps.IndexOf(before)), "Pruning runs after " + before + ".");
     }
 
-    // MCB's steps sit in Orbiters' build where their SDK callbacks ran: the Toolkit steps they are ordered against exist
-    // under the names MCB gives them, and the order holds.
+    // MCB's steps sit in Orbiters' build where their SDK callbacks ran: each in its phase, on the same side of the
+    // Toolkit's steps as before.
     [Test] public void McbBuildStepsKeepTheirPlaceAmongTheToolkitsSteps()
     {
-        Assert.That(McbBuildSteps.MissingSteps, Is.Empty, "a Toolkit step MCB orders against is gone");
-        foreach (var type in new[] { McbBuildSteps.Attachments, McbBuildSteps.AttachmentsFinish, McbBuildSteps.SurfaceFollow, McbBuildSteps.BuiltAnimations })
-            Assert.That(type, Is.Not.Null, "a Toolkit step MCB orders against was renamed");
         var steps = Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Select(s => s.GetType()).ToList();
         int At(Type t) => steps.IndexOf(t);
-        Assert.That(At(typeof(VersionCustomizationCaptureHook)), Is.GreaterThanOrEqualTo(0).And.LessThan(At(McbBuildSteps.Attachments)), "an earlier phase than the attachment copies");
-        Assert.That(At(typeof(VersionCustomizationSurveyHook)), Is.GreaterThan(At(McbBuildSteps.BuiltAnimations)));
+        int Toolkits(string name)
+        {
+            int at = steps.FindIndex(t => t.Name == name);
+            Assert.That(at, Is.GreaterThanOrEqualTo(0), "the Toolkit has no build step " + name + " any more: check MCB's phases against what replaced it");
+            return at;
+        }
+        Assert.That(At(typeof(VersionCustomizationCaptureHook)), Is.GreaterThanOrEqualTo(0).And.LessThan(Toolkits("AttachmentBuildHook")), "an earlier phase than the attachment copies");
+        Assert.That(At(typeof(VersionCustomizationSurveyHook)), Is.GreaterThan(Toolkits("VrcFuryBuiltAnimationsHook")));
+        Assert.That(At(typeof(VersionCustomizationApplyHook)), Is.GreaterThan(Toolkits("SurfaceFollowHook")).And.GreaterThan(Toolkits("AttachmentFinishHook")));
         int Order(Type t) => Orbiters.Toolkit.Editor.VRChat.Build.BuildPhases.Order(Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Single(s => s.GetType() == t).Phase);
         // Against the other tools' callbacks, as at -10105 (where the SDK ran it before ReFit's kept fits, which shared the
         // number, and after ReFit's capture at -10110), -9500 and -8800.

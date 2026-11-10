@@ -264,56 +264,18 @@ public static class VersionCustomizationBuild
     }
 }
 
-// MCB's steps in Orbiters' build (Toolkit's AvatarBuildPipeline), each where its SDK callback ran: the capture at
-// -10105 (after N4N0's hooks, ReFit's capture -10110 and kept fits -10105, before the Toolkit's attachments -10100), the
-// survey at -9500 (right after VRCFury and the Toolkit's built-animations step -9999, before My Avatar's -9010), the apply
-// at -8800 (after Follow Body Blendshapes -8950 and the accessories' finish -8900, before My Avatar's -1100). The lock
-// (-8970) and the correctives (-9000) stay SDK callbacks: no phase sits between My Avatar's -9005 and ReFit's -8960.
+// MCB's steps in Orbiters' build (Toolkit's AvatarBuildPipeline), each in the phase the Toolkit keeps where its SDK
+// callback ran: the capture (formerly -10105: before ReFit's kept fits, which shared the number and ran second, and the
+// Toolkit's attachments -10100), the survey (-9500: after VRCFury and the Toolkit's reading of the animations it built,
+// before My Avatar's -9010), the apply (-8800: after Follow Body Blendshapes and the accessories' finish, before My
+// Avatar's -1100). A phase is a place among every tool's callbacks, so the steps name no other step. The lock (-8970) and
+// the correctives (-9000) stay SDK callbacks: no phase sits between My Avatar's -9005 and ReFit's -8960.
 internal static class McbBuildSteps
 {
-    // The Toolkit's own steps are internal to its assembly: named here. A name that no longer finds its type would drop
-    // the ordering silently (the pipeline ignores null), so it is an error at load, and the steps ordered against it
-    // refuse to run (the build stops) rather than run in another place.
-    private static readonly List<string> Missing = new List<string>();
-    internal static Type Toolkit(string name)
-    {
-        var type = typeof(BuildStep).Assembly.GetType(name);
-        if (type == null) Missing.Add(name);
-        return type;
-    }
-    internal static readonly Type Attachments = Toolkit("Orbiters.Toolkit.Editor.VRChat.Attachments.AttachmentBuildHook");
-    internal static readonly Type AttachmentsFinish = Toolkit("Orbiters.Toolkit.Editor.VRChat.Attachments.AttachmentFinishHook");
-    internal static readonly Type SurfaceFollow = Toolkit("Orbiters.Toolkit.Editor.VRChat.SurfaceFollow.SurfaceFollowHook");
-    internal static readonly Type BuiltAnimations = Toolkit("Orbiters.Toolkit.Editor.VRChat.VrcFuryBuiltAnimationsHook");
-
-    internal static IReadOnlyList<string> MissingSteps => Missing;
-
-    [InitializeOnLoadMethod]
-    private static void Check()
-    {
-        if (Missing.Count > 0) Debug.LogError(MissingMessage("MCB's build steps"));
-    }
-
-    private static string MissingMessage(string who) =>
-        "[MCB] " + who + " cannot keep their place in the avatar build: Orbiters Toolkit has no build step " + string.Join(", ", Missing) +
-        " any more (renamed?). MCB must be updated to order against what replaced it.";
-
     internal static bool Run(Action<GameObject> step, GameObject avatar)
     {
         try { step(avatar); return true; }
         catch (Exception ex) { Debug.LogException(ex); return false; }
-    }
-
-    /// <summary>Runs a pipeline step whose order needs <paramref name="constraints"/>: refused (the build stops) when one is missing.</summary>
-    internal static bool Run(BuildStep owner, IReadOnlyList<Type> constraints, Action<GameObject> step, GameObject avatar)
-    {
-        foreach (var type in constraints)
-            if (type == null)
-            {
-                Debug.LogError(MissingMessage(owner.GetType().Name));
-                return false;
-            }
-        return Run(step, avatar);
     }
 }
 
@@ -326,13 +288,13 @@ internal sealed class VersionCustomizationCaptureHook : BuildStep
     public override bool Run(BuildContext context) => McbBuildSteps.Run(VersionCustomizationBuild.Capture, context.Avatar);
 }
 
-// Right after VRCFury (-10000) built the avatar's animations, before face tracking (-9010) and the correctives (-9000).
+// After VRCFury (-10000) built the avatar's animations and the Toolkit read them (the phase before this one), before face
+// tracking (-9010) and the correctives (-9000): the phase the Toolkit keeps where this ran as an SDK callback (-9500).
 internal sealed class VersionCustomizationSurveyHook : BuildStep
 {
-    public override BuildPhase Phase => BuildPhase.AfterVrcFury;
-    public override IReadOnlyList<Type> After => new[] { McbBuildSteps.BuiltAnimations };
+    public override BuildPhase Phase => BuildPhase.AfterBuiltAnimations;
     public override string Owner => "MCB";
-    public override bool Run(BuildContext context) => McbBuildSteps.Run(this, After, VersionCustomizationBuild.Survey, context.Avatar);
+    public override bool Run(BuildContext context) => McbBuildSteps.Run(VersionCustomizationBuild.Survey, context.Avatar);
 }
 
 // After the correctives (-9000), before the clothing links copy body curves: ReFit (-8960), Follow Body Blendshapes
@@ -343,11 +305,11 @@ internal sealed class VersionCustomizationLockHook : IVRCSDKPreprocessAvatarCall
     public bool OnPreprocessAvatar(GameObject avatarGameObject) => McbBuildSteps.Run(VersionCustomizationBuild.Lock, avatarGameObject);
 }
 
-// After every animation-adding step: pruning must see the final animations.
+// After every animation-adding step (the accessories follow the body in the phase before this one): pruning must see the
+// final animations. The phase the Toolkit keeps where this ran as an SDK callback (-8800).
 internal sealed class VersionCustomizationApplyHook : BuildStep
 {
-    public override BuildPhase Phase => BuildPhase.AccessoryShapes;
-    public override IReadOnlyList<Type> After => new[] { McbBuildSteps.SurfaceFollow, McbBuildSteps.AttachmentsFinish };
+    public override BuildPhase Phase => BuildPhase.Versions;
     public override string Owner => "MCB";
-    public override bool Run(BuildContext context) => McbBuildSteps.Run(this, After, VersionCustomizationBuild.Apply, context.Avatar);
+    public override bool Run(BuildContext context) => McbBuildSteps.Run(VersionCustomizationBuild.Apply, context.Avatar);
 }
