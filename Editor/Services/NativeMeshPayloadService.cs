@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -1626,26 +1627,28 @@ public static partial class NativeMeshPayloadService
             var vertices = mesh.vertices;
             writer.Write(string.IsNullOrWhiteSpace(meshName) ? mesh.name : meshName);
             writer.Write((int)mesh.indexFormat);
-            WriteVector3Array(writer, vertices);
-            WriteVector3Array(writer, mesh.normals);
-            WriteVector4Array(writer, mesh.tangents);
-            WriteColor32Array(writer, mesh.colors32);
+            WriteBlock(writer, vertices);
+            WriteBlock(writer, mesh.normals);
+            WriteBlock(writer, mesh.tangents);
+            WriteBlock(writer, mesh.colors32);
 
+            var uvs = new List<Vector4>(vertices.Length);
+            Vector4[] uvScratch = null;
             for (int channel = 0; channel < 8; channel++)
             {
-                var uvs = new List<Vector4>();
+                uvs.Clear();
                 mesh.GetUVs(channel, uvs);
-                WriteVector4List(writer, uvs);
+                WriteVector4List(writer, uvs, ref uvScratch);
             }
 
             WriteBoneWeightArray(writer, mesh.boneWeights);
-            WriteMatrixArray(writer, mesh.bindposes);
+            WriteBlock(writer, mesh.bindposes);
 
             writer.Write(mesh.subMeshCount);
             for (int i = 0; i < mesh.subMeshCount; i++)
             {
                 writer.Write((int)mesh.GetTopology(i));
-                WriteIntArray(writer, mesh.GetIndices(i, true));
+                WriteBlock(writer, mesh.GetIndices(i, true));
             }
 
             WriteBounds(writer, mesh.bounds);
@@ -1655,6 +1658,11 @@ public static partial class NativeMeshPayloadService
             var deltaVertices = new Vector3[vertexCount];
             var deltaNormals = new Vector3[vertexCount];
             var deltaTangents = new Vector3[vertexCount];
+            // Whether deltaNormals and deltaTangents hold a previous frame's deltas: they are written as zeros when a baked
+            // frame lacks its own (the arrays used to be cleared before every frame).
+            bool normalsHeld = false;
+            SparseDelta[] sparse = null;
+            var slice = System.Diagnostics.Stopwatch.StartNew();
             yield return null;
             for (int shape = 0; shape < mesh.blendShapeCount; shape++)
             {
@@ -1671,8 +1679,18 @@ public static partial class NativeMeshPayloadService
                     normalFrames?.TryGetValue((shapeName, frame), out bakedFrame);
                     bool writeNormalTangents = includeNormalTangents || bakedFrame != null;
                     Array.Clear(deltaVertices, 0, deltaVertices.Length);
-                    Array.Clear(deltaNormals, 0, deltaNormals.Length);
-                    Array.Clear(deltaTangents, 0, deltaTangents.Length);
+                    if (includeNormalTangents)
+                    {
+                        Array.Clear(deltaNormals, 0, deltaNormals.Length);
+                        Array.Clear(deltaTangents, 0, deltaTangents.Length);
+                        normalsHeld = true;
+                    }
+                    else if (normalsHeld && writeNormalTangents && (bakedFrame.normals == null || bakedFrame.tangents == null))
+                    {
+                        Array.Clear(deltaNormals, 0, deltaNormals.Length);
+                        Array.Clear(deltaTangents, 0, deltaTangents.Length);
+                        normalsHeld = false;
+                    }
                     mesh.GetBlendShapeFrameVertices(
                         shape,
                         frame,
@@ -1680,12 +1698,11 @@ public static partial class NativeMeshPayloadService
                         includeNormalTangents ? deltaNormals : null,
                         includeNormalTangents ? deltaTangents : null);
                     writer.Write(mesh.GetBlendShapeFrameWeight(shape, frame));
-                    long vertexBytes = WriteSparseVector3Array(writer, deltaVertices, exact: true);
+                    long vertexBytes = WriteSparseVector3Array(writer, deltaVertices, ref sparse, exact: true);
                     writer.Write(writeNormalTangents);
-                    long normalBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.normals ?? deltaNormals) : 0L;
+                    long normalBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.normals ?? deltaNormals, ref sparse) : 0L;
                     writer.Write(writeNormalTangents);
-                    long tangentBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.tangents ?? deltaTangents) : 0L;
-                    yield return null;
+                    long tangentBytes = writeNormalTangents ? WriteSparseVector3Array(writer, bakedFrame?.tangents ?? deltaTangents, ref sparse) : 0L;
                     if (metrics != null)
                     {
                         metrics.blendShapeVertexBytes += vertexBytes;
@@ -1693,6 +1710,12 @@ public static partial class NativeMeshPayloadService
                         metrics.skippedBlendShapeTangentBytes += writeNormalTangents ? 0L : EstimateSparseVector3ArrayWorstCaseBytes(vertexCount);
                         metrics.blendShapeNormalBytes += normalBytes;
                         metrics.blendShapeTangentBytes += tangentBytes;
+                    }
+                    // Time-sliced: a frame takes far less than a tick, so yielding after each one stretched the build.
+                    if (slice.ElapsedMilliseconds >= 8)
+                    {
+                        yield return null;
+                        slice.Restart();
                     }
                 }
             }
@@ -1709,52 +1732,27 @@ public static partial class NativeMeshPayloadService
         string payloadCompression,
         NativeMeshPayloadPreparationStatus status)
     {
-        // A plain payload has no original-model key.
-        byte[] baseData = null;
-        if (preloadedOriginalFbxData != null && preloadedOriginalFbxData.Length > 0)
+        // The .bin and its key (the original model; a plain payload has none) are read forward in blocks, XORed and hashed
+        // on the way, and decoded block by block: only the decoded payload is ever held whole.
+        bool inMemory = preloadedBinData != null && preloadedBinData.Length > 0;
+        status.Report(inMemory ? 0.24f : 0.12f, inMemory ? "Using in-memory advanced mesh payload..." : "Reading advanced mesh payload...");
+        using (Stream bin = inMemory ? new MemoryStream(preloadedBinData, false) : (Stream)MCBXor.OpenRead(binPath))
+        using (Stream key = preloadedOriginalFbxData != null && preloadedOriginalFbxData.Length > 0
+                   ? new MemoryStream(preloadedOriginalFbxData, false)
+                   : !string.IsNullOrEmpty(originalFbxPath) ? MCBXor.OpenRead(originalFbxPath) : null)
         {
-            status.Report(0.12f, "Using preloaded original FBX key...");
-            baseData = preloadedOriginalFbxData;
+            long length = bin.Length;
+            var xor = key != null ? new MCBXorReadStream(bin, key, leaveOpen: true) : null;
+            try
+            {
+                string label = xor != null ? "Decrypting advanced mesh payload..." : "Reading advanced mesh payload...";
+                var progress = new ProgressReadStream(xor ?? bin, length, share => status.Report(Lerp(0.24f, 0.48f, share), label));
+                var payload = ReadPreparedPayload(progress, length, assetName, payloadHash, payloadCompression, status, 0.50f, 1f);
+                status.Report(1f, "Advanced mesh payload prepared...");
+                return payload;
+            }
+            finally { xor?.Dispose(); }
         }
-        else if (!string.IsNullOrEmpty(originalFbxPath))
-        {
-            status.Report(0.02f, "Reading original FBX key...");
-            baseData = File.ReadAllBytes(originalFbxPath);
-        }
-
-        byte[] binData;
-        if (preloadedBinData != null && preloadedBinData.Length > 0)
-        {
-            status.Report(0.24f, "Using in-memory advanced mesh payload...");
-            binData = preloadedBinData;
-        }
-        else
-        {
-            status.Report(0.12f, "Reading advanced mesh payload...");
-            binData = File.ReadAllBytes(binPath);
-        }
-
-        byte[] payloadBytes = binData;
-        if (baseData != null)
-        {
-            status.Report(0.24f, "Decrypting advanced mesh payload...");
-            payloadBytes = XorTransformWithProgress(baseData, binData, status, 0.24f, 0.48f);
-        }
-        status.Report(0.50f, PayloadUsesGZip(payloadCompression) ? "Decompressing advanced mesh payload..." : "Parsing advanced mesh payload...");
-        var payload = ReadPreparedPayloadAsset(payloadBytes, assetName, payloadHash, payloadCompression, status, 0.50f, 1f);
-        status.Report(1f, "Advanced mesh payload prepared...");
-        return payload;
-    }
-
-    private static byte[] XorTransformWithProgress(
-        byte[] baseData,
-        byte[] keyData,
-        NativeMeshPayloadPreparationStatus status,
-        float startProgress,
-        float endProgress)
-    {
-        return MCBXor.Transform(baseData, keyData, progress =>
-            status.Report(Lerp(startProgress, endProgress, progress), "Decrypting advanced mesh payload..."));
     }
 
     private static PreparedPayloadAssetData ReadPreparedPayloadAsset(
@@ -1766,10 +1764,56 @@ public static partial class NativeMeshPayloadService
         float startProgress,
         float endProgress)
     {
-        if (!payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash);
+        using (var stream = new MemoryStream(payloadBytes ?? Array.Empty<byte>(), false))
+            return ReadPreparedPayload(stream, payloadBytes?.LongLength ?? 0, assetName, payloadHash, payloadCompression, status, startProgress, endProgress);
+    }
+
+    /// <summary>
+    /// Verifies, decodes and parses a payload read forward from <paramref name="source"/> (<paramref name="length"/> bytes,
+    /// already XORed). A codec payload's hash covers its encoded bytes ("raw:" identities cover the decoded payload): it is
+    /// computed while the blocks are decoded, and a payload that fails to decode is reported as failing verification when
+    /// its hash does not match, as when the hash was checked first.
+    /// </summary>
+    private static PreparedPayloadAssetData ReadPreparedPayload(
+        Stream source,
+        long length,
+        string assetName,
+        string payloadHash,
+        string payloadCompression,
+        NativeMeshPayloadPreparationStatus status,
+        float startProgress,
+        float endProgress)
+    {
+        if (string.IsNullOrWhiteSpace(payloadHash)) throw new InvalidDataException("Advanced mesh payload hash is missing.");
+        bool raw = payloadHash.StartsWith("raw:", StringComparison.Ordinal);
+        byte[] payloadBytes;
         if (payloadCompression == MCBCompression.Lz4 || payloadCompression == MCBCompression.Zstd)
-            payloadBytes = MCBCompression.Decode(payloadBytes, payloadCompression);
-        if (payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash.Substring(4));
+        {
+            if (raw)
+            {
+                payloadBytes = MCBCompression.Decode(source, length, payloadCompression);
+                VerifyPayloadHash(payloadBytes, payloadHash.Substring(4));
+            }
+            else
+            {
+                using (var hashing = new MCBHashingReadStream(source))
+                {
+                    try { payloadBytes = MCBCompression.Decode(hashing, length, payloadCompression); }
+                    catch (InvalidDataException)
+                    {
+                        RequireHash(hashing.Finish(), payloadHash);
+                        throw;
+                    }
+                    RequireHash(hashing.Finish(), payloadHash);
+                }
+            }
+        }
+        else
+        {
+            payloadBytes = ReadAll(source, length);
+            VerifyPayloadHash(payloadBytes, raw ? payloadHash.Substring(4) : payloadHash);
+        }
+
         if (payloadBytes == null || payloadBytes.Length == 0)
         {
             throw new InvalidDataException("Native mesh payload is empty.");
@@ -1786,6 +1830,57 @@ public static partial class NativeMeshPayloadService
         {
             throw new InvalidDataException("Native mesh payload could not be read with the expected MCB payload format.", ex);
         }
+    }
+
+    private static byte[] ReadAll(Stream source, long length)
+    {
+        if (length > int.MaxValue) throw new InvalidDataException("Native mesh payload exceeds the supported size.");
+        var bytes = new byte[length];
+        for (int done = 0; done < bytes.Length;)
+        {
+            int read = source.Read(bytes, done, bytes.Length - done);
+            if (read <= 0) throw new EndOfStreamException("The advanced mesh payload is shorter than its file.");
+            done += read;
+        }
+        return bytes;
+    }
+
+    /// <summary>Reports the share of <c>length</c> bytes read through it.</summary>
+    private sealed class ProgressReadStream : Stream
+    {
+        private readonly Stream inner;
+        private readonly long length;
+        private readonly Action<float> report;
+        private long read;
+
+        public ProgressReadStream(Stream inner, long length, Action<float> report)
+        {
+            this.inner = inner;
+            this.length = Math.Max(1, length);
+            this.report = report;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => read; set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int n = inner.Read(buffer, offset, count);
+            if (n > 0)
+            {
+                read += n;
+                report(Math.Min(1f, read / (float)length));
+            }
+            return n;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private static PreparedPayloadAssetData ReadPreparedPayloadAssetContents(
@@ -1877,20 +1972,20 @@ public static partial class NativeMeshPayloadService
         {
             name = reader.ReadString(),
             indexFormat = (IndexFormat)reader.ReadInt32(),
-            vertices = ReadVector3Array(reader),
-            normals = ReadVector3Array(reader),
-            tangents = ReadVector4Array(reader),
-            colors = ReadColor32Array(reader),
+            vertices = reader.ReadBlock<Vector3>(12, "vectors"),
+            normals = reader.ReadBlock<Vector3>(12, "vectors"),
+            tangents = reader.ReadBlock<Vector4>(16, "vectors"),
+            colors = reader.ReadBlock<Color32>(4, "colors"),
             uvs = new List<Vector4>[8]
         };
 
         for (int channel = 0; channel < 8; channel++)
         {
-            mesh.uvs[channel] = ReadVector4List(reader);
+            mesh.uvs[channel] = new List<Vector4>(reader.ReadBlock<Vector4>(16, "vectors"));
         }
 
         mesh.boneWeights = ReadBoneWeightArray(reader);
-        mesh.bindposes = ReadMatrixArray(reader);
+        mesh.bindposes = reader.ReadBlock<Matrix4x4>(64, "bind poses");
 
         int subMeshCount = reader.ReadCount(PayloadReader.MinSubMeshBytes, "submeshes");
         for (int i = 0; i < subMeshCount; i++)
@@ -1898,7 +1993,7 @@ public static partial class NativeMeshPayloadService
             mesh.subMeshes.Add(new PreparedSubMeshData
             {
                 topology = (MeshTopology)reader.ReadInt32(),
-                indices = ReadIntArray(reader)
+                indices = reader.ReadBlock<int>(4, "indices")
             });
         }
 
@@ -2112,7 +2207,7 @@ public static partial class NativeMeshPayloadService
         if (deltas == null) return null;
         if (deltas.length != vertexCount) return deltas.ToDense();
         if (scratch == null) scratch = new Vector3[vertexCount];
-        for (int i = 0; i < deltas.indices.Length; i++) scratch[deltas.indices[i]] = deltas.values[i];
+        foreach (var entry in deltas.entries) scratch[entry.index] = entry.value;
         return scratch;
     }
 
@@ -2120,7 +2215,7 @@ public static partial class NativeMeshPayloadService
     private static void Unspread(this SparseDeltas deltas, Vector3[] spread)
     {
         if (deltas == null || spread == null) return;
-        for (int i = 0; i < deltas.indices.Length; i++) spread[deltas.indices[i]] = default;
+        foreach (var entry in deltas.entries) spread[entry.index] = default;
     }
 
     private static float Lerp(float from, float to, float value)
@@ -2231,13 +2326,12 @@ public static partial class NativeMeshPayloadService
     internal sealed class SparseDeltas
     {
         public int length;
-        public int[] indices;
-        public Vector3[] values;
+        public SparseDelta[] entries;
 
         public Vector3[] ToDense()
         {
             var dense = new Vector3[length];
-            for (int i = 0; i < indices.Length; i++) dense[indices[i]] = values[i];
+            foreach (var entry in entries) dense[entry.index] = entry.value;
             return dense;
         }
     }
@@ -2301,28 +2395,84 @@ public static partial class NativeMeshPayloadService
         return new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
     }
 
-    private static void WriteVector3Array(BinaryWriter writer, Vector3[] values)
+    // Arrays of fixed-size records are written and read as one block of bytes: the payload is little-endian, as
+    // BinaryWriter writes it, and so is every platform the editor runs on.
+    private static void RequireLittleEndian()
     {
-        writer.Write(values?.Length ?? 0);
-        foreach (var value in values ?? Array.Empty<Vector3>())
-        {
-            WriteVector3(writer, value);
-        }
+        if (!BitConverter.IsLittleEndian) throw new PlatformNotSupportedException("Native mesh payloads need a little-endian editor.");
     }
 
-    private static Vector3[] ReadVector3Array(PayloadReader reader)
+    // A count, then the records' bytes.
+    private static void WriteBlock<T>(BinaryWriter writer, T[] values, int count = -1) where T : struct
     {
-        int count = reader.ReadCount(12, "vectors");
-        var values = new Vector3[count];
-        for (int i = 0; i < count; i++)
+        if (count < 0) count = values?.Length ?? 0;
+        writer.Write(count);
+        if (count == 0) return;
+        RequireLittleEndian();
+        writer.Write(MemoryMarshal.AsBytes(new ReadOnlySpan<T>(values, 0, count)));
+    }
+
+    private static void WriteVector4List(BinaryWriter writer, List<Vector4> values, ref Vector4[] scratch)
+    {
+        int count = values?.Count ?? 0;
+        if (count > 0)
         {
-            values[i] = ReadVector3(reader);
+            if (scratch == null || scratch.Length < count) scratch = new Vector4[count];
+            values.CopyTo(scratch, 0);
+        }
+        WriteBlock(writer, scratch, count);
+    }
+
+    // The payload's bone weight: four indices, then four weights.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PackedBoneWeight
+    {
+        public int index0, index1, index2, index3;
+        public float weight0, weight1, weight2, weight3;
+    }
+
+    private static void WriteBoneWeightArray(BinaryWriter writer, BoneWeight[] values)
+    {
+        var packed = new PackedBoneWeight[values?.Length ?? 0];
+        for (int i = 0; i < packed.Length; i++)
+        {
+            var value = values[i];
+            packed[i] = new PackedBoneWeight
+            {
+                index0 = value.boneIndex0, index1 = value.boneIndex1, index2 = value.boneIndex2, index3 = value.boneIndex3,
+                weight0 = value.weight0, weight1 = value.weight1, weight2 = value.weight2, weight3 = value.weight3
+            };
+        }
+        WriteBlock(writer, packed);
+    }
+
+    private static BoneWeight[] ReadBoneWeightArray(PayloadReader reader)
+    {
+        var packed = reader.ReadBlock<PackedBoneWeight>(32, "bone weights");
+        var values = new BoneWeight[packed.Length];
+        for (int i = 0; i < packed.Length; i++)
+        {
+            var value = packed[i];
+            values[i] = new BoneWeight
+            {
+                boneIndex0 = value.index0, boneIndex1 = value.index1, boneIndex2 = value.index2, boneIndex3 = value.index3,
+                weight0 = value.weight0, weight1 = value.weight1, weight2 = value.weight2, weight3 = value.weight3
+            };
         }
 
         return values;
     }
 
-    private static long WriteSparseVector3Array(BinaryWriter writer, Vector3[] values, bool exact = false)
+    // A sparse delta as the payload stores it: the vertex index, then the delta.
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    internal struct SparseDelta
+    {
+        public int index;
+        public Vector3 value;
+    }
+
+    /// <param name="scratch">Reused between calls; grown to the array's length when needed.</param>
+    private static long WriteSparseVector3Array(BinaryWriter writer, Vector3[] values, ref SparseDelta[] scratch, bool exact = false)
     {
         int length = values?.Length ?? 0;
         writer.Write(length);
@@ -2332,7 +2482,8 @@ public static partial class NativeMeshPayloadService
             return 8;
         }
 
-        var nonZeroValues = new List<KeyValuePair<int, Vector3>>();
+        if (scratch == null || scratch.Length < length) scratch = new SparseDelta[length];
+        int count = 0;
         for (int i = 0; i < length; i++)
         {
             Vector3 value = values[i];
@@ -2344,17 +2495,11 @@ public static partial class NativeMeshPayloadService
                 continue;
             }
 
-            nonZeroValues.Add(new KeyValuePair<int, Vector3>(i, value));
+            scratch[count++] = new SparseDelta { index = i, value = value };
         }
 
-        writer.Write(nonZeroValues.Count);
-        foreach (var item in nonZeroValues)
-        {
-            writer.Write(item.Key);
-            WriteVector3(writer, item.Value);
-        }
-
-        return EstimateSparseVector3ArrayBytes(nonZeroValues.Count);
+        WriteBlock(writer, scratch, count);
+        return EstimateSparseVector3ArrayBytes(count);
     }
 
     private static long EstimateSparseVector3ArrayBytes(int nonZeroCount)
@@ -2395,175 +2540,17 @@ public static partial class NativeMeshPayloadService
         }
 
         reader.Expand(length * 12L, "blendshape deltas");
-        var deltas = new SparseDeltas { length = length, indices = new int[nonZeroCount], values = new Vector3[nonZeroCount] };
-        for (int i = 0; i < nonZeroCount; i++)
+        var deltas = new SparseDeltas { length = length, entries = new SparseDelta[nonZeroCount] };
+        reader.ReadBlock(deltas.entries);
+        foreach (var entry in deltas.entries)
         {
-            int index = reader.ReadInt32();
-            Vector3 value = ReadVector3(reader);
-            if (index < 0 || index >= length)
+            if (entry.index < 0 || entry.index >= length)
             {
                 throw new InvalidDataException("Native mesh payload has a blendshape delta outside its mesh.");
             }
-
-            deltas.indices[i] = index;
-            deltas.values[i] = value;
         }
 
         return deltas;
-    }
-
-    private static void WriteVector4Array(BinaryWriter writer, Vector4[] values)
-    {
-        writer.Write(values?.Length ?? 0);
-        foreach (var value in values ?? Array.Empty<Vector4>())
-        {
-            WriteVector4(writer, value);
-        }
-    }
-
-    private static Vector4[] ReadVector4Array(PayloadReader reader)
-    {
-        int count = reader.ReadCount(16, "vectors");
-        var values = new Vector4[count];
-        for (int i = 0; i < count; i++)
-        {
-            values[i] = ReadVector4(reader);
-        }
-
-        return values;
-    }
-
-    private static void WriteVector4List(BinaryWriter writer, List<Vector4> values)
-    {
-        writer.Write(values?.Count ?? 0);
-        foreach (var value in values ?? new List<Vector4>())
-        {
-            WriteVector4(writer, value);
-        }
-    }
-
-    private static List<Vector4> ReadVector4List(PayloadReader reader)
-    {
-        int count = reader.ReadCount(16, "vectors");
-        var values = new List<Vector4>(count);
-        for (int i = 0; i < count; i++)
-        {
-            values.Add(ReadVector4(reader));
-        }
-
-        return values;
-    }
-
-    private static void WriteColor32Array(BinaryWriter writer, Color32[] values)
-    {
-        writer.Write(values?.Length ?? 0);
-        foreach (var value in values ?? Array.Empty<Color32>())
-        {
-            writer.Write(value.r);
-            writer.Write(value.g);
-            writer.Write(value.b);
-            writer.Write(value.a);
-        }
-    }
-
-    private static Color32[] ReadColor32Array(PayloadReader reader)
-    {
-        int count = reader.ReadCount(4, "colors");
-        var values = new Color32[count];
-        for (int i = 0; i < count; i++)
-        {
-            values[i] = new Color32(reader.ReadByte(), reader.ReadByte(), reader.ReadByte(), reader.ReadByte());
-        }
-
-        return values;
-    }
-
-    private static void WriteBoneWeightArray(BinaryWriter writer, BoneWeight[] values)
-    {
-        writer.Write(values?.Length ?? 0);
-        foreach (var value in values ?? Array.Empty<BoneWeight>())
-        {
-            writer.Write(value.boneIndex0);
-            writer.Write(value.boneIndex1);
-            writer.Write(value.boneIndex2);
-            writer.Write(value.boneIndex3);
-            writer.Write(value.weight0);
-            writer.Write(value.weight1);
-            writer.Write(value.weight2);
-            writer.Write(value.weight3);
-        }
-    }
-
-    private static BoneWeight[] ReadBoneWeightArray(PayloadReader reader)
-    {
-        int count = reader.ReadCount(32, "bone weights");
-        var values = new BoneWeight[count];
-        for (int i = 0; i < count; i++)
-        {
-            values[i] = new BoneWeight
-            {
-                boneIndex0 = reader.ReadInt32(),
-                boneIndex1 = reader.ReadInt32(),
-                boneIndex2 = reader.ReadInt32(),
-                boneIndex3 = reader.ReadInt32(),
-                weight0 = reader.ReadSingle(),
-                weight1 = reader.ReadSingle(),
-                weight2 = reader.ReadSingle(),
-                weight3 = reader.ReadSingle()
-            };
-        }
-
-        return values;
-    }
-
-    private static void WriteMatrixArray(BinaryWriter writer, Matrix4x4[] values)
-    {
-        writer.Write(values?.Length ?? 0);
-        foreach (var matrix in values ?? Array.Empty<Matrix4x4>())
-        {
-            for (int i = 0; i < 16; i++)
-            {
-                writer.Write(matrix[i]);
-            }
-        }
-    }
-
-    private static Matrix4x4[] ReadMatrixArray(PayloadReader reader)
-    {
-        int count = reader.ReadCount(64, "bind poses");
-        var values = new Matrix4x4[count];
-        for (int i = 0; i < count; i++)
-        {
-            var matrix = new Matrix4x4();
-            for (int j = 0; j < 16; j++)
-            {
-                matrix[j] = reader.ReadSingle();
-            }
-            values[i] = matrix;
-        }
-
-        return values;
-    }
-
-    private static void WriteIntArray(BinaryWriter writer, int[] values)
-    {
-        writer.Write(values?.Length ?? 0);
-        foreach (int value in values ?? Array.Empty<int>())
-        {
-            writer.Write(value);
-        }
-    }
-
-    private static int[] ReadIntArray(PayloadReader reader)
-    {
-        int count = reader.ReadCount(4, "indices");
-        var values = new int[count];
-        for (int i = 0; i < count; i++)
-        {
-            values[i] = reader.ReadInt32();
-        }
-
-        return values;
     }
 
     private static void WriteBounds(BinaryWriter writer, Bounds bounds)
@@ -2601,7 +2588,7 @@ public static partial class NativeMeshPayloadService
         /// <summary>A reader over the payload's bytes; GZIP payloads are decoded first, within the supported payload size.</summary>
         public static PayloadReader Open(byte[] payloadBytes, bool gzip)
         {
-            if (!gzip) return new PayloadReader(new MemoryStream(payloadBytes, false));
+            if (!gzip) return new PayloadReader(new MemoryStream(payloadBytes, 0, payloadBytes.Length, false, true));
             var decoded = new MemoryStream();
             using (var input = new GZipStream(new MemoryStream(payloadBytes, false), System.IO.Compression.CompressionMode.Decompress))
             {
@@ -2627,6 +2614,27 @@ public static partial class NativeMeshPayloadService
             if (count < 0 || (long)count * minimumBytes > Remaining)
                 throw new InvalidDataException($"Native mesh payload declares {count} {what}, more than it contains.");
             return count;
+        }
+
+        /// <summary>Reads a count of records of <paramref name="recordBytes"/> each, then the records as one block.</summary>
+        public T[] ReadBlock<T>(int recordBytes, string what) where T : struct
+        {
+            var values = new T[ReadCount(recordBytes, what)];
+            ReadBlock(values);
+            return values;
+        }
+
+        /// <summary>Fills <paramref name="values"/> with the next bytes of the payload, copied straight from its buffer.</summary>
+        public void ReadBlock<T>(T[] values) where T : struct
+        {
+            Span<byte> target = MemoryMarshal.AsBytes(values.AsSpan());
+            if (target.Length == 0) return;
+            RequireLittleEndian();
+            if (target.Length > Remaining) throw new InvalidDataException("Native mesh payload ends inside an array.");
+            var stream = (MemoryStream)BaseStream;
+            if (!stream.TryGetBuffer(out ArraySegment<byte> buffer)) throw new InvalidOperationException("The payload buffer is not readable.");
+            new ReadOnlySpan<byte>(buffer.Array, buffer.Offset + checked((int)stream.Position), target.Length).CopyTo(target);
+            stream.Position += target.Length;
         }
 
         public void Expand(long bytes, string what)
@@ -3757,6 +3765,8 @@ public static partial class NativeMeshPayloadService
         public override long Length => throw new NotSupportedException();
         public override long Position { get; set; }
 
+        private byte[] scratch;
+
         public override void Write(byte[] buffer, int offset, int count)
         {
             if (count <= 0)
@@ -3764,15 +3774,17 @@ public static partial class NativeMeshPayloadService
                 return;
             }
 
-            byte[] encrypted = new byte[count];
-            for (int i = 0; i < count; i++)
+            // XORed in a reused block, a key run at a time (MCBXor.Apply): the caller's buffer is left as it is.
+            if (scratch == null) scratch = new byte[Math.Min(Math.Max(count, 64 * 1024), MCBXor.StreamBlockBytes)];
+            for (int done = 0; done < count;)
             {
-                int keyIndex = (int)((Position + i) % key.Length);
-                encrypted[i] = (byte)(buffer[offset + i] ^ key[keyIndex]);
+                int run = Math.Min(count - done, scratch.Length);
+                Buffer.BlockCopy(buffer, offset + done, scratch, 0, run);
+                MCBXor.Apply(key, Position, new Span<byte>(scratch, 0, run));
+                inner.Write(scratch, 0, run);
+                Position += run;
+                done += run;
             }
-
-            inner.Write(encrypted, 0, encrypted.Length);
-            Position += count;
         }
 
         public override void Flush()

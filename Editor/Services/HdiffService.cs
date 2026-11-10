@@ -155,12 +155,8 @@ public static class HdiffService
                 DeleteTempFile(roundTripPath);
             }
 
-            byte[] baseData = File.ReadAllBytes(baseFbxPath);
-            byte[] hdiffData = File.ReadAllBytes(tempHdiffPath);
-            byte[] encryptedData = fileManagerService.XorTransform(baseData, hdiffData);
-
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputBinPath)));
-            File.WriteAllBytes(outputBinPath, encryptedData);
+            MCBXor.TransformFile(baseFbxPath, tempHdiffPath, outputBinPath);
 
             info = new BuildInfo
             {
@@ -212,10 +208,7 @@ public static class HdiffService
         string tempHdiffPath = CreateTempWorkPath(".hdiff");
         try
         {
-            byte[] baseData = File.ReadAllBytes(baseFbxPath);
-            byte[] binData = File.ReadAllBytes(binPath);
-            byte[] hdiffData = fileManagerService.XorTransform(baseData, binData);
-            File.WriteAllBytes(tempHdiffPath, hdiffData);
+            MCBXor.TransformFile(baseFbxPath, binPath, tempHdiffPath);
 
             string compressionType = null;
             ulong oldSize = 0;
@@ -246,7 +239,7 @@ public static class HdiffService
             {
                 baseBytes = oldSize,
                 outputBytes = newSize,
-                patchBytes = binData.LongLength,
+                patchBytes = new FileInfo(binPath).Length,
                 compressionType = compressionType
             };
         }

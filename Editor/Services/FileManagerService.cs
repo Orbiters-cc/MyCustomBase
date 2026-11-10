@@ -1207,10 +1207,8 @@ public class FileManagerService
 
                             if (!wroteHdiff)
                             {
-                                byte[] baseData = File.ReadAllBytes(entry.sourceFbxPath);
-                                byte[] targetData = File.ReadAllBytes(customFbxPath);
-                                byte[] encryptedData = XorTransform(baseData, targetData);
-                                File.WriteAllBytes(Path.GetFullPath(binUnityPath), encryptedData);
+                                // Streamed: the custom model XORed with the original, a block at a time (hash remembered).
+                                MCBXor.TransformFile(entry.sourceFbxPath, customFbxPath, Path.GetFullPath(binUnityPath));
                                 entry.patchTransform = ModelFileTransforms.XorBinToFbx;
                             }
 
