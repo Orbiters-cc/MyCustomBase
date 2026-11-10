@@ -78,13 +78,11 @@ public static class VersionBuilder
         }
 
         var animationPaths = (additionalAnimationAssetPaths ?? Enumerable.Empty<string>()).ToList();
-        // One build: each input is read once, and the outputs are recorded as they are written.
-        using var proof = new ContentHash.Operation();
 
         // Inputs are hashed before packaging so the drift baseline reflects exactly
         // what this build consumed.
         yield return null;
-        var inputs = CollectInputs(packageEntries, logicPrefab, includeCustomVeins ? customVeinsTexture : null, animationPaths, proof);
+        var inputs = CollectInputs(packageEntries, logicPrefab, includeCustomVeins ? customVeinsTexture : null, animationPaths);
         Mark("Hash inputs");
 
         string staging = VersionRepository.CreateStagingFolder(assetId, versionString, defaultAviVersion, sourceVersionKey);
@@ -101,8 +99,7 @@ public static class VersionBuilder
                 includeDynamicNormalsFlexing,
                 animationPaths,
                 customization?.dynamicNormalBlendshapes,
-                originalModelPaths,
-                proof);
+                originalModelPaths);
             Mark("Package model and logic");
 
             var metadata = metadataFactory();
@@ -112,10 +109,18 @@ public static class VersionBuilder
             }
 
             metadata.sourceVersionKey = sourceVersionKey;
-            if (originalVersions != null) yield return OriginalBaseVariantBuilder.AddToBuildCoroutine(staging, metadata, originalVersions, proof);
+            if (originalVersions != null) yield return OriginalBaseVariantBuilder.AddToBuildCoroutine(staging, metadata, originalVersions);
             metadata.isUnsubmitted = true;
             Mark("Create metadata");
-            var manifest = VersionRepository.CreateManifestFromFolder(staging, metadata, unsubmitted: true, formSignature: formSignature, inputs: inputs, operation: proof);
+            VersionManifest manifest;
+            // Final acceptance, read from the bytes in one stretch without yields: the build took seconds to minutes, so
+            // nothing hashed earlier is trusted. Every input must still be what was hashed when the build started (else the
+            // outputs may describe another source), and each model's recorded identities must match what is on disk.
+            using (var accept = new ContentHash.Operation())
+            {
+                manifest = VersionRepository.CreateManifestFromFolder(staging, metadata, unsubmitted: true, formSignature: formSignature, inputs: inputs, operation: accept);
+                RequireUnchanged(inputs, packageEntries, accept);
+            }
             Mark("Hash outputs and manifest");
             var result = VersionRepository.CommitStaging(staging, metadata, manifest);
             Mark("Commit local artifact");
@@ -129,12 +134,31 @@ public static class VersionBuilder
         }
     }
 
+    private static void RequireUnchanged(IEnumerable<VersionManifestInput> inputs,
+        IEnumerable<FileManagerService.ModelFilePackageEntry> packageEntries, ContentHash.Operation accept)
+    {
+        void Require(string path, string hash)
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(hash)) return;
+            if (!ContentHash.Verify(path, hash, operation: accept))
+                throw new IOException($"'{path}' changed while the version was built. Build it again.");
+        }
+
+        foreach (var input in inputs ?? Enumerable.Empty<VersionManifestInput>()) Require(input?.path, input?.hash);
+        foreach (var entry in packageEntries ?? Enumerable.Empty<FileManagerService.ModelFilePackageEntry>())
+        {
+            if (entry == null) continue;
+            Require(entry.sourceFbxPath, entry.sourceHash);
+            Require(entry.binUnityPath, entry.binHash);
+            Require(entry.avatarUnityPath, entry.avatarHash);
+        }
+    }
+
     private static List<VersionManifestInput> CollectInputs(
         IEnumerable<FileManagerService.ModelFilePackageEntry> packageEntries,
         GameObject logicPrefab,
         Texture2D veinsTexture,
-        IEnumerable<string> animationAssetPaths,
-        ContentHash.Operation proof)
+        IEnumerable<string> animationAssetPaths)
     {
         var inputs = new List<VersionManifestInput>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -153,7 +177,7 @@ public static class VersionBuilder
             inputs.Add(new VersionManifestInput
             {
                 path = unityPath,
-                hash = ContentHash.Proof(fullPath, proof),
+                hash = ContentHash.Proof(fullPath),
                 kind = kind
             });
         }

@@ -13,6 +13,8 @@ public static class OriginalBaseVariantBuilder
     public static OriginalBaseVersionData Build(string folder, CustomBaseVersion version, OriginalBaseVersionData target, Func<ModelFileData, string> resolveKey = null,
         ContentHash.Operation operation = null)
     {
+        // Build runs in one stretch on a worker: its own scope, unless the caller passes one.
+        using var owned = ContentHash.Operation.Join(operation, out operation);
         if (target.sourceFiles == null || version.sourceFiles.Any(source => !target.sourceFiles.Any(targetSource => string.Equals(targetSource.path, source.path, StringComparison.OrdinalIgnoreCase))))
             throw new InvalidDataException("Each supported original needs a mapping for every target FBX.");
         resolveKey = resolveKey ?? OriginalBaseLibrary.Resolve;
