@@ -175,8 +175,10 @@ public class PersistentCache
         cacheFilePath = Path.Combine(GetCacheDirectory(), CACHE_FILE_NAME);
         LoadCache();
         
-        // Subscribe to editor update for periodic cleanup
+        // Subscribe to editor update for periodic cleanup and the debounced save
         EditorApplication.update += PeriodicCleanup;
+        AssemblyReloadEvents.beforeAssemblyReload += FlushPendingSave;
+        EditorApplication.quitting += FlushPendingSave;
     }
 
     private string GetCacheDirectory()
@@ -218,7 +220,7 @@ public class PersistentCache
             cacheData.versionCache.Remove(key);
             rewrite = true;
         }
-        if (rewrite && File.Exists(cacheFilePath)) SaveCache();
+        if (rewrite && File.Exists(cacheFilePath)) RequestSave();
     }
 
     private static string CreateSalt()
@@ -245,6 +247,44 @@ public class PersistentCache
     /// Snapshots the cache on the calling thread (its entries are private copies, so nothing changes them meanwhile) and
     /// writes the latest snapshot on a worker thread; snapshots taken while one is written are coalesced.
     /// </summary>
+    // Saves are debounced: a burst of hashes or version lists is serialised once, on the main thread, after SaveDelay.
+    private static readonly double SaveDelay = 2d;
+    private bool saveRequested;
+    private double saveDueAt;
+
+    private void RequestSave()
+    {
+        lock (writeLock) saveRequested = true;
+    }
+
+    private void FlushPendingSave()
+    {
+        bool requested;
+        lock (writeLock) { requested = saveRequested; saveRequested = false; }
+        if (!requested) return;
+        saveDueAt = 0;
+        string json;
+        lock (cacheLock) json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
+        bool writeHere;
+        lock (writeLock)
+        {
+            pendingJson = json;
+            writeHere = !writing;
+            writing = true;
+        }
+        // The domain is about to unload: write on this thread, or let the running writer take this snapshot and wait for it.
+        if (writeHere) WritePendingSnapshots();
+        else
+        {
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (waited.ElapsedMilliseconds < 2000)
+            {
+                lock (writeLock) if (!writing) return;
+                System.Threading.Thread.Sleep(10);
+            }
+        }
+    }
+
     private void SaveCache()
     {
         string json;
@@ -337,7 +377,7 @@ public class PersistentCache
 
         if (removed)
         {
-            SaveCache();
+            RequestSave();
             MCBLogger.Log($"[PersistentCache] Manually invalidated hash for: {normalizedPath}");
         }
     }
@@ -361,7 +401,7 @@ public class PersistentCache
         }
 MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         
-        SaveCache();
+        RequestSave();
     }
 
     // Version Cache Methods
@@ -451,7 +491,7 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         }
         MCBLogger.Log($"[PersistentCache] Cached {serverVersions?.Count ?? 0} versions for hash: {baseFbxHash}");
         
-        SaveCache();
+        RequestSave();
     }
 
     /// <summary>Forgets the versions cached for this account and selection (its access to the asset was denied).</summary>
@@ -466,7 +506,7 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         {
             removed = cacheData.versionCache.Remove(cacheKey);
         }
-        if (removed) SaveCache();
+        if (removed) RequestSave();
     }
 
     private static string VersionCacheKey(string baseFbxHash, string accountKey, int assetId, string sourceVersionKey) =>
@@ -475,11 +515,25 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
     // Cleanup Methods
     private void PeriodicCleanup()
     {
+        bool requested;
+        lock (writeLock) requested = saveRequested;
+        if (requested)
+        {
+            double now = EditorApplication.timeSinceStartup;
+            if (saveDueAt == 0) saveDueAt = now + SaveDelay;
+            else if (now >= saveDueAt)
+            {
+                saveDueAt = 0;
+                lock (writeLock) saveRequested = false;
+                SaveCache();
+            }
+        }
+
         if (DateTime.Now - cacheData.lastCleanup > CLEANUP_INTERVAL)
         {
             CleanupExpiredEntries();
             cacheData.lastCleanup = DateTime.Now;
-            SaveCache();
+            RequestSave();
         }
     }
 
@@ -534,7 +588,7 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
             cacheData.hashCache.Clear();
             cacheData.versionCache.Clear();
         }
-        SaveCache();
+        RequestSave();
         MCBLogger.Log("[PersistentCache] Cleared all cache data.");
     }
 
@@ -544,7 +598,7 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         {
             cacheData.hashCache.Clear();
         }
-        SaveCache();
+        RequestSave();
         MCBLogger.Log("[PersistentCache] Cleared hash cache.");
     }
 
@@ -554,7 +608,7 @@ MCBLogger.Log($"[PersistentCache] Cached hash for: {normalizedPath}");
         {
             cacheData.versionCache.Clear();
         }
-        SaveCache();
+        RequestSave();
         MCBLogger.Log("[PersistentCache] Cleared version cache.");
     }
 
