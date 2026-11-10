@@ -1,5 +1,14 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.12.24 — 2026-11-10
+
+- **Going back to the original base gives you back the avatar you had.** An avatar migrated from a release made before
+  MCB (Ultirex V4) went back to the default base model instead. The migration now remembers what the avatar had (its
+  meshes, bone poses, materials, shape values, FX controller, parameters and menus) and switches the old release's
+  objects off instead of deleting them; going back to the original base restores all of it. Migrating again reuses the
+  copies of your controller and menus, so what you changed in them stays. Avatars migrated with an earlier version
+  have nothing recorded: they still go back to the default base model.
+
 ## 1.12.23 — 2026-11-09
 
 - **Resetting to the original base keeps your face and body shapes.** A reset put the original meshes back without
