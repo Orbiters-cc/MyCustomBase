@@ -82,6 +82,9 @@ public class VersionActions
     /// <summary>How far the running version download is (0 to 1).</summary>
     public float DownloadProgress { get; private set; }
 
+    // A value in a query string, escaped (a version or key with a '&' or a space must not change the request).
+    private static string Query(string value) => Uri.EscapeDataString(value ?? string.Empty);
+
     public VersionActions(MCBEditor editor, NetworkService network, FileManagerService files)
     {
         this.editor = editor;
@@ -224,7 +227,7 @@ public class VersionActions
         string requestedToken = editor.authToken;
         string requestedBaseHash = editor.currentBaseFbxHash;
         string requestedSourceVersionKey = OriginalBaseLibrary.ActiveKey(selectedAsset);
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={editor.currentBaseFbxHash}&sourceKey={OriginalBaseLibrary.ActiveKey(selectedAsset)}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={Query(editor.currentBaseFbxHash)}&sourceKey={Query(OriginalBaseLibrary.ActiveKey(selectedAsset))}";
         MCBLogger.Log($"[VersionActions] Starting version fetch. assetId={selectedAsset.id} | url={url} | currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash}");
         var fetchTask = networkService.FetchVersionsAsync(url, requestedToken);
         
@@ -375,7 +378,7 @@ public class VersionActions
         }
         editor.currentBaseFbxHash = requestBaseHash;
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={version.version}&d={requestBaseHash}&sourceKey={version.sourceVersionKey}";
+        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={Query(version.version)}&d={Query(requestBaseHash)}&sourceKey={Query(version.sourceVersionKey)}";
         var deliveryDecision = MCBPerformance.Choose(version.deliveryVariants);
         var delivery = version.deliveryVariants?.FirstOrDefault(v => v.codec == deliveryDecision.codec);
         if (delivery != null) url += "&codec=" + Uri.EscapeDataString(delivery.codec);

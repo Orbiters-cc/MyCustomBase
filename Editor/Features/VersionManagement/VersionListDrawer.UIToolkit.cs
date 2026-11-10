@@ -79,14 +79,13 @@ public partial class VersionListDrawer
         root.Clear();
         root.AddToClassList("mcb-version-list");
 
+        // Shown for as long as the avatar wears an unsupported custom base (it used to vanish on the next rebuild).
         if (FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION) &&
-            editor.currentIsCustom &&
-            !editor.customWarningShown)
+            editor.currentIsCustom)
         {
             root.Add(CreateHelpBox(
                 "The current custom version of your avatar base is not supported. If you update it to one of the custom base versions, you may lose some custom features or blendshapes of your custom base.",
                 HelpBoxMessageType.Warning));
-            editor.customWarningShown = true;
         }
 
         var allVersions = editor.GetAllVersions() ?? new List<CustomBaseVersion>();
@@ -953,9 +952,22 @@ public partial class VersionListDrawer
 
         string token = editor.authToken;
         string url = $"{MCBUtils.getApiUrl("creator")}/assets/{ver.assetId}/versions/{ver.id}";
-        var result = await networkService.UpdateCreatorVersionMetadataAsync(url, token, nextTitle, editingVersionChangelogDraft ?? string.Empty);
+        (bool success, CustomBaseVersion version, string error) result;
+        try
+        {
+            result = await networkService.UpdateCreatorVersionMetadataAsync(url, token, nextTitle, editingVersionChangelogDraft ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            // The edit stays open with the error: Save, Cancel and Edit must not stay disabled until a reload.
+            MCBLogger.LogWarning($"[MCB] Could not save the version details: {ex.Message}");
+            result = (false, null, ex.Message);
+        }
+        finally
+        {
+            isUpdatingVersionMetadata = false;
+        }
 
-        isUpdatingVersionMetadata = false;
         if (!result.success)
         {
             versionMetadataUpdateError = result.error;

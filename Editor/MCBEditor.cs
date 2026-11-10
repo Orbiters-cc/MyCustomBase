@@ -120,7 +120,6 @@ public class MCBEditor : UnityEditor.Editor
 
     // Runtime state for detection
     public string currentAppliedFbxHash;
-    public bool customWarningShown;
 
     public bool HasServerAccess
     {

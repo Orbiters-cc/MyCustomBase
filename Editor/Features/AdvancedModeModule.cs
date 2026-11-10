@@ -378,7 +378,7 @@ public class AdvancedModeModule
                             EditorGUI.indentLevel++;
                             foreach (var blendshape in activeBlendshapes)
                             {
-                                EditorGUILayout.LabelField("â€¢ " + blendshape);
+                                EditorGUILayout.LabelField("• " + blendshape);
                             }
                             EditorGUI.indentLevel--;
                         }
@@ -528,7 +528,6 @@ public class AdvancedModeModule
                         if (feature.Key == FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION && !next)
                         {
                             editor.selectedCustomVersionForAction = null;
-                            editor.customWarningShown = false;
                             editor.currentIsCustom = false; // hide current custom UI marks
                             editor.Repaint();
                         }
