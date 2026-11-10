@@ -100,17 +100,6 @@ public partial class AssetGalleryModule
                 : "Loading banner...");
     }
 
-    private void BuildSelectedAssetActionsUIToolkit()
-    {
-        if (selectedAssetActionsRoot == null)
-        {
-            return;
-        }
-
-        selectedAssetActionsRoot.Clear();
-        selectedAssetActionsRoot.style.display = DisplayStyle.None;
-    }
-
     private void ApplySelectedAssetBannerTexture(Texture2D texture)
     {
         if (selectedAssetBannerImage == null || texture == null)

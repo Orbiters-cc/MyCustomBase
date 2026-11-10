@@ -32,7 +32,7 @@ public class MCBEditor : UnityEditor.Editor
 
     // --- Serialized Properties ---
     public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
-                               customFbxForCreatorProp, customBaseAvatarForCreatorProp, avatarLogicPrefabProp, customBlendshapesForCreatorProp,
+                               avatarLogicPrefabProp, customBlendshapesForCreatorProp,
                                modelFileBuildEntriesProp,
                                useAdvancedMeshReplacementForCreatorProp,
                                useHdiffFbxDeltaForCreatorProp,
@@ -59,8 +59,6 @@ public class MCBEditor : UnityEditor.Editor
     private VisualElement connectivityHost;
     private VisualElement statusHost;
     private VisualElement galleryHost;
-    private VisualElement selectedAssetActionsHost;
-    private VisualElement creatorHost;
     private VisualElement versionHost;
     private VisualElement avatarOptionsHost;
     private VisualElement adjustMaterialHost;
@@ -238,8 +236,6 @@ public class MCBEditor : UnityEditor.Editor
         connectivityHost = null;
         statusHost = null;
         galleryHost = null;
-        selectedAssetActionsHost = null;
-        creatorHost = null;
         versionHost = null;
         avatarOptionsHost = null;
         adjustMaterialHost = null;
@@ -290,17 +286,9 @@ public class MCBEditor : UnityEditor.Editor
         galleryHost = new VisualElement();
         uiToolkitRoot.Add(galleryHost);
 
-        selectedAssetActionsHost = new VisualElement();
-        selectedAssetActionsHost.AddToClassList("mcb-selected-actions-host");
-        uiToolkitRoot.Add(selectedAssetActionsHost);
-
         statusHost = new VisualElement();
         statusHost.AddToClassList("mcb-status-host");
         uiToolkitRoot.Add(statusHost);
-
-        creatorHost = new VisualElement();
-        creatorHost.AddToClassList("mcb-creator-host");
-        uiToolkitRoot.Add(creatorHost);
 
         versionHost = new VisualElement();
         versionHost.AddToClassList("mcb-version-host");
@@ -324,8 +312,7 @@ public class MCBEditor : UnityEditor.Editor
         uiToolkitRoot.Add(bottomBarImGuiContainer);
 
         dependencyInstallerModule?.AttachUIToolkit(dependencyHost);
-        assetGalleryModule?.AttachUIToolkit(galleryHost, selectedAssetActionsHost, commentsHost);
-        creatorModule?.AttachUIToolkit(creatorHost);
+        assetGalleryModule?.AttachUIToolkit(galleryHost, commentsHost);
         versionModule?.AttachUIToolkit(versionHost);
         avatarOptionsModule?.AttachUIToolkit(avatarOptionsHost);
         // The modules only take their hosts: everything is built once, here (each used to build itself on attach, then again).
@@ -409,9 +396,7 @@ public class MCBEditor : UnityEditor.Editor
         dependencyHost?.BringToFront();
         connectivityHost?.BringToFront();
         galleryHost?.BringToFront();
-        selectedAssetActionsHost?.BringToFront();
         statusHost?.BringToFront();
-        creatorHost?.BringToFront();
         versionHost?.BringToFront();
         avatarOptionsHost?.BringToFront();
         adjustMaterialHost?.BringToFront();
@@ -429,9 +414,7 @@ public class MCBEditor : UnityEditor.Editor
             connectivityHost.style.display = blocked || connectivityHost.childCount == 0 ? DisplayStyle.None : DisplayStyle.Flex;
         }
         if (galleryHost != null) galleryHost.style.display = contentDisplay;
-        if (selectedAssetActionsHost != null) selectedAssetActionsHost.style.display = contentDisplay;
         if (statusHost != null && blocked) statusHost.style.display = DisplayStyle.None;
-        if (creatorHost != null && blocked) creatorHost.style.display = DisplayStyle.None;
         if (versionHost != null && blocked) versionHost.style.display = DisplayStyle.None;
         if (avatarOptionsHost != null && blocked) avatarOptionsHost.style.display = DisplayStyle.None;
         if (adjustMaterialHost != null && blocked) adjustMaterialHost.style.display = DisplayStyle.None;
@@ -1528,8 +1511,6 @@ public class MCBEditor : UnityEditor.Editor
         baseFbxFilesProp = serializedObject.FindProperty("baseFbxFiles");
         blendShapeValuesProp = serializedObject.FindProperty("blendShapeValues");
         isCreatorModeProp = serializedObject.FindProperty("isCreatorMode");
-        customFbxForCreatorProp = serializedObject.FindProperty("customFbxForCreator");
-        customBaseAvatarForCreatorProp = serializedObject.FindProperty("customBaseAvatarForCreatorProp");
         modelFileBuildEntriesProp = serializedObject.FindProperty("modelFileBuildEntries");
         avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
         useAdvancedMeshReplacementForCreatorProp = serializedObject.FindProperty("useAdvancedMeshReplacementForCreator");

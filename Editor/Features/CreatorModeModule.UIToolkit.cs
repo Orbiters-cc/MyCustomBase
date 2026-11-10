@@ -57,13 +57,6 @@ public partial class CreatorModeModule
         public bool canSubmit;
     }
 
-    public void AttachUIToolkit(VisualElement root)
-    {
-        // The inspector keeps the version timeline; the form lives only in its window.
-        root.Clear();
-        root.style.display = DisplayStyle.None;
-    }
-
     public void DetachUIToolkit()
     {
         creatorRoot = null;
