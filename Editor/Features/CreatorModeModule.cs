@@ -14,9 +14,6 @@ public partial class CreatorModeModule
 {
     private const string InitialDefaultAviVersion = "1.0.0";
     private const long MaxVersionPackageUploadBytes = 600L * 1024L * 1024L;
-    private static Dictionary<string, List<AnimationClip>> animationClipsByNameCache;
-    private static double animationClipsByNameCacheTimestamp;
-    private static bool animationClipProjectChangedHooked;
 
     private readonly MCBEditor editor;
     private readonly NetworkService networkService;
@@ -55,7 +52,6 @@ public partial class CreatorModeModule
         this.editor = editor;
         this.networkService = new NetworkService();
         this.fileManagerService = new FileManagerService();
-        EnsureAnimationClipProjectChangedHook();
         creatorBlendshapeEditorFoldout = EditorPrefs.GetBool("MCB_CreatorMode_BlendshapeEditorFoldout", false);
     }
 
@@ -411,14 +407,7 @@ public partial class CreatorModeModule
         return newType;
     }
 
-    private static List<AnimationClip> FindAnimationClipsByName(string clipName)
-    {
-        if (string.IsNullOrWhiteSpace(clipName)) return new List<AnimationClip>();
-        var lookup = GetAnimationClipsByNameLookupCached();
-        return lookup.TryGetValue(clipName, out var clips) && clips != null
-            ? clips
-            : new List<AnimationClip>();
-    }
+    private static List<AnimationClip> FindAnimationClipsByName(string clipName) => AnimationClipLookup.Find(clipName);
 
     private static List<string> CollectAnimationAssetPathsFromFixedBy(IEnumerable<CustomBlendshapeEntry> customBlendshapeEntries)
     {
@@ -502,55 +491,6 @@ public partial class CreatorModeModule
         cachedCustomFbxBlendshapeNames = names.OrderBy(n => n, StringComparer.Ordinal).ToList();
         cachedCustomFbxSignature = signature;
         return cachedCustomFbxBlendshapeNames;
-    }
-
-    private static Dictionary<string, List<AnimationClip>> GetAnimationClipsByNameLookupCached()
-    {
-        EnsureAnimationClipProjectChangedHook();
-
-        if (animationClipsByNameCache != null)
-        {
-            return animationClipsByNameCache;
-        }
-
-        var lookup = new Dictionary<string, List<AnimationClip>>(StringComparer.Ordinal);
-        string[] guids = AssetDatabase.FindAssets("t:AnimationClip");
-        for (int i = 0; i < guids.Length; i++)
-        {
-            string path = AssetDatabase.GUIDToAssetPath(guids[i]);
-            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(path);
-            if (clip == null || string.IsNullOrWhiteSpace(clip.name)) continue;
-
-            if (!lookup.TryGetValue(clip.name, out var list))
-            {
-                list = new List<AnimationClip>();
-                lookup[clip.name] = list;
-            }
-
-            list.Add(clip);
-        }
-
-        foreach (var pair in lookup)
-        {
-            pair.Value.Sort((a, b) => string.CompareOrdinal(AssetDatabase.GetAssetPath(a), AssetDatabase.GetAssetPath(b)));
-        }
-
-        animationClipsByNameCache = lookup;
-        animationClipsByNameCacheTimestamp = EditorApplication.timeSinceStartup;
-        return animationClipsByNameCache;
-    }
-
-    private static void EnsureAnimationClipProjectChangedHook()
-    {
-        if (animationClipProjectChangedHooked) return;
-        animationClipProjectChangedHooked = true;
-        EditorApplication.projectChanged += ClearAnimationClipLookupCache;
-    }
-
-    private static void ClearAnimationClipLookupCache()
-    {
-        animationClipsByNameCache = null;
-        animationClipsByNameCacheTimestamp = 0d;
     }
 
     private static void AddCorrectivePair(
