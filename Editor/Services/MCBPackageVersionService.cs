@@ -13,10 +13,13 @@ public static class MCBPackageVersionService
     private const string MinorPopupSessionKey = "MCB.PackageVersion.MinorPopup";
     private const string MockEnabledPrefKey = "MCB.PackageVersion.MockEnabled";
     private const string MockJsonPrefKey = "MCB.PackageVersion.MockJson";
+    // The last answer of this editor session, with the account it was asked for: a domain reload does not ask again.
+    private const string StatusSessionKey = "MCB.PackageVersion.Status";
     private static readonly NetworkService networkService = new NetworkService();
     private static int lastKnownMCBCount = -1;
     private static bool isChecking;
-    private static string lastRequestedToken;
+    // A hash of the token the last check was made with (never the token itself, which session state would keep).
+    private static string lastRequestedTokenKey;
     private static bool hasPendingForcedCheck;
     private static string pendingAuthToken;
     private static bool hierarchyScanQueued;
@@ -26,7 +29,7 @@ public static class MCBPackageVersionService
 
     static MCBPackageVersionService()
     {
-        CurrentStatus = PackageVersionStatus.CreateDefault(ReadCurrentPackageVersion());
+        CurrentStatus = RestoreSessionStatus() ?? PackageVersionStatus.CreateDefault(CurrentPackageVersion);
         EditorApplication.delayCall += OnInitialDelayCall;
         EditorApplication.hierarchyChanged += OnHierarchyChanged;
     }
@@ -85,12 +88,12 @@ public static class MCBPackageVersionService
         if (!force &&
             CurrentStatus != null &&
             CurrentStatus.hasChecked &&
-            string.Equals(lastRequestedToken, authToken ?? string.Empty, StringComparison.Ordinal))
+            string.Equals(lastRequestedTokenKey, TokenKey(authToken), StringComparison.Ordinal))
         {
             return;
         }
 
-        lastRequestedToken = authToken ?? string.Empty;
+        lastRequestedTokenKey = TokenKey(authToken);
         _ = RunCheckAsync(authToken);
     }
 
@@ -99,7 +102,8 @@ public static class MCBPackageVersionService
         lastKnownMCBCount = CountLoadedMCBComponents();
         if (lastKnownMCBCount > 0)
         {
-            EnsureCheckStarted(AuthenticationService.GetAuth()?.token, true);
+            // Once per session and account: after a domain reload the restored answer stands.
+            EnsureCheckStarted(AuthenticationService.GetAuth()?.token);
         }
     }
 
@@ -156,10 +160,11 @@ public static class MCBPackageVersionService
     private static async System.Threading.Tasks.Task RunCheckAsync(string authToken)
     {
         isChecking = true;
-        PackageVersionStatus statusToPublish = PackageVersionStatus.CreateDefault(ReadCurrentPackageVersion());
+        PackageVersionStatus statusToPublish = PackageVersionStatus.CreateDefault(CurrentPackageVersion);
+        string tokenKey = TokenKey(authToken);
         try
         {
-            string currentVersion = ReadCurrentPackageVersion();
+            string currentVersion = CurrentPackageVersion;
             NetworkService.CheckConnectionResponse response;
 
             if (IsMockEnabled && TryDeserializeResponse(MockResponseJson, out var mockedResponse))
@@ -177,7 +182,7 @@ public static class MCBPackageVersionService
         catch (Exception ex)
         {
             MCBLogger.LogWarning($"[MCB] Package version check failed: {ex.Message}");
-            statusToPublish = PackageVersionStatus.CreateDefault(ReadCurrentPackageVersion());
+            statusToPublish = PackageVersionStatus.CreateDefault(CurrentPackageVersion);
         }
         finally
         {
@@ -186,6 +191,7 @@ public static class MCBPackageVersionService
                 // A transient outage must not erase an already received support restriction.
                 if (IsConnectedState(statusToPublish.connectionState) || CurrentStatus == null || !CurrentStatus.hasChecked)
                     CurrentStatus = statusToPublish;
+                if (statusToPublish.hasChecked) SaveSessionStatus(CurrentStatus, tokenKey);
                 isChecking = false;
                 MaybeShowMinorUpdatePopup(statusToPublish);
                 StatusChanged?.Invoke();
@@ -258,6 +264,37 @@ public static class MCBPackageVersionService
             $"A newer MCB package is available.\n\nCurrent version: {status.currentVersion}\nLatest version: {status.latestVersion}\n\nGo to VCC and update the \"MCB\" package.",
             "OK");
     }
+
+    private static string currentPackageVersion;
+
+    /// <summary>The installed package's version, read once per domain (a package update reloads the domain).</summary>
+    private static string CurrentPackageVersion => currentPackageVersion ?? (currentPackageVersion = ReadCurrentPackageVersion());
+
+    private static string TokenKey(string authToken) => string.IsNullOrEmpty(authToken) ? string.Empty : MCBHashing.HashString(authToken);
+
+    private sealed class SessionStatus
+    {
+        public PackageVersionStatus status;
+        public string tokenKey;
+    }
+
+    private static PackageVersionStatus RestoreSessionStatus()
+    {
+        try
+        {
+            var saved = JsonConvert.DeserializeObject<SessionStatus>(SessionState.GetString(StatusSessionKey, string.Empty));
+            if (saved?.status == null || !saved.status.hasChecked || saved.status.currentVersion != CurrentPackageVersion) return null;
+            lastRequestedTokenKey = saved.tokenKey ?? string.Empty;
+            return saved.status;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static void SaveSessionStatus(PackageVersionStatus status, string tokenKey) =>
+        SessionState.SetString(StatusSessionKey, JsonConvert.SerializeObject(new SessionStatus { status = status, tokenKey = tokenKey }));
 
     private static string ReadCurrentPackageVersion()
     {
@@ -378,7 +415,7 @@ public static class MCBPackageVersionService
     private static async System.Threading.Tasks.Task<NetworkService.CheckConnectionResponse> FetchRealResponseAsync(string authToken)
     {
         string url = MCBUtils.getApiUrl() + MCBUtils.CHECK_CONNECTION_ENDPOINT
-            + "?packageVersion=" + Uri.EscapeDataString(ReadCurrentPackageVersion());
+            + "?packageVersion=" + Uri.EscapeDataString(CurrentPackageVersion);
         return await networkService.CheckConnectionDetailedAsync(url, authToken);
     }
 
