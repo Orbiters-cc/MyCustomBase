@@ -20,15 +20,6 @@ public static partial class NativeMeshPayloadService
             throw new InvalidDataException("Advanced mesh payload verification failed. Download this version again before applying it.");
     }
 
-    static NativeMeshPayloadBuildResult WriteDeliveryVariants(string sourcePath, GameObject source,
-        List<PayloadRendererSource> renderers, byte[] key, string outputPath,
-        NativeMeshPayloadBuildMetrics metrics, Transform sourcePoseRoot)
-    {
-        NativeMeshPayloadBuildResult result = null;
-        MCBWork.Drain(WriteDeliveryVariantsCoroutine(sourcePath, source, renderers, key, outputPath, metrics, sourcePoseRoot, value => result = value));
-        return result;
-    }
-
     static System.Collections.IEnumerator WriteDeliveryVariantsCoroutine(string sourcePath, GameObject source,
         List<PayloadRendererSource> renderers, byte[] key, string outputPath,
         NativeMeshPayloadBuildMetrics metrics, Transform sourcePoseRoot, Action<NativeMeshPayloadBuildResult> completed)

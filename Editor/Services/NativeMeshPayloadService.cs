@@ -1330,37 +1330,6 @@ public static partial class NativeMeshPayloadService
         return result;
     }
 
-    private static void CreateBinaryPayload(
-        string sourceFbxPath,
-        GameObject customFbx,
-        List<PayloadRendererSource> rendererSources,
-        Stream payloadOutput,
-        NativeMeshPayloadBuildMetrics metrics,
-        bool compressPayload,
-        Transform sourcePoseRoot)
-    {
-        if (compressPayload)
-        {
-            using (var gzip = new GZipStream(payloadOutput, System.IO.Compression.CompressionLevel.Optimal, true))
-            {
-                WriteBinaryPayloadContents(sourceFbxPath, customFbx, rendererSources, gzip, metrics, sourcePoseRoot);
-            }
-
-            return;
-        }
-
-        WriteBinaryPayloadContents(sourceFbxPath, customFbx, rendererSources, payloadOutput, metrics, sourcePoseRoot);
-    }
-
-    private static void WriteBinaryPayloadContents(
-        string sourceFbxPath,
-        GameObject customFbx,
-        List<PayloadRendererSource> rendererSources,
-        Stream payloadOutput,
-        NativeMeshPayloadBuildMetrics metrics,
-        Transform sourcePoseRoot)
-    { MCBWork.Drain(WriteBinaryPayloadContentsCoroutine(sourceFbxPath, customFbx, rendererSources, payloadOutput, metrics, sourcePoseRoot)); }
-
     // An unbound payload names no source model, so applying it uses the custom skeleton pose it carries.
     private static System.Collections.IEnumerator WriteBinaryPayloadContentsCoroutine(
         string sourceFbxPath,
@@ -1612,10 +1581,6 @@ public static partial class NativeMeshPayloadService
         }
         if (!mesh.isReadable) throw new InvalidOperationException("The mesh " + mesh.name + " can't be read" + (string.IsNullOrEmpty(path) ? "" : " (" + path + ")") + ": enable Read/Write on its model.");
     }
-
-    private static void WriteMesh(BinaryWriter writer, Mesh mesh, string meshName, NativeMeshPayloadBuildMetrics metrics,
-        Dictionary<(string shape, int frame), DynamicNormals.NormalFrame> normalFrames = null)
-    { MCBWork.Drain(WriteMeshCoroutine(writer, mesh, meshName, metrics, normalFrames)); }
 
     private static System.Collections.IEnumerator WriteMeshCoroutine(BinaryWriter writer, Mesh mesh, string meshName, NativeMeshPayloadBuildMetrics metrics,
         Dictionary<(string shape, int frame), DynamicNormals.NormalFrame> normalFrames = null)

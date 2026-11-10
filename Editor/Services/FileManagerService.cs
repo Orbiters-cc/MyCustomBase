@@ -581,13 +581,6 @@ public class FileManagerService
                token.All(character => char.IsLetterOrDigit(character) || character == '-');
     }
     
-    public void DeleteVersionFolder(string path)
-    {
-        if (!Directory.Exists(path)) return;
-        Directory.Delete(path, true);
-        if (File.Exists(path + ".meta")) File.Delete(path + ".meta");
-    }
-
     public byte[] XorTransform(byte[] baseData, byte[] keyData)
     {
         return MCBXor.Transform(baseData, keyData);
@@ -625,18 +618,6 @@ public class FileManagerService
         Orbiters.Toolkit.Editor.Storage.SafeArchive.Extract(zipStream, finalDestinationPath, captureRelativePaths, validateExtracted,
             budget ?? new VersionArchiveBudget());
 
-    private void CopyDirectory(string sourceDir, string destDir)
-    {
-        Directory.CreateDirectory(destDir);
-        foreach (var file in Directory.GetFiles(sourceDir))
-        {
-            File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), true);
-        }
-        foreach (var dir in Directory.GetDirectories(sourceDir))
-        {
-            CopyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
-        }
-    }
 
     /// <summary>The armature debug prefab Advanced mode places on the avatar.</summary>
     public const string DebugPrefabPath = MCBUtils.PACKAGE_BASE_FOLDER + "/debug/debug.prefab";

@@ -508,38 +508,6 @@ namespace MCBEditorUtils
                 .ToList();
         }
 
-        private static void RebuildBlendshapesOnCopy(Mesh meshCopy, Mesh originalMesh, Dictionary<string, DeltaMeshBake[]> nameToFrameDeltaBakes)
-        {
-            var verts = new Vector3[originalMesh.vertexCount];
-            var norms = new Vector3[originalMesh.vertexCount];
-            var tans = new Vector3[originalMesh.vertexCount];
-
-            meshCopy.ClearBlendShapes();
-            for (var shapeIndex = 0; shapeIndex < originalMesh.blendShapeCount; shapeIndex++)
-            {
-                var name = originalMesh.GetBlendShapeName(shapeIndex);
-                if (!nameToFrameDeltaBakes.TryGetValue(name, out var bakedFrames))
-                {
-                    var frameCount = originalMesh.GetBlendShapeFrameCount(shapeIndex);
-                    for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
-                    {
-                        var weight = originalMesh.GetBlendShapeFrameWeight(shapeIndex, frameIndex);
-                        originalMesh.GetBlendShapeFrameVertices(shapeIndex, frameIndex, verts, norms, tans);
-                        meshCopy.AddBlendShapeFrame(name, weight, verts, norms, tans);
-                    }
-                }
-                else
-                {
-                    for (var frameIndex = 0; frameIndex < bakedFrames.Length; frameIndex++)
-                    {
-                        var weight = originalMesh.GetBlendShapeFrameWeight(shapeIndex, frameIndex);
-                        var frame = bakedFrames[frameIndex];
-                        meshCopy.AddBlendShapeFrame(name, weight, frame.vertices, frame.normals, frame.tangents);
-                    }
-                }
-            }
-        }
-
         private static void ExtractFromTRS(Matrix4x4 matrix, out Vector3 pos, out Quaternion rot, out Vector3 scale)
         {
             var c0 = matrix.GetColumn(0);
@@ -584,13 +552,6 @@ namespace MCBEditorUtils
                 }
 #endif
             }
-        }
-
-        private struct DeltaMeshBake
-        {
-            public Vector3[] vertices;
-            public Vector3[] normals;
-            public Vector3[] tangents;
         }
 #endif
     }

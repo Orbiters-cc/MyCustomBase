@@ -222,12 +222,6 @@ public static class MCBUtils
             version.localArtifactSourceVersionKey ?? version.sourceVersionKey);
     }
 
-    public static string GetVersionBinPath(CustomBaseVersion version)
-    {
-        string dataPath = GetVersionDataPath(version);
-        return FindSingleVersionFile(dataPath, "*.bin");
-    }
-
     public static bool IsVersionDownloaded(CustomBaseVersion version)
     {
         try { return VersionStorage.IsComplete(GetVersionDataPath(version), version); }

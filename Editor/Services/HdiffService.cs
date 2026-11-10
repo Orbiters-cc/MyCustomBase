@@ -470,9 +470,6 @@ internal static class MCBHdiffPatchWrapper
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint dwFlags);
 
-    [DllImport("kernel32", SetLastError = true)]
-    private static extern bool FreeLibrary(IntPtr hModule);
-
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
     private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
 
@@ -724,38 +721,6 @@ internal static class MCBHdiffPatchWrapper
         }
 
         return true;
-    }
-
-    public static void FreeDlls()
-    {
-#if UNITY_EDITOR_WIN
-        try
-        {
-            if (s_hdiffzHandle != IntPtr.Zero)
-            {
-                FreeLibrary(s_hdiffzHandle);
-                s_hdiffzHandle = IntPtr.Zero;
-            }
-
-            if (s_hpatchzHandle != IntPtr.Zero)
-            {
-                FreeLibrary(s_hpatchzHandle);
-                s_hpatchzHandle = IntPtr.Zero;
-            }
-
-            s_registerDelegateHdiffz = null;
-            s_registerErrorDelegateHdiffz = null;
-            s_hdiffUnity = null;
-            s_registerDelegateHpatchz = null;
-            s_registerErrorDelegateHpatchz = null;
-            s_hpatchUnity = null;
-            s_dllsLoaded = false;
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning("[HdiffService] Error freeing HDiff DLLs: " + ex.Message);
-        }
-#endif
     }
 
 #if UNITY_EDITOR_WIN
