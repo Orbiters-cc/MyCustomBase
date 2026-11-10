@@ -228,9 +228,12 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
     {
         Undo.undoRedoPerformed -= OnUndoRedo;
         Undo.undoRedoPerformed += OnUndoRedo;
-        // Undo history ends with the editor session: copies without a record are from an earlier one.
-        EditorApplication.delayCall += () =>
+        // Undo history ends with the editor session: copies without a record are from an earlier one, so one sweep per
+        // editor session finds them all.
+        if (SessionState.GetBool(SweptSessionKey, false)) return;
+        Orbiters.Toolkit.Editor.OrbitersEditorHost.Once("MCB version switch undo files", () =>
         {
+            SessionState.SetBool(SweptSessionKey, true);
             var live = new HashSet<string>(All().Select(r => r.id), StringComparer.OrdinalIgnoreCase);
             if (!Directory.Exists(Folder)) return;
             foreach (string directory in Directory.GetDirectories(Folder))
@@ -239,8 +242,10 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
                     try { Directory.Delete(directory, true); }
                     catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
                 }
-        };
+        });
     }
+
+    private const string SweptSessionKey = "MCB.VersionSwitchFileUndo.Swept";
 
     private static void OnUndoRedo()
     {

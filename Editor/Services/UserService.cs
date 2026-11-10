@@ -1,12 +1,13 @@
 #if UNITY_EDITOR
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
+using System.Threading.Tasks;
+using Orbiters.Toolkit;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
-using UnityEngine.Networking;
 using Newtonsoft.Json;
 using Object = UnityEngine.Object;
 
@@ -70,7 +71,7 @@ public class UserService
         }
         
         pendingRequests.Add(userId);
-        EditorCoroutineUtility.StartCoroutineOwnerless(FetchUserInfo(userId, null, onComplete));
+        _ = FetchUserInfoAsync(userId, null, onComplete);
     }
     
     // Overload allowing an explicit auth token when auth.dat is not available yet
@@ -96,10 +97,10 @@ public class UserService
         }
         
         pendingRequests.Add(userId);
-        EditorCoroutineUtility.StartCoroutineOwnerless(FetchUserInfo(userId, authToken, onComplete));
+        _ = FetchUserInfoAsync(userId, authToken, onComplete);
     }
     
-    private static IEnumerator FetchUserInfo(int userId, string overrideToken, System.Action onComplete)
+    private static async Task FetchUserInfoAsync(int userId, string overrideToken, System.Action onComplete)
     {
         string tokenToUse = overrideToken;
         if (string.IsNullOrEmpty(tokenToUse))
@@ -113,52 +114,52 @@ public class UserService
             pendingRequests.Remove(userId);
             failedRequests.Add(userId);
             onComplete?.Invoke();
-            yield break;
+            return;
         }
         
         string url = $"{MCBUtils.getApiUrl()}/user?u={userId}";
-
-        using (UnityWebRequest request = UnityWebRequest.Get(url))
+        UserInfo userInfo = null;
+        bool fetched = false;
+        try
         {
-            MCBRequestHeaders.SetAuthorization(request, tokenToUse);
-            request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.UserInfo);
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Fetch user info"));
-            
-            pendingRequests.Remove(userId);
-            
-            if (request.result == UnityWebRequest.Result.Success)
-            {
-                try
-                {
-                    var userInfo = JsonConvert.DeserializeObject<UserInfo>(request.downloadHandler.text);
-                    if (userInfo != null)
-                    {
-                        if (userInfo.creatorTrusted.HasValue) trustedCreators[userId] = userInfo.creatorTrusted.Value;
-                        UpdateUserInfo(userId, userInfo.username, userInfo.avatarUrl);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MCBLogger.LogError($"[MCB] Failed to parse user info for ID {userId}: {ex.Message}");
-                }
-            }
-            else
-            {
-                failedRequests.Add(userId);
-                MCBLogger.LogWarning($"[MCB] Failed to fetch user info for ID {userId}: {request.error}, url: {NetworkService.SanitizeUrlForLogs(url)}");
-            }
-            
-            onComplete?.Invoke();
+            userInfo = await McbHttp.JsonAsync<UserInfo>(HttpMethod.Get, url, tokenToUse, null, MCBRequestPolicy.Backend("Fetch user info"),
+                NetworkService.GetTimeoutSeconds(NetworkRequestType.UserInfo));
+            fetched = true;
         }
+        catch (OrbitersHttpException ex)
+        {
+            failedRequests.Add(userId);
+            MCBLogger.LogWarning($"[MCB] Failed to fetch user info for ID {userId}: {ex.Message}, url: {NetworkService.SanitizeUrlForLogs(url)}");
+        }
+        catch (Exception ex)
+        {
+            MCBLogger.LogError($"[MCB] Failed to parse user info for ID {userId}: {ex.Message}");
+        }
+
+        pendingRequests.Remove(userId);
+        if (fetched && userInfo != null)
+        {
+            try
+            {
+                if (userInfo.creatorTrusted.HasValue) trustedCreators[userId] = userInfo.creatorTrusted.Value;
+                UpdateUserInfo(userId, userInfo.username, userInfo.avatarUrl);
+            }
+            catch (Exception ex)
+            {
+                MCBLogger.LogError($"[MCB] Failed to parse user info for ID {userId}: {ex.Message}");
+            }
+        }
+
+        onComplete?.Invoke();
     }
     
-    private static IEnumerator DownloadAvatar(int uploaderId, string avatarUrl)
+    private static async Task DownloadAvatarAsync(int uploaderId, string avatarUrl)
     {
         try
         {
             if (HasLiveAvatar(uploaderId))
             {
-                yield break;
+                return;
             }
 
             string localPath = Path.Combine(AVATARS_FOLDER, $"avatar_{uploaderId}.png");
@@ -169,59 +170,59 @@ public class UserService
                 if (LoadLocalAvatar(uploaderId, localPath))
                 {
                     failedAvatarDownloads.Remove(uploaderId);
-                    yield break;
+                    return;
                 }
 
-                try { File.Delete(localPath); } catch { }
+                try { File.Delete(localPath); } catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
             }
 
-            using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(avatarUrl))
+            var policy = MCBManagedRequest.ResourcePolicyForUrl(
+                avatarUrl,
+                $"Download user avatar for {uploaderId}",
+                GetAvatarWarningKey(uploaderId),
+                "Profile picture unavailable");
+            Texture2D texture;
+            try
             {
-                request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AvatarDownload);
-                var policy = MCBManagedRequest.ResourcePolicyForUrl(
-                    avatarUrl,
-                    $"Download user avatar for {uploaderId}",
+                // MCB's 10 s, as before: asked as an API call (OrbitersHttp's picture limit, 8 s, would end it first), so a
+                // failed first try is tried again once within those 10 s.
+                int seconds = NetworkService.GetTimeoutSeconds(NetworkRequestType.AvatarDownload);
+                texture = await McbHttp.Run(avatarUrl, policy, seconds, default,
+                    limit => OrbitersHttp.TextureAsync(avatarUrl, null, limit, McbHttp.KindFor(seconds)));
+            }
+            catch (Exception ex) when (ex is OrbitersHttpException || ex is UriFormatException || ex is ArgumentException)
+            {
+                failedAvatarDownloads.Add(uploaderId);
+                MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {ex.Message} (url: {NetworkService.SanitizeUrlForLogs(avatarUrl)})");
+                return;
+            }
+
+            try
+            {
+                if (texture == null) throw new InvalidDataException("The answer is not a picture.");
+                Texture2D processed = MakeCircularAvatar(texture) ?? texture;
+                byte[] pngData = processed.EncodeToPNG();
+                File.WriteAllBytes(localPath, pngData);
+
+                avatarCache[uploaderId] = MCBImageCache.Retain(processed);
+                failedAvatarDownloads.Remove(uploaderId);
+                MCBConnectivityMonitor.ClearRequestWarning(GetAvatarWarningKey(uploaderId));
+                QueueRepaintAllViews();
+
+                if (!ReferenceEquals(processed, texture))
+                {
+                    Object.DestroyImmediate(texture);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (texture != null && !avatarCache.ContainsValue(texture)) Object.DestroyImmediate(texture);
+                failedAvatarDownloads.Add(uploaderId);
+                MCBConnectivityMonitor.ReportManagedException(avatarUrl, ex, MCBRequestPolicy.ExternalResource(
+                    $"Process user avatar for {uploaderId}",
                     GetAvatarWarningKey(uploaderId),
-                    "Profile picture unavailable");
-                yield return MCBManagedRequest.SendUnityWebRequest(request, avatarUrl, policy);
-
-                if (request.result == UnityWebRequest.Result.Success)
-                {
-                    try
-                    {
-                        Texture2D texture = DownloadHandlerTexture.GetContent(request);
-                        if (texture != null)
-                        {
-                            Texture2D processed = MakeCircularAvatar(texture) ?? texture;
-                            byte[] pngData = processed.EncodeToPNG();
-                            File.WriteAllBytes(localPath, pngData);
-
-                            avatarCache[uploaderId] = MCBImageCache.Retain(processed);
-                            failedAvatarDownloads.Remove(uploaderId);
-                            MCBConnectivityMonitor.ClearRequestWarning(GetAvatarWarningKey(uploaderId));
-                            QueueRepaintAllViews();
-
-                            if (!ReferenceEquals(processed, texture))
-                            {
-                                Object.DestroyImmediate(texture);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        failedAvatarDownloads.Add(uploaderId);
-                        MCBConnectivityMonitor.ReportManagedException(avatarUrl, ex, MCBRequestPolicy.ExternalResource(
-                            $"Process user avatar for {uploaderId}",
-                            GetAvatarWarningKey(uploaderId),
-                            "Profile picture unavailable"));
-                        MCBLogger.LogError($"[MCB] Failed to process avatar for user {uploaderId}: {ex.Message}");
-                    }
-                }
-                else
-                {
-                    failedAvatarDownloads.Add(uploaderId);
-                    MCBLogger.LogWarning($"[MCB] Failed to download avatar for user {uploaderId}: {request.error} (url: {NetworkService.SanitizeUrlForLogs(avatarUrl)})");
-                }
+                    "Profile picture unavailable"));
+                MCBLogger.LogError($"[MCB] Failed to process avatar for user {uploaderId}: {ex.Message}");
             }
         }
         finally
@@ -271,7 +272,7 @@ public class UserService
 
         if (pendingAvatarDownloads.Add(uploaderId))
         {
-            EditorCoroutineUtility.StartCoroutineOwnerless(DownloadAvatar(uploaderId, info.avatarUrl));
+            _ = DownloadAvatarAsync(uploaderId, info.avatarUrl);
         }
     }
 
@@ -393,7 +394,7 @@ public class UserService
                 if (!File.Exists(localPath))
                 {
                     pendingAvatarDownloads.Add(userId);
-                    EditorCoroutineUtility.StartCoroutineOwnerless(DownloadAvatar(userId, info.avatarUrl));
+                    _ = DownloadAvatarAsync(userId, info.avatarUrl);
                 }
             }
 

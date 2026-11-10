@@ -31,7 +31,14 @@ public static class MCBMeshDelivery
     static readonly string CacheRoot = Path.Combine(MCBUtils.GetMCBDataFolder(), "mesh-blobs-v1");
     static readonly object CacheLock = new object();
     const int ManifestLimit = 128 * 1024;
-    static MCBMeshDelivery() { EditorApplication.update += PruneWhenIdle; }
+    static MCBMeshDelivery()
+    {
+        // No cache, nothing to prune (blobs downloaded later this session are fresh).
+        if (UnityEngine.Application.isBatchMode || SessionState.GetBool(PrunedSessionKey, false) || !Directory.Exists(CacheRoot)) return;
+        // Once per editor session, a minute after startup, on the editor host (which waits while the editor compiles,
+        // imports, builds or plays).
+        Orbiters.Toolkit.Editor.OrbitersEditorHost.Once("MCB mesh blob prune", PruneWhenIdle, Math.Max(0, 60 - EditorApplication.timeSinceStartup));
+    }
     static bool Hash(string value) => value != null && System.Text.RegularExpressions.Regex.IsMatch(value, "^[a-f0-9]{64}$");
     static string BlobPath(MCBPayloadVariant v) => Hash(v.hash) ? Path.Combine(CacheRoot, v.hash + ".bin") : throw new InvalidDataException("Invalid mesh blob hash.");
 
@@ -239,10 +246,12 @@ public static class MCBMeshDelivery
     // Once per editor session, a minute after startup, while nothing is compiling, importing, building or entering play mode.
     static void PruneWhenIdle()
     {
-        if (EditorApplication.timeSinceStartup < 60) return;
-        if (UnityEngine.Application.isBatchMode || SessionState.GetBool(PrunedSessionKey, false)) { EditorApplication.update -= PruneWhenIdle; return; }
-        if (EditorApplication.isPlayingOrWillChangePlaymode || McbSession.ShouldDeferBackgroundNetworkRefresh()) return;
-        EditorApplication.update -= PruneWhenIdle;
+        if (SessionState.GetBool(PrunedSessionKey, false)) return;
+        if (EditorApplication.isPlayingOrWillChangePlaymode || McbSession.ShouldDeferBackgroundNetworkRefresh())
+        {
+            Orbiters.Toolkit.Editor.OrbitersEditorHost.Once("MCB mesh blob prune", PruneWhenIdle, 1);
+            return;
+        }
         SessionState.SetBool(PrunedSessionKey, true);
         string versionsRoot = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);
         Task.Run(() => {

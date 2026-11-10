@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Orbiters.Toolkit.Editor.Animations;
 using Orbiters.Toolkit.Editor.VRChat.Attachments;
 using Orbiters.Toolkit.Editor.VRChat.BlendShapes;
+using Orbiters.Toolkit.Editor.VRChat.Build;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -40,19 +41,26 @@ public static class VersionCustomizationBuild
         public HashSet<(string, Type, string)> OwnAnimated;
         public bool Locked, Applied;
     }
+    // The build's plan (BuildContext.State): Capture makes it, the later steps of the same build read it.
+    private sealed class Planned { public Plan Plan; }
     // Re-exported bone rolls (Ultirex V5.1's toes: 100–180°); pose differences kept by the version stay well below.
     private const float ReorientedAngle = 20f;
-    private static readonly ConditionalWeakTable<GameObject, Plan> Plans = new ConditionalWeakTable<GameObject, Plan>();
+    // Objects whose build applied MCB's plan already: building one again (Play Mode builds the scene's avatar, which then
+    // keeps what the first build did) changes nothing more. Only this verdict outlives a build.
+    private static readonly ConditionalWeakTable<GameObject, Plan> AppliedBuilds = new ConditionalWeakTable<GameObject, Plan>();
+
+    // The plan of the build of avatar under way (a caller running the steps by hand gets a build of its own), or null.
+    private static Plan PlanOf(GameObject avatar) => BuildContext.Of(avatar)?.State<Planned>().Plan;
 
     public static void Capture(GameObject avatar)
     {
-        if (Plans.TryGetValue(avatar, out var previous) && previous.Applied) return;
+        if (AppliedBuilds.TryGetValue(avatar, out _)) return;
         var owner = avatar.GetComponentInChildren<MyCustomBase>(true);
         if (owner == null || owner.appliedCustomBaseAssetId <= 0) return;
         var plan = new Plan();
         plan.Base.AddRange(MCBReFitIntegration.GetCustomBaseRenderers(owner));
         plan.Frames = ReorientedBones(owner, avatar.transform, plan.Base);
-        Plans.Remove(avatar); Plans.Add(avatar, plan);
+        BuildContext.For(avatar).State<Planned>().Plan = plan;
         var config = owner.appliedCustomization;
         if (config == null)
         {
@@ -152,7 +160,8 @@ public static class VersionCustomizationBuild
     /// <summary>Notes which locked values the avatar's own animations write, once VRCFury built them (see <see cref="Lock"/>).</summary>
     public static void Survey(GameObject avatar)
     {
-        if (!Plans.TryGetValue(avatar, out var plan) || plan.Locked || plan.Properties.Count == 0) return;
+        var plan = PlanOf(avatar);
+        if (plan == null || plan.Locked || plan.Properties.Count == 0) return;
         var locked = new HashSet<(string, Type, string)>(plan.Properties.Where(p => p.Target != null && p.Target.IsChildOf(avatar.transform))
             .Select(p => (AnimationUtility.CalculateTransformPath(p.Target, avatar.transform), p.Type, p.Name)));
         plan.OwnAnimated = new HashSet<(string, Type, string)>(Animated(avatar).Where(locked.Contains));
@@ -169,7 +178,8 @@ public static class VersionCustomizationBuild
     /// </summary>
     public static void Lock(GameObject avatar)
     {
-        if (!Plans.TryGetValue(avatar, out var plan) || plan.Locked) return;
+        var plan = PlanOf(avatar);
+        if (plan == null || plan.Locked) return;
         var properties = new Dictionary<(string, Type, string), float>();
         foreach (var property in plan.Properties)
         {
@@ -219,7 +229,8 @@ public static class VersionCustomizationBuild
 
     public static void Apply(GameObject avatar)
     {
-        if (!Plans.TryGetValue(avatar, out var plan) || plan.Applied) return;
+        var plan = PlanOf(avatar);
+        if (plan == null || plan.Applied) return;
         Lock(avatar);
         if (plan.Frames.Count > 0) Reorient(avatar, BlendShapeLinkEngine.CollectBuiltControllers(avatar), plan.Frames);
         // The animations are final from here: the unused blendshapes leave the meshes before the twist and physic copy them.
@@ -229,6 +240,8 @@ public static class VersionCustomizationBuild
         if (stripped.Count > 0) PhysicService.Strip(avatar, stripped, AttachmentAnimationBuild.Prepare(avatar).Keep);
         foreach (var pair in plan.Chains.Where(pair => pair.Value)) PhysicService.AddPhysBones(avatar, pair.Key, plan.Settings[pair.Key]);
         plan.Applied = true;
+        AppliedBuilds.Remove(avatar);
+        AppliedBuilds.Add(avatar, plan);
     }
 
     // Several hundred MB on a sculpted body (Ultirex: 380 unused shapes, 448 MB), over VRChat's upload limits. Play mode
@@ -251,46 +264,89 @@ public static class VersionCustomizationBuild
     }
 }
 
-internal sealed class VersionCustomizationCaptureHook : IVRCSDKPreprocessAvatarCallback
+// MCB's steps in Orbiters' build (Toolkit's AvatarBuildPipeline), each where its SDK callback ran: the capture at
+// -10105 (after N4N0's hooks, ReFit's capture -10110 and kept fits -10105, before the Toolkit's attachments -10100), the
+// survey at -9500 (right after VRCFury and the Toolkit's built-animations step -9999, before My Avatar's -9010), the apply
+// at -8800 (after Follow Body Blendshapes -8950 and the accessories' finish -8900, before My Avatar's -1100). The lock
+// (-8970) and the correctives (-9000) stay SDK callbacks: no phase sits between My Avatar's -9005 and ReFit's -8960.
+internal static class McbBuildSteps
 {
-    public int callbackOrder => -10105;
-    public bool OnPreprocessAvatar(GameObject avatarGameObject)
+    // The Toolkit's own steps are internal to its assembly: named here. A name that no longer finds its type would drop
+    // the ordering silently (the pipeline ignores null), so it is an error at load, and the steps ordered against it
+    // refuse to run (the build stops) rather than run in another place.
+    private static readonly List<string> Missing = new List<string>();
+    internal static Type Toolkit(string name)
     {
-        try { VersionCustomizationBuild.Capture(avatarGameObject); return true; }
+        var type = typeof(BuildStep).Assembly.GetType(name);
+        if (type == null) Missing.Add(name);
+        return type;
+    }
+    internal static readonly Type Attachments = Toolkit("Orbiters.Toolkit.Editor.VRChat.Attachments.AttachmentBuildHook");
+    internal static readonly Type AttachmentsFinish = Toolkit("Orbiters.Toolkit.Editor.VRChat.Attachments.AttachmentFinishHook");
+    internal static readonly Type SurfaceFollow = Toolkit("Orbiters.Toolkit.Editor.VRChat.SurfaceFollow.SurfaceFollowHook");
+    internal static readonly Type BuiltAnimations = Toolkit("Orbiters.Toolkit.Editor.VRChat.VrcFuryBuiltAnimationsHook");
+
+    internal static IReadOnlyList<string> MissingSteps => Missing;
+
+    [InitializeOnLoadMethod]
+    private static void Check()
+    {
+        if (Missing.Count > 0) Debug.LogError(MissingMessage("MCB's build steps"));
+    }
+
+    private static string MissingMessage(string who) =>
+        "[MCB] " + who + " cannot keep their place in the avatar build: Orbiters Toolkit has no build step " + string.Join(", ", Missing) +
+        " any more (renamed?). MCB must be updated to order against what replaced it.";
+
+    internal static bool Run(Action<GameObject> step, GameObject avatar)
+    {
+        try { step(avatar); return true; }
         catch (Exception ex) { Debug.LogException(ex); return false; }
     }
+
+    /// <summary>Runs a pipeline step whose order needs <paramref name="constraints"/>: refused (the build stops) when one is missing.</summary>
+    internal static bool Run(BuildStep owner, IReadOnlyList<Type> constraints, Action<GameObject> step, GameObject avatar)
+    {
+        foreach (var type in constraints)
+            if (type == null)
+            {
+                Debug.LogError(MissingMessage(owner.GetType().Name));
+                return false;
+            }
+        return Run(step, avatar);
+    }
+}
+
+internal sealed class VersionCustomizationCaptureHook : BuildStep
+{
+    public override BuildPhase Phase => BuildPhase.BeforeVrcFury;
+    public override IReadOnlyList<Type> Before => new[] { McbBuildSteps.Attachments };
+    public override string Owner => "MCB";
+    public override bool Run(BuildContext context) => McbBuildSteps.Run(this, Before, VersionCustomizationBuild.Capture, context.Avatar);
 }
 
 // Right after VRCFury (-10000) built the avatar's animations, before face tracking (-9010) and the correctives (-9000).
-internal sealed class VersionCustomizationSurveyHook : IVRCSDKPreprocessAvatarCallback
+internal sealed class VersionCustomizationSurveyHook : BuildStep
 {
-    public int callbackOrder => -9500;
-    public bool OnPreprocessAvatar(GameObject avatarGameObject)
-    {
-        try { VersionCustomizationBuild.Survey(avatarGameObject); return true; }
-        catch (Exception ex) { Debug.LogException(ex); return false; }
-    }
+    public override BuildPhase Phase => BuildPhase.AfterVrcFury;
+    public override IReadOnlyList<Type> After => new[] { McbBuildSteps.BuiltAnimations };
+    public override string Owner => "MCB";
+    public override bool Run(BuildContext context) => McbBuildSteps.Run(this, After, VersionCustomizationBuild.Survey, context.Avatar);
 }
 
 // After the correctives (-9000), before the clothing links copy body curves: ReFit (-8960), Follow Body Blendshapes
-// (-8950) and accessories (-8900).
+// (-8950) and accessories (-8900). An SDK callback: no phase of Orbiters' build sits there.
 internal sealed class VersionCustomizationLockHook : IVRCSDKPreprocessAvatarCallback
 {
     public int callbackOrder => -8970;
-    public bool OnPreprocessAvatar(GameObject avatarGameObject)
-    {
-        try { VersionCustomizationBuild.Lock(avatarGameObject); return true; }
-        catch (Exception ex) { Debug.LogException(ex); return false; }
-    }
+    public bool OnPreprocessAvatar(GameObject avatarGameObject) => McbBuildSteps.Run(VersionCustomizationBuild.Lock, avatarGameObject);
 }
 
 // After every animation-adding step: pruning must see the final animations.
-internal sealed class VersionCustomizationApplyHook : IVRCSDKPreprocessAvatarCallback
+internal sealed class VersionCustomizationApplyHook : BuildStep
 {
-    public int callbackOrder => -8800;
-    public bool OnPreprocessAvatar(GameObject avatarGameObject)
-    {
-        try { VersionCustomizationBuild.Apply(avatarGameObject); return true; }
-        catch (Exception ex) { Debug.LogException(ex); return false; }
-    }
+    public override BuildPhase Phase => BuildPhase.AccessoryShapes;
+    public override IReadOnlyList<Type> After => new[] { McbBuildSteps.SurfaceFollow, McbBuildSteps.AttachmentsFinish };
+    public override string Owner => "MCB";
+    public override bool Run(BuildContext context) => McbBuildSteps.Run(this, After, VersionCustomizationBuild.Apply, context.Avatar);
 }

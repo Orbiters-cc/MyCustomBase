@@ -4,8 +4,12 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Orbiters.Toolkit;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -88,7 +92,26 @@ public static class McbInstanceHistoryClient
         [JsonProperty] public string code;
     }
 
+    /// <summary>The coroutine form of <see cref="SyncAndRecoverAsync"/>, for callers that run coroutines.</summary>
     public static IEnumerator SyncAndRecoverCoroutine(
+        string authToken,
+        MyCustomBase target,
+        AvatarDiscoveredAsset asset,
+        IEnumerable<string> availablePaths,
+        bool requestSuggestions,
+        Action<bool> onComplete = null)
+    {
+        var task = SyncAndRecoverAsync(authToken, target, asset, availablePaths, requestSuggestions, onComplete);
+        while (!task.IsCompleted) yield return null;
+        if (task.IsFaulted) MCBLogger.LogWarning($"[MCB Instance] Sync failed: {task.Exception?.GetBaseException().Message}");
+    }
+
+    /// <summary>
+    /// Tells the server about this MCB component and its path bindings and, when <paramref name="requestSuggestions"/>,
+    /// offers the mapping the account used before (verified against the avatar's original base files) for the paths it
+    /// misses. <paramref name="onComplete"/> hears whether a mapping was taken.
+    /// </summary>
+    public static async Task SyncAndRecoverAsync(
         string authToken,
         MyCustomBase target,
         AvatarDiscoveredAsset asset,
@@ -99,7 +122,7 @@ public static class McbInstanceHistoryClient
         if (string.IsNullOrWhiteSpace(authToken) || target == null || asset == null || asset.id <= 0)
         {
             onComplete?.Invoke(false);
-            yield break;
+            return;
         }
 
         McbInstanceIdentityService.EnsureIdentity(target);
@@ -107,42 +130,37 @@ public static class McbInstanceHistoryClient
         if (!PendingRequests.Add(requestKey))
         {
             onComplete?.Invoke(false);
-            yield break;
+            return;
         }
 
         bool recovered = false;
         try
         {
             var normalizedAvailablePaths = NormalizeAvailablePaths(availablePaths);
-            SyncResponse response = null;
-            string errorCode = null;
-            yield return SendSyncRequest(
-                authToken,
-                BuildSyncRequest(target, asset, normalizedAvailablePaths, requestSuggestions),
-                (result, code) => { response = result; errorCode = code; });
+            var sync = await SendSyncRequestAsync(authToken, BuildSyncRequest(target, asset, normalizedAvailablePaths, requestSuggestions));
+            SyncResponse response = sync.response;
 
-            if (response == null && string.Equals(errorCode, "MCB_COMPONENT_ID_COLLISION", StringComparison.Ordinal))
+            if (response == null && string.Equals(sync.errorCode, "MCB_COMPONENT_ID_COLLISION", StringComparison.Ordinal))
             {
+                // The component may be gone by now (its scene closed while the request ran).
+                if (target == null) return;
                 McbInstanceIdentityService.RotateComponentId(target);
-                yield return SendSyncRequest(
-                    authToken,
-                    BuildSyncRequest(target, asset, normalizedAvailablePaths, requestSuggestions),
-                    (result, code) => response = result);
+                response = (await SendSyncRequestAsync(authToken, BuildSyncRequest(target, asset, normalizedAvailablePaths, requestSuggestions))).response;
             }
 
-            if (response == null || string.IsNullOrWhiteSpace(response.instanceId)) yield break;
+            if (response == null || string.IsNullOrWhiteSpace(response.instanceId) || target == null) return;
             if (!string.Equals(target.mcbServerInstanceId, response.instanceId, StringComparison.OrdinalIgnoreCase))
             {
                 target.mcbServerInstanceId = response.instanceId;
                 EditorUtility.SetDirty(target);
             }
 
-            if (!requestSuggestions) yield break;
+            if (!requestSuggestions) return;
             var validated = ValidateCompleteRecovery(target, asset.sourceFiles, normalizedAvailablePaths, response.suggestions);
-            if (validated.Count == 0) yield break;
+            if (validated.Count == 0) return;
 
             string promptKey = response.instanceId + ":" + string.Join(",", validated.Select(binding => binding.acceptedFromBindingId).OrderBy(id => id));
-            if (!PromptedRecoveries.Add(promptKey)) yield break;
+            if (!PromptedRecoveries.Add(promptKey)) return;
 
             bool accepted = EditorUtility.DisplayDialog(
                 "Use previous MCB paths?",
@@ -168,7 +186,7 @@ public static class McbInstanceHistoryClient
                 recovered = true;
             }
 
-            yield return SendRecoveryDecision(authToken, response.instanceId, accepted, validated);
+            await SendRecoveryDecisionAsync(authToken, response.instanceId, accepted, validated);
         }
         finally
         {
@@ -348,55 +366,53 @@ public static class McbInstanceHistoryClient
         return builder.ToString();
     }
 
-    private static IEnumerator SendSyncRequest(string authToken, SyncRequest payload, Action<SyncResponse, string> onComplete)
+    // The server's answer, or null and the error code it gave (null when none came).
+    private static async Task<(SyncResponse response, string errorCode)> SendSyncRequestAsync(string authToken, SyncRequest payload)
     {
         string url = $"{MCBUtils.getApiUrl()}/instances/sync";
-        using (var request = CreateJsonPost(url, payload, authToken))
+        try
         {
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Sync MCB instance"));
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                var error = TryDeserialize<ErrorResponse>(request.downloadHandler.text);
-                MCBLogger.LogWarning($"[MCB Instance] Sync failed: {error?.error ?? request.error}");
-                onComplete?.Invoke(null, error?.code);
-                yield break;
-            }
-            onComplete?.Invoke(TryDeserialize<SyncResponse>(request.downloadHandler.text), null);
+            var response = await McbHttp.JsonAsync<SyncResponse>(HttpMethod.Post, url, authToken, payload, MCBRequestPolicy.Backend("Sync MCB instance"),
+                NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery));
+            return (response, null);
+        }
+        catch (OrbitersHttpException ex)
+        {
+            var error = TryDeserialize<ErrorResponse>(ex.Body);
+            MCBLogger.LogWarning($"[MCB Instance] Sync failed: {error?.error ?? ex.Message}");
+            return (null, error?.code);
+        }
+        catch (JsonException)
+        {
+            return (null, null);
         }
     }
 
-    private static IEnumerator SendRecoveryDecision(
+    private static async Task SendRecoveryDecisionAsync(
         string authToken,
         string instanceId,
         bool accepted,
         List<BindingPayload> bindings)
     {
         string url = $"{MCBUtils.getApiUrl()}/instances/{UnityWebRequest.EscapeURL(instanceId)}/recovery-decision";
-        using (var request = CreateJsonPost(url, new RecoveryDecisionRequest { accepted = accepted, bindings = bindings }, authToken))
+        try
         {
-            yield return MCBManagedRequest.SendUnityWebRequest(request, url, MCBRequestPolicy.Backend("Save MCB path recovery decision"));
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                MCBLogger.LogWarning($"[MCB Instance] Could not save path recovery decision: {request.error}");
-            }
+            await McbHttp.JsonAsync<JToken>(HttpMethod.Post, url, authToken, new RecoveryDecisionRequest { accepted = accepted, bindings = bindings },
+                MCBRequestPolicy.Backend("Save MCB path recovery decision"), NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery));
         }
-    }
-
-    private static UnityWebRequest CreateJsonPost(string url, object payload, string authToken)
-    {
-        var request = new UnityWebRequest(url, "POST");
-        MCBRequestHeaders.SetAuthorization(request, authToken);
-        request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload)));
-        request.downloadHandler = new DownloadHandlerBuffer();
-        request.SetRequestHeader("Content-Type", "application/json");
-        request.timeout = NetworkService.GetTimeoutSeconds(NetworkRequestType.AssetDiscovery);
-        return request;
+        catch (OrbitersHttpException ex)
+        {
+            MCBLogger.LogWarning($"[MCB Instance] Could not save path recovery decision: {ex.Message}");
+        }
+        // The decision was saved; its answer is not read.
+        catch (JsonException) { }
     }
 
     private static T TryDeserialize<T>(string json) where T : class
     {
+        if (string.IsNullOrWhiteSpace(json)) return null;
         try { return JsonConvert.DeserializeObject<T>(json); }
-        catch { return null; }
+        catch (JsonException) { return null; }
     }
 }
 #endif

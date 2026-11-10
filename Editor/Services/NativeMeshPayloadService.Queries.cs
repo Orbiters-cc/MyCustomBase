@@ -161,13 +161,20 @@ public static partial class NativeMeshPayloadService
             return false;
         }
 
+        // Looked up once, at the first renderer that needs it.
+        MyCustomBase state = null;
+        bool stateSearched = false;
         foreach (var renderer in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
             string meshPath = renderer != null && renderer.sharedMesh != null
                 ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh))
                 : null;
             if (IsSharedMeshForVersion(meshPath, null)) {
-                var state = avatarRoot.GetComponentsInChildren<MyCustomBase>(true).FirstOrDefault(m => m.appliedCustomBaseAssetId > 0 && !string.IsNullOrEmpty(m.appliedCustomBaseVersionString));
+                if (!stateSearched)
+                {
+                    state = avatarRoot.GetComponentsInChildren<MyCustomBase>(true).FirstOrDefault(m => m.appliedCustomBaseAssetId > 0 && !string.IsNullOrEmpty(m.appliedCustomBaseVersionString));
+                    stateSearched = true;
+                }
                 if (state != null) { assetId = state.appliedCustomBaseAssetId; versionString = state.appliedCustomBaseVersionString; return true; }
             }
             if (TryParseGeneratedMeshAssetPath(meshPath, out assetId, out versionString))
