@@ -460,11 +460,26 @@ public partial class VersionActions
     // may change between frames. Inside it, a file's hash is read from its bytes once and reused while its length and
     // write time stay the same (ContentHash.Operation), instead of once per check.
     private ContentHash.Operation fileOperation;
+    // Scopes opened after an import inside the switch, disposed with it.
+    private readonly List<ContentHash.Operation> renewedFileOperations = new List<ContentHash.Operation>();
+
+    /// <summary>
+    /// After an import or a reimport inside the switch: Unity and other tools' postprocessors may have rewritten a file the
+    /// scope already proved, so what the switch decides from here on is proven again, in a new scope.
+    /// </summary>
+    private void RenewFileOperationAfterImport()
+    {
+        if (fileOperation == null) return;
+        var fresh = new ContentHash.Operation();
+        renewedFileOperations.Add(fresh);
+        fileOperation = fresh;
+    }
 
     private void ApplyOrResetCore(CustomBaseVersion version, bool isReset, bool finalize = true)
     {
         // One synchronous stretch (a reset nested in a custom version's install joins that one).
         var outer = fileOperation;
+        int renewedBefore = renewedFileOperations.Count;
         using (ContentHash.Operation.Join(outer, out var operation))
         {
             fileOperation = operation;
@@ -474,6 +489,11 @@ public partial class VersionActions
             }
             finally
             {
+                for (int i = renewedFileOperations.Count - 1; i >= renewedBefore; i--)
+                {
+                    renewedFileOperations[i].Dispose();
+                    renewedFileOperations.RemoveAt(i);
+                }
                 fileOperation = outer;
             }
         }
@@ -689,6 +709,7 @@ public partial class VersionActions
                 ReportApplyProgress(Mathf.Lerp(0.30f, 0.55f, fbxImportPaths.Count == 0 ? 1f : importIndex / (float)fbxImportPaths.Count), $"Importing FBX {importIndex}/{fbxImportPaths.Count}...");
                 MCBLogger.Log($"[VersionActions] Importing modified FBX at {affectedPath}");
                 AssetDatabase.ImportAsset(affectedPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                RenewFileOperationAfterImport();
             }
             MCBLogger.Log(fbxImportPaths.Count > 0
                 ? "[VersionActions] FBX import completed."

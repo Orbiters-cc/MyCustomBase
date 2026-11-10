@@ -258,6 +258,7 @@ public partial class VersionActions
         // Preparation has already materialized the payload cache; assign meshes/pose synchronously.
         NativeMeshPayloadService.ApplyEncryptedPayload(AvatarPaths.Root(session.customBaseTarget), version, patchFile,
             binPath, originalFbxPath, fileManagerService, targetFbxPath);
+        RenewFileOperationAfterImport(); // the payload's meshes are created and imported
     }
 
     private void RestoreBackupsForVersion(CustomBaseVersion version, string fallbackFbxPath, bool requireBackup = true)
@@ -288,6 +289,7 @@ public partial class VersionActions
         {
             RefreshOriginalBackup(path, version);
             fileManagerService.ForceRestoreBackupAtPath(path, operation: fileOperation);
+            RenewFileOperationAfterImport(); // the restore reimports the model
         }
     }
 
@@ -574,6 +576,7 @@ public partial class VersionActions
                 RefreshOriginalBackup(path, previousVersion, nextVersion);
                 if (fileManagerService.FbxMatchesBackupAtPath(path, fileOperation)) continue;
                 fileManagerService.ForceRestoreBackupAtPath(path, operation: fileOperation);
+                RenewFileOperationAfterImport(); // the restore reimports the model
                 changed = true;
             }
             if (!avatarNext.Contains(path) && RestoreOriginalImporter(root, previousVersion, path)) changed = true;
@@ -602,6 +605,7 @@ public partial class VersionActions
         var model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
         if (AvatarDefinitionGenerationService.RestoreOriginalImportSettings(fbxPath))
         {
+            RenewFileOperationAfterImport(); // the model is reimported
             model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
             var animator = model != null ? model.GetComponent<Animator>() : null;
             if (versionAvatar && animator != null && animator.avatar != null)
@@ -618,6 +622,7 @@ public partial class VersionActions
         }
         MCBLogger.Log($"[VersionActions] Restoring default avatar import settings from {defaultAvatarPath} to {fbxPath}");
         fileManagerService.ApplyAvatarToModel(root, model, defaultAvatarPath);
+        RenewFileOperationAfterImport(); // the model is reimported
         return true;
     }
 
@@ -711,6 +716,7 @@ public partial class VersionActions
 
             MCBLogger.Log($"[VersionActions] Applying avatar import settings from {avatarPath} to {sourcePath}");
             fileManagerService.ApplyAvatarToModel(root, fbxGameObject, avatarPath);
+            RenewFileOperationAfterImport(); // the model is reimported
         }
     }
 
@@ -857,6 +863,7 @@ public partial class VersionActions
         {
             RefreshOriginalBackup(path, versions.ToArray());
             fileManagerService.ForceRestoreBackupAtPath(path, operation: fileOperation);
+            RenewFileOperationAfterImport(); // the restore reimports the model
         }
 
         // Native versions assign the Animator Avatar directly. Repointing the FBX
