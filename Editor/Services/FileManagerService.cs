@@ -226,9 +226,8 @@ public class FileManagerService
         WriteVerifiedCopy(fullBackupPath, fullFbxPath, backupHash, replaceExisting: true);
         MCBLogger.Log($"[FileManager] Restored original FBX backup and reimporting: {unityPath}");
 
-        // Force Unity to reimport the restored FBX
+        // Force Unity to reimport the restored FBX (this file only: a refresh would rescan the project for every model).
         AssetDatabase.ImportAsset(unityPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
     }
 
     // The backup's hash, after checking it against the expected original, else against the hash recorded when it was made.

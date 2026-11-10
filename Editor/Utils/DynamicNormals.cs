@@ -434,7 +434,8 @@ namespace MCBEditorUtils
                     if (!string.IsNullOrEmpty(assetPath))
                     {
                         AssetDatabase.CreateAsset(newMesh, assetPath);
-                        AssetDatabase.SaveAssets();
+                        // This mesh only: a project-wide save would write every dirty asset (large materials included).
+                        AssetDatabase.SaveAssetIfDirty(newMesh);
                         // Reload the asset to ensure we're using the saved version
                         newMesh = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
                         MCBLogger.Log($"[DynamicNormals] Saved dynamic normals mesh as asset at: {assetPath}");
