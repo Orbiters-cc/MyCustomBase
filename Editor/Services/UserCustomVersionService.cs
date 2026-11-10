@@ -58,20 +58,22 @@ public class UserCustomVersionService
         }
     }
 
-    public bool ExistsByAppliedHash(string appliedHash)
+    /// <summary>
+    /// Saves the model at <paramref name="fbxUnityPath"/> (and its Avatar) as a custom version unless an entry already
+    /// holds exactly these bytes. Both decisions are proofs: the model is hashed from its bytes, an existing entry counts
+    /// only when its saved copy still holds them, and a new copy is verified before its identity is recorded.
+    /// </summary>
+    /// <param name="created">Whether a new entry was saved.</param>
+    public UserCustomVersionEntry SaveCurrent(string fbxUnityPath, Transform root, out bool created)
     {
-        if (string.IsNullOrEmpty(appliedHash)) return false;
-        var list = GetAll();
-        return list.Exists(e => string.Equals(e.appliedUserAviHash, appliedHash, StringComparison.OrdinalIgnoreCase));
-    }
-
-    public UserCustomVersionEntry CreateFromCurrent(string fbxUnityPath, string currentHash, Transform root)
-    {
-        if (string.IsNullOrEmpty(fbxUnityPath) || string.IsNullOrEmpty(currentHash)) return null;
-        if (ExistsByAppliedHash(currentHash))
-        {
-            return GetAll().Find(e => e.appliedUserAviHash == currentHash);
-        }
+        created = false;
+        if (string.IsNullOrEmpty(fbxUnityPath)) return null;
+        using var proof = new ContentHash.Operation();
+        string currentHash = ContentHash.Proof(fbxUnityPath, proof);
+        if (string.IsNullOrEmpty(currentHash)) return null;
+        var existing = GetAll().Find(e => string.Equals(e.appliedUserAviHash, currentHash, StringComparison.OrdinalIgnoreCase) &&
+                                          ContentHash.Verify(e.backupFbxPath, currentHash, operation: proof));
+        if (existing != null) return existing;
 
         string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
         string folder = MCBUtils.USER_VERSIONS_DIR;
@@ -102,6 +104,16 @@ public class UserCustomVersionService
             {
                 MCBLogger.LogError($"[MCB] Failed to copy custom FBX: {ex.Message}");
             }
+        }
+
+        // The copy is read back: a model that changed since it was hashed is not recorded under that hash.
+        if (!ContentHash.Verify(destFbxPath, currentHash))
+        {
+            MCBLogger.LogError($"[MCB] The custom FBX changed while it was saved; nothing was recorded: {fbxUnityPath}");
+            if (!AssetDatabase.DeleteAsset(customFolderPath))
+                try { Directory.Delete(Path.GetFullPath(customFolderPath), true); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+            return null;
         }
 
         // Determine avatar asset and copy it if possible
@@ -140,6 +152,7 @@ public class UserCustomVersionService
         };
         GetAll().Add(entry);
         SaveAll();
+        created = true;
         return entry;
     }
 

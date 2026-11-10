@@ -3519,13 +3519,11 @@ public class VersionActions
                 // Persist the custom version entry (copy FBX and avatar) if not already present
                 try
                 {
-                    if (!UserCustomVersionService.Instance.ExistsByAppliedHash(currentFileHash))
+                    // Saving decides from the model's bytes, never from the cached hash this state was detected with.
+                    UserCustomVersionService.Instance.SaveCurrent(fbxPath, AvatarPaths.Root(editor.customBaseTarget), out bool created);
+                    if (created)
                     {
-                        var entry = UserCustomVersionService.Instance.CreateFromCurrent(fbxPath, currentFileHash, AvatarPaths.Root(editor.customBaseTarget));
-                        if (entry != null)
-                        {
-                            editor.userCustomVersions = UserCustomVersionService.Instance.GetAll();
-                        }
+                        editor.userCustomVersions = UserCustomVersionService.Instance.GetAll();
                     }
                 }
                 catch (System.Exception ex)
