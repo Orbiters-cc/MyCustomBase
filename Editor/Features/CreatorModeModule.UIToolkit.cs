@@ -856,7 +856,16 @@ public partial class CreatorModeModule
 
         int index = parent.IndexOf(card);
         var built = new VisualElement();
-        BuildBlendshapeEditorUIToolkit(built);
+        // As around the whole form's build (RefreshUIToolkit): the card's fields read and may clamp properties.
+        editor.serializedObject.Update();
+        try
+        {
+            BuildBlendshapeEditorUIToolkit(built);
+        }
+        finally
+        {
+            editor.serializedObject.ApplyModifiedProperties();
+        }
         card.RemoveFromHierarchy();
         parent.Insert(index, blendshapeEditorCard);
         refreshSubmissionValidation?.Invoke();
