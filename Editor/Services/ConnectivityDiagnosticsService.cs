@@ -343,7 +343,10 @@ public static class MCBManagedRequest
     }
 }
 
-// Made on first use (an MCB surface, a request reporting itself): nothing runs for a project that never touches MCB.
+// Loaded with the scripts, on the main thread: its state comes from SessionState, which no other thread may read, and the
+// first request to report itself can finish on any thread. Loading runs nothing else (the recovery poll exists only while
+// MCB is offline).
+[InitializeOnLoad]
 public static partial class MCBConnectivityMonitor
 {
     private const string SessionKey = "MCB.PackageConnectivity.Started";
