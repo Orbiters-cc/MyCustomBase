@@ -23,33 +23,62 @@ public class MCBEditor : UnityEditor.Editor
         "Packages/orbiters.mcb/Editor/Styles/mcb-version.uss",
         "Packages/orbiters.mcb/Editor/Styles/mcb-avatar-options.uss"
     };
-    private static readonly Dictionary<string, List<string>> SharedDetectedAvatarFbxPathCache =
-        new Dictionary<string, List<string>>(StringComparer.Ordinal);
 
-    // --- Target & Serialized Object ---
+    // --- Target ---
     public MyCustomBase customBaseTarget;
-    public new SerializedObject serializedObject;
+    [NonSerialized] private McbSession session;
+    /// <summary>The avatar's session: its versions, selection, account, busy state and operations. This Inspector is one view of it.</summary>
+    public McbSession Session => session ?? (session = McbSession.For(customBaseTarget));
 
-    // --- Serialized Properties ---
-    public SerializedProperty specifyCustomBaseFbxProp, baseFbxFilesProp, blendShapeValuesProp, isCreatorModeProp,
-                               avatarLogicPrefabProp, customBlendshapesForCreatorProp,
-                               modelFileBuildEntriesProp,
-                               useAdvancedMeshReplacementForCreatorProp,
-                               useHdiffFbxDeltaForCreatorProp,
-                               includeCustomVeinsForCreatorProp, customVeinsNormalMapProp,
-                               includeDynamicNormalsBodyForCreatorProp, includeDynamicNormalsFlexingForCreatorProp,
-                               includeSuggestRealisticForCreatorProp, suggestRealisticMeshPathsForCreatorProp;
+    // The session's state, as this view's modules read it.
+    public new SerializedObject serializedObject => Session.serializedObject;
+    public SerializedProperty specifyCustomBaseFbxProp => Session.specifyCustomBaseFbxProp;
+    public SerializedProperty baseFbxFilesProp => Session.baseFbxFilesProp;
+    public SerializedProperty blendShapeValuesProp => Session.blendShapeValuesProp;
+    public SerializedProperty isCreatorModeProp => Session.isCreatorModeProp;
+    public SerializedProperty avatarLogicPrefabProp => Session.avatarLogicPrefabProp;
+    public SerializedProperty customBlendshapesForCreatorProp => Session.customBlendshapesForCreatorProp;
+    public SerializedProperty modelFileBuildEntriesProp => Session.modelFileBuildEntriesProp;
+    public SerializedProperty useAdvancedMeshReplacementForCreatorProp => Session.useAdvancedMeshReplacementForCreatorProp;
+    public SerializedProperty useHdiffFbxDeltaForCreatorProp => Session.useHdiffFbxDeltaForCreatorProp;
+    public SerializedProperty includeCustomVeinsForCreatorProp => Session.includeCustomVeinsForCreatorProp;
+    public SerializedProperty customVeinsNormalMapProp => Session.customVeinsNormalMapProp;
+    public SerializedProperty includeDynamicNormalsBodyForCreatorProp => Session.includeDynamicNormalsBodyForCreatorProp;
+    public SerializedProperty includeDynamicNormalsFlexingForCreatorProp => Session.includeDynamicNormalsFlexingForCreatorProp;
+    public SerializedProperty includeSuggestRealisticForCreatorProp => Session.includeSuggestRealisticForCreatorProp;
+    public SerializedProperty suggestRealisticMeshPathsForCreatorProp => Session.suggestRealisticMeshPathsForCreatorProp;
+    public WarningsModule warningsModule => Session.warningsModule;
+    public bool isAuthenticated { get => Session.isAuthenticated; set => Session.isAuthenticated = value; }
+    public string authToken { get => Session.authToken; set => Session.authToken = value; }
+    public bool fetchAttempted { get => Session.fetchAttempted; set => Session.fetchAttempted = value; }
+    public bool isFetching { get => Session.isFetching; set => Session.isFetching = value; }
+    public bool isDownloading { get => Session.isDownloading; set => Session.isDownloading = value; }
+    public bool isDeleting { get => Session.isDeleting; set => Session.isDeleting = value; }
+    public bool isSubmitting { get => Session.isSubmitting; set => Session.isSubmitting = value; }
+    public bool isApplying { get => Session.isApplying; set => Session.isApplying = value; }
+    public string fetchError { get => Session.fetchError; set => Session.fetchError = value; }
+    public string submitError { get => Session.submitError; set => Session.submitError = value; }
+    public string accessDeniedAssetId { get => Session.accessDeniedAssetId; set => Session.accessDeniedAssetId = value; }
+    public string currentBaseFbxHash { get => Session.currentBaseFbxHash; set => Session.currentBaseFbxHash = value; }
+    public string currentAppliedFbxHash { get => Session.currentAppliedFbxHash; set => Session.currentAppliedFbxHash = value; }
+    public bool isCustomBase { get => Session.isCustomBase; set => Session.isCustomBase = value; }
+    public List<CustomBaseVersion> serverVersions { get => Session.serverVersions; set => Session.serverVersions = value; }
+    public List<CustomBaseVersion> importedVersions { get => Session.importedVersions; set => Session.importedVersions = value; }
+    public List<CustomBaseVersion> unsubmittedVersions { get => Session.unsubmittedVersions; set => Session.unsubmittedVersions = value; }
+    public CustomBaseVersion recommendedVersion { get => Session.recommendedVersion; set => Session.recommendedVersion = value; }
+    public CustomBaseVersion selectedVersionForAction { get => Session.selectedVersionForAction; set => Session.selectedVersionForAction = value; }
+    public List<UserCustomVersionEntry> userCustomVersions { get => Session.userCustomVersions; set => Session.userCustomVersions = value; }
+    public UserCustomVersionEntry selectedCustomVersionForAction { get => Session.selectedCustomVersionForAction; set => Session.selectedCustomVersionForAction = value; }
+    public bool currentIsCustom { get => Session.currentIsCustom; set => Session.currentIsCustom = value; }
+    public bool HasServerAccess => Session.HasServerAccess;
 
-    // --- Services and Modules ---
-    private NetworkService networkService;
+    // --- Modules (this view's sections) ---
     public VersionManagementModule versionModule;
-    public CreatorModeModule creatorModule;
     private AssetGalleryModule assetGalleryModule;
     private AdvancedModeModule advancedModule;
     private DependencyInstallerModule dependencyInstallerModule;
     private AvatarOptionsModule avatarOptionsModule;
     private AdjustMaterialModule adjustMaterialModule;
-    public WarningsModule warningsModule;
 
     private VisualElement uiToolkitRoot;
     private OrbitersGlowSurfaceElement chromeSurfaceHost;
@@ -69,73 +98,11 @@ public class MCBEditor : UnityEditor.Editor
     public const float AssetViewImGuiPaddingRight = 24f;
     public const float AssetViewImGuiPaddingTop = 18f;
     public const float AssetViewImGuiPaddingBottom = 22f;
-    
-    // --- Async Services ---
-    private AsyncTaskManager taskManager;
-    private AsyncHashService hashService;
-    private AsyncVersionService versionService;
-    
-    // --- SHARED EDITOR STATE ---
-    public bool isAuthenticated;
-    public string authToken;
-    public bool fetchAttempted;
-    // Runtime state of the coroutines running them: a domain reload ends those, so it must not restore these. The four
-    // operations on the avatar's files belong to the avatar, not to this inspector: every view of it (another inspector,
-    // the creator and compare windows) sees the same operation, and hears when one starts or ends. A fetch fills this
-    // view's own version lists, so it stays this view's (until the lists move to the avatar's model with it).
-    public bool isFetching
-    {
-        get => fetching;
-        set
-        {
-            if (fetching == value) return;
-            fetching = value;
-            if (viewRefresh != null) RequestRefresh(McbViewParts.Versions);
-        }
-    }
-    [NonSerialized] private bool fetching;
-    /// <summary>A fetch was asked for while this view's fetch ran: it runs again when that one ends.</summary>
-    [NonSerialized] public bool versionFetchQueued;
-    public bool isDownloading { get => ViewModel.IsDownloading; set => ViewModel.IsDownloading = value; }
-    public bool isDeleting { get => ViewModel.IsDeleting; set => ViewModel.IsDeleting = value; }
-    public bool isSubmitting { get => ViewModel.IsSubmitting; set => ViewModel.IsSubmitting = value; }
-    public bool isApplying { get => ViewModel.IsApplying; set => ViewModel.IsApplying = value; }
-    [NonSerialized] private McbAvatarViewModel viewModel;
-    public McbAvatarViewModel ViewModel => viewModel ?? (viewModel = McbAvatarViewModel.For(customBaseTarget));
+
     [NonSerialized] private McbViewRefresh viewRefresh;
-    public string fetchError, submitError;
-    public string accessDeniedAssetId;
-    public string currentBaseFbxHash;
-    public bool isCustomBase;
-    public List<CustomBaseVersion> serverVersions = new List<CustomBaseVersion>();
-    public List<CustomBaseVersion> importedVersions = new List<CustomBaseVersion>();
-    public List<CustomBaseVersion> unsubmittedVersions = new List<CustomBaseVersion>();
-    public CustomBaseVersion recommendedVersion, selectedVersionForAction;
-    
-    // User custom base tracking
-    public List<UserCustomVersionEntry> userCustomVersions = new List<UserCustomVersionEntry>();
-    public UserCustomVersionEntry selectedCustomVersionForAction;
-    public bool currentIsCustom;
-    
     public string uiRenderingError;
     private string lastUiRenderingExceptionSignature;
-    private List<string> cachedDetectedAvatarFbxPaths;
-    private int cachedDetectedAvatarRootInstanceId;
-    private bool detectedAvatarFbxCacheDirty = true;
-    private bool delayedDetectionScheduled;
-    private bool asyncInitializationScheduled;
-    private bool initialBackgroundRefreshStarted;
-    private bool lastConnectivityBlocked;
-    private bool connectivityRecoveryScheduled;
     private bool projectRefreshPending;
-
-    // Runtime state for detection
-    public string currentAppliedFbxHash;
-
-    public bool HasServerAccess
-    {
-        get { return MCBPackageVersionService.HasServerAccess(authToken); }
-    }
 
     public static bool IsDevModeWarningEnabled
     {
@@ -155,68 +122,33 @@ public class MCBEditor : UnityEditor.Editor
         customBaseTarget = target as MyCustomBase;
         if (customBaseTarget == null)
         {
-            // A hidden editor whose component is gone (an operation cut short by a script reload) has nothing to show.
+            // An Inspector whose component is gone has nothing to show.
             EditorApplication.delayCall += () => { if (this != null) DestroyImmediate(this); };
             return;
         }
-        EnsureSerializedDefaults();
-        serializedObject = new SerializedObject(customBaseTarget);
-        viewModel = McbAvatarViewModel.For(customBaseTarget);
-        viewModel.Changed += OnViewModelChanged;
+        session = McbSession.For(customBaseTarget);
         viewRefresh = new McbViewRefresh(RefreshSections);
-        // Views that act through an inspector of this avatar (the compare window) look for it again.
-        viewModel.MarkChanged(McbViewParts.Versions);
-        fetchAttempted = false;
-        
-        // Initialize async services first
-        taskManager = AsyncTaskManager.Instance;
-        hashService = AsyncHashService.Instance;
-        versionService = AsyncVersionService.Instance;
-        
+        session.Changed += OnSessionChanged;
+        session.AuthenticationChanged += OnAuthenticationChanged;
+        session.ModelsDetected += OnModelsDetected;
+        session.warningsModule.Changed += OnWarningsChanged;
+
         // Ensure ProgressBarManager is initialized early so it subscribes to task events
         var __ensureProgressBars = ProgressBarManager.Instance;
-        
-        // Subscribe to version service events
-        versionService.OnVersionsUpdated += OnVersionsUpdated;
-        versionService.OnVersionFetchError += OnVersionFetchError;
-        
-        FindSerializedProperties();
-        
-        networkService = new NetworkService();
-        var fileManagerService = new FileManagerService();
-        
-        versionModule = new VersionManagementModule(this, networkService, fileManagerService);
-        creatorModule = new CreatorModeModule(this);
+
+        versionModule = new VersionManagementModule(this);
         assetGalleryModule = new AssetGalleryModule(this);
         advancedModule = new AdvancedModeModule(this);
         dependencyInstallerModule = new DependencyInstallerModule(this);
         dependencyInstallerModule.Initialize();
         avatarOptionsModule = new AvatarOptionsModule(this);
         adjustMaterialModule = new AdjustMaterialModule(this);
-        warningsModule = new WarningsModule();
-        warningsModule.Changed += OnWarningsChanged;
-        
-        // Load local versions first (synchronous, but fast)
-        LoadImportedVersions();
-        LoadUnsubmittedVersions();
-        // Load user custom versions
-        userCustomVersions = UserCustomVersionService.Instance.GetAll();
-        
-        CheckAuthentication();
-        AuthenticationService.Changed += SyncAuthentication;
-        OrbitersEnvironment.Changed += SyncAuthentication;
-        lastConnectivityBlocked = IsConnectivityBlocked();
-        MCBConnectivityMonitor.StatusChanged += RepaintFromConnectivityMonitor;
-        MCBConnectivityMonitor.EnsureCheckStarted(authToken);
-        MCBPackageVersionService.StatusChanged += RepaintFromPackageVersionStatus;
-        MCBPackageVersionService.EnsureCheckStarted(authToken);
-        MCBPerformance.EnsureStarted(this);
-        
+
         // Ensure modules are enabled
         versionModule.OnEnable();
-        
-        ScheduleAsyncInitialization();
-        
+
+        session.BeginBackgroundRefresh();
+
         // Subscribe to play mode state changes
         EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
         LiveEditors.Add(this);
@@ -224,24 +156,21 @@ public class MCBEditor : UnityEditor.Editor
 
         PlayPendingComponentAddedMeshEffect();
     }
-    
+
     private void OnDisable()
     {
         // Unsubscribe from play mode state changes
         EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
-        EditorApplication.delayCall -= RunScheduledAsyncInitialization;
-        AuthenticationService.Changed -= SyncAuthentication;
-        OrbitersEnvironment.Changed -= SyncAuthentication;
-        asyncInitializationScheduled = false;
-        if (viewModel != null)
+        if (session != null)
         {
-            viewModel.Changed -= OnViewModelChanged;
-            viewModel.MarkChanged(McbViewParts.Versions);
+            session.Changed -= OnSessionChanged;
+            session.AuthenticationChanged -= OnAuthenticationChanged;
+            session.ModelsDetected -= OnModelsDetected;
+            session.warningsModule.Changed -= OnWarningsChanged;
         }
         viewRefresh?.Cancel();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
-        creatorModule?.DetachUIToolkit();
         versionModule?.DetachUIToolkit();
         avatarOptionsModule?.DetachUIToolkit();
         assetGalleryModule?.DetachUIToolkit();
@@ -260,20 +189,6 @@ public class MCBEditor : UnityEditor.Editor
         adjustMaterialHost = null;
         commentsHost = null;
         bottomBarImGuiContainer = null;
-        
-        // Unsubscribe from version service events
-        if (versionService != null)
-        {
-            versionService.OnVersionsUpdated -= OnVersionsUpdated;
-            versionService.OnVersionFetchError -= OnVersionFetchError;
-        }
-
-        MCBConnectivityMonitor.StatusChanged -= RepaintFromConnectivityMonitor;
-        MCBPackageVersionService.StatusChanged -= RepaintFromPackageVersionStatus;
-        if (warningsModule != null)
-        {
-            warningsModule.Changed -= OnWarningsChanged;
-        }
         LiveEditors.Remove(this);
     }
 
@@ -345,30 +260,38 @@ public class MCBEditor : UnityEditor.Editor
         return uiToolkitRoot;
     }
 
-    /// <summary>Rebuilds every section on the next editor frame (once, however many changes ask for it before).</summary>
-    public void RefreshUiToolkitSections() => RequestRefresh(McbViewParts.All);
-
-    /// <summary>Rebuilds these sections on the next editor frame, together with whatever else was asked for by then.</summary>
+    /// <summary>Rebuilds these sections of this view on the next editor frame, together with whatever else was asked for by then.</summary>
     public void RequestRefresh(McbViewParts parts)
     {
         if (viewRefresh != null) viewRefresh.Request(parts);
         else RefreshSections(parts);
     }
 
-    // An operation of this avatar started or ended, here or in another view of it: the version section shows its state.
-    private void OnViewModelChanged(McbViewParts parts)
+    // The session changed (here or in another view of the avatar), already coalesced to once a frame: refresh what it says.
+    private void OnSessionChanged(McbViewParts parts)
     {
-        if ((parts & McbViewParts.Busy) != 0) RequestRefresh(McbViewParts.Versions);
+        // A download, delete or switch starting or ending changes the version section's buttons.
+        if ((parts & McbViewParts.Busy) != 0) parts |= McbViewParts.Versions;
+        parts &= ~(McbViewParts.Busy | McbViewParts.Repaint);
+        if (parts != McbViewParts.None && viewRefresh != null)
+        {
+            viewRefresh.Request(parts);
+            viewRefresh.Flush();
+        }
+        Repaint();
     }
+
+    private void OnAuthenticationChanged() => assetGalleryModule?.OnAuthenticationChanged();
+
+    private void OnModelsDetected() => assetGalleryModule?.RefreshIfNeeded(force: true);
 
     private void RefreshSections(McbViewParts parts)
     {
         bool Has(McbViewParts part) => (parts & part) != 0;
 
-        SyncAppliedCustomBaseName();
+        Session.SyncAppliedCustomBaseName();
         if (uiToolkitRoot == null)
         {
-            if (creatorWindowAsset != null && Has(McbViewParts.Creator)) creatorModule?.RefreshUIToolkit();
             return;
         }
 
@@ -384,7 +307,6 @@ public class MCBEditor : UnityEditor.Editor
         if (Has(McbViewParts.Dependencies)) Section(() => dependencyInstallerModule?.RefreshUIToolkit());
         if (Has(McbViewParts.Connectivity)) Section(RefreshConnectivityDiagnosticsUIToolkit);
         if (Has(McbViewParts.Gallery)) Section(() => assetGalleryModule?.RefreshUIToolkit());
-        if (Has(McbViewParts.Creator)) Section(() => creatorModule?.RefreshUIToolkit());
         if (Has(McbViewParts.Versions)) Section(() =>
         {
             // The full version DTO is not Unity-serialized. Rehydrate it from local/server
@@ -394,8 +316,6 @@ public class MCBEditor : UnityEditor.Editor
                 !string.IsNullOrEmpty(customBaseTarget.appliedCustomBaseVersionString))
                 versionModule?.actions.UpdateAppliedVersionAndState();
             versionModule?.RefreshUIToolkit();
-            // Its versions or their applied state changed: the avatar's other views (the compare window) hear it.
-            ViewModel.MarkChanged(McbViewParts.Versions);
         });
         if (Has(McbViewParts.AvatarOptions)) Section(() => avatarOptionsModule?.RefreshUIToolkit());
         if (Has(McbViewParts.Status)) Section(RefreshStatusMessagesUIToolkit);
@@ -646,7 +566,7 @@ public class MCBEditor : UnityEditor.Editor
 
     public bool ShouldShowGalleryOnly()
     {
-        return creatorWindowAsset == null && assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly();
+        return assetGalleryModule != null && assetGalleryModule.ShouldShowGalleryOnly();
     }
 
     public void StartCreateNewVersion()
@@ -664,8 +584,8 @@ public class MCBEditor : UnityEditor.Editor
             EditorUtility.SetDirty(customBaseTarget);
         }
 
-        RefreshUiToolkitSections();
-        creatorModule.OpenWindow();
+        RequestRefresh(McbViewParts.All);
+        new CreatorModeModule(Session, GetSelectedAsset()).OpenWindow();
         Repaint();
     }
 
@@ -741,7 +661,6 @@ public class MCBEditor : UnityEditor.Editor
         if (projectChangeHooked) return;
         projectChangeHooked = true;
         EditorApplication.projectChanged += ScheduleProjectChange;
-        EditorApplication.hierarchyChanged += OnHierarchyChanged;
     }
 
     /// <summary>Asset paths an import changed: imported versions are only scanned again when their folder changed.</summary>
@@ -749,7 +668,7 @@ public class MCBEditor : UnityEditor.Editor
     {
         bool versionsChanged = pathGroups.Any(paths => paths != null && paths.Any(IsInVersionsFolder));
         if (!versionsChanged) return;
-        // Without an inspector the next one to open scans again.
+        // Without an inspector the next one to open scans again (sessions read their lists again when one opens).
         if (LiveEditors.Count == 0) VersionRepository.InvalidateCache();
         else
         {
@@ -778,7 +697,7 @@ public class MCBEditor : UnityEditor.Editor
 
     private static void RunSettledProjectChange()
     {
-        if (EditorApplication.timeSinceStartup - projectChangedAt < ProjectChangeSettleSeconds || ShouldDeferBackgroundNetworkRefresh() ||
+        if (EditorApplication.timeSinceStartup - projectChangedAt < ProjectChangeSettleSeconds || McbSession.ShouldDeferBackgroundNetworkRefresh() ||
             (EditorApplication.isPlayingOrWillChangePlaymode && !EditorApplication.isPlaying))
         {
             return;
@@ -796,12 +715,15 @@ public class MCBEditor : UnityEditor.Editor
         }
 
         SmrPathService.InvalidateCache();
-        SharedDetectedAvatarFbxPathCache.Clear();
         if (versionsChanged) VersionRepository.Scan(true);
+        // Each avatar's session once, however many Inspectors show it.
+        foreach (var session in McbSession.Live)
+        {
+            session.InvalidateDetectedAvatarFbxCache();
+            if (versionsChanged) session.LoadImportedVersions();
+        }
         foreach (var editor in LiveEditors.ToArray())
         {
-            editor.InvalidateDetectedAvatarFbxCache();
-            if (versionsChanged) editor.LoadImportedVersions();
             editor.projectRefreshPending = true;
         }
         RefreshPendingEditors();
@@ -816,14 +738,14 @@ public class MCBEditor : UnityEditor.Editor
         foreach (var editor in LiveEditors.ToArray())
         {
             if (editor == null || !editor.projectRefreshPending || !editor.IsShown) continue;
-            if (editor.isDownloading || editor.isApplying || editor.isSubmitting || editor.isDeleting || ShouldDeferBackgroundNetworkRefresh()) waiting = true;
+            if (editor.isDownloading || editor.isApplying || editor.isSubmitting || editor.isDeleting || McbSession.ShouldDeferBackgroundNetworkRefresh()) waiting = true;
             else editor.RefreshAfterProjectChange();
         }
         if (waiting) EditorApplication.update += RefreshPendingEditors;
     }
 
-    // An inspector's UI is in a panel while it is shown (not in an inactive docked tab); a creator window shows its own.
-    private bool IsShown => uiToolkitRoot?.panel != null || creatorWindowAsset != null;
+    // An inspector's UI is in a panel while it is shown (not in an inactive docked tab).
+    private bool IsShown => uiToolkitRoot?.panel != null;
 
     private void RefreshAfterProjectChange()
     {
@@ -832,281 +754,6 @@ public class MCBEditor : UnityEditor.Editor
         dependencyInstallerModule?.RefreshUIToolkit();
         ApplyDependencyBlockerState();
         Repaint();
-    }
-
-    private static void OnHierarchyChanged()
-    {
-        SmrPathService.InvalidateCache();
-        SharedDetectedAvatarFbxPathCache.Clear();
-        foreach (var editor in LiveEditors)
-        {
-            if (editor != null) editor.InvalidateDetectedAvatarFbxCache();
-        }
-    }
-
-    internal bool CanStartBackgroundRefreshes
-    {
-        get { return initialBackgroundRefreshStarted && !ShouldDeferBackgroundNetworkRefresh(); }
-    }
-
-    private void ScheduleAsyncInitialization()
-    {
-        if (asyncInitializationScheduled)
-        {
-            return;
-        }
-
-        asyncInitializationScheduled = true;
-        EditorApplication.delayCall += RunScheduledAsyncInitialization;
-    }
-
-    private void RunScheduledAsyncInitialization()
-    {
-        asyncInitializationScheduled = false;
-        EditorApplication.delayCall -= RunScheduledAsyncInitialization;
-
-        if (customBaseTarget == null)
-        {
-            return;
-        }
-
-        if (ShouldDeferBackgroundNetworkRefresh())
-        {
-            ScheduleAsyncInitialization();
-            return;
-        }
-
-        initialBackgroundRefreshStarted = true;
-        StartAsyncInitialization();
-        RefreshUiToolkitSections();
-        Repaint();
-    }
-
-    private void StartAsyncInitialization()
-    {
-        MCBPerformance.EnsureStarted(this);
-        // Skip async initialization if already in progress or if we're submitting/building
-        if (isFetching || isSubmitting || ShouldDeferBackgroundNetworkRefresh()) return;
-
-        // Auto-detect FBX immediately (synchronously) to avoid missing detection on first draw
-        if (!specifyCustomBaseFbxProp.boolValue)
-        {
-            DetectAndLoadCached();
-            if (baseFbxFilesProp != null && baseFbxFilesProp.arraySize == 0)
-            {
-                ScheduleDelayedDetectAndLoadCached();
-            }
-        }
-        else
-        {
-            TryLoadCachedVersionsAndRefetch(false);
-        }
-    }
-
-    internal static bool ShouldDeferBackgroundNetworkRefresh()
-    {
-        return EditorApplication.isCompiling ||
-               EditorApplication.isUpdating ||
-               BuildPipeline.isBuildingPlayer ||
-               IsVrcSdkPanelBusy();
-    }
-
-    private static bool IsVrcSdkPanelBusy()
-    {
-        VRCSdkControlPanel panel = VRCSdkControlPanel.window;
-        return panel != null && panel.PanelState != SdkPanelState.Idle;
-    }
-
-    private void ScheduleDelayedDetectAndLoadCached()
-    {
-        if (delayedDetectionScheduled)
-        {
-            return;
-        }
-
-        delayedDetectionScheduled = true;
-        EditorApplication.delayCall += () =>
-        {
-            delayedDetectionScheduled = false;
-            if (ShouldDeferBackgroundNetworkRefresh())
-            {
-                return;
-            }
-
-            DetectAndLoadCached();
-        };
-    }
-
-    // Every inspector hears the shared service: keep only the answers to this inspector's current selection.
-    private bool IsCurrentVersionRequest(VersionFetchRequest request)
-    {
-        var selectedAsset = GetSelectedAsset();
-        return request != null && selectedAsset != null &&
-               request.Matches(GetCurrentFBXPath(), authToken, selectedAsset.id, OriginalBaseLibrary.ActiveKey(selectedAsset));
-    }
-
-    private void OnVersionsUpdated(VersionFetchRequest request, System.Collections.Generic.List<CustomBaseVersion> versions, CustomBaseVersion recommended)
-    {
-        if (!IsCurrentVersionRequest(request))
-        {
-            return;
-        }
-
-        // Every inspector of this selection hears the same list: each keeps its own, which it may clear.
-        serverVersions = new List<CustomBaseVersion>(versions ?? new List<CustomBaseVersion>());
-        recommendedVersion = recommended;
-        fetchError = null; // Clear any previous errors
-        accessDeniedAssetId = null; // Clear special access state on success
-        
-        // Update applied version state
-        if (versionModule?.actions != null)
-        {
-            versionModule.actions.UpdateAppliedVersionAndState();
-        }
-        
-        RefreshUiToolkitSections();
-        Repaint();
-        MCBLogger.Log($"[MCBEditor] Updated with {versions.Count} server versions");
-    }
-
-    public void LoadCachedVersionsForCurrentSelection()
-    {
-        TryLoadCachedVersionsAndRefetch(false);
-    }
-
-    private void TryLoadCachedVersionsAndRefetch(bool forceRefetch)
-    {
-        string fbxPath = GetCurrentFBXPath();
-        if (string.IsNullOrEmpty(fbxPath))
-        {
-            return;
-        }
-
-        var selectedAsset = GetSelectedAsset();
-        if (selectedAsset == null)
-        {
-            serverVersions = new List<CustomBaseVersion>();
-            recommendedVersion = null;
-            return;
-        }
-
-        var cached = versionService.GetCachedVersions(fbxPath, authToken, selectedAsset.id, OriginalBaseLibrary.ActiveKey(selectedAsset));
-        if (HasServerAccess && cached.versions.Count > 0)
-        {
-            serverVersions = cached.versions;
-            recommendedVersion = cached.recommended;
-            if (versionModule != null && versionModule.actions != null)
-            {
-                versionModule.actions.UpdateAppliedVersionAndState();
-            }
-            RefreshUiToolkitSections();
-            Repaint();
-        }
-
-        if (HasServerAccess && (forceRefetch || cached.versions.Count == 0))
-        {
-            fetchAttempted = true;
-            versionService.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: !forceRefetch, sourceVersionKey: OriginalBaseLibrary.ActiveKey(selectedAsset));
-        }
-    }
-
-    private void DetectAndLoadCached()
-    {
-        if (!SyncBaseFbxFilesFromSelectedAsset())
-        {
-            AutoDetectBaseFbxViaHierarchy();
-        }
-        // Immediately update hash state so UI knows an FBX is present
-        if (versionModule != null && versionModule.actions != null)
-        {
-            versionModule.actions.UpdateCurrentBaseFbxHash();
-        }
-        TryLoadCachedVersionsAndRefetch(false);
-        assetGalleryModule?.RefreshIfNeeded(force: true);
-    }
-
-    private void OnVersionFetchError(VersionFetchRequest request, string error)
-    {
-        if (!IsCurrentVersionRequest(request))
-        {
-            return;
-        }
-
-        if (error != null && error.StartsWith(NetworkService.AccessDeniedPrefix, StringComparison.Ordinal))
-        {
-            // No access: the version list shows the store link, never versions cached while the member had access.
-            accessDeniedAssetId = error.Substring(NetworkService.AccessDeniedPrefix.Length);
-            serverVersions = new List<CustomBaseVersion>();
-            recommendedVersion = null;
-            fetchError = null;
-            RefreshUiToolkitSections();
-            Repaint();
-            return;
-        }
-
-        fetchError = error;
-        RefreshUiToolkitSections();
-        Repaint();
-        MCBLogger.LogError($"[MCBEditor] Version fetch error: {error}");
-    }
-
-    /// <summary>The avatar's models changed (a legacy migration): detect its base models again, as when the inspector opens.</summary>
-    internal void RedetectBaseFbx()
-    {
-        serializedObject.Update();
-        InvalidateDetectedAvatarFbxCache();
-        if (!SyncBaseFbxFilesFromSelectedAsset()) AutoDetectBaseFbxViaHierarchy();
-        versionModule?.actions?.UpdateCurrentBaseFbxHash();
-    }
-
-    private bool AutoDetectBaseFbxViaHierarchy()
-    {
-        if (customBaseTarget == null) return false;
-        var detectedPaths = GetDetectedAvatarFbxPaths();
-        if (detectedPaths.Count == 0)
-        {
-            return false;
-        }
-
-        var detectedAssets = new List<GameObject>();
-        for (int i = 0; i < detectedPaths.Count; i++)
-        {
-            var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(detectedPaths[i]);
-            if (fbxAsset == null)
-            {
-                continue;
-            }
-
-            detectedAssets.Add(fbxAsset);
-        }
-
-        if (detectedAssets.Count == 0)
-        {
-            return false;
-        }
-
-        if (AreBaseFbxReferencesEqual(detectedAssets))
-        {
-            return true;
-        }
-
-        serializedObject.ApplyModifiedProperties();
-        FileManagerService.SetCreatorSourceFiles(customBaseTarget, detectedAssets);
-        serializedObject.Update();
-        InvalidateDetectedAvatarFbxCache();
-        MCBLogger.Log($"[MCBEditor] Auto-detected {baseFbxFilesProp.arraySize} FBX file(s) for the avatar root.");
-        Repaint();
-        return true;
-    }
-
-    internal string GetCurrentFBXPath()
-    {
-        if (baseFbxFilesProp.arraySize > 0)
-        {
-            var fbx = baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject;
-            if (fbx != null) return AssetDatabase.GetAssetPath(fbx);
-        }
-        return null;
     }
 
     // The legacy full-IMGUI inspector path (OnInspectorGUI) was removed: Unity never
@@ -1234,7 +881,7 @@ public class MCBEditor : UnityEditor.Editor
         {
             MCBConnectivityMonitor.Retry(authToken);
             RefreshAccountAndVersions();
-            RefreshUiToolkitSections();
+            RequestRefresh(McbViewParts.All);
         }));
         panel.Add(actions);
     }
@@ -1329,7 +976,7 @@ public class MCBEditor : UnityEditor.Editor
         actions.Add(CreateConnectivityButton("Clear warnings", () =>
         {
             MCBConnectivityMonitor.ClearAllRequestWarnings();
-            RefreshUiToolkitSections();
+            RequestRefresh(McbViewParts.All);
         }));
         section.Add(actions);
 
@@ -1414,75 +1061,37 @@ public class MCBEditor : UnityEditor.Editor
         }
     }
 
-    // The account is shared by every Orbiters panel: a sign-out or switch elsewhere must stop this
-    // inspector from sending requests with the previous token.
-    public void SyncAuthentication() => SyncAuthentication(AuthenticationService.GetAuth());
+    // The session's operations, as this view's modules call them.
+    internal bool CanStartBackgroundRefreshes => Session.CanStartBackgroundRefreshes;
+    public void LoadCachedVersionsForCurrentSelection() => Session.LoadCachedVersionsForCurrentSelection();
+    internal void RedetectBaseFbx() => Session.RedetectBaseFbx();
+    internal string GetCurrentFBXPath() => Session.GetCurrentFBXPath();
+    public void SyncAuthentication() => Session.SyncAuthentication();
+    public void CheckAuthentication() => Session.CheckAuthentication();
+    public void LoadUnsubmittedVersions(bool forceRefresh = false) => Session.LoadUnsubmittedVersions(forceRefresh);
+    public void LoadImportedVersions(bool forceRefresh = false) => Session.LoadImportedVersions(forceRefresh);
+    public List<CustomBaseVersion> GetAllVersions() => Session.GetAllVersions();
+    public Version ParseVersion(string v) => McbSession.VersionNumber(v);
+    public int CompareVersions(string v1, string v2) => Session.CompareVersions(v1, v2);
+    public AvatarDiscoveredAsset GetSelectedAsset() => Session.SelectedAsset;
+    public bool SyncBaseFbxFilesFromSelectedAsset() => Session.SyncBaseFbxFilesFromSelectedAsset();
+    public string GetSelectedAssetDisplayName() => Session.GetSelectedAssetDisplayName();
+    public List<string> GetDetectedAvatarFbxPaths() => Session.GetDetectedAvatarFbxPaths();
+    internal void InvalidateDetectedAvatarFbxCache() => Session.InvalidateDetectedAvatarFbxCache();
 
-    // Share the callback's state transition with isolated tests without changing the shared credential store.
-    internal void SyncAuthentication(AuthenticationService.AuthData auth)
+    public void RefreshAccountAndVersions()
     {
-        if (!string.Equals(auth?.token, authToken, StringComparison.Ordinal)) CheckAuthentication(auth);
-    }
-
-    public void CheckAuthentication() => CheckAuthentication(AuthenticationService.GetAuth());
-
-    private void CheckAuthentication(AuthenticationService.AuthData auth)
-    {
-        authToken = auth?.token;
-        isAuthenticated = !string.IsNullOrEmpty(authToken);
-        if (!isAuthenticated)
+        Session.RefreshAccountAndVersions();
+        if (Session.SelectedAsset == null)
         {
-            accessDeniedAssetId = null;
-            fetchError = null;
+            assetGalleryModule?.RefreshIfNeeded(force: true);
         }
-        if (isAuthenticated) MCBPackageVersionService.EnsureCheckStarted(authToken);
-        RequestSignedInUserInfo(auth);
-        assetGalleryModule?.OnAuthenticationChanged();
-        RefreshUiToolkitSections();
-    }
-
-    // The account row is Orbiters Toolkit's; MCB still reads the signed-in creator's details from its user cache (whether
-    // Orbiters trusts them decides the protection settings a new custom base offers).
-    private void RequestSignedInUserInfo(AuthenticationService.AuthData auth)
-    {
-        if (string.IsNullOrEmpty(auth?.token) || !int.TryParse(auth.user, out int userId) || UserService.IsUserInfoAvailable(userId)) return;
-        UserService.RequestUserInfo(userId, auth.token, RefreshUiToolkitSections);
     }
 
     public void ReloadVersionsAndBanners()
     {
         AvatarAssetDiscoveryService.ReloadImages();
         RefreshAccountAndVersions();
-    }
-
-    public void RefreshAccountAndVersions()
-    {
-        // Clear failed user info requests to allow retry
-        UserService.ClearAllFailedRequests();
-        
-        try
-        {
-            RequestSignedInUserInfo(AuthenticationService.GetAuth());
-        }
-        catch (Exception ex)
-        {
-            RecordUiException(ex);
-        }
-
-        SyncBaseFbxFilesFromSelectedAsset();
-
-        string fbxPath = GetCurrentFBXPath();
-        var selectedAsset = GetSelectedAsset();
-        if (!string.IsNullOrEmpty(fbxPath) && HasServerAccess && selectedAsset != null)
-        {
-            fetchAttempted = true;
-            versionService?.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false, sourceVersionKey: OriginalBaseLibrary.ActiveKey(selectedAsset));
-        }
-        if (selectedAsset == null)
-        {
-            assetGalleryModule?.RefreshIfNeeded(force: true);
-        }
-        RefreshUiToolkitSections();
     }
 
     public void DisableDevModeOverride()
@@ -1526,45 +1135,6 @@ public class MCBEditor : UnityEditor.Editor
         Repaint();
     }
 
-    private void FindSerializedProperties()
-    {
-        specifyCustomBaseFbxProp = serializedObject.FindProperty("specifyCustomBaseFbx");
-        baseFbxFilesProp = serializedObject.FindProperty("baseFbxFiles");
-        blendShapeValuesProp = serializedObject.FindProperty("blendShapeValues");
-        isCreatorModeProp = serializedObject.FindProperty("isCreatorMode");
-        modelFileBuildEntriesProp = serializedObject.FindProperty("modelFileBuildEntries");
-        avatarLogicPrefabProp = serializedObject.FindProperty("avatarLogicPrefab");
-        useAdvancedMeshReplacementForCreatorProp = serializedObject.FindProperty("useAdvancedMeshReplacementForCreator");
-        useHdiffFbxDeltaForCreatorProp = serializedObject.FindProperty("useHdiffFbxDeltaForCreator");
-        customBlendshapesForCreatorProp = serializedObject.FindProperty("customBlendshapesForCreator");
-        includeCustomVeinsForCreatorProp = serializedObject.FindProperty("includeCustomVeinsForCreator");
-        customVeinsNormalMapProp = serializedObject.FindProperty("customVeinsNormalMap");
-        includeDynamicNormalsBodyForCreatorProp = serializedObject.FindProperty("includeDynamicNormalsBodyForCreator");
-        includeDynamicNormalsFlexingForCreatorProp = serializedObject.FindProperty("includeDynamicNormalsFlexingForCreator");
-        includeSuggestRealisticForCreatorProp = serializedObject.FindProperty("includeSuggestRealisticForCreator");
-        suggestRealisticMeshPathsForCreatorProp = serializedObject.FindProperty("suggestRealisticMeshPathsForCreator");
-    }
-
-    private void EnsureSerializedDefaults()
-    {
-        if (customBaseTarget == null) return;
-
-        if (!customBaseTarget.preserveBlendshapeValuesOnVersionSwitchInitialized)
-        {
-            customBaseTarget.preserveBlendshapeValuesOnVersionSwitch = true;
-            customBaseTarget.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
-            EditorUtility.SetDirty(customBaseTarget);
-        }
-
-        if (customBaseTarget.avatarPathOverrides == null)
-        {
-            customBaseTarget.avatarPathOverrides = new List<AvatarPathOverrideEntry>();
-            EditorUtility.SetDirty(customBaseTarget);
-        }
-
-        McbInstanceIdentityService.EnsureIdentity(customBaseTarget);
-    }
-
     private void PlayPendingComponentAddedMeshEffect()
     {
         if (customBaseTarget == null || customBaseTarget.pendingSceneMeshDotEffectLoops <= 0)
@@ -1578,394 +1148,6 @@ public class MCBEditor : UnityEditor.Editor
         SceneMeshDotEffectService.PlayAvatarSweep(customBaseTarget.transform != null ? AvatarPaths.Root(customBaseTarget) : null, loops);
     }
 
-    /// <summary>Local version lists are served by the VersionRepository scan, which
-    /// classifies folders by their build manifest (unsubmitted artifacts vs imported/
-    /// downloaded versions), runs the one-time legacy-index migration and garbage
-    /// collection, and caches results internally.</summary>
-    public void LoadUnsubmittedVersions(bool forceRefresh = false)
-    {
-        var scan = VersionRepository.Scan(forceRefresh);
-        unsubmittedVersions.Clear();
-        unsubmittedVersions.AddRange(scan.unsubmitted);
-    }
-
-    public void LoadImportedVersions(bool forceRefresh = false)
-    {
-        var scan = VersionRepository.Scan(forceRefresh);
-        importedVersions.Clear();
-        importedVersions.AddRange(scan.imported);
-    }
-
-    public List<CustomBaseVersion> GetAllVersions()
-    {
-        if (!HasServerAccess)
-        {
-            return importedVersions
-                .Where(v => v != null)
-                .OrderByDescending(v => ParseVersion(v.version))
-                .ToList();
-        }
-
-        int selectedAssetId = GetSelectedAsset()?.id ?? 0;
-        return VersionRepository.MergeAvailableVersions(selectedAssetId, serverVersions, importedVersions, unsubmittedVersions, OriginalBaseLibrary.ActiveKey(GetSelectedAsset()))
-            .OrderByDescending(v => ParseVersion(v.version)).ToList();
-    }
-    
-    public Version ParseVersion(string v) => VersionNumber(v);
-
-    /// <summary>A version label as a comparable number ("0.5" reads as 0.5.0; anything unreadable as 0.0).</summary>
-    public static Version VersionNumber(string v)
-    {
-        if (string.IsNullOrEmpty(v)) return new Version(0,0);
-        if (v.Count(c => c == '.') == 0) v += ".0.0";
-        if (v.Count(c => c == '.') == 1) v += ".0";
-        return Version.TryParse(v, out var ver) ? ver : new Version(0,0);
-    }
-
-    public int CompareVersions(string v1, string v2) => ParseVersion(v1).CompareTo(ParseVersion(v2));
-
-    public AvatarDiscoveredAsset GetSelectedAsset()
-    {
-        return creatorWindowAsset ?? (assetGalleryModule != null ? assetGalleryModule.SelectedAsset : null);
-    }
-
-    /// <summary>Shows the asset the custom base applied in the gallery (see <see cref="AssetGalleryModule.ShowAppliedAsset"/>).</summary>
-    internal bool ShowAppliedAsset() => creatorWindowAsset == null && assetGalleryModule != null && assetGalleryModule.ShowAppliedAsset();
-
-    private AvatarDiscoveredAsset creatorWindowAsset;
-    internal void SetCreatorWindowAsset(AvatarDiscoveredAsset asset) { creatorWindowAsset = asset; }
-
-    public bool SyncBaseFbxFilesFromSelectedAsset()
-    {
-        var selectedAsset = GetSelectedAsset();
-        if (selectedAsset?.sourceFiles == null || selectedAsset.sourceFiles.Length == 0 || baseFbxFilesProp == null)
-        {
-            return false;
-        }
-        // One unencrypted package serves every original: the asset's registered source is not this avatar's model.
-        // Neither is it while a version is applied: the models recorded at that time are.
-        if (selectedAsset.UsesPlainPackages() || (customBaseTarget.appliedCustomBaseAssetId > 0 && customBaseTarget.versionOriginalModels.Count > 0))
-        {
-            return false;
-        }
-
-        AvatarPathOverrideService.SyncOverridesForSelectedAsset(
-            customBaseTarget,
-            selectedAsset.sourceFiles,
-            GetDetectedAvatarFbxPaths());
-
-        var sourceFiles = selectedAsset.sourceFiles
-            .Where(file => file != null
-                           && string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase)
-                           && string.Equals(file.role, "SOURCE", StringComparison.OrdinalIgnoreCase)
-                           && !string.IsNullOrWhiteSpace(file.path))
-            .ToList();
-        var paths = sourceFiles
-            .Select(file => AvatarPathOverrideService.ResolveLocalTargetPath(customBaseTarget, file))
-            .ToList();
-
-        if (sourceFiles.Count == 0 ||
-            paths.Any(string.IsNullOrWhiteSpace) ||
-            paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != sourceFiles.Count)
-        {
-            return false;
-        }
-
-        var fbxAssets = new List<GameObject>();
-        foreach (string path in paths)
-        {
-            var fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            if (fbxAsset == null || !(AssetImporter.GetAtPath(path) is ModelImporter))
-            {
-                MCBLogger.LogWarning($"[MCBEditor] Selected custom base source FBX is not present in this project: {path}");
-                continue;
-            }
-
-            fbxAssets.Add(fbxAsset);
-        }
-
-        if (fbxAssets.Count != sourceFiles.Count)
-        {
-            return false;
-        }
-
-        if (AreBaseFbxReferencesEqual(fbxAssets))
-        {
-            return true;
-        }
-
-        serializedObject.ApplyModifiedProperties();
-        FileManagerService.SetCreatorSourceFiles(customBaseTarget, fbxAssets);
-        serializedObject.Update();
-        InvalidateDetectedAvatarFbxCache();
-        MCBLogger.Log($"[MCBEditor] Synced {baseFbxFilesProp.arraySize} target FBX file(s) from selected custom base source ModelFiles.");
-        versionModule?.actions?.UpdateCurrentBaseFbxHash();
-        return true;
-    }
-
-    // Other tools (My Avatar) show the applied custom base by name: keep it from the gallery's asset once it is known.
-    private void SyncAppliedCustomBaseName()
-    {
-        var asset = GetSelectedAsset();
-        if (customBaseTarget == null || asset == null || asset.id <= 0 || asset.id != customBaseTarget.appliedCustomBaseAssetId ||
-            string.IsNullOrWhiteSpace(asset.name) || asset.name == customBaseTarget.appliedCustomBaseName) return;
-        customBaseTarget.appliedCustomBaseName = asset.name;
-        EditorUtility.SetDirty(customBaseTarget);
-        MCBReFitIntegration.NotifyCustomBaseChanged(customBaseTarget);
-    }
-
-    public string GetSelectedAssetDisplayName()
-    {
-        var selectedAsset = GetSelectedAsset();
-        return selectedAsset != null && !string.IsNullOrWhiteSpace(selectedAsset.name)
-            ? selectedAsset.name
-            : "Custom Base";
-    }
-
-    public List<string> GetDetectedAvatarFbxPaths()
-    {
-        if (customBaseTarget == null)
-        {
-            return new List<string>();
-        }
-
-        // The avatar (its descriptor), not the scene root it may share with other avatars.
-        Transform root = AvatarPaths.Root(customBaseTarget);
-        int rootInstanceId = root != null ? root.GetInstanceID() : 0;
-        string sharedCacheKey = BuildDetectedAvatarFbxCacheKey(rootInstanceId);
-        if (!detectedAvatarFbxCacheDirty &&
-            cachedDetectedAvatarFbxPaths != null &&
-            cachedDetectedAvatarRootInstanceId == rootInstanceId)
-        {
-            return new List<string>(cachedDetectedAvatarFbxPaths);
-        }
-
-        if (!string.IsNullOrEmpty(sharedCacheKey) && SharedDetectedAvatarFbxPathCache.TryGetValue(sharedCacheKey, out var sharedPaths))
-        {
-            cachedDetectedAvatarRootInstanceId = rootInstanceId;
-            cachedDetectedAvatarFbxPaths = new List<string>(sharedPaths);
-            detectedAvatarFbxCacheDirty = false;
-            return new List<string>(cachedDetectedAvatarFbxPaths);
-        }
-
-        var uniquePaths = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        // Each model file's skinned meshes in the scene: those skinned to the avatar's armature tell its base model apart.
-        var skinned = new Dictionary<string, List<SkinnedMeshRenderer>>(StringComparer.OrdinalIgnoreCase);
-
-        void TryAddPath(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return;
-            }
-
-            path = path.Replace("\\", "/");
-            if (seen.Add(path))
-            {
-                uniquePaths.Add(path);
-            }
-        }
-
-        if (root != null)
-        {
-            foreach (var smr in MeshFinder.GetAllSkinnedMeshRenderers(root))
-            {
-                string path = AvatarSceneMeshProvenanceService.ModelPathOf(smr != null ? smr.sharedMesh : null);
-                if (path == null) continue;
-                TryAddPath(path);
-                path = path.Replace("\\", "/");
-                if (!skinned.TryGetValue(path, out var renderers)) skinned[path] = renderers = new List<SkinnedMeshRenderer>();
-                renderers.Add(smr);
-            }
-
-            foreach (var meshFilter in root.GetComponentsInChildren<MeshFilter>(true))
-            {
-                TryAddPath(AvatarSceneMeshProvenanceService.ModelPathOf(meshFilter != null ? meshFilter.sharedMesh : null));
-            }
-        }
-
-        var baseModels = new AvatarBaseModels(root);
-        GameObject Model(string path) => AssetDatabase.LoadAssetAtPath<GameObject>(path);
-        IEnumerable<SkinnedMeshRenderer> Skinned(string path) =>
-            skinned.TryGetValue(path, out var renderers) ? renderers : Enumerable.Empty<SkinnedMeshRenderer>();
-        // A prop's model file (a face tracking debug panel) does not stand for the base model's meshes.
-        bool hasMeshSources = uniquePaths.Any(path => baseModels.Carries(Model(path), Skinned(path)));
-        foreach (string path in AvatarSceneMeshProvenanceService.GetAdditionalDiscoverySources(customBaseTarget, hasMeshSources))
-        {
-            TryAddPath(path);
-        }
-
-        // Versions apply to the first base FBX: the model with the avatar's skeleton, never a prop found before it.
-        uniquePaths = baseModels.BaseFirst(uniquePaths, Model, Skinned);
-
-        cachedDetectedAvatarRootInstanceId = rootInstanceId;
-        cachedDetectedAvatarFbxPaths = uniquePaths;
-        detectedAvatarFbxCacheDirty = false;
-        if (!string.IsNullOrEmpty(sharedCacheKey))
-        {
-            SharedDetectedAvatarFbxPathCache[sharedCacheKey] = new List<string>(uniquePaths);
-        }
-
-        return new List<string>(uniquePaths);
-    }
-
-    private string BuildDetectedAvatarFbxCacheKey(int rootInstanceId)
-    {
-        if (rootInstanceId == 0)
-        {
-            return null;
-        }
-
-        var basePaths = new List<string>();
-        if (baseFbxFilesProp != null)
-        {
-            for (int i = 0; i < baseFbxFilesProp.arraySize; i++)
-            {
-                var fbx = baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-                if (fbx == null)
-                {
-                    continue;
-                }
-
-                string path = MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(fbx));
-                if (!string.IsNullOrWhiteSpace(path))
-                {
-                    basePaths.Add(path);
-                }
-            }
-        }
-
-        basePaths.Sort(StringComparer.OrdinalIgnoreCase);
-        return rootInstanceId + "|" + string.Join("|", basePaths);
-    }
-
-    private bool AreBaseFbxReferencesEqual(List<GameObject> fbxAssets)
-    {
-        if (baseFbxFilesProp == null || fbxAssets == null)
-        {
-            return false;
-        }
-
-        if (baseFbxFilesProp.arraySize != fbxAssets.Count)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < fbxAssets.Count; i++)
-        {
-            var current = baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-            if (current != fbxAssets[i])
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    internal void InvalidateDetectedAvatarFbxCache(bool clearSharedCache = false)
-    {
-        int rootInstanceId = 0;
-        try
-        {
-            rootInstanceId = customBaseTarget != null && customBaseTarget.transform != null
-                ? AvatarPaths.Root(customBaseTarget).GetInstanceID()
-                : 0;
-        }
-        catch
-        {
-            rootInstanceId = 0;
-        }
-
-        detectedAvatarFbxCacheDirty = true;
-        cachedDetectedAvatarFbxPaths = null;
-        cachedDetectedAvatarRootInstanceId = 0;
-
-        if (!clearSharedCache)
-        {
-            return;
-        }
-
-        if (rootInstanceId != 0)
-        {
-            string prefix = rootInstanceId + "|";
-            var keysToRemove = SharedDetectedAvatarFbxPathCache.Keys
-                .Where(key => key != null && key.StartsWith(prefix, StringComparison.Ordinal))
-                .ToList();
-            foreach (string key in keysToRemove)
-            {
-                SharedDetectedAvatarFbxPathCache.Remove(key);
-            }
-        }
-        else
-        {
-            SharedDetectedAvatarFbxPathCache.Clear();
-        }
-    }
-
-    private void RepaintFromConnectivityMonitor()
-    {
-        bool currentlyBlocked = IsConnectivityBlocked();
-        bool restored = lastConnectivityBlocked && IsConnectivityReachable();
-        if (currentlyBlocked)
-        {
-            lastConnectivityBlocked = true;
-        }
-        else if (restored)
-        {
-            lastConnectivityBlocked = false;
-            ScheduleConnectivityRecoveryRefresh();
-        }
-
-        RefreshUiToolkitSections();
-        Repaint();
-    }
-
-    private static bool IsConnectivityBlocked()
-    {
-        return MCBConnectivityMonitor.HasCompleted &&
-               !MCBConnectivityMonitor.CanReachServer &&
-               !string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
-    }
-
-    private static bool IsConnectivityReachable()
-    {
-        return MCBConnectivityMonitor.HasCompleted &&
-               MCBConnectivityMonitor.CanReachServer &&
-               string.IsNullOrEmpty(MCBConnectivityMonitor.FailureReport);
-    }
-
-    private void ScheduleConnectivityRecoveryRefresh()
-    {
-        if (connectivityRecoveryScheduled)
-        {
-            return;
-        }
-
-        connectivityRecoveryScheduled = true;
-        EditorApplication.delayCall += () =>
-        {
-            connectivityRecoveryScheduled = false;
-            if (!IsConnectivityReachable() || customBaseTarget == null || ShouldDeferBackgroundNetworkRefresh())
-            {
-                return;
-            }
-
-            MCBLogger.Log("[MCBEditor] Connectivity restored. Refreshing avatar base detection, gallery assets, and versions.");
-            UserService.ClearAllFailedRequests();
-            InvalidateDetectedAvatarFbxCache(true);
-            DetectAndLoadCached();
-            RefreshUiToolkitSections();
-            Repaint();
-        };
-    }
-
-    private void RepaintFromPackageVersionStatus()
-    {
-        RefreshUiToolkitSections();
-        Repaint();
-    }
 }
 /// <summary>Reports which assets an import changed to the MCB inspectors (only the versions folder matters to them).</summary>
 internal sealed class MCBProjectChangePostprocessor : AssetPostprocessor

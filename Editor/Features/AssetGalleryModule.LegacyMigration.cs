@@ -42,7 +42,7 @@ public partial class AssetGalleryModule
         finally
         {
             legacyLoading = false;
-            if (legacyMatches.Count > 0) editor.RefreshUiToolkitSections();
+            if (legacyMatches.Count > 0) editor.RequestRefresh(McbViewParts.All);
         }
     }
 
@@ -95,7 +95,7 @@ public partial class AssetGalleryModule
                 finally
                 {
                     legacyMigrating = false;
-                    editor.RefreshUiToolkitSections();
+                    editor.RequestRefresh(McbViewParts.All);
                 }
             };
         });

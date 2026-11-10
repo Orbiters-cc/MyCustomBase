@@ -20,11 +20,12 @@ public partial class VersionManagementModule
     private static readonly Color AccentGreen = new Color32(0, 218, 109, 255);
     private static readonly Color DisabledAccentGreen = new Color32(0, 120, 60, 255);
 
-    public VersionManagementModule(MCBEditor editor, NetworkService network, FileManagerService files)
+    public VersionManagementModule(MCBEditor editor)
     {
         this.editor = editor;
-        actions = new VersionActions(editor, network, files);
-        fileManagerService = files;
+        // The avatar's operations: every view of it shows the same progress and busy state.
+        actions = editor.Session.actions;
+        fileManagerService = editor.Session.fileManagerService;
         fileConfigDrawer = new FileConfigurationDrawer(editor, actions);
         versionListDrawer = new VersionListDrawer(editor, actions);
     }
@@ -80,11 +81,6 @@ public partial class VersionManagementModule
     // The server only lists the role requirement; a version already on disk can still be applied.
     private static bool IsDiscordRoleBlocked(CustomBaseVersion version) =>
         VersionProtection.IsDiscordRoleDenied(version) && !version.isUnsubmitted && !MCBUtils.IsVersionDownloaded(version);
-
-    private static bool ShouldSkipApplyConfirmation(CustomBaseVersion version)
-    {
-        return NativeMeshPayloadService.VersionUsesAdvancedMesh(version);
-    }
 
     private bool ShouldResetWithoutConfirmation()
     {
@@ -162,8 +158,8 @@ public partial class VersionManagementModule
 
     private VisualElement versionRoot;
 
-    // The section is rebuilt when a fetch, download, delete or switch starts or ends (the avatar's view model announces
-    // it, MCBEditor.OnViewModelChanged), instead of every half second while one runs.
+    // The section is rebuilt when a fetch, download, delete or switch starts or ends (the avatar's session announces it,
+    // MCBEditor.OnSessionChanged), instead of every half second while one runs.
     public void AttachUIToolkit(VisualElement root)
     {
         versionRoot = root;
@@ -267,8 +263,8 @@ public partial class VersionManagementModule
         var button = CreateVersionTextButton(editor.isFetching ? "Fetching..." : "Check for Updates", () =>
         {
             ResetMissingVersionWarning();
-            actions.StartVersionFetch();
-            editor.RefreshUiToolkitSections();
+            editor.Session.RefreshVersions();
+            editor.RequestRefresh(McbViewParts.All);
             editor.Repaint();
         });
         button.AddToClassList("mcb-version-fetch");
@@ -397,7 +393,7 @@ public partial class VersionManagementModule
             if (ShouldResetWithoutConfirmation() || EditorUtility.DisplayDialog("Confirm Reset", "This will restore the original FBX from its backup and reapply the default avatar configuration.", "Reset", "Cancel"))
             {
                 actions.StartReset();
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
                 editor.Repaint();
             }
 
@@ -410,7 +406,7 @@ public partial class VersionManagementModule
             if (cv != null && EditorUtility.DisplayDialog("Apply Custom Version", $"This will replace your current FBX with your saved custom version from {cv.detectionDate}.", "Proceed", "Cancel"))
             {
                 actions.StartApplyCustomVersion();
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
                 editor.Repaint();
             }
 
@@ -424,38 +420,7 @@ public partial class VersionManagementModule
     /// Applies a version after the usual confirmation, downloading it first when needed. Returns false when nothing
     /// started (declined, or another download or apply is running).
     /// </summary>
-    public bool RequestApply(CustomBaseVersion version)
-    {
-        if (version == null || editor.isDownloading || editor.isApplying)
-        {
-            return false;
-        }
-
-        bool isDownloaded = MCBUtils.IsVersionDownloaded(version);
-        string assetName = editor.GetSelectedAssetDisplayName();
-
-        bool shouldApply = ShouldSkipApplyConfirmation(version) ||
-                           EditorUtility.DisplayDialog("Confirm Transformation", $"This will modify your base FBX file using {assetName} version '{version.version}'.\nA backup will be created.", "Proceed", "Cancel");
-        if (!shouldApply)
-        {
-            return false;
-        }
-
-        editor.selectedVersionForAction = version;
-        editor.selectedCustomVersionForAction = null;
-        if (isDownloaded)
-        {
-            actions.StartApplyVersion();
-        }
-        else
-        {
-            actions.StartVersionDownload(version, true);
-        }
-
-        editor.RefreshUiToolkitSections();
-        editor.Repaint();
-        return true;
-    }
+    public bool RequestApply(CustomBaseVersion version) => editor.Session.RequestApply(version);
 
     private static Button CreateVersionTextButton(string text, System.Action onClick)
     {

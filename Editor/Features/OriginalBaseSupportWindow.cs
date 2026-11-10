@@ -15,8 +15,8 @@ public sealed class OriginalBaseSupportWindow : EditorWindow
     [SerializeField] MyCustomBase avatar;
     [SerializeField] string assetJson;
     [SerializeField] string stateJson;
-    MCBEditor editor;
-    bool ownsEditor;
+    // The avatar's session (no Inspector of it needed).
+    McbSession editor;
     AvatarDiscoveredAsset asset;
     OriginalBaseVersionData[] originals;
     CustomBaseVersion[] versions = Array.Empty<CustomBaseVersion>();
@@ -50,7 +50,7 @@ public sealed class OriginalBaseSupportWindow : EditorWindow
         .Select(f => f.path).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     List<OriginalBaseVersionsEditor.Draft> ActiveDrafts => drafts.Where(d => d.reading || !string.IsNullOrWhiteSpace(d.label) || d.candidates.Count > 0).ToList();
 
-    public static void Open(MCBEditor editor, AvatarDiscoveredAsset asset)
+    public static void Open(McbSession editor, AvatarDiscoveredAsset asset)
     {
         var window = Resources.FindObjectsOfTypeAll<OriginalBaseSupportWindow>().FirstOrDefault(w => w.avatar == editor.customBaseTarget && w.asset?.id == asset.id)
             ?? CreateInstance<OriginalBaseSupportWindow>();
@@ -71,9 +71,7 @@ public sealed class OriginalBaseSupportWindow : EditorWindow
         if (asset == null) asset = JsonConvert.DeserializeObject<AvatarDiscoveredAsset>(assetJson);
         if (editor == null && avatar != null)
         {
-            editor = Resources.FindObjectsOfTypeAll<MCBEditor>().FirstOrDefault(e => e.customBaseTarget == avatar);
-            ownsEditor = false;
-            if (editor == null) { editor = (MCBEditor)UnityEditor.Editor.CreateEditor(avatar, typeof(MCBEditor)); ownsEditor = true; }
+            editor = McbSession.For(avatar);
         }
         // Unity hot reload can restore primitive fields while losing non-serializable DTOs and lists.
         // Restore the complete snapshot together, regardless of the old loaded flag.
@@ -85,7 +83,6 @@ public sealed class OriginalBaseSupportWindow : EditorWindow
     {
         EditorApplication.delayCall -= RecoverContext;
         SaveState();
-        if (ownsEditor && editor != null) { DestroyImmediate(editor); editor = null; ownsEditor = false; }
     }
     void SaveState()
     {
@@ -320,7 +317,7 @@ public sealed class OriginalBaseSupportWindow : EditorWindow
             }
             OriginalBaseLibrary.SaveSelection(asset.id, OriginalBaseLibrary.Selection(asset).Concat(keys).Distinct());
             succeeded = true; drafts.Clear(); existingTargets.Clear();
-            if (editor != null) { editor.ReloadVersionsAndBanners(); editor.RefreshUiToolkitSections(); }
+            if (editor != null) { AvatarAssetDiscoveryService.ReloadImages(); editor.RefreshAccountAndVersions(); }
         }
         catch (Exception ex) { error = ex.Message; }
         finally { busy = false; if (this != null) { SaveState(); CreateGUI(); } }

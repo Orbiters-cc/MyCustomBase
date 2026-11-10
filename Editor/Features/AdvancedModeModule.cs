@@ -90,7 +90,7 @@ public class AdvancedModeModule
     public AdvancedModeModule(MCBEditor editor)
     {
         this.editor = editor;
-        dynamicNormalsService = new DynamicNormalsService(editor);
+        dynamicNormalsService = new DynamicNormalsService(editor.Session);
         blendShapeLinkTestDrawer = new BlendShapeLinkTestDrawer(editor);
         connectionMockEnabledDraft = MCBPackageVersionService.IsMockEnabled;
         connectionMockJsonDraft = MCBPackageVersionService.MockResponseJson;
@@ -984,7 +984,7 @@ public class AdvancedModeModule
                     "Flush",
                     "Cancel"))
             {
-                string summary = VersionRepository.FlushRemovableData(editor);
+                string summary = VersionRepository.FlushRemovableData(editor.Session);
                 unitGitConnectorStatus = null;
                 diskSpaceStatus = summary;
                 editor.Repaint();
@@ -1113,7 +1113,7 @@ public class AdvancedModeModule
         if (next != current)
         {
             McbDependencies.AssumeLocalOptionalIntegrationsInstalled = next;
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             editor.Repaint();
         }
 

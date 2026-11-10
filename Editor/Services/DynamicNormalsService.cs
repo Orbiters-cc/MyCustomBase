@@ -7,11 +7,11 @@ using MCBEditorUtils;
 
 public class DynamicNormalsService
 {
-    private readonly MCBEditor editor;
+    private readonly McbSession editor;
     private List<string> activeBlendshapes = new List<string>();
     private Dictionary<SkinnedMeshRenderer, Mesh> originalMeshes = new Dictionary<SkinnedMeshRenderer, Mesh>();
 
-    public DynamicNormalsService(MCBEditor editor)
+    public DynamicNormalsService(McbSession editor)
     {
         this.editor = editor;
     }

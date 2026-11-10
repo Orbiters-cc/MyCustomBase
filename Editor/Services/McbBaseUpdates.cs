@@ -9,15 +9,14 @@ using VRC.SDK3.Avatars.Components;
 
 /// <summary>
 /// MCB in other views of the avatar (Mixer's Hierarchy): the version the server recommends for the avatar's custom base,
-/// when it is newer than the applied one, and updating to it. The custom base's Inspector applies it with its usual
-/// confirmation and progress, as its version list does.
+/// when it is newer than the applied one, and updating to it. The avatar's session applies it with its usual confirmation
+/// and progress, as its version list does, whether or not an Inspector shows the avatar.
 /// </summary>
 [InitializeOnLoad]
 internal sealed class McbBaseUpdates : IAvatarObjectUpdates
 {
-    // Seconds after which the custom base opens in an Inspector of its own (the selection showed it in none), and after
-    // which an update its Inspector could not start (signed out, its versions not loaded) is given up.
-    private const double OwnInspectorAfter = 1.5, GiveUpAfter = 20;
+    // Seconds after which an update the session could not start (signed out, its versions not loaded) is given up.
+    private const double GiveUpAfter = 20;
     // Views ask on every refresh: what the cache said is kept until a version list is read or a version applied (each
     // read checks files and logs), at most this long, and a custom base with no versions cached is read in the background
     // at most this often.
@@ -28,7 +27,6 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
         public MyCustomBase Target;
         public string Version;
         public double Asked;
-        public bool OwnInspector;
     }
 
     private static readonly List<Request> Waiting = new List<Request>();
@@ -72,9 +70,9 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
         if (target == null || EditorUtility.IsPersistent(target) || target.appliedCustomBaseAssetId <= 0 || AvatarPaths.Root(target) != go.transform) return null;
         string applied = !string.IsNullOrWhiteSpace(target.appliedCustomBaseVersionString) ? target.appliedCustomBaseVersionString : target.appliedCustomBaseVersion?.version;
         if (string.IsNullOrEmpty(applied)) return null;
-        var editor = LiveEditor(target);
+        var editor = McbSession.Find(target);
         string newer = RecommendedFor(target, editor);
-        if (newer == null || MCBEditor.VersionNumber(newer).CompareTo(MCBEditor.VersionNumber(applied)) <= 0) return null;
+        if (newer == null || McbSession.VersionNumber(newer).CompareTo(McbSession.VersionNumber(applied)) <= 0) return null;
         bool asked = Waiting.Any(r => r.Target == target);
         bool running = asked || (editor != null && (editor.isDownloading || editor.isApplying));
         bool failed = !running && Failures.TryGetValue(target.GetInstanceID(), out var failure) && failure.version == newer;
@@ -99,12 +97,12 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
     private static bool AlreadyAt(MyCustomBase target, string version)
     {
         string applied = Applied(target);
-        return string.IsNullOrEmpty(version) || !string.IsNullOrEmpty(applied) && MCBEditor.VersionNumber(version).CompareTo(MCBEditor.VersionNumber(applied)) <= 0;
+        return string.IsNullOrEmpty(version) || !string.IsNullOrEmpty(applied) && McbSession.VersionNumber(version).CompareTo(McbSession.VersionNumber(applied)) <= 0;
     }
 
-    // The live Inspector's recommendation when it shows this custom base's asset; else the version list cached last, as the
-    // Inspector reads it when it opens (and read in the background when there is none).
-    private static string RecommendedFor(MyCustomBase target, MCBEditor editor)
+    // The session's recommendation when it shows this custom base's asset; else the version list cached last, as the
+    // session reads it when a view opens (and read in the background when there is none).
+    private static string RecommendedFor(MyCustomBase target, McbSession editor)
     {
         if (editor != null && editor.recommendedVersion != null && editor.GetSelectedAsset()?.id == target.appliedCustomBaseAssetId)
             return editor.recommendedVersion.version;
@@ -132,11 +130,7 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
         return version;
     }
 
-    private static MCBEditor LiveEditor(MyCustomBase target) =>
-        Resources.FindObjectsOfTypeAll<MCBEditor>().FirstOrDefault(e => e != null && e.customBaseTarget == target && e.versionModule != null);
-
-    // The custom base's Inspector applies it once it shows that version (selecting the avatar opens it there; an Inspector
-    // of its own when none did).
+    // The avatar's session applies it once it lists that version (finding the applied asset and its versions first).
     private static void Ask(MyCustomBase target, string version)
     {
         if (target == null || Waiting.Any(r => r.Target == target)) return;
@@ -144,7 +138,8 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
         // Asked from a view drawn before the custom base was updated elsewhere: nothing to do.
         if (AlreadyAt(target, version)) { AvatarObjectTools.NotifyChanged(); return; }
         Waiting.Add(new Request { Target = target, Version = version, Asked = EditorApplication.timeSinceStartup });
-        if (LiveEditor(target) == null) Selection.activeGameObject = target.gameObject;
+        // A retry looks for the asset again.
+        McbSession.For(target)?.LookForAppliedAssetAgain();
         EditorApplication.update -= Pump;
         EditorApplication.update += Pump;
         AvatarObjectTools.NotifyChanged();
@@ -159,37 +154,31 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
         {
             var target = request.Target;
             if (target == null) { Waiting.Remove(request); changed = true; continue; }
-            var editor = LiveEditor(target);
+            var editor = McbSession.For(target);
             // Updated meanwhile (from its Inspector): nothing left to apply.
             if (AlreadyAt(target, request.Version)) { Waiting.Remove(request); changed = true; continue; }
-            // Its gallery may show another asset (the one picked last on another avatar): the custom base's own is shown,
-            // with its versions.
-            if (editor != null && editor.GetSelectedAsset()?.id != target.appliedCustomBaseAssetId) editor.ShowAppliedAsset();
+            // The session may show another asset (the one picked last): the custom base's own is shown, with its versions.
+            var shown = editor.ShowAppliedAsset();
             // Ready once it shows the custom base's asset with its version list read.
-            var version = editor != null && !editor.isFetching && editor.GetSelectedAsset()?.id == target.appliedCustomBaseAssetId
+            var version = shown == McbSession.AppliedAssetState.Shown && !editor.isFetching
                 ? editor.GetAllVersions()?.FirstOrDefault(v => v != null && v.version == request.Version)
                 : null;
             if (version != null)
             {
                 Waiting.Remove(request);
                 changed = true;
-                editor.versionModule.RequestApply(version);
+                editor.RequestApply(version);
                 continue;
             }
-            if (editor == null && !request.OwnInspector && now - request.Asked >= OwnInspectorAfter)
-            {
-                request.OwnInspector = true;
-                EditorUtility.OpenPropertyEditor(target);
-            }
-            if (now - request.Asked >= GiveUpAfter)
+            if (shown == McbSession.AppliedAssetState.NotFound || now - request.Asked >= GiveUpAfter)
             {
                 Waiting.Remove(request);
                 changed = true;
-                Failures[target.GetInstanceID()] = (request.Version, editor == null ? "MCB's Inspector did not open on it"
-                    : editor.GetSelectedAsset()?.id != target.appliedCustomBaseAssetId ? "MCB did not find " + (string.IsNullOrEmpty(target.appliedCustomBaseName) ? "its asset" : target.appliedCustomBaseName) + " among the avatar's assets (signed out?)"
+                Failures[target.GetInstanceID()] = (request.Version, shown != McbSession.AppliedAssetState.Shown
+                    ? "MCB did not find " + (string.IsNullOrEmpty(target.appliedCustomBaseName) ? "its asset" : target.appliedCustomBaseName) + " among the avatar's assets (signed out?)"
                     : "MCB's version list did not show " + request.Version + " (signed out, or its versions not loaded)");
                 Debug.LogWarning("[MCB] The update of " + (string.IsNullOrEmpty(target.appliedCustomBaseName) ? "the custom base" : target.appliedCustomBaseName) +
-                                 " to " + request.Version + " did not start: MCB's Inspector did not show that version within " + GiveUpAfter +
+                                 " to " + request.Version + " did not start: MCB did not list that version within " + GiveUpAfter +
                                  " seconds (signed out, or its versions not loaded). Select the avatar and apply it from MCB's version list.");
             }
         }

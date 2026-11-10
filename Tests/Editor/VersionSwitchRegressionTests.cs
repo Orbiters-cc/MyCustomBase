@@ -1007,10 +1007,10 @@ public sealed class VersionSwitchRegressionTests
     }
 
     [Test]
-    public void SharedLogoutCallbackClearsAnOpenInspectorWithoutReadingOrChangingCredentials()
+    public void SharedLogoutCallbackClearsAnOpenSessionWithoutReadingOrChangingCredentials()
     {
-        // Avoid OnEnable: real inspector initialization starts background services and reads the user's account.
-        var inspector = (MCBEditor)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(MCBEditor));
+        // A detached session: a started one reads the user's account and listens to the services.
+        var inspector = McbSession.Detached(null);
         inspector.authToken = "fixture-stale-token";
         inspector.isAuthenticated = true;
         inspector.accessDeniedAssetId = "fixture-denied";

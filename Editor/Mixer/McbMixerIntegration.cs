@@ -105,7 +105,7 @@ internal static class McbMixerIntegration
         return EditorUtility.DisplayDialog("Revert " + renderer.name, message, "Revert", "Cancel", DialogOptOutDecisionType.ForThisMachine, RevertOptOutKey);
     }
 
-    private static void Build(VisualElement card, MCBEditor editor, Action refresh)
+    private static void Build(VisualElement card, McbSession editor, Action refresh)
     {
         var state = CreatorModeModule.CreateCreatorRow();
         state.AddToClassList("mcb-blender__state");

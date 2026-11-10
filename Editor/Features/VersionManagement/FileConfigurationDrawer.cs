@@ -35,7 +35,7 @@ public class FileConfigurationDrawer
         // Only fetch if we have a hash and haven't tried yet.
         if(!string.IsNullOrEmpty(editor.currentBaseFbxHash) && !editor.fetchAttempted)
         {
-            actions.StartVersionFetch();
+            editor.Session.RefreshVersions();
         }
     }
 
@@ -79,7 +79,7 @@ public class FileConfigurationDrawer
                 editor.serializedObject.Update();
             }
             actions.UpdateCurrentBaseFbxHash();
-            actions.StartVersionFetch();
+            editor.Session.RefreshVersions();
             editor.Repaint();
         }
 

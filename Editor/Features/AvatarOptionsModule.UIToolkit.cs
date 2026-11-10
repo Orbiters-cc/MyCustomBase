@@ -269,7 +269,7 @@ public partial class AvatarOptionsModule
 
     internal static void RefreshEditorUi(MCBEditor editor)
     {
-        editor?.RefreshUiToolkitSections();
+        editor?.RequestRefresh(McbViewParts.All);
         editor?.Repaint();
     }
 

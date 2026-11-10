@@ -604,7 +604,7 @@ public partial class VersionListDrawer
             {
                 if (EditorUtility.DisplayDialog("Confirm Upload", $"Upload version {ver.version} to the server?\n\nThis action is irreversible.", "Upload", "Cancel"))
                 {
-                    EditorCoroutineUtility.StartCoroutineOwnerless(editor.creatorModule.UploadUnsubmittedVersionCoroutine(ver));
+                    EditorCoroutineUtility.StartCoroutineOwnerless(editor.Session.Publish(ver));
                     RefreshVersionUi();
                 }
             }));
@@ -747,7 +747,7 @@ public partial class VersionListDrawer
         icon.AddToClassList("mcb-version-mesh-row__icon");
         button.Add(icon);
         ShowPress(button);
-        ButtonInteraction.RegisterImmediateClick(button, () => VersionCompareWindow.Open(editor, ver));
+        ButtonInteraction.RegisterImmediateClick(button, () => VersionCompareWindow.Open(editor.Session, ver));
         row.Add(button);
 
         var export = new Button { tooltip = "Save this version's model as an FBX file, without applying it: the file its creator published, or the avatar's meshes as the version makes them." };

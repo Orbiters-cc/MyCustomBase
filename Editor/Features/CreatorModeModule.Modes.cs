@@ -322,7 +322,7 @@ public partial class CreatorModeModule
             int other = bindings.Length - shapes - objects - bindings.Count(b => b.type == typeof(Transform));
             if (other > 0) parts.Add(other + " other value(s)");
             name.Add(McbSectionUi.Text(parts.Count > 0 ? string.Join(" · ", parts) : "Animates nothing", "mcb-rule__mesh"));
-            var root = AvatarPaths.Root(editor.customBaseTarget);
+            var root = AvatarPaths.Root(session.customBaseTarget);
             var missing = bindings.Select(b => b.path).Distinct().Where(p => p.Length > 0 && ResolveModeObject(p) == null && AvatarPaths.Find(root, p) == null).ToArray();
             name.tooltip = AssetDatabase.GetAssetPath(clip) + (missing.Length > 0 ? "\nNot on this avatar: " + string.Join(", ", missing.Take(6)) : "");
             if (missing.Length > 0) name.AddToClassList("mcb-section__note--warning");
@@ -341,8 +341,8 @@ public partial class CreatorModeModule
     /// <summary>The avatar-relative path of a dropped object; logic prefab objects use the installed "mcb logic/" prefix.</summary>
     private string ModeObjectPath(GameObject go)
     {
-        var avatar = AvatarPaths.Root(editor.customBaseTarget);
-        var logic = editor.customBaseTarget.avatarLogicPrefab;
+        var avatar = AvatarPaths.Root(session.customBaseTarget);
+        var logic = session.customBaseTarget.avatarLogicPrefab;
         if (go.transform.IsChildOf(avatar) && go.transform != avatar) return AnimationUtility.CalculateTransformPath(go.transform, avatar);
         if (logic != null && go.transform.IsChildOf(logic.transform) && go.transform != logic.transform)
             return AvatarPaths.LogicPrefix + AnimationUtility.CalculateTransformPath(go.transform, logic.transform);
@@ -351,10 +351,10 @@ public partial class CreatorModeModule
 
     private GameObject ResolveModeObject(string path)
     {
-        var logic = editor.customBaseTarget.avatarLogicPrefab;
+        var logic = session.customBaseTarget.avatarLogicPrefab;
         if (path.StartsWith(AvatarPaths.LogicPrefix, StringComparison.Ordinal) && logic != null)
             return logic.transform.Find(path.Substring(AvatarPaths.LogicPrefix.Length))?.gameObject;
-        return AvatarPaths.Root(editor.customBaseTarget).Find(path)?.gameObject;
+        return AvatarPaths.Root(session.customBaseTarget).Find(path)?.gameObject;
     }
 
     /// <summary>Animation clips the version's modes play: shipped in the logic package so their GUIDs resolve for users.</summary>

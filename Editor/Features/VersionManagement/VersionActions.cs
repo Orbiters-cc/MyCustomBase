@@ -68,7 +68,7 @@ public class VersionActions
         }
     }
 
-    private readonly MCBEditor editor;
+    private readonly McbSession session;
     private readonly NetworkService networkService;
     private readonly FileManagerService fileManagerService;
     private VersionTransitionRollbackSnapshot activeTransitionRollback;
@@ -85,19 +85,18 @@ public class VersionActions
     // A value in a query string, escaped (a version or key with a '&' or a space must not change the request).
     private static string Query(string value) => Uri.EscapeDataString(value ?? string.Empty);
 
-    public VersionActions(MCBEditor editor, NetworkService network, FileManagerService files)
+    public VersionActions(McbSession session, NetworkService network, FileManagerService files)
     {
-        this.editor = editor;
+        this.session = session;
         this.networkService = network;
         this.fileManagerService = files;
     }
     
     // Coroutine Starters
-    public void StartVersionFetch() => EditorCoroutineUtility.StartCoroutineOwnerless(FetchVersionsCoroutine());
     public void StartVersionDownload(CustomBaseVersion ver, bool apply)
     {
         if (apply && RefitBlocksSwitch()) return;
-        if (apply && !editor.isDownloading)
+        if (apply && !session.isDownloading)
         {
             ResetApplyProgressRange();
             StartApplyProgress("Starting download...", 0f);
@@ -106,7 +105,7 @@ public class VersionActions
         EditorCoroutineUtility.StartCoroutineOwnerless(DownloadVersionCoroutine(ver, apply));
     }
     public void StartVersionDelete(CustomBaseVersion ver) => EditorCoroutineUtility.StartCoroutineOwnerless(DeleteVersionCoroutine(ver));
-    public void StartApplyVersion() => StartApplyOrResetWithIntro(editor.selectedVersionForAction, false, "Starting version switch...");
+    public void StartApplyVersion() => StartApplyOrResetWithIntro(session.selectedVersionForAction, false, "Starting version switch...");
     public void StartReset() => StartApplyOrResetWithIntro(null, true, "Starting reset...");
     public void StartRecalculateCurrentFbxHash()
     {
@@ -115,19 +114,19 @@ public class VersionActions
     }
     public void StartApplyCustomVersion()
     {
-        if (editor.isApplying || ApplyProgress.IsRunning || RefitBlocksSwitch()) return;
-        EditorCoroutineUtility.StartCoroutineOwnerless(ApplyCustomVersionCoroutine(editor.selectedCustomVersionForAction));
+        if (session.isApplying || ApplyProgress.IsRunning || RefitBlocksSwitch()) return;
+        EditorCoroutineUtility.StartCoroutineOwnerless(ApplyCustomVersionCoroutine(session.selectedCustomVersionForAction));
     }
     public void ConfigureApplyProgressColor(Color color) => ApplyProgress.SetFillColor(color);
 
     public bool CanResetToDefaultBaseWithoutFbxImport()
     {
-        if (editor?.customBaseTarget == null || fileManagerService == null)
+        if (session?.customBaseTarget == null || fileManagerService == null)
         {
             return false;
         }
 
-        var versionForAssets = ResolvePersistedAppliedVersion() ?? editor.selectedVersionForAction;
+        var versionForAssets = ResolvePersistedAppliedVersion() ?? session.selectedVersionForAction;
         if (!NativeMeshPayloadService.VersionUsesAdvancedMesh(versionForAssets))
         {
             return false;
@@ -153,8 +152,8 @@ public class VersionActions
         string versionFolderPath = MCBUtils.GetVersionDataPath(version);
         if (string.IsNullOrWhiteSpace(versionFolderPath) || !Directory.Exists(Path.GetFullPath(versionFolderPath)))
         {
-            editor.warningsModule.AddWarning("The selected version is not available locally, so it cannot be exported.", MessageType.Error, "Export failed");
-            editor.Repaint();
+            session.warningsModule.AddWarning("The selected version is not available locally, so it cannot be exported.", MessageType.Error, "Export failed");
+            session.Repaint();
             return;
         }
 
@@ -178,122 +177,17 @@ public class VersionActions
         }
         catch (Exception ex)
         {
-            editor.warningsModule.AddWarning(ex.Message, MessageType.Error, "Export failed");
+            session.warningsModule.AddWarning(ex.Message, MessageType.Error, "Export failed");
             MCBLogger.LogError($"[VersionActions] Offline export failed: {ex}");
         }
         finally
         {
             EditorUtility.ClearProgressBar();
-            editor.LoadImportedVersions(true);
-            editor.Repaint();
+            session.LoadImportedVersions(true);
+            session.Repaint();
         }
     }
 
-    // A fetch asked for while one runs (a publication's, while the list was loading) is not dropped: the running one may
-    // predate what it must show, so it runs again once that one ends.
-    private IEnumerator FetchVersionsCoroutine()
-    {
-        if (!editor.HasServerAccess) yield break;
-        if (editor.isFetching)
-        {
-            editor.versionFetchQueued = true;
-            yield break;
-        }
-        do
-        {
-            editor.versionFetchQueued = false;
-            yield return FetchVersionsOnceCoroutine();
-        }
-        while (editor != null && editor.versionFetchQueued && editor.HasServerAccess);
-    }
-
-    private IEnumerator FetchVersionsOnceCoroutine()
-    {
-        editor.isFetching = true;
-        editor.warningsModule.Clear();
-        editor.accessDeniedAssetId = null;
-        editor.fetchAttempted = true;
-        editor.Repaint();
-
-        UpdateCurrentBaseFbxHash();
-
-        if (string.IsNullOrEmpty(editor.currentBaseFbxHash))
-        {
-            MCBLogger.LogWarning("[VersionActions] Version fetch aborted because currentBaseFbxHash is empty.");
-            editor.serverVersions = new System.Collections.Generic.List<CustomBaseVersion>();
-            UpdateAppliedVersionAndState(); // This will clear the applied state
-            editor.isFetching = false;
-            editor.Repaint();
-            yield break;
-        }
-
-        var selectedAsset = editor.GetSelectedAsset();
-        if (selectedAsset == null)
-        {
-            MCBLogger.Log("[VersionActions] Version fetch skipped because no asset is selected in the gallery.");
-            editor.serverVersions = new System.Collections.Generic.List<CustomBaseVersion>();
-            editor.recommendedVersion = null;
-            editor.isFetching = false;
-            editor.Repaint();
-            yield break;
-        }
-
-        string currentFbxPath = GetCurrentFBXPath();
-        int requestedAssetId = selectedAsset.id;
-        string requestedToken = editor.authToken;
-        string requestedBaseHash = editor.currentBaseFbxHash;
-        string requestedSourceVersionKey = OriginalBaseLibrary.ActiveKey(selectedAsset);
-        string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(selectedAsset.id)}?d={Query(editor.currentBaseFbxHash)}&sourceKey={Query(OriginalBaseLibrary.ActiveKey(selectedAsset))}";
-        MCBLogger.Log($"[VersionActions] Starting version fetch. assetId={selectedAsset.id} | url={url} | currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash}");
-        var fetchTask = networkService.FetchVersionsAsync(url, requestedToken);
-        
-        while (!fetchTask.IsCompleted)
-        {
-            yield return null;
-        }
-        
-        var (success, response, error) = fetchTask.Result;
-        if (editor.GetSelectedAsset()?.id != requestedAssetId || editor.authToken != requestedToken ||
-            editor.currentBaseFbxHash != requestedBaseHash || OriginalBaseLibrary.ActiveKey(editor.GetSelectedAsset()) != requestedSourceVersionKey)
-        {
-            editor.isFetching = false;
-            yield break;
-        }
-        if (success)
-        {
-            editor.serverVersions = response?.versions ?? new System.Collections.Generic.List<CustomBaseVersion>();
-            editor.recommendedVersion = editor.serverVersions.FirstOrDefault(v => v.version == response?.recommendedVersion);
-            PersistentCache.Instance.CacheVersions(requestedBaseHash, editor.serverVersions,
-                editor.recommendedVersion, requestedToken, requestedAssetId, requestedSourceVersionKey);
-            UpdateAppliedVersionAndState();
-            SmartSelectVersion();
-        }
-        else
-        {
-            // No access (403 ACCESS_DENIED): the version list shows the store link instead of an error, and nothing cached.
-            if (!string.IsNullOrEmpty(error) && error.StartsWith(NetworkService.AccessDeniedPrefix, StringComparison.Ordinal))
-            {
-                editor.accessDeniedAssetId = error.Substring(NetworkService.AccessDeniedPrefix.Length);
-                editor.warningsModule.Clear(); // Do not show generic error box
-                editor.serverVersions = new System.Collections.Generic.List<CustomBaseVersion>();
-                editor.recommendedVersion = null;
-                PersistentCache.Instance.RemoveCachedVersions(requestedBaseHash, requestedToken, requestedAssetId, requestedSourceVersionKey);
-            }
-            else
-            {
-                MCBLogger.LogError($"[VersionActions] Version fetch failed. currentFbxPath={currentFbxPath} | currentBaseFbxHash={editor.currentBaseFbxHash} | error={error}");
-                editor.warningsModule.AddWarning(error, MessageType.Error, "Fetch failed");
-                // A transient backend failure must not discard the last known version metadata
-                // or recalculate applied state from an unchanged FBX hash. Local imported data and
-                // the persisted applied marker remain authoritative while offline.
-            }
-        }
-        
-        editor.isFetching = false;
-        editor.RefreshUiToolkitSections();
-        editor.Repaint();
-    }
-    
     private IEnumerator DownloadVersionCoroutine(CustomBaseVersion version, bool applyAfter)
     {
         // A Download and Apply started the apply progress (StartVersionDownload): every way out before the apply runs ends
@@ -301,8 +195,8 @@ public class VersionActions
         void EndUnstarted()
         {
             if (applyAfter) FinishApplyProgress(false);
-            else editor.RefreshUiToolkitSections();
-            editor.Repaint();
+            else session.RequestRefresh(McbViewParts.All);
+            session.Repaint();
         }
 
         if (version.isUnsubmitted || version.localArtifactSourceVersionKey != null)
@@ -312,31 +206,31 @@ public class VersionActions
             {
                 if (!local)
                 {
-                    editor.warningsModule.AddWarning("This local build is incomplete. Rebuild it in the creator form before previewing or applying it.", MessageType.Error, "Local version unavailable");
+                    session.warningsModule.AddWarning("This local build is incomplete. Rebuild it in the creator form before previewing or applying it.", MessageType.Error, "Local version unavailable");
                     EndUnstarted();
                     yield break;
                 }
                 if (applyAfter) yield return ApplyOrResetCoroutine(version, false);
-                editor.RefreshUiToolkitSections();
+                session.RequestRefresh(McbViewParts.All);
                 yield break;
             }
             // A published version whose local artifact no longer holds this original: download the original's own copy.
             version = VersionRepository.InLocalArtifact(version, null);
         }
         MCBPerformance.PauseForeground();
-        if (editor.isDownloading) yield break;
-        editor.warningsModule.Clear();
+        if (session.isDownloading) yield break;
+        session.warningsModule.Clear();
 
         // Before downloading anything, and before the download counts as running.
         string blocked = DownloadBlocker(version, out string blockedTitle);
         if (blocked != null)
         {
-            editor.warningsModule.AddWarning(blocked, MessageType.Error, blockedTitle);
+            session.warningsModule.AddWarning(blocked, MessageType.Error, blockedTitle);
             EndUnstarted();
             yield break;
         }
 
-        var selectedAsset = editor.GetSelectedAsset();
+        var selectedAsset = session.GetSelectedAsset();
         if (selectedAsset == null)
         {
             MCBLogger.LogWarning("[VersionActions] Download aborted because no asset is selected in the gallery.");
@@ -344,13 +238,13 @@ public class VersionActions
             yield break;
         }
 
-        editor.isDownloading = true;
+        session.isDownloading = true;
         DownloadProgress = 0f;
         if (applyAfter)
         {
             BeginApplyProgress("Downloading version...", 0.02f);
         }
-        editor.Repaint();
+        session.Repaint();
 
         // Every way the download ends on its own clears isDownloading. One that throws (a locked FBX while hashing or
         // preloading it) still ends it here, or the version buttons stay disabled until the next reload.
@@ -361,10 +255,10 @@ public class VersionActions
         }
         finally
         {
-            if (editor.isDownloading)
+            if (session.isDownloading)
             {
-                editor.isDownloading = false;
-                editor.warningsModule.AddWarning($"Version {version.version} could not be downloaded. See the Console for details.", MessageType.Error, "Download failed");
+                session.isDownloading = false;
+                session.warningsModule.AddWarning($"Version {version.version} could not be downloaded. See the Console for details.", MessageType.Error, "Download failed");
                 EndUnstarted();
             }
         }
@@ -375,24 +269,24 @@ public class VersionActions
         // Inspector initialization may first detect a garment before the selected
         // asset's source mapping is loaded. Never use that stale UI hash to download.
         string requestedSourcePath = GetCurrentFBXPath();
-        string requestedToken = editor.authToken;
+        string requestedToken = session.authToken;
         var sourceHashesTask = FileManagerService.HashModelAndBackupAsync(requestedSourcePath);
         while (!sourceHashesTask.IsCompleted) yield return null;
         var sourceHashes = sourceHashesTask.Result;
         RefreshOriginalBackup(requestedSourcePath, version);
         string requestBaseHash = fileManagerService.BackupExists(requestedSourcePath)
             ? sourceHashes.originalHash : sourceHashes.currentHash;
-        if (editor.GetSelectedAsset()?.id != selectedAsset.id || editor.authToken != requestedToken ||
+        if (session.GetSelectedAsset()?.id != selectedAsset.id || session.authToken != requestedToken ||
             !string.Equals(requestedSourcePath, GetCurrentFBXPath(), StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(requestBaseHash))
         {
-            editor.isDownloading = false;
+            session.isDownloading = false;
             if (applyAfter) FinishApplyProgress(false);
-            editor.warningsModule.AddWarning("The source model changed or could not be read. Select the version again to retry.", MessageType.Warning, "Download paused");
-            editor.RefreshUiToolkitSections();
+            session.warningsModule.AddWarning("The source model changed or could not be read. Select the version again to retry.", MessageType.Warning, "Download paused");
+            session.RequestRefresh(McbViewParts.All);
             yield break;
         }
-        editor.currentBaseFbxHash = requestBaseHash;
+        session.currentBaseFbxHash = requestBaseHash;
         string tempZipPath = Path.Combine(Path.GetTempPath(), $"mcb_dl_{Guid.NewGuid()}.zip");
         string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetModelEndpoint(selectedAsset.id)}?version={Query(version.version)}&d={Query(requestBaseHash)}&sourceKey={Query(version.sourceVersionKey)}";
         var deliveryDecision = MCBPerformance.Choose(version.deliveryVariants);
@@ -464,11 +358,11 @@ public class VersionActions
         
         if (!setupSucceeded)
         {
-            editor.warningsModule.AddWarning("Failed to start download task", MessageType.Error, "Download failed");
-            editor.isDownloading = false;
+            session.warningsModule.AddWarning("Failed to start download task", MessageType.Error, "Download failed");
+            session.isDownloading = false;
             if (applyAfter) FinishApplyProgress(false);
-            else editor.RefreshUiToolkitSections();
-            editor.Repaint();
+            else session.RequestRefresh(McbViewParts.All);
+            session.Repaint();
             yield break;
         }
         
@@ -547,8 +441,8 @@ public class VersionActions
         }
         if (success)
         {
-            if (editor.authToken != requestedToken || AuthenticationService.GetAuth()?.token != requestedToken ||
-                editor.GetSelectedAsset()?.id != selectedAsset.id)
+            if (session.authToken != requestedToken || AuthenticationService.GetAuth()?.token != requestedToken ||
+                session.GetSelectedAsset()?.id != selectedAsset.id)
             {
                 success = false;
                 error = "The signed-in account or selected asset changed during download. Select the version again to retry.";
@@ -562,13 +456,13 @@ public class VersionActions
         {
             if (!success)
             {
-                editor.warningsModule.AddWarning(error, MessageType.Error, "Download failed");
+                session.warningsModule.AddWarning(error, MessageType.Error, "Download failed");
                 if (applyAfter) FinishApplyProgress(false);
             }
             else if (!VersionContentTrust.ConfirmDownloadedCode(version, selectedAsset, downloadedCode, currentCreatorTrust))
             {
                 downloadedZipBytes = null;
-                editor.warningsModule.AddWarning(
+                session.warningsModule.AddWarning(
                     $"Version {version.version} was not installed: it contains code and you chose not to import it. Nothing was added to your project.",
                     MessageType.Info, "Download cancelled");
                 if (applyAfter) FinishApplyProgress(false);
@@ -613,7 +507,7 @@ public class VersionActions
                     fileManagerService.UnzipAndMove(tempZipPath, tempExtractPath, finalDest, ValidateDownload);
                 }
 
-                editor.LoadImportedVersions(true);
+                session.LoadImportedVersions(true);
                 extractionSucceeded = true;
                 if (advancedMeshApply)
                 {
@@ -625,7 +519,7 @@ public class VersionActions
         }
         catch (Exception e) 
         { 
-            editor.warningsModule.AddWarning($"Extraction failed: {e.Message}", MessageType.Error, "Extraction failed"); 
+            session.warningsModule.AddWarning($"Extraction failed: {e.Message}", MessageType.Error, "Extraction failed"); 
             if (applyAfter) FinishApplyProgress(false);
         }
         finally
@@ -635,14 +529,14 @@ public class VersionActions
             if (!string.IsNullOrEmpty(tempExtractPath) && Directory.Exists(tempExtractPath)) 
                 Directory.Delete(tempExtractPath, true);
             
-            editor.isDownloading = false;
+            session.isDownloading = false;
             // A failed download-and-apply rebuilt the panel while the download still counted as running: rebuild it
             // again, or its buttons stay disabled. A successful one goes on applying and refreshes when that ends.
             if (!applyAfter || !extractionSucceeded)
             {
-                editor.RefreshUiToolkitSections();
+                session.RequestRefresh(McbViewParts.All);
             }
-            editor.Repaint();
+            session.Repaint();
         }
         
         // --- Post-processing phase (outside try/catch) ---
@@ -660,7 +554,7 @@ public class VersionActions
 
             if (applyAfter) 
             {
-                editor.selectedVersionForAction = version;
+                session.selectedVersionForAction = version;
                 SetApplyProgressRange(DownloadApplyImportComplete, 1f - DownloadApplyImportComplete);
                 yield return ApplyOrResetCoroutine(version, false);
                 advancedMeshPreparationPreloads.Clear();
@@ -936,10 +830,10 @@ public class VersionActions
 
     private IEnumerator DeleteVersionCoroutine(CustomBaseVersion version)
     {
-        if (editor.isDeleting) yield break;
-        editor.isDeleting = true;
-        editor.warningsModule.Clear();
-        editor.Repaint();
+        if (session.isDeleting) yield break;
+        session.isDeleting = true;
+        session.warningsModule.Clear();
+        session.Repaint();
 
         bool deleted = false;
         try
@@ -948,7 +842,7 @@ public class VersionActions
             VersionRepository.Delete(version);
             deleted = true;
         }
-        catch (Exception e) { editor.warningsModule.AddWarning($"Failed to delete folder: {e.Message}", MessageType.Error, "Deletion failed"); }
+        catch (Exception e) { session.warningsModule.AddWarning($"Failed to delete folder: {e.Message}", MessageType.Error, "Deletion failed"); }
 
         if (deleted)
         {
@@ -957,20 +851,20 @@ public class VersionActions
 
             if (version.isUnsubmitted)
             {
-                editor.creatorModule.RemoveUnsubmittedVersion(version);
+                session.RemoveUnsubmittedVersion(version);
             }
             AssetDatabase.Refresh();
-            editor.LoadImportedVersions(true);
+            session.LoadImportedVersions(true);
         }
 
-        editor.isDeleting = false;
-        editor.RefreshUiToolkitSections();
-        editor.Repaint();
+        session.isDeleting = false;
+        session.RequestRefresh(McbViewParts.All);
+        session.Repaint();
     }
 
     private void BeginApplyProgress(string stepText, float progress)
     {
-        editor.isApplying = true;
+        session.isApplying = true;
         if (!ApplyProgress.IsRunning)
         {
             applyProgressGeneration++;
@@ -978,7 +872,7 @@ public class VersionActions
         }
 
         ApplyProgress.Report(MapApplyProgress(progress), stepText);
-        editor.Repaint();
+        session.Repaint();
     }
 
     private void ReportApplyProgress(float progress, string stepText)
@@ -986,12 +880,12 @@ public class VersionActions
         if (!ApplyProgress.IsRunning)
         {
             applyProgressGeneration++;
-            editor.isApplying = true;
+            session.isApplying = true;
             ApplyProgress.Begin(stepText);
         }
 
         ApplyProgress.Report(MapApplyProgress(progress), stepText);
-        editor.Repaint();
+        session.Repaint();
     }
 
     private void FinishApplyProgress(bool success)
@@ -1001,19 +895,19 @@ public class VersionActions
             int generation = ++applyProgressGeneration;
             ApplyProgress.Report(1f, "Apply complete...");
             ResetApplyProgressRange();
-            editor.Repaint();
+            session.Repaint();
             EditorCoroutineUtility.StartCoroutineOwnerless(CompleteApplyProgressAfterVisualHold(generation));
             // Other tools (My Avatar) check the avatar's clothing against the new custom base.
-            if (editor.customBaseTarget != null) MCBReFitIntegration.NotifyCustomBaseChanged(editor.customBaseTarget);
+            if (session.customBaseTarget != null) MCBReFitIntegration.NotifyCustomBaseChanged(session.customBaseTarget);
         }
         else
         {
             applyProgressGeneration++;
-            editor.isApplying = false;
+            session.isApplying = false;
             ResetApplyProgressRange();
             ApplyProgress.Fail();
-            editor.Repaint();
-            editor.RefreshUiToolkitSections();
+            session.Repaint();
+            session.RequestRefresh(McbViewParts.All);
         }
     }
 
@@ -1021,10 +915,10 @@ public class VersionActions
     {
         ResetApplyProgressRange();
         applyProgressGeneration++;
-        editor.isApplying = true;
+        session.isApplying = true;
         ApplyProgress.Begin(stepText);
         ApplyProgress.Report(MapApplyProgress(progress), stepText);
-        editor.Repaint();
+        session.Repaint();
         return applyProgressGeneration;
     }
 
@@ -1057,7 +951,7 @@ public class VersionActions
 
     private void StartApplyOrResetWithIntro(CustomBaseVersion version, bool isReset, string stepText)
     {
-        if (editor.isApplying || ApplyProgress.IsRunning || RefitBlocksSwitch())
+        if (session.isApplying || ApplyProgress.IsRunning || RefitBlocksSwitch())
         {
             return;
         }
@@ -1074,7 +968,7 @@ public class VersionActions
         {
             float localProgress = (float)((EditorApplication.timeSinceStartup - startTime) / ApplyProgressIntroSeconds);
             ApplyProgress.Report(Mathf.Lerp(0f, 0.04f, Mathf.Clamp01(localProgress)), stepText);
-            editor.Repaint();
+            session.Repaint();
             yield return null;
         }
 
@@ -1092,7 +986,7 @@ public class VersionActions
         while (applyProgressGeneration == generation &&
                EditorApplication.timeSinceStartup - startTime < ApplyProgressCompletionHoldSeconds)
         {
-            editor.Repaint();
+            session.Repaint();
             yield return null;
         }
 
@@ -1101,17 +995,17 @@ public class VersionActions
             yield break;
         }
 
-        editor.isApplying = false;
+        session.isApplying = false;
         ApplyProgress.Complete();
-        editor.Repaint();
-        editor.RefreshUiToolkitSections();
+        session.Repaint();
+        session.RequestRefresh(McbViewParts.All);
     }
 
     internal IEnumerator ApplyOrResetCoroutine(CustomBaseVersion version, bool isReset)
     {
         // The base models are read through this inspector's serialized copy: a migration, MCP or another inspector may
         // have changed the component since, and a stale copy restores the armature from a model the avatar no longer has.
-        editor.serializedObject.Update();
+        session.serializedObject.Update();
         IEnumerator routine = null;
         try
         {
@@ -1157,18 +1051,18 @@ public class VersionActions
         string message = $"{operation} failed: {ex.GetBaseException().Message}";
         MCBLogger.LogError($"[VersionActions] {operation} failed unexpectedly. version={versionLabel} reset={isReset}: {ex}");
         RollbackActiveTransition();
-        editor.warningsModule?.AddWarning(message, MessageType.Error, $"{operation} failed");
-        editor.isDownloading = false;
+        session.warningsModule?.AddWarning(message, MessageType.Error, $"{operation} failed");
+        session.isDownloading = false;
         advancedMeshPreparationPreloads.Clear();
         FinishApplyProgress(false);
-        editor.RefreshUiToolkitSections();
-        editor.Repaint();
+        session.RequestRefresh(McbViewParts.All);
+        session.Repaint();
     }
 
     private IEnumerator PrepareVersionSwitchCoroutine(CustomBaseVersion version, bool isReset)
     {
-        var requestedTarget = editor.customBaseTarget;
-        string requestedToken = editor.authToken;
+        var requestedTarget = session.customBaseTarget;
+        string requestedToken = session.authToken;
         if (!isReset)
         {
             if (version == null) throw new ArgumentNullException(nameof(version));
@@ -1189,7 +1083,7 @@ public class VersionActions
             }
         }
         while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
-        if (requestedTarget == null || editor.customBaseTarget != requestedTarget || editor.authToken != requestedToken)
+        if (requestedTarget == null || session.customBaseTarget != requestedTarget || session.authToken != requestedToken)
             throw new InvalidOperationException("The avatar or signed-in account changed while preparing the version switch.");
 
     }
@@ -1217,7 +1111,7 @@ public class VersionActions
     /// </summary>
     private void ApplyOrResetFollowingAnimations(CustomBaseVersion version, bool isReset)
     {
-        var target = editor.customBaseTarget;
+        var target = session.customBaseTarget;
         var root = target != null ? AvatarPaths.Root(target) : null;
         Orbiters.Toolkit.Editor.Animations.PathSnapshot before = null;
         try { if (root != null) before = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Snapshot(root.gameObject); }
@@ -1246,16 +1140,16 @@ public class VersionActions
                 string restored = LegacyMigrationService.RestoreOriginal(root);
                 if (restored != null)
                 {
-                    editor.serializedObject.Update();
+                    session.serializedObject.Update();
                     UpdateCurrentBaseFbxHash();
-                    editor.RefreshUiToolkitSections();
+                    session.RequestRefresh(McbViewParts.All);
                     MCBLogger.Log($"[MCB] The avatar is back on {restored}, as before its migration.");
                 }
             }
             catch (Exception ex)
             {
                 MCBLogger.LogWarning("[MCB] The release from before MCB could not be restored: " + ex);
-                editor.warningsModule?.AddWarning("The avatar is on its original base model, but what it had before its migration could not be restored: "
+                session.warningsModule?.AddWarning("The avatar is on its original base model, but what it had before its migration could not be restored: "
                     + ex.Message, MessageType.Warning, "Reset");
             }
         if (before == null) return;
@@ -1268,7 +1162,7 @@ public class VersionActions
             MCBLogger.Log($"[MCB] {applied.Paths} animation path(s) in {applied.Assets} asset(s) now follow the bones the "
                 + (isReset ? "reset" : "version") + $" moved ({applied.Copies} shared asset(s) copied for this avatar).");
             if (applied.Skipped.Count > 0)
-                editor.warningsModule.AddWarning("Some animations still use the former bone paths and were left as they are: "
+                session.warningsModule.AddWarning("Some animations still use the former bone paths and were left as they are: "
                     + string.Join("; ", applied.Skipped), MessageType.Warning, "Animation paths");
         }
         catch (Exception ex) { MCBLogger.LogWarning("[MCB] Animations could not follow the moved bones: " + ex.Message); }
@@ -1427,30 +1321,30 @@ public class VersionActions
             return;
         }
         MCBPerformance.PauseForeground();
-        editor.serializedObject.Update();
+        session.serializedObject.Update();
         if (!isReset) MCBVersionDelivery.ApplyLocalDelivery(version);
         float startingProgress = applyProgressBase > 0f
             ? 0f
             : (ApplyProgress.IsRunning ? Mathf.Max(ApplyProgress.Progress, 0.18f) : 0f);
         BeginApplyProgress(isReset ? "Preparing reset..." : "Preparing version switch...", startingProgress);
-        var root = AvatarPaths.Root(editor.customBaseTarget);
-        bool preserveBlendshapeValues = editor.customBaseTarget != null && editor.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch;
+        var root = AvatarPaths.Root(session.customBaseTarget);
+        bool preserveBlendshapeValues = session.customBaseTarget != null && session.customBaseTarget.preserveBlendshapeValuesOnVersionSwitch;
         var blendshapeSnapshot = preserveBlendshapeValues ? CaptureBlendshapeState(root) : null;
         var previousVersion = ResolvePersistedAppliedVersion();
-        var versionForAssets = isReset ? (previousVersion ?? editor.selectedVersionForAction) : version;
+        var versionForAssets = isReset ? (previousVersion ?? session.selectedVersionForAction) : version;
         bool previousUsesAdvancedMesh = NativeMeshPayloadService.VersionUsesAdvancedMesh(previousVersion);
         bool versionUsesAdvancedMesh = NativeMeshPayloadService.VersionUsesAdvancedMesh(versionForAssets);
         var transitionVersions = GetDistinctTransitionVersions(previousVersion, versionForAssets);
         bool isAdvancedTransition = previousUsesAdvancedMesh || versionUsesAdvancedMesh;
         var profile = new ApplyTimingProfile(versionForAssets, isReset, versionUsesAdvancedMesh);
-        var dynamicNormalsService = new DynamicNormalsService(editor);
+        var dynamicNormalsService = new DynamicNormalsService(session);
         profile.Mark("Setup target, version state, and blendshape snapshot");
 
         MCBLogger.Log($"[VersionActions] ApplyOrReset start (reset={isReset}, version={(version != null ? version.version : "null")})");
 
         // Leaving the original state records the avatar's own models; while a version is applied they are what
         // transitions and the reset restore, whatever the version or the selected asset name as sources.
-        var target = editor.customBaseTarget;
+        var target = session.customBaseTarget;
         if (previousVersion == null && target.appliedCustomBaseAssetId == 0)
         {
             if (!isReset)
@@ -1462,9 +1356,9 @@ public class VersionActions
         }
         else if (target.versionOriginalModels.Count > 0 && !target.baseFbxFiles.SequenceEqual(target.versionOriginalModels))
         {
-            editor.serializedObject.ApplyModifiedProperties();
+            session.serializedObject.ApplyModifiedProperties();
             FileManagerService.SetCreatorSourceFiles(target, target.versionOriginalModels);
-            editor.serializedObject.Update();
+            session.serializedObject.Update();
         }
 
         string fbxPath = GetCurrentFBXPath();
@@ -1479,18 +1373,18 @@ public class VersionActions
         if (activeTransitionRollback != null)
             throw new InvalidOperationException("Another version transition is still active.");
         activeTransitionRollback = VersionTransitionRollbackSnapshot.Capture(
-            GetTransitionAffectedFbxPaths(transitionVersions, fbxPath), editor.customBaseTarget, editor);
+            GetTransitionAffectedFbxPaths(transitionVersions, fbxPath), session.customBaseTarget, session);
 
-        ModeService.Restore(editor.customBaseTarget);
+        ModeService.Restore(session.customBaseTarget);
         // The person's values without the version's modes: the reset gives them back by name once the original meshes are on.
         var resetSnapshot = isReset ? CaptureBlendshapeState(root) : null;
         // The original base has none of the custom base's blendshapes: remember their values for its next install.
         if (isReset) RememberVersionBlendshapes(root, previousVersion);
-        NativeRendererLayoutService.Restore(editor.customBaseTarget);
-        NativeMeshPayloadService.RestoreOriginalBoneParents(editor.customBaseTarget);
-        MCBReFitIntegration.SaveVersionFits(editor.customBaseTarget, previousVersion);
-        MCBReFitIntegration.RestoreOriginalAssetMeshes(editor.customBaseTarget);
-        editor.serializedObject.Update();
+        NativeRendererLayoutService.Restore(session.customBaseTarget);
+        NativeMeshPayloadService.RestoreOriginalBoneParents(session.customBaseTarget);
+        MCBReFitIntegration.SaveVersionFits(session.customBaseTarget, previousVersion);
+        MCBReFitIntegration.RestoreOriginalAssetMeshes(session.customBaseTarget);
+        session.serializedObject.Update();
 
         var previousAffectedFbxPaths = GetResetAffectedFbxPaths(previousVersion ?? versionForAssets, fbxPath);
         if (!isAdvancedTransition)
@@ -1529,14 +1423,14 @@ public class VersionActions
                         root,
                         versionForAssets,
                         GetResetAffectedFbxPaths(versionForAssets, fbxPath),
-                        editor.customBaseTarget,
+                        session.customBaseTarget,
                         missingRenderers: missingRenderers);
                     if (restoredRenderers == 0 && missingRenderers.Count == 0)
                     {
                         throw new InvalidOperationException("Advanced mesh reset could not safely restore any renderer from the original FBX.");
                     }
                     WarnSkippedRenderers(missingRenderers);
-                    NativeMeshPayloadService.RemoveGeneratedBones(editor.customBaseTarget);
+                    NativeMeshPayloadService.RemoveGeneratedBones(session.customBaseTarget);
                     // After the skeleton is final: the Animator caches the bones it binds.
                     ApplyDefaultAvatarToRootForReset(root, versionForAssets);
                 }
@@ -1560,7 +1454,7 @@ public class VersionActions
                     bool keepShared = VersionCustomization.Read(version.extraCustomization).rendererLayout.IsEmpty;
                     RestoreOriginalFbxStateForTransition(root, transitionVersions, fbxPath,
                         previousVersion != null && !previousUsesAdvancedMesh, keepShared ? version : null);
-                    NativeMeshPayloadService.RemoveGeneratedBones(editor.customBaseTarget);
+                    NativeMeshPayloadService.RemoveGeneratedBones(session.customBaseTarget);
                     profile.Mark("Restored original FBX renderer and armature state for advanced mesh transition");
                 }
                 else if (previousVersion != null)
@@ -1572,7 +1466,7 @@ public class VersionActions
                 // The models this version gives its own Avatar: their import settings are kept for the reset.
                 foreach (string avatarModelPath in GetCustomAvatarFbxPaths(version))
                     AvatarDefinitionGenerationService.BackupOriginalImportSettings(avatarModelPath);
-                NativeRendererLayoutService.Apply(editor.customBaseTarget, version, GetCurrentFBXPaths());
+                NativeRendererLayoutService.Apply(session.customBaseTarget, version, GetCurrentFBXPaths());
                 ApplyVersionModelFilePatches(version, fbxPath);
             }
             catch (Exception e)
@@ -1602,7 +1496,7 @@ public class VersionActions
         {
             profile.Mark("Model patch/reset failed");
             MCBLogger.LogError($"[MCB] Operation failed: {operationException.Message}");
-            editor.warningsModule?.AddWarning(operationException.Message, MessageType.Error, isReset ? "Reset failed" : "Apply failed");
+            session.warningsModule?.AddWarning(operationException.Message, MessageType.Error, isReset ? "Reset failed" : "Apply failed");
             if (activeTransitionRollback != null)
             {
                 RollbackActiveTransition();
@@ -1687,7 +1581,7 @@ public class VersionActions
             bool hasDynamicNormalBody = !isReset && ExtraCustomizationUtils.HasFlag(version?.extraCustomization, "dynamicNormalBody");
             bool hasDynamicNormalFlexing = !isReset && ExtraCustomizationUtils.HasFlag(version?.extraCustomization, "dynamicNormalFlexing");
             var normalSelection = VersionCustomization.Read(version?.extraCustomization).dynamicNormalBlendshapes;
-            bool shouldApplyDynamicNormals = (!isReset && normalSelection.Count > 0 || hasDynamicNormalBody || hasDynamicNormalFlexing) && editor.customBaseTarget.useDynamicNormals;
+            bool shouldApplyDynamicNormals = (!isReset && normalSelection.Count > 0 || hasDynamicNormalBody || hasDynamicNormalFlexing) && session.customBaseTarget.useDynamicNormals;
             
             // Apply or remove dynamic normals based on version feature flags
             // Complete these synchronous mutations inside the version transaction.
@@ -1727,7 +1621,7 @@ public class VersionActions
             // Apply or remove custom veins based on version feature flag
             var materialService = new MaterialService(root);
             var targetMaterialRenderers = versionUsesAdvancedMesh
-                ? NativeMeshPayloadService.ResolveRenderersForSourcePaths(root, versionForAssets, affectedFbxPaths, editor.customBaseTarget)
+                ? NativeMeshPayloadService.ResolveRenderersForSourcePaths(root, versionForAssets, affectedFbxPaths, session.customBaseTarget)
                 : materialService.GetSkinnedMeshRenderersForFbxPaths(affectedFbxPaths);
             // An unencrypted version names no source renderers: its targets are the renderers carrying its meshes.
             if (targetMaterialRenderers.Count == 0 && versionUsesAdvancedMesh && !isReset)
@@ -1792,8 +1686,8 @@ public class VersionActions
             
             if (!isReset && version != null)
             {
-                int restoredRefits = MCBReFitIntegration.RestoreVersionFits(editor.customBaseTarget, version);
-                editor.serializedObject.Update();
+                int restoredRefits = MCBReFitIntegration.RestoreVersionFits(session.customBaseTarget, version);
+                session.serializedObject.Update();
                 profile.Mark($"Restored {restoredRefits} saved accessory ReFits");
             }
 
@@ -1817,7 +1711,7 @@ public class VersionActions
                     RestoreBlendshapeState(root, blendshapeSnapshot, defaults);
                     SyncReFitTransferredBlendshapeWeights(root, version);
                     SyncBlendshapeOverridesFromCurrentWeights(root, version);
-                    MCBLogger.Log($"[VersionActions] Restored blendshape values by name (saved renderers: {blendshapeSnapshot.Count}, overrides: {editor.customBaseTarget.customBlendshapeOverrideNames.Count})");
+                    MCBLogger.Log($"[VersionActions] Restored blendshape values by name (saved renderers: {blendshapeSnapshot.Count}, overrides: {session.customBaseTarget.customBlendshapeOverrideNames.Count})");
                 }
                 else
                 {
@@ -1843,9 +1737,9 @@ public class VersionActions
                     var allSliderEntries = version.customBlendshapes.Where(e => e.isSlider).ToList();
                     List<CustomBlendshapeEntry> selectedSliders;
 
-                    if (editor.customBaseTarget.useCustomSliderSelection)
+                    if (session.customBaseTarget.useCustomSliderSelection)
                     {
-                        var savedNames = new HashSet<string>(editor.customBaseTarget.customSliderSelectionNames ?? new List<string>());
+                        var savedNames = new HashSet<string>(session.customBaseTarget.customSliderSelectionNames ?? new List<string>());
                         selectedSliders = allSliderEntries.Where(e => savedNames.Contains(e.name)).ToList();
                     }
                     else
@@ -1854,13 +1748,13 @@ public class VersionActions
                     }
 
                     MCBLogger.Log($"[VersionActions] Applying sliders for version {version.version}. Count: {selectedSliders.Count}");
-                    VRCFuryService.Instance.ApplySliders(root.gameObject, editor.customBaseTarget.slidersMenuName, selectedSliders);
+                    VRCFuryService.Instance.ApplySliders(root.gameObject, session.customBaseTarget.slidersMenuName, selectedSliders);
 
                     // Ensure the active state is correct (ApplySliders handles creation state, but we enforce it here for existing ones too)
                     slidersTransform = root.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);
                     if (slidersTransform != null)
                     {
-                        bool desiredState = editor.customBaseTarget.useCustomSlidersState ? editor.customBaseTarget.customSlidersState : true;
+                        bool desiredState = session.customBaseTarget.useCustomSlidersState ? session.customBaseTarget.customSlidersState : true;
                         if (slidersTransform.gameObject.activeSelf != desiredState)
                         {
                             MCBLogger.Log($"[VersionActions] Setting sliders GameObject active state to: {desiredState}");
@@ -1875,12 +1769,12 @@ public class VersionActions
                 ReportApplyProgress(0.95f, "Clearing custom version controls...");
                 RestoreOriginalBaseBlendshapes(root, resetSnapshot, previousVersion, preserveBlendshapeValues);
                 // Clear custom overrides when resetting
-                editor.customBaseTarget.customBlendshapeOverrideNames.Clear();
-                editor.customBaseTarget.customBlendshapeOverrideValues.Clear();
-                editor.customBaseTarget.useCustomSliderSelection = false;
-                editor.customBaseTarget.customSliderSelectionNames.Clear();
-                editor.customBaseTarget.useCustomSlidersState = false;
-                editor.customBaseTarget.customSlidersState = true;
+                session.customBaseTarget.customBlendshapeOverrideNames.Clear();
+                session.customBaseTarget.customBlendshapeOverrideValues.Clear();
+                session.customBaseTarget.useCustomSliderSelection = false;
+                session.customBaseTarget.customSliderSelectionNames.Clear();
+                session.customBaseTarget.useCustomSlidersState = false;
+                session.customBaseTarget.customSlidersState = true;
                 SyncAppliedVersionBlendshapeLinkCache(null);
                 SyncAppliedVersionAnimationPositionOffsetCache(null);
 
@@ -1897,8 +1791,8 @@ public class VersionActions
             if (isReset)
             {
                 // Back on the original base: a later install starts from the version's default modes.
-                int resetAssetId = editor.customBaseTarget.appliedCustomBaseAssetId;
-                editor.customBaseTarget.modeChoices.RemoveAll(choice => choice.assetId == resetAssetId);
+                int resetAssetId = session.customBaseTarget.appliedCustomBaseAssetId;
+                session.customBaseTarget.modeChoices.RemoveAll(choice => choice.assetId == resetAssetId);
                 ClearAppliedVersionState();
             }
             else
@@ -1906,7 +1800,7 @@ public class VersionActions
                 try
                 {
                     PersistAppliedVersionState(version);
-                    ModeService.Install(editor.customBaseTarget, version);
+                    ModeService.Install(session.customBaseTarget, version);
                 }
                 catch (Exception ex)
                 {
@@ -1921,7 +1815,7 @@ public class VersionActions
         if (!success)
         {
             RollbackActiveTransition();
-            editor.Repaint();
+            session.Repaint();
             FinishApplyProgress(false);
             profile.Done("FAILED");
             return;
@@ -1944,7 +1838,7 @@ public class VersionActions
             ? "Started asynchronous FBX hash/state recalculation after advanced transition"
             : "Started asynchronous FBX hash/state recalculation");
 
-        EditorUtility.SetDirty(editor.customBaseTarget);
+        EditorUtility.SetDirty(session.customBaseTarget);
         if (versionUsesAdvancedMesh)
         {
             MCBLogger.Log("[VersionActions] Skipping synchronous project auto-save for native mesh apply. The scene remains dirty so Unity can save it normally.");
@@ -1955,7 +1849,7 @@ public class VersionActions
             AutoSaveProjectAfterVersionSwitch();
             profile.Mark("Auto-saved assets and scenes");
         }
-        editor.Repaint();
+        session.Repaint();
         FinishApplyProgress(true);
         // Completion advances the visual generation; it must not cancel its own refresh.
         EditorCoroutineUtility.StartCoroutineOwnerless(
@@ -2114,9 +2008,9 @@ public class VersionActions
     // A refit saves and restores fits per version: switching while one runs would mix two custom bases.
     private bool RefitBlocksSwitch()
     {
-        if (editor == null || !MCBReFitIntegration.IsRefitRunning(editor.customBaseTarget)) return false;
-        editor.warningsModule.AddWarning(MCBReFitIntegration.RefitRunningMessage, MessageType.Warning, "Refit running");
-        editor.Repaint();
+        if (session == null || !MCBReFitIntegration.IsRefitRunning(session.customBaseTarget)) return false;
+        session.warningsModule.AddWarning(MCBReFitIntegration.RefitRunningMessage, MessageType.Warning, "Refit running");
+        session.Repaint();
         return true;
     }
 
@@ -2127,8 +2021,8 @@ public class VersionActions
     private void RefreshOriginalBackup(string fbxPath, params CustomBaseVersion[] versions)
     {
         if (string.IsNullOrWhiteSpace(fbxPath)) return;
-        var known = versions.Append(editor?.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseVersion : null)
-            .Concat(editor?.GetAllVersions() ?? Enumerable.Empty<CustomBaseVersion>())
+        var known = versions.Append(session?.customBaseTarget != null ? session.customBaseTarget.appliedCustomBaseVersion : null)
+            .Concat(session?.GetAllVersions() ?? Enumerable.Empty<CustomBaseVersion>())
             .Where(value => value != null).Distinct().ToList();
         if (fileManagerService.RefreshStaleOriginalBackup(fbxPath, known) == FileManagerService.OriginalBackupState.Unknown)
             MCBLogger.LogWarning($"[VersionActions] {Path.GetFileName(fbxPath)} differs from its original-base backup and from every known version: the backup is used as the original.");
@@ -2203,7 +2097,7 @@ public class VersionActions
 
     private void ApplyXorBinToUnityAsset(CustomBaseVersion version, ModelFileData patchFile)
     {
-        if (editor?.customBaseTarget == null)
+        if (session?.customBaseTarget == null)
         {
             throw new InvalidOperationException("Apply failed: no My Custom Base target is available.");
         }
@@ -2217,7 +2111,7 @@ public class VersionActions
         string originalFbxPath = ResolvePayloadKeyPath(version, patchFile, targetFbxPath, "native mesh payload");
         string binPath = ResolveVersionPatchPath(version, patchFile);
         // Preparation has already materialized the payload cache; assign meshes/pose synchronously.
-        NativeMeshPayloadService.ApplyEncryptedPayload(AvatarPaths.Root(editor.customBaseTarget), version, patchFile,
+        NativeMeshPayloadService.ApplyEncryptedPayload(AvatarPaths.Root(session.customBaseTarget), version, patchFile,
             binPath, originalFbxPath, fileManagerService, targetFbxPath);
     }
 
@@ -2302,7 +2196,7 @@ public class VersionActions
             ? source.id
             : (patchFile?.sourceModelFileId ?? 0);
         return AvatarPathOverrideService.ResolveLocalTargetPath(
-            editor?.customBaseTarget,
+            session?.customBaseTarget,
             sourcePath,
             sourceModelFileId,
             source?.hash);
@@ -2335,7 +2229,7 @@ public class VersionActions
 
     private void ApplyAdvancedMeshAuthoringPose(CustomBaseVersion version, string fallbackFbxPath)
     {
-        if (editor?.customBaseTarget == null || !NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
+        if (session?.customBaseTarget == null || !NativeMeshPayloadService.VersionUsesAdvancedMesh(version))
         {
             return;
         }
@@ -2350,7 +2244,7 @@ public class VersionActions
             throw new InvalidDataException("Advanced mesh version is missing required native mesh payload patches.");
         }
 
-        Transform root = AvatarPaths.Root(editor.customBaseTarget);
+        Transform root = AvatarPaths.Root(session.customBaseTarget);
         foreach (var patchFile in advancedPatchFiles)
         {
             string targetFbxPath = ResolveTargetFbxPath(version, patchFile, fallbackFbxPath);
@@ -2492,7 +2386,7 @@ public class VersionActions
     private List<string> ResolvePlainPayloadFbxPaths(CustomBaseVersion version, ModelFileData patchFile)
     {
         var models = GetCurrentFBXPaths();
-        var root = editor?.customBaseTarget != null ? AvatarPaths.Root(editor.customBaseTarget) : null;
+        var root = session?.customBaseTarget != null ? AvatarPaths.Root(session.customBaseTarget) : null;
         if (models.Count < 2 || root == null) return models.Take(1).ToList();
         var payload = NativeMeshPayloadService.FindCachedPayload(version, patchFile);
         var rendererPaths = payload != null
@@ -2588,7 +2482,7 @@ public class VersionActions
         string message = "These renderers the version replaced are no longer on the avatar (deleted or renamed) and were skipped: " +
                          string.Join(", ", missingRenderers.Distinct(StringComparer.Ordinal));
         MCBLogger.LogWarning("[VersionActions] " + message);
-        editor.warningsModule?.AddWarning(message, MessageType.Warning, "Renderers skipped");
+        session.warningsModule?.AddWarning(message, MessageType.Warning, "Renderers skipped");
     }
 
     private List<string> GetResetAffectedFbxPaths(CustomBaseVersion version, string fallbackFbxPath)
@@ -2717,7 +2611,7 @@ public class VersionActions
             }
         }
 
-        int selectedAssetId = editor.GetSelectedAsset()?.id ?? 0;
+        int selectedAssetId = session.GetSelectedAsset()?.id ?? 0;
         if (selectedAssetId > 0)
         {
             string assetVersionsRoot = MCBUtils.ToUnityPath($"{MCBUtils.ASSET_VERSIONS_FOLDER}/{selectedAssetId}/versions");
@@ -2746,27 +2640,27 @@ public class VersionActions
             yield return resetFromVersion;
         }
 
-        var applied = editor.customBaseTarget != null ? editor.customBaseTarget.appliedCustomBaseVersion : null;
+        var applied = session.customBaseTarget != null ? session.customBaseTarget.appliedCustomBaseVersion : null;
         if (applied != null && applied != resetFromVersion && applied != VersionListDrawer.RESET_VERSION)
         {
             yield return applied;
         }
 
-        if (editor.selectedVersionForAction != null &&
-            editor.selectedVersionForAction != resetFromVersion &&
-            editor.selectedVersionForAction != VersionListDrawer.RESET_VERSION)
+        if (session.selectedVersionForAction != null &&
+            session.selectedVersionForAction != resetFromVersion &&
+            session.selectedVersionForAction != VersionListDrawer.RESET_VERSION)
         {
-            yield return editor.selectedVersionForAction;
+            yield return session.selectedVersionForAction;
         }
 
-        if (editor.recommendedVersion != null &&
-            editor.recommendedVersion != resetFromVersion &&
-            editor.recommendedVersion != VersionListDrawer.RESET_VERSION)
+        if (session.recommendedVersion != null &&
+            session.recommendedVersion != resetFromVersion &&
+            session.recommendedVersion != VersionListDrawer.RESET_VERSION)
         {
-            yield return editor.recommendedVersion;
+            yield return session.recommendedVersion;
         }
 
-        foreach (var version in editor.GetAllVersions() ?? new List<CustomBaseVersion>())
+        foreach (var version in session.GetAllVersions() ?? new List<CustomBaseVersion>())
         {
             if (version != null && version != resetFromVersion && version != VersionListDrawer.RESET_VERSION)
             {
@@ -2864,7 +2758,7 @@ public class VersionActions
     /// <summary>Saves the applied version's exposed blendshape values for this asset before the avatar returns to its original base.</summary>
     private void RememberVersionBlendshapes(Transform root, CustomBaseVersion version)
     {
-        var owner = editor.customBaseTarget;
+        var owner = session.customBaseTarget;
         if (root == null || owner == null || version?.customBlendshapes == null || version.assetId <= 0) return;
         var renderers = GetTargetBlendshapeRenderers(root).OrderByDescending(r => r.name == "Body").ToList();
         // Merged into what the asset already remembers: a migrated legacy release's own shapes ("arcane correction") are
@@ -2893,7 +2787,7 @@ public class VersionActions
 
     private void RememberOriginalBaseBlendshapes(Transform root, Dictionary<string, Dictionary<string, float>> snapshot)
     {
-        var owner = editor.customBaseTarget;
+        var owner = session.customBaseTarget;
         if (root == null || owner == null || snapshot == null) return;
         var memory = new BlendshapeMemory { assetId = OriginalBaseMemoryId };
         // The body's values first when two renderers share a shape name.
@@ -2916,7 +2810,7 @@ public class VersionActions
     {
         if (root == null || snapshot == null) return;
         var original = new Dictionary<string, float>(StringComparer.Ordinal);
-        var memory = editor.customBaseTarget?.blendshapeMemory.FirstOrDefault(m => m.assetId == OriginalBaseMemoryId);
+        var memory = session.customBaseTarget?.blendshapeMemory.FirstOrDefault(m => m.assetId == OriginalBaseMemoryId);
         for (int i = 0; memory != null && i < memory.names.Count && i < memory.values.Count; i++) original[memory.names[i]] = memory.values[i];
         var owned = new HashSet<string>((previousVersion?.customBlendshapes ?? new CustomBlendshapeEntry[0]).Where(e => e != null && !string.IsNullOrEmpty(e.name)).Select(e => e.name), StringComparer.Ordinal);
         foreach (var renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
@@ -2937,7 +2831,7 @@ public class VersionActions
 
     private Dictionary<string, float> RememberedBlendshapes(CustomBaseVersion version)
     {
-        var memory = editor.customBaseTarget?.blendshapeMemory.FirstOrDefault(m => version != null && m.assetId == version.assetId);
+        var memory = session.customBaseTarget?.blendshapeMemory.FirstOrDefault(m => version != null && m.assetId == version.assetId);
         var result = new Dictionary<string, float>(StringComparer.Ordinal);
         for (int i = 0; memory != null && i < memory.names.Count && i < memory.values.Count; i++) result[memory.names[i]] = memory.values[i];
         return result;
@@ -2945,9 +2839,9 @@ public class VersionActions
 
     private void SyncBlendshapeOverridesFromCurrentWeights(Transform root, CustomBaseVersion version)
     {
-        editor.customBaseTarget.customBlendshapeOverrideNames.Clear();
-        editor.customBaseTarget.customBlendshapeOverrideValues.Clear();
-        editor.customBaseTarget.blendShapeValues.Clear();
+        session.customBaseTarget.customBlendshapeOverrideNames.Clear();
+        session.customBaseTarget.customBlendshapeOverrideValues.Clear();
+        session.customBaseTarget.blendShapeValues.Clear();
 
         if (root == null || version?.customBlendshapes == null) return;
 
@@ -2958,7 +2852,7 @@ public class VersionActions
         {
             if (entry == null)
             {
-                editor.customBaseTarget.blendShapeValues.Add(0f);
+                session.customBaseTarget.blendShapeValues.Add(0f);
                 continue;
             }
 
@@ -2974,19 +2868,19 @@ public class VersionActions
                 }
             }
 
-            editor.customBaseTarget.blendShapeValues.Add(currentValue);
+            session.customBaseTarget.blendShapeValues.Add(currentValue);
 
             if (Mathf.Abs(currentValue - defaultValue) > BlendshapeWeightEpsilon)
             {
-                editor.customBaseTarget.customBlendshapeOverrideNames.Add(entry.name);
-                editor.customBaseTarget.customBlendshapeOverrideValues.Add(currentValue);
+                session.customBaseTarget.customBlendshapeOverrideNames.Add(entry.name);
+                session.customBaseTarget.customBlendshapeOverrideValues.Add(currentValue);
             }
         }
     }
 
     private void ApplyVersionBlendshapeValues(Transform root, CustomBaseVersion version)
     {
-        editor.customBaseTarget.blendShapeValues.Clear();
+        session.customBaseTarget.blendShapeValues.Clear();
 
         if (root == null || version?.customBlendshapes == null || version.customBlendshapes.Length == 0) return;
 
@@ -2997,25 +2891,25 @@ public class VersionActions
         {
             if (entry == null)
             {
-                editor.customBaseTarget.blendShapeValues.Add(0f);
+                session.customBaseTarget.blendShapeValues.Add(0f);
                 continue;
             }
 
             float defaultValue = ParseBlendshapeDefaultValue(entry.defaultValue);
             float valueToApply = RememberedBlendshapes(version).TryGetValue(entry.name, out float remembered) ? remembered : defaultValue;
-            int overrideIdx = editor.customBaseTarget.customBlendshapeOverrideNames.IndexOf(entry.name);
-            if (overrideIdx >= 0 && overrideIdx < editor.customBaseTarget.customBlendshapeOverrideValues.Count)
+            int overrideIdx = session.customBaseTarget.customBlendshapeOverrideNames.IndexOf(entry.name);
+            if (overrideIdx >= 0 && overrideIdx < session.customBaseTarget.customBlendshapeOverrideValues.Count)
             {
-                valueToApply = editor.customBaseTarget.customBlendshapeOverrideValues[overrideIdx];
+                valueToApply = session.customBaseTarget.customBlendshapeOverrideValues[overrideIdx];
             }
 
             MCBReFitIntegration.ApplyBlendShapeWeightWithTransferredReFit(
-                editor.customBaseTarget,
+                session.customBaseTarget,
                 renderers,
                 entry.name,
                 valueToApply);
 
-            editor.customBaseTarget.blendShapeValues.Add(valueToApply);
+            session.customBaseTarget.blendShapeValues.Add(valueToApply);
         }
 
     }
@@ -3032,7 +2926,7 @@ public class VersionActions
             if (entry == null || string.IsNullOrEmpty(entry.name)) continue;
             if (!TryGetCurrentBlendshapeWeight(renderers, entry.name, out float currentWeight)) continue;
             MCBReFitIntegration.ApplyBlendShapeWeightWithTransferredReFit(
-                editor.customBaseTarget,
+                session.customBaseTarget,
                 renderers,
                 entry.name,
                 currentWeight);
@@ -3101,7 +2995,7 @@ public class VersionActions
                 root,
                 transitionVersion,
                 affectedPathsByVersion[transitionVersion],
-                editor.customBaseTarget, preserveVersion, missingRenderers);
+                session.customBaseTarget, preserveVersion, missingRenderers);
         }
 
         if (restoredRenderers == 0 && missingRenderers.Count == 0)
@@ -3208,7 +3102,7 @@ public class VersionActions
         catch (Exception ex)
         {
             MCBLogger.LogError($"[VersionActions] Auto-save after version change failed: {ex.Message}");
-            editor.warningsModule.AddWarning("The version switch succeeded, but MCB could not auto-save the project. Save the project manually to persist the scene state.", MessageType.Warning, "Auto-save failed");
+            session.warningsModule.AddWarning("The version switch succeeded, but MCB could not auto-save the project. Save the project manually to persist the scene state.", MessageType.Warning, "Auto-save failed");
         }
     }
 
@@ -3225,7 +3119,7 @@ public class VersionActions
         var missingRenderers = new List<string>();
         foreach (string fbxPath in targetPaths)
         {
-            var smrPaths = SmrPathService.ResolveSmrPathsForSource(version, fbxPath, editor?.customBaseTarget);
+            var smrPaths = SmrPathService.ResolveSmrPathsForSource(version, fbxPath, session?.customBaseTarget);
             var missing = new List<string>();
             int restored = SmrPathService.RestoreTargetStateFromFbx(root, fbxPath, smrPaths, skipMissingRenderers: true, missingRenderers: missing);
             missingRenderers.AddRange(missing);
@@ -3267,9 +3161,9 @@ public class VersionActions
         string path = paths.FirstOrDefault();
         if (string.IsNullOrEmpty(path))
         {
-            editor.currentBaseFbxHash = null;
-            editor.currentAppliedFbxHash = null;
-            editor.currentIsCustom = false;
+            session.currentBaseFbxHash = null;
+            session.currentAppliedFbxHash = null;
+            session.currentIsCustom = false;
             UpdateAppliedVersionAndState(null);
             return;
         }
@@ -3291,16 +3185,16 @@ public class VersionActions
         if (cachedCurrentHash != null && allCurrentHashesCached && (!hasBackup || cachedOriginalHash != null))
         {
             // We have all needed cached hashes - use them immediately
-            editor.currentAppliedFbxHash = cachedCurrentHash;
-            editor.currentBaseFbxHash = hasBackup ? cachedOriginalHash : cachedCurrentHash;
+            session.currentAppliedFbxHash = cachedCurrentHash;
+            session.currentBaseFbxHash = hasBackup ? cachedOriginalHash : cachedCurrentHash;
             UpdateAppliedVersionAndState(cachedCurrentHash);
         }
         else
         {
             // Missing cache - start async hash calculation and use placeholder for now
-            editor.currentBaseFbxHash = null; // Will be updated when async calculation completes
-            var requestedTarget = editor.target;
-            int? requestedAssetId = editor.GetSelectedAsset()?.id;
+            session.currentBaseFbxHash = null; // Will be updated when async calculation completes
+            var requestedTarget = session.customBaseTarget;
+            int? requestedAssetId = session.GetSelectedAsset()?.id;
             
             // Start async hash calculation in background
             _ = System.Threading.Tasks.Task.Run(async () =>
@@ -3323,13 +3217,13 @@ public class VersionActions
                     // Update on main thread when calculation completes
                     AsyncTaskManager.Instance.ExecuteOnMainThread(() =>
                     {
-                        if (editor == null || editor.target != requestedTarget ||
-                            editor.GetSelectedAsset()?.id != requestedAssetId ||
+                        if (session == null || session.customBaseTarget != requestedTarget ||
+                            session.GetSelectedAsset()?.id != requestedAssetId ||
                             !GetCurrentFBXPaths().SequenceEqual(paths, StringComparer.OrdinalIgnoreCase)) return;
-                        editor.currentAppliedFbxHash = currentHash;
-                        editor.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
+                        session.currentAppliedFbxHash = currentHash;
+                        session.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
                         UpdateAppliedVersionAndState(currentHash);
-                        editor.Repaint();
+                        session.Repaint();
                     });
                 }
                 catch (System.Exception ex)
@@ -3435,9 +3329,9 @@ public class VersionActions
             yield break;
         }
 
-        editor.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
+        session.currentBaseFbxHash = hasBackup ? originalHash : currentHash;
         UpdateAppliedVersionAndState(currentHash);
-        editor.Repaint();
+        session.Repaint();
         MCBLogger.Log($"[VersionApplyProfile] Async hash/state recalculation DONE: step={step.Elapsed.TotalMilliseconds:F1} ms total={profile.Elapsed.TotalMilliseconds:F1} ms");
     }
     
@@ -3457,7 +3351,7 @@ public class VersionActions
                 var pendingMarkerVersion = ResolvePersistedAppliedVersion();
                 if (pendingMarkerVersion != null && IsAdvancedMeshVersionApplied(pendingMarkerVersion))
                 {
-                    var previousVersion = editor.customBaseTarget.appliedCustomBaseVersion;
+                    var previousVersion = session.customBaseTarget.appliedCustomBaseVersion;
                     if (PersistAppliedVersionState(pendingMarkerVersion, true) || !Equals(previousVersion, pendingMarkerVersion))
                         MCBLogger.Log($"[VersionActions] Keeping applied native mesh version from persisted state before hash is ready: {pendingMarkerVersion.version}");
                     return;
@@ -3469,22 +3363,22 @@ public class VersionActions
         }
 
         // Track applied hash consistently
-        editor.currentAppliedFbxHash = currentFileHash;
+        session.currentAppliedFbxHash = currentFileHash;
 
-        var candidateVersions = editor.GetAllVersions() ?? new System.Collections.Generic.List<CustomBaseVersion>();
+        var candidateVersions = session.GetAllVersions() ?? new System.Collections.Generic.List<CustomBaseVersion>();
 
         // If we have no candidates yet, don't decide custom state prematurely
-        if (string.IsNullOrEmpty(currentFileHash) || (!editor.fetchAttempted && candidateVersions.Count == 0))
+        if (string.IsNullOrEmpty(currentFileHash) || (!session.fetchAttempted && candidateVersions.Count == 0))
         {
             MCBLogger.Log("[VersionActions] Deferring state detection (waiting for versions).\n" +
-                              $"fetchAttempted={editor.fetchAttempted}, candidates={candidateVersions.Count}");
+                              $"fetchAttempted={session.fetchAttempted}, candidates={candidateVersions.Count}");
             return;
         }
 
-        if (editor?.customBaseTarget == null) return;
+        if (session?.customBaseTarget == null) return;
         // This runs on every inspector rebuild: the custom base is recorded for undo and marked dirty only when one of its
         // values changes, and the outcome is logged only when it changes.
-        var target = editor.customBaseTarget;
+        var target = session.customBaseTarget;
         var previous = target.appliedCustomBaseVersion;
 
         var markerVersion = ResolvePersistedAppliedVersion(candidateVersions);
@@ -3500,8 +3394,8 @@ public class VersionActions
 
         if (matchingVersion != null)
         {
-            editor.isCustomBase = true;
-            editor.currentIsCustom = false;
+            session.isCustomBase = true;
+            session.currentIsCustom = false;
             var links = BuildAppliedVersionBlendshapeLinkCache(matchingVersion);
             var offsets = BuildAppliedVersionAnimationPositionOffsetCache(matchingVersion);
             // The applied version is saved with the custom base: another version, or the same one with new contents, counts.
@@ -3519,7 +3413,7 @@ public class VersionActions
         }
         else
         {
-            editor.isCustomBase = false;
+            session.isCustomBase = false;
             changed = previous != null || target.appliedVersionAnimationPositionOffsetsCache?.Count > 0;
             if (changed)
             {
@@ -3531,18 +3425,18 @@ public class VersionActions
             // Detect user-custom base only when feature is enabled and we have attempted fetching versions
             string fbxPath = GetCurrentFBXPath();
             bool hasBackup = !string.IsNullOrEmpty(fbxPath) && fileManagerService.BackupExists(fbxPath);
-            bool canTreatAsCustom = FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION) && editor.fetchAttempted && candidateVersions.Count > 0;
+            bool canTreatAsCustom = FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION) && session.fetchAttempted && candidateVersions.Count > 0;
             if (hasBackup && canTreatAsCustom)
             {
-                editor.currentIsCustom = true;
+                session.currentIsCustom = true;
                 // Persist the custom version entry (copy FBX and avatar) if not already present
                 try
                 {
                     // Saving decides from the model's bytes, never from the cached hash this state was detected with.
-                    UserCustomVersionService.Instance.SaveCurrent(fbxPath, AvatarPaths.Root(editor.customBaseTarget), out bool created);
+                    UserCustomVersionService.Instance.SaveCurrent(fbxPath, AvatarPaths.Root(session.customBaseTarget), out bool created);
                     if (created)
                     {
-                        editor.userCustomVersions = UserCustomVersionService.Instance.GetAll();
+                        session.userCustomVersions = UserCustomVersionService.Instance.GetAll();
                     }
                 }
                 catch (System.Exception ex)
@@ -3552,7 +3446,7 @@ public class VersionActions
             }
             else
             {
-                editor.currentIsCustom = false;
+                session.currentIsCustom = false;
             }
             
             if (changed)
@@ -3569,14 +3463,14 @@ public class VersionActions
     /// <returns>Whether the custom base was written.</returns>
     private bool PersistAppliedVersionState(CustomBaseVersion version, bool onlyWhenChanged)
     {
-        if (editor?.customBaseTarget == null || version == null || version == VersionListDrawer.RESET_VERSION)
+        if (session?.customBaseTarget == null || version == null || version == VersionListDrawer.RESET_VERSION)
         {
             ClearAppliedVersionState();
             return true;
         }
 
-        var target = editor.customBaseTarget;
-        var appliedAsset = editor.GetSelectedAsset();
+        var target = session.customBaseTarget;
+        var appliedAsset = session.GetSelectedAsset();
         string name = appliedAsset != null && appliedAsset.id == version.assetId && !string.IsNullOrWhiteSpace(appliedAsset.name)
             ? appliedAsset.name
             : target.appliedCustomBaseAssetId != version.assetId ? "" : target.appliedCustomBaseName;
@@ -3591,8 +3485,8 @@ public class VersionActions
         var customization = VersionCustomization.Read(version.extraCustomization);
 
         target.appliedCustomBaseVersion = version;
-        editor.isCustomBase = true;
-        editor.currentIsCustom = false;
+        session.isCustomBase = true;
+        session.currentIsCustom = false;
         if (onlyWhenChanged)
         {
             if (target.appliedCustomBaseName == name &&
@@ -3618,46 +3512,46 @@ public class VersionActions
         SetCache(ref target.appliedVersionAnimationPositionOffsetsCache, offsets);
         target.appliedCustomization = customization;
         EditorUtility.SetDirty(target);
-        editor.serializedObject.Update();
+        session.serializedObject.Update();
         return true;
     }
 
     private void ClearAppliedVersionState()
     {
-        if (editor?.customBaseTarget == null) return;
+        if (session?.customBaseTarget == null) return;
 
-        ModeService.Restore(editor.customBaseTarget);
-        editor.customBaseTarget.appliedCustomization = new VersionCustomization();
-        editor.customBaseTarget.appliedCustomBaseVersion = null;
-        editor.customBaseTarget.appliedCustomBaseAssetId = 0;
-        editor.customBaseTarget.versionOriginalModels.Clear();
-        editor.customBaseTarget.appliedCustomBaseName = "";
-        editor.customBaseTarget.appliedCustomBaseVersionString = "";
-        editor.customBaseTarget.appliedCustomBaseDefaultAviVersion = "";
-        editor.customBaseTarget.appliedCustomBaseSourceVersionKey = "";
-        editor.customBaseTarget.appliedCustomBaseDeliveryMode = "";
-        editor.isCustomBase = false;
-        editor.currentIsCustom = false;
+        ModeService.Restore(session.customBaseTarget);
+        session.customBaseTarget.appliedCustomization = new VersionCustomization();
+        session.customBaseTarget.appliedCustomBaseVersion = null;
+        session.customBaseTarget.appliedCustomBaseAssetId = 0;
+        session.customBaseTarget.versionOriginalModels.Clear();
+        session.customBaseTarget.appliedCustomBaseName = "";
+        session.customBaseTarget.appliedCustomBaseVersionString = "";
+        session.customBaseTarget.appliedCustomBaseDefaultAviVersion = "";
+        session.customBaseTarget.appliedCustomBaseSourceVersionKey = "";
+        session.customBaseTarget.appliedCustomBaseDeliveryMode = "";
+        session.isCustomBase = false;
+        session.currentIsCustom = false;
         SyncAppliedVersionBlendshapeLinkCache(null);
         SyncAppliedVersionAnimationPositionOffsetCache(null);
-        EditorUtility.SetDirty(editor.customBaseTarget);
+        EditorUtility.SetDirty(session.customBaseTarget);
     }
 
     private CustomBaseVersion ResolvePersistedAppliedVersion(IReadOnlyList<CustomBaseVersion> candidateVersions = null)
     {
-        if (editor?.customBaseTarget == null)
+        if (session?.customBaseTarget == null)
         {
             return null;
         }
 
-        var applied = editor.customBaseTarget.appliedCustomBaseVersion;
-        string versionString = editor.customBaseTarget.appliedCustomBaseVersionString;
+        var applied = session.customBaseTarget.appliedCustomBaseVersion;
+        string versionString = session.customBaseTarget.appliedCustomBaseVersionString;
         var candidates = new List<CustomBaseVersion>();
         if (candidateVersions != null) candidates.AddRange(candidateVersions.Where(v => v != null));
-        var allVersions = editor.GetAllVersions();
+        var allVersions = session.GetAllVersions();
         if (allVersions != null) candidates.AddRange(allVersions.Where(v => v != null));
-        if (editor.selectedVersionForAction != null) candidates.Add(editor.selectedVersionForAction);
-        if (editor.recommendedVersion != null) candidates.Add(editor.recommendedVersion);
+        if (session.selectedVersionForAction != null) candidates.Add(session.selectedVersionForAction);
+        if (session.recommendedVersion != null) candidates.Add(session.recommendedVersion);
 
         candidates = candidates
             .Where(v => v != null)
@@ -3685,15 +3579,15 @@ public class VersionActions
             return candidates.FirstOrDefault(v =>
                        v != null &&
                        NativeMeshPayloadService.VersionUsesAdvancedMesh(v) &&
-                       NativeMeshPayloadService.HasAnyAdvancedMeshApplied(AvatarPaths.Root(editor.customBaseTarget), v));
+                       NativeMeshPayloadService.HasAnyAdvancedMeshApplied(AvatarPaths.Root(session.customBaseTarget), v));
         }
 
-        int assetId = editor.customBaseTarget.appliedCustomBaseAssetId;
-        string defaultAviVersion = editor.customBaseTarget.appliedCustomBaseDefaultAviVersion;
+        int assetId = session.customBaseTarget.appliedCustomBaseAssetId;
+        string defaultAviVersion = session.customBaseTarget.appliedCustomBaseDefaultAviVersion;
         return candidates.FirstOrDefault(v =>
             v != null &&
             string.Equals(v.version, versionString, StringComparison.Ordinal) &&
-            (string.IsNullOrEmpty(editor.customBaseTarget.appliedCustomBaseSourceVersionKey) || v.sourceVersionKey == editor.customBaseTarget.appliedCustomBaseSourceVersionKey) &&
+            (string.IsNullOrEmpty(session.customBaseTarget.appliedCustomBaseSourceVersionKey) || v.sourceVersionKey == session.customBaseTarget.appliedCustomBaseSourceVersionKey) &&
             (assetId <= 0 || v.assetId == assetId) &&
             (string.IsNullOrWhiteSpace(defaultAviVersion) || string.Equals(v.defaultAviVersion, defaultAviVersion, StringComparison.Ordinal)));
     }
@@ -3715,12 +3609,12 @@ public class VersionActions
     private CustomBaseVersion InferAdvancedVersionFromGeneratedMeshPaths(IReadOnlyList<CustomBaseVersion> candidates, out bool hasGeneratedMeshes)
     {
         hasGeneratedMeshes = false;
-        if (editor?.customBaseTarget == null)
+        if (session?.customBaseTarget == null)
         {
             return null;
         }
 
-        var target = editor.customBaseTarget;
+        var target = session.customBaseTarget;
         var root = AvatarPaths.Root(target);
         var meshes = root.GetComponentsInChildren<SkinnedMeshRenderer>(true)
             .Select(renderer => renderer.sharedMesh != null ? renderer.sharedMesh.GetInstanceID() : 0)
@@ -3774,16 +3668,16 @@ public class VersionActions
 
         if (match.isUnsubmitted)
         {
-            if (editor.unsubmittedVersions != null &&
-                !editor.unsubmittedVersions.Any(v => v != null && v.Equals(match)))
+            if (session.unsubmittedVersions != null &&
+                !session.unsubmittedVersions.Any(v => v != null && v.Equals(match)))
             {
-                editor.unsubmittedVersions.Add(match);
+                session.unsubmittedVersions.Add(match);
             }
         }
-        else if (editor.importedVersions != null &&
-                 !editor.importedVersions.Any(v => v != null && v.Equals(match)))
+        else if (session.importedVersions != null &&
+                 !session.importedVersions.Any(v => v != null && v.Equals(match)))
         {
-            editor.importedVersions.Add(match);
+            session.importedVersions.Add(match);
         }
 
         return match;
@@ -3801,19 +3695,19 @@ public class VersionActions
 
     private bool IsAdvancedMeshVersionApplied(CustomBaseVersion version)
     {
-        if (editor?.customBaseTarget == null || version == null)
+        if (session?.customBaseTarget == null || version == null)
         {
             return false;
         }
 
         bool isAdvanced = NativeMeshPayloadService.VersionUsesAdvancedMesh(version) ||
                           string.Equals(
-                              editor.customBaseTarget.appliedCustomBaseDeliveryMode,
+                              session.customBaseTarget.appliedCustomBaseDeliveryMode,
                               AdvancedMeshDeliveryMode,
                               StringComparison.Ordinal);
         return isAdvanced &&
                NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
-                   AvatarPaths.Root(editor.customBaseTarget),
+                   AvatarPaths.Root(session.customBaseTarget),
                    version).Count > 0;
     }
 
@@ -3863,7 +3757,7 @@ public class VersionActions
 
     public bool IsVersionCurrentlyApplied(CustomBaseVersion version)
     {
-        if (version == null || version == VersionListDrawer.RESET_VERSION || editor?.customBaseTarget == null)
+        if (version == null || version == VersionListDrawer.RESET_VERSION || session?.customBaseTarget == null)
         {
             return false;
         }
@@ -3874,17 +3768,17 @@ public class VersionActions
 
     public bool HasAppliedCustomBaseEvidence()
     {
-        if (editor?.customBaseTarget == null)
+        if (session?.customBaseTarget == null)
         {
             return false;
         }
 
         if (appliedScopeDepth > 0 && evidenceInScope.HasValue) return evidenceInScope.Value;
         bool evidence = NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
-                            AvatarPaths.Root(editor.customBaseTarget)).Count > 0 ||
+                            AvatarPaths.Root(session.customBaseTarget)).Count > 0 ||
                         AppliedVersionForView() != null ||
-                        editor.isCustomBase ||
-                        editor.currentIsCustom;
+                        session.isCustomBase ||
+                        session.currentIsCustom;
         if (appliedScopeDepth > 0) evidenceInScope = evidence;
         return evidence;
     }
@@ -3896,14 +3790,14 @@ public class VersionActions
 
     private void SyncAppliedVersionBlendshapeLinkCache(CustomBaseVersion version)
     {
-        if (editor?.customBaseTarget == null) return;
-        SetCache(ref editor.customBaseTarget.appliedVersionBlendshapeLinksCache, BuildAppliedVersionBlendshapeLinkCache(version));
+        if (session?.customBaseTarget == null) return;
+        SetCache(ref session.customBaseTarget.appliedVersionBlendshapeLinksCache, BuildAppliedVersionBlendshapeLinkCache(version));
     }
 
     private void SyncAppliedVersionAnimationPositionOffsetCache(CustomBaseVersion version)
     {
-        if (editor?.customBaseTarget == null) return;
-        SetCache(ref editor.customBaseTarget.appliedVersionAnimationPositionOffsetsCache, BuildAppliedVersionAnimationPositionOffsetCache(version));
+        if (session?.customBaseTarget == null) return;
+        SetCache(ref session.customBaseTarget.appliedVersionAnimationPositionOffsetsCache, BuildAppliedVersionAnimationPositionOffsetCache(version));
     }
 
     private static void SetCache<T>(ref List<T> cache, List<T> entries)
@@ -3979,32 +3873,32 @@ public class VersionActions
         return cache;
     }
 
-    private void SmartSelectVersion()
+    internal void SmartSelectVersion()
     {
-        var allVersions = editor.GetAllVersions() ?? new System.Collections.Generic.List<CustomBaseVersion>();
+        var allVersions = session.GetAllVersions() ?? new System.Collections.Generic.List<CustomBaseVersion>();
         CustomBaseVersion versionToSelect = null;
 
-        if (editor.selectedVersionForAction != null && allVersions.Contains(editor.selectedVersionForAction))
+        if (session.selectedVersionForAction != null && allVersions.Contains(session.selectedVersionForAction))
         {
-            versionToSelect = editor.selectedVersionForAction;
+            versionToSelect = session.selectedVersionForAction;
         }
-        else if (editor.customBaseTarget.appliedCustomBaseVersion != null && allVersions.Contains(editor.customBaseTarget.appliedCustomBaseVersion))
+        else if (session.customBaseTarget.appliedCustomBaseVersion != null && allVersions.Contains(session.customBaseTarget.appliedCustomBaseVersion))
         {
-            versionToSelect = editor.customBaseTarget.appliedCustomBaseVersion;
+            versionToSelect = session.customBaseTarget.appliedCustomBaseVersion;
         }
-        else if (editor.recommendedVersion != null)
+        else if (session.recommendedVersion != null)
         {
-            bool isNewer = editor.customBaseTarget.appliedCustomBaseVersion == null ||
-                           editor.CompareVersions(editor.recommendedVersion.version, editor.customBaseTarget.appliedCustomBaseVersion.version) > 0;
-            bool isDownloaded = MCBUtils.IsVersionDownloaded(editor.recommendedVersion);
+            bool isNewer = session.customBaseTarget.appliedCustomBaseVersion == null ||
+                           session.CompareVersions(session.recommendedVersion.version, session.customBaseTarget.appliedCustomBaseVersion.version) > 0;
+            bool isDownloaded = MCBUtils.IsVersionDownloaded(session.recommendedVersion);
 
             if (isNewer && isDownloaded)
             {
-                versionToSelect = editor.recommendedVersion;
+                versionToSelect = session.recommendedVersion;
             }
         }
 
-        editor.selectedVersionForAction = versionToSelect;
+        session.selectedVersionForAction = versionToSelect;
     }
 
     public string GetCurrentFBXPath()
@@ -4014,15 +3908,15 @@ public class VersionActions
 
     private List<string> GetCurrentFBXPaths()
     {
+        // Read from the component itself: the shared serialized view may not have read a change made without it.
         var paths = new List<string>();
-        if (editor?.baseFbxFilesProp == null)
+        if (session?.customBaseTarget == null || session.customBaseTarget.baseFbxFiles == null)
         {
             return paths;
         }
 
-        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        foreach (var fbx in session.customBaseTarget.baseFbxFiles)
         {
-            var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
             if (!string.IsNullOrWhiteSpace(path))
             {
@@ -4042,7 +3936,7 @@ public class VersionActions
             return null;
         }
 
-        var persistedAdvanced = editor?.customBaseTarget?.appliedCustomBaseVersion;
+        var persistedAdvanced = session?.customBaseTarget?.appliedCustomBaseVersion;
         if (persistedAdvanced != null && NativeMeshPayloadService.VersionUsesAdvancedMesh(persistedAdvanced))
         {
             var matchingPersisted = candidateVersions.FirstOrDefault(v =>
@@ -4051,13 +3945,13 @@ public class VersionActions
                 string.Equals(v.version, persistedAdvanced.version, StringComparison.Ordinal) &&
                 string.Equals(v.defaultAviVersion, persistedAdvanced.defaultAviVersion, StringComparison.Ordinal));
             if (matchingPersisted != null &&
-                NativeMeshPayloadService.IsVersionApplied(AvatarPaths.Root(editor.customBaseTarget), matchingPersisted))
+                NativeMeshPayloadService.IsVersionApplied(AvatarPaths.Root(session.customBaseTarget), matchingPersisted))
             {
                 return matchingPersisted;
             }
         }
 
-        var target = editor?.customBaseTarget;
+        var target = session?.customBaseTarget;
         return SelectAppliedVersionByHashes(candidateVersions, currentFileHash, GetCurrentTargetHashes(currentFileHash),
             sourceFile => AvatarPathOverrideService.ResolveLocalTargetPath(target, sourceFile),
             version => target != null &&
@@ -4248,7 +4142,7 @@ public class VersionActions
         {
             MCBLogger.LogError($"[VersionActions] Version transition rollback failed: {rollbackException}");
             ClearAppliedVersionState();
-            editor.warningsModule?.AddWarning(
+            session.warningsModule?.AddWarning(
                 "The version switch failed and MCB could not fully restore the previous state. The applied-version marker was cleared to avoid reporting a mismatched version.",
                 MessageType.Error,
                 "Version rollback failed");
@@ -4266,19 +4160,19 @@ public class VersionActions
         private readonly List<string> fbxPaths = new List<string>();
         private readonly List<VersionSwitchFileUndo.Entry> entries = new List<VersionSwitchFileUndo.Entry>();
         private VersionSwitchFileUndo.Setting veinsBefore;
-        private readonly MCBEditor editor;
+        private readonly McbSession session;
         private readonly Transform root;
         private readonly List<string> assetsBefore;
         private readonly bool editorWasCustomBase;
         private readonly bool editorCurrentWasCustom;
         private bool completed;
 
-        private VersionTransitionRollbackSnapshot(MyCustomBase target, MCBEditor editor)
+        private VersionTransitionRollbackSnapshot(MyCustomBase target, McbSession session)
         {
-            this.editor = editor;
+            this.session = session;
             folder = Path.Combine(VersionSwitchFileUndo.Folder, id);
-            editorWasCustomBase = editor != null && editor.isCustomBase;
-            editorCurrentWasCustom = editor != null && editor.currentIsCustom;
+            editorWasCustomBase = session != null && session.isCustomBase;
+            editorCurrentWasCustom = session != null && session.currentIsCustom;
             root = target != null ? AvatarPaths.Root(target) : null;
             assetsBefore = VersionSwitchFileUndo.UsedGeneratedAssets(root).ToList();
             undo = new VersionSwitchUndoScope(root, UndoName);
@@ -4291,9 +4185,9 @@ public class VersionActions
         public static VersionTransitionRollbackSnapshot Capture(
             IEnumerable<string> fbxPaths,
             MyCustomBase target,
-            MCBEditor editor)
+            McbSession session)
         {
-            var snapshot = new VersionTransitionRollbackSnapshot(target, editor);
+            var snapshot = new VersionTransitionRollbackSnapshot(target, session);
             try
             {
                 snapshot.fbxPaths.AddRange(fbxPaths ?? Enumerable.Empty<string>());
@@ -4374,10 +4268,10 @@ public class VersionActions
                 rollbackFailure = rollbackFailure ?? ex;
             }
 
-            if (editor != null)
+            if (session != null)
             {
-                editor.isCustomBase = editorWasCustomBase;
-                editor.currentIsCustom = editorCurrentWasCustom;
+                session.isCustomBase = editorWasCustomBase;
+                session.currentIsCustom = editorCurrentWasCustom;
             }
 
             completed = true;
@@ -4407,12 +4301,12 @@ public class VersionActions
         if (entry == null || !FeatureFlags.IsEnabled(FeatureFlags.SUPPORT_USER_UNKNOWN_VERSION)) yield break;
         if (string.IsNullOrWhiteSpace(entry.backupFbxPath) || !File.Exists(entry.backupFbxPath))
         {
-            editor.warningsModule?.AddWarning("The saved custom FBX no longer exists. The current version was kept.", MessageType.Error, "Custom version unavailable");
+            session.warningsModule?.AddWarning("The saved custom FBX no longer exists. The current version was kept.", MessageType.Error, "Custom version unavailable");
             yield break;
         }
-        var requestedTarget = editor.customBaseTarget;
+        var requestedTarget = session.customBaseTarget;
         while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
-        if (requestedTarget == null || editor.customBaseTarget != requestedTarget) yield break;
+        if (requestedTarget == null || session.customBaseTarget != requestedTarget) yield break;
 
         var root = AvatarPaths.Root(requestedTarget);
         string fbxPath = GetCurrentFBXPath();
@@ -4425,7 +4319,7 @@ public class VersionActions
         {
             if (activeTransitionRollback != null) throw new InvalidOperationException("Another version transition is still active.");
             snapshot = VersionTransitionRollbackSnapshot.Capture(
-                GetTransitionAffectedFbxPaths(GetDistinctTransitionVersions(previous), fbxPath), requestedTarget, editor);
+                GetTransitionAffectedFbxPaths(GetDistinctTransitionVersions(previous), fbxPath), requestedTarget, session);
             StartApplyProgress("Applying saved custom version...", 0f);
             // Reset and custom installation are one synchronous transaction: failure must restore the release as well.
             if (ReleaseApplied())
@@ -4438,15 +4332,15 @@ public class VersionActions
             File.Copy(Path.GetFullPath(MCBUtils.ToUnityPath(entry.backupFbxPath)), Path.GetFullPath(fbxPath), true);
             fileManagerService.RecordWrittenFbx(fbxPath);
             AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-            var fbxGameObject = editor.baseFbxFilesProp.arraySize > 0
-                ? editor.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject : null;
+            var fbxGameObject = session.baseFbxFilesProp.arraySize > 0
+                ? session.baseFbxFilesProp.GetArrayElementAtIndex(0).objectReferenceValue as GameObject : null;
             if (!string.IsNullOrEmpty(entry.appliedAvatarAsset))
             {
                 if (fbxGameObject != null) AvatarDefinitionGenerationService.BackupOriginalImportSettings(AssetDatabase.GetAssetPath(fbxGameObject));
                 fileManagerService.ApplyAvatarToModel(root, fbxGameObject, entry.appliedAvatarAsset);
             }
             ClearAppliedVersionState();
-            editor.currentIsCustom = true;
+            session.currentIsCustom = true;
             snapshot.Commit();
             FinishApplyProgress(true);
             StartRecalculateCurrentFbxHash();
@@ -4458,15 +4352,15 @@ public class VersionActions
             catch (Exception rollback)
             {
                 ClearAppliedVersionState();
-                editor.warningsModule?.AddWarning(rollback.Message, MessageType.Error, "Custom version rollback failed");
+                session.warningsModule?.AddWarning(rollback.Message, MessageType.Error, "Custom version rollback failed");
                 MCBLogger.LogError($"[MCB] Custom version rollback failed: {rollback.Message}");
             }
             FinishApplyProgress(false);
-            editor.warningsModule?.AddWarning(ex.Message, MessageType.Error, "Custom version not applied");
+            session.warningsModule?.AddWarning(ex.Message, MessageType.Error, "Custom version not applied");
             MCBLogger.LogError($"[MCB] Failed to apply custom version: {ex.Message}");
         }
-        editor.RefreshUiToolkitSections();
-        editor.Repaint();
+        session.RequestRefresh(McbViewParts.All);
+        session.Repaint();
     }
 
 }

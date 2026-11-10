@@ -14,9 +14,9 @@ public partial class CreatorModeModule
 
     private GameObject[] CustomizationModels()
     {
-        var sources = editor.customBaseTarget.modelFileBuildEntries.Where(e => e.customFbx != null).Select(e => e.customFbx)
-            .Concat(new[] { editor.customBaseTarget.customFbxForCreator }).Where(g => g != null).Distinct().ToArray();
-        return sources.Length > 0 ? sources : new[] { AvatarPaths.Root(editor.customBaseTarget).gameObject };
+        var sources = session.customBaseTarget.modelFileBuildEntries.Where(e => e.customFbx != null).Select(e => e.customFbx)
+            .Concat(new[] { session.customBaseTarget.customFbxForCreator }).Where(g => g != null).Distinct().ToArray();
+        return sources.Length > 0 ? sources : new[] { AvatarPaths.Root(session.customBaseTarget).gameObject };
     }
 
     private IEnumerable<(string path, SkinnedMeshRenderer renderer)> CustomizationRenderers()
@@ -82,7 +82,7 @@ public partial class CreatorModeModule
         var section = McbSectionUi.Section("Twisting bones",
             twists.Count == 0 ? "Spread a bone's twist along its mesh, like forearms following the wrist. Works on any bone, clothing included."
                 : $"{twists.Count} bone(s) twist · adds {twists.Count} bone(s) and {twists.Count} VRC constraint(s) to the built avatar.", out var body,
-            McbSectionUi.Pill(twists.Count == 0 ? "Set twisting bones" : "Edit", () => TwistBoneWindow.Open(editor.customBaseTarget, () => RefreshUIToolkit())));
+            McbSectionUi.Pill(twists.Count == 0 ? "Set twisting bones" : "Edit", () => TwistBoneWindow.Open(session.customBaseTarget, () => RefreshUIToolkit())));
         if (twists.Count == 0) { section.Remove(body); root.Add(section); return; }
         var chips = McbSectionUi.Row("mcb-chips");
         chips.style.flexWrap = Wrap.Wrap;

@@ -2,14 +2,12 @@
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
-using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 
-/// <summary>Hosts the existing creator form without duplicating its draft or build pipeline.</summary>
+/// <summary>Hosts the creator form of an avatar's session for one asset, without an Inspector of the avatar.</summary>
 public sealed class MCBCreatorWindow : EditorWindow
 {
-    private MCBEditor sourceEditor;
     private CreatorModeModule module;
     [SerializeField] private MyCustomBase avatar;
     [SerializeField] private string assetJson;
@@ -18,7 +16,6 @@ public sealed class MCBCreatorWindow : EditorWindow
     [SerializeField] internal bool showBuildSuccess;
     [SerializeField] internal string builtVersion;
     [SerializeField] internal string builtDefaultVersion;
-    private bool disposing;
     [System.Serializable] private class WindowState
     {
         public string draft, version, defaultVersion;
@@ -26,17 +23,18 @@ public sealed class MCBCreatorWindow : EditorWindow
     }
     private string SessionKey => "MCB_CreatorWindow_" + (avatar != null ? avatar.mcbComponentId : "") + "_" + assetId;
 
-    internal static MCBCreatorWindow Open(MCBEditor editor, CreatorModeModule creator)
+    /// <summary>The window of this form's avatar and asset: the open one, else a new one starting from the form's draft.</summary>
+    internal static MCBCreatorWindow Open(McbSession session, CreatorModeModule creator)
     {
         var existing = Resources.FindObjectsOfTypeAll<MCBCreatorWindow>()
-            .FirstOrDefault(w => w.avatar == editor.customBaseTarget && w.assetId == editor.GetSelectedAsset()?.id);
+            .FirstOrDefault(w => w.avatar == session.customBaseTarget && w.assetId == creator.Asset?.id);
         if (existing != null) return existing;
         var window = CreateInstance<MCBCreatorWindow>();
-        window.avatar = editor.customBaseTarget;
+        window.avatar = session.customBaseTarget;
         McbInstanceIdentityService.EnsureIdentity(window.avatar);
-        window.assetJson = JsonConvert.SerializeObject(editor.GetSelectedAsset());
+        window.assetJson = JsonConvert.SerializeObject(creator.Asset);
         window.draftJson = creator.SaveWindowDraft();
-        window.assetId = editor.GetSelectedAsset()?.id ?? 0;
+        window.assetId = creator.Asset?.id ?? 0;
         string saved = SessionState.GetString(window.SessionKey, "");
         if (!string.IsNullOrEmpty(saved))
         {
@@ -51,21 +49,16 @@ public sealed class MCBCreatorWindow : EditorWindow
         return window;
     }
 
-    internal bool MatchesContext(MCBEditor editor) => editor != null && editor == sourceEditor &&
-        editor.customBaseTarget != null && (editor.GetSelectedAsset()?.id ?? 0) == assetId;
+    /// <summary>Whether this window shows that form.</summary>
+    internal bool Holds(CreatorModeModule form) => form != null && form == module;
 
     internal void DetachAndClose()
     {
-        // Inspector/domain reloads must not destroy the window's saved context. The editor stays referenced: the
-        // window's OnDisable destroys it. Dropping it here (its OnDisable can run first during a reload) leaked one
-        // live editor, background services included, per reload. The draft is kept first: the window's own OnDisable
-        // may come after this and find no module.
+        // Inspector/domain reloads must not destroy the window's saved context. The draft is kept first: the window's own
+        // OnDisable may come after this and find no module.
         if (module != null) draftJson = module.SaveWindowDraft();
         module = null;
     }
-
-    // Names the editors creator windows create, so ones a reload left without a window can be found and destroyed.
-    private const string OwnedEditorName = "MCB Creator Window Editor";
 
     private void CreateGUI()
     {
@@ -76,28 +69,17 @@ public sealed class MCBCreatorWindow : EditorWindow
 
     private void RecoverContext()
     {
-        if (disposing || avatar == null || string.IsNullOrEmpty(assetJson)) return;
-        if (sourceEditor == null)
+        if (avatar == null || string.IsNullOrEmpty(assetJson)) return;
+        if (module == null)
         {
-            DestroyOrphanedEditors();
-            sourceEditor = (MCBEditor)UnityEditor.Editor.CreateEditor(avatar, typeof(MCBEditor));
-            sourceEditor.name = OwnedEditorName;
-            sourceEditor.SetCreatorWindowAsset(JsonConvert.DeserializeObject<AvatarDiscoveredAsset>(assetJson));
-            sourceEditor.serializedObject.Update();
-            sourceEditor.isCreatorModeProp.boolValue = true;
-            sourceEditor.serializedObject.ApplyModifiedProperties();
-            module = sourceEditor.creatorModule;
+            var session = McbSession.For(avatar);
+            session.serializedObject.Update();
+            session.isCreatorModeProp.boolValue = true;
+            session.serializedObject.ApplyModifiedProperties();
+            module = new CreatorModeModule(session, JsonConvert.DeserializeObject<AvatarDiscoveredAsset>(assetJson));
             module.LoadWindowDraft(draftJson);
         }
         BuildUI();
-    }
-
-    // Editors an earlier creator window created but no open window holds any more (a domain reload drops the reference).
-    private static void DestroyOrphanedEditors()
-    {
-        var held = new HashSet<MCBEditor>(Resources.FindObjectsOfTypeAll<MCBCreatorWindow>().Select(w => w.sourceEditor).Where(e => e != null));
-        foreach (var orphan in Resources.FindObjectsOfTypeAll<MCBEditor>().Where(e => e.name == OwnedEditorName && !held.Contains(e) && !e.isSubmitting))
-            DestroyImmediate(orphan);
     }
 
     internal void Built(CustomBaseVersion version)
@@ -128,25 +110,10 @@ public sealed class MCBCreatorWindow : EditorWindow
         if (module != null) draftJson = module.SaveWindowDraft();
         if (avatar != null) SessionState.SetString(SessionKey, JsonUtility.ToJson(new WindowState {
             draft = draftJson, version = builtVersion, defaultVersion = builtDefaultVersion, success = showBuildSuccess }));
-        disposing = true;
-        var previousEditor = sourceEditor;
+        // An upload still in flight keeps running: it is the session's, not this window's.
+        var previous = module;
         module = null;
-        sourceEditor = null;
-        if (previousEditor != null && previousEditor.isSubmitting)
-        {
-            // Closing the UI must not dispose the context of an upload still in flight.
-            previousEditor.creatorModule.DetachUIToolkit();
-            EditorApplication.CallbackFunction cleanup = null;
-            cleanup = () =>
-            {
-                if (previousEditor != null && previousEditor.isSubmitting) return;
-                EditorApplication.update -= cleanup;
-                if (previousEditor != null) DestroyImmediate(previousEditor);
-            };
-            EditorApplication.update += cleanup;
-        }
-        else if (previousEditor != null) DestroyImmediate(previousEditor);
-        disposing = false;
+        previous?.DetachUIToolkit();
     }
 }
 #endif

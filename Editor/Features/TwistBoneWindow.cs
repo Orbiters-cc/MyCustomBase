@@ -134,7 +134,7 @@ internal sealed class TwistBoneWindow : EditorWindow
             owner.creatorCustomization.twistBones = draft.Clone().twistBones;
             EditorUtility.SetDirty(owner);
             if (changed != null) changed();
-            else foreach (var editor in Resources.FindObjectsOfTypeAll<MCBEditor>().Where(e => e.customBaseTarget == owner)) editor.creatorModule.RefreshUIToolkit();
+            else McbSession.Find(owner)?.RequestRefresh(McbViewParts.Creator);
             Close();
         }
         catch (Exception ex)

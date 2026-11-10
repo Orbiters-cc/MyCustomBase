@@ -27,14 +27,14 @@ public partial class AssetGalleryModule
         ClearTextureField(ref editThumbnail);
         ClearTextureField(ref editBanner);
         ResetPhotoshootState(destroyPreviewTexture: true);
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 
     private void CancelSelectedAssetMediaEdit()
     {
         ResetSelectedAssetMediaEditState(destroyPreviewTexture: true);
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 
@@ -64,7 +64,7 @@ public partial class AssetGalleryModule
         var saveButton = CreateTextButton(isSavingSelectedAssetMedia ? "Saving..." : "Save", () =>
         {
             EditorCoroutineUtility.StartCoroutineOwnerless(UpdateSelectedAssetMediaCoroutine());
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         });
         saveButton.AddToClassList("mcb-button--primary");
         saveButton.AddToClassList("mcb-photoshoot-save-button");
@@ -87,7 +87,7 @@ public partial class AssetGalleryModule
                 bool layoutChanged = asset.UsesPlainPackages() != !protection.xor;
                 asset.protection = protection;
                 // Supporting new originals only applies to encrypted versions.
-                if (layoutChanged) editor.RefreshUiToolkitSections();
+                if (layoutChanged) editor.RequestRefresh(McbViewParts.All);
             }));
             root.Add(access);
         }
@@ -110,7 +110,7 @@ public partial class AssetGalleryModule
             Back = includeBackButton ? CancelSelectedAssetMediaEdit : (Action)null,
             Changed = () =>
             {
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
                 editor.Repaint();
             },
             Repaint = () =>
@@ -292,7 +292,7 @@ public partial class AssetGalleryModule
             if (savingSelectedAssetMediaEdit == edit) savingSelectedAssetMediaEdit = 0;
         }
 
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 }

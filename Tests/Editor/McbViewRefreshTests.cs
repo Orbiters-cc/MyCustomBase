@@ -59,27 +59,29 @@ public sealed class McbViewRefreshTests
         try
         {
             var target = go.AddComponent<MyCustomBase>();
-            var first = McbAvatarViewModel.For(target);
-            var second = McbAvatarViewModel.For(target);
+            var first = McbSession.For(target);
+            var second = McbSession.For(target);
             Assert.That(second, Is.SameAs(first));
+            Assert.That(McbSession.Find(target), Is.SameAs(first));
 
             var announced = new List<McbViewParts>();
+            first.FlushChanges();
             first.Changed += parts => announced.Add(parts);
-            first.IsDownloading = true;
-            first.IsApplying = true;
-            first.IsApplying = true;
-            Assert.That(second.IsDownloading && second.IsApplying && second.IsBusy);
+            first.isDownloading = true;
+            first.isApplying = true;
+            first.isApplying = true;
+            Assert.That(second.isDownloading && second.isApplying && second.IsBusy);
 
             first.FlushChanges();
             Assert.That(announced, Is.EqualTo(new[] { McbViewParts.Busy }));
 
-            first.IsDownloading = false;
-            first.IsApplying = false;
+            first.isDownloading = false;
+            first.isApplying = false;
             first.FlushChanges();
             Assert.That(second.IsBusy, Is.False);
             Assert.That(announced.Count, Is.EqualTo(2));
 
-            first.IsDeleting = false;
+            first.isDeleting = false;
             first.FlushChanges();
             Assert.That(announced.Count, Is.EqualTo(2), "setting a flag to its value announces nothing");
         }
@@ -124,9 +126,8 @@ public sealed class VersionActionsAppliedStateScopeTests
         try
         {
             var target = go.AddComponent<MyCustomBase>();
-            // Avoid OnEnable: a real inspector starts background services and reads the user's account.
-            var inspector = (MCBEditor)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(MCBEditor));
-            inspector.customBaseTarget = target;
+            // A detached session: a started one reads the user's account and listens to the services.
+            var inspector = McbSession.Detached(target);
             inspector.serverVersions = new List<CustomBaseVersion>();
             inspector.importedVersions = new List<CustomBaseVersion>();
             inspector.unsubmittedVersions = new List<CustomBaseVersion>();

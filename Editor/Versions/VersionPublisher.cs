@@ -34,7 +34,7 @@ public static class VersionPublisher
         public float value;
     }
 
-    public static IEnumerator PublishCoroutine(MCBEditor editor, NetworkService networkService,
+    public static IEnumerator PublishCoroutine(McbSession editor, NetworkService networkService,
         FileManagerService fileManagerService, CustomBaseVersion version, Action onPublished = null, bool interactive = true,
         string assetName = null)
     {
@@ -53,13 +53,13 @@ public static class VersionPublisher
         {
             editor.submitError = busy;
             editor.warningsModule.AddWarning(busy, MessageType.Warning, "Publish not started");
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             yield break;
         }
         editor.isSubmitting = true;
         editor.submitError = "";
         editor.warningsModule.Clear();
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         var cancellation = new CancellationTokenSource();
         var progress = new Progress();
         Task task = null;
@@ -91,21 +91,22 @@ public static class VersionPublisher
             cancellation.Dispose();
             EditorUtility.ClearProgressBar();
             editor.isSubmitting = false;
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             editor.Repaint();
         }
         if (!success) yield break;
         onPublished?.Invoke();
-        new VersionActions(editor, networkService, fileManagerService).StartVersionFetch();
+        // Forced: one running for the same request makes this one run after it, so the list shows the new version.
+        editor.RefreshVersions();
         // The checkpoint names the published asset, which need not be the gallery's selection (creator window, MCP).
         string publishedAssetName = ResolvePublishedAssetName(version, assetName,
-            new[] { editor.GetSelectedAsset() }.Concat(Resources.FindObjectsOfTypeAll<MCBEditor>().Select(other => other.GetSelectedAsset())));
+            new[] { editor.GetSelectedAsset() }.Concat(McbSession.Live.Select(other => other.GetSelectedAsset())));
         bool checkpoint = UnitGitReleasePublisher.TryPublishReleaseCheckpoint(version, publishedAssetName, out string checkpointMessage);
         if (interactive) EditorUtility.DisplayDialog("Publish successful", "Version " + version.version + " and all its source variants have been uploaded." +
             (checkpoint ? "\n\nA local release checkpoint was created." : ""), "OK");
     }
 
-    private static async Task PublishBuiltAsync(MCBEditor editor, NetworkService network,
+    private static async Task PublishBuiltAsync(McbSession editor, NetworkService network,
         FileManagerService files, CustomBaseVersion shown, bool interactive, Progress progress, CancellationToken cancellation)
     {
         var artifact = VersionRepository.GetArtifact(shown);
@@ -303,7 +304,7 @@ public static class VersionPublisher
 /// <summary>
 /// One version build or publish at a time in this editor process. The creator window, every MCB editor and MCP jobs
 /// all go through it: they share the version folders, the avatars' FBX files and the upload session, while each
-/// MCBEditor only knows its own isSubmitting. The holder releases it in a finally; a domain reload ends every running
+/// McbSession only knows its own isSubmitting. The holder releases it in a finally; a domain reload ends every running
 /// operation and releases it as well.
 /// </summary>
 public static class VersionOperationGuard
@@ -325,7 +326,7 @@ public static class VersionOperationGuard
     /// editor frames without the guard): what changes the base's renderers and entries waits for both.
     /// </summary>
     public static bool VersionWorkRunning => IsBusy ||
-        Resources.FindObjectsOfTypeAll<MCBEditor>().Any(editor => editor != null && (editor.isApplying || editor.isDownloading));
+        McbSession.Live.Any(session => session.isApplying || session.isDownloading);
 
     public static string BusyMessage => current == null ? null
         : "Another MCB operation is " + current.Operation + ". Wait for it to finish, then try again.";

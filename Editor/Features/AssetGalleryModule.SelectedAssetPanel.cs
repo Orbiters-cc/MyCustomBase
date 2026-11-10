@@ -63,7 +63,7 @@ public partial class AssetGalleryModule
             // One unencrypted package serves every original: there is no per-original version to support.
             if (!selectedAsset.UsesPlainPackages())
             {
-                var supportButton = CreateTextButton("Support new version", () => OriginalBaseSupportWindow.Open(editor, selectedAsset));
+                var supportButton = CreateTextButton("Support new version", () => OriginalBaseSupportWindow.Open(editor.Session, selectedAsset));
                 supportButton.AddToClassList("mcb-selected-banner__edit-button");
                 creatorActions.Add(supportButton);
             }
@@ -264,7 +264,7 @@ public partial class AssetGalleryModule
         selectedAssetLikeButton = null;
         selectedAssetLikeCountLabel = null;
         EditorPrefs.DeleteKey(SelectedAssetIdPrefKey);
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 
@@ -364,7 +364,7 @@ public partial class AssetGalleryModule
                     {
                         editor.RefreshAccountAndVersions();
                     }
-                    editor.RefreshUiToolkitSections();
+                    editor.RequestRefresh(McbViewParts.All);
                 }));
         }
 
@@ -404,7 +404,7 @@ public partial class AssetGalleryModule
             }
         }
 
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
     }
 
     private void TryRestoreSelectedAsset()
@@ -455,16 +455,5 @@ public partial class AssetGalleryModule
         return applied <= 0 ? null : compatibleAssets.Concat(allAssets).FirstOrDefault(a => a != null && a.id == applied);
     }
 
-    /// <summary>
-    /// Shows the asset the custom base applied, with its versions read again (an update asked from another view applies one
-    /// of them); true when it is shown or now loading, false when the avatar's assets do not hold it (yet).
-    /// </summary>
-    internal bool ShowAppliedAsset()
-    {
-        var applied = AppliedAsset();
-        if (applied == null) return false;
-        if (SelectedAsset == null || SelectedAsset.id != applied.id) SelectAsset(applied, persist: false, refreshVersions: true);
-        return true;
-    }
 }
 #endif

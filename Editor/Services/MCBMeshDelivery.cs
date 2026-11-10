@@ -241,7 +241,7 @@ public static class MCBMeshDelivery
     {
         if (EditorApplication.timeSinceStartup < 60) return;
         if (UnityEngine.Application.isBatchMode || SessionState.GetBool(PrunedSessionKey, false)) { EditorApplication.update -= PruneWhenIdle; return; }
-        if (EditorApplication.isPlayingOrWillChangePlaymode || MCBEditor.ShouldDeferBackgroundNetworkRefresh()) return;
+        if (EditorApplication.isPlayingOrWillChangePlaymode || McbSession.ShouldDeferBackgroundNetworkRefresh()) return;
         EditorApplication.update -= PruneWhenIdle;
         SessionState.SetBool(PrunedSessionKey, true);
         string versionsRoot = Path.GetFullPath(MCBUtils.ASSET_VERSIONS_FOLDER);

@@ -15,9 +15,11 @@ public partial class CreatorModeModule
     private const string InitialDefaultAviVersion = "1.0.0";
     private const long MaxVersionPackageUploadBytes = 600L * 1024L * 1024L;
 
-    private readonly MCBEditor editor;
+    private readonly McbSession session;
     private readonly NetworkService networkService;
     private readonly FileManagerService fileManagerService;
+    /// <summary>The asset this form builds versions of: its window's, whatever the session's gallery shows meanwhile.</summary>
+    public AvatarDiscoveredAsset Asset { get; }
     private string cachedCustomFbxSignature;
     private List<string> cachedCustomFbxBlendshapeNames = new List<string>();
 
@@ -47,17 +49,19 @@ public partial class CreatorModeModule
     private CustomBaseVersion lastParentVersionForVeins;
     private bool isRestoringFromVersionState;
     
-    public CreatorModeModule(MCBEditor editor)
+    /// <summary>The creator form of an avatar's session, for one asset (the creator window's, or MCP's draft).</summary>
+    public CreatorModeModule(McbSession session, AvatarDiscoveredAsset asset)
     {
-        this.editor = editor;
-        this.networkService = new NetworkService();
-        this.fileManagerService = new FileManagerService();
+        this.session = session;
+        Asset = asset;
+        this.networkService = session.networkService;
+        this.fileManagerService = session.fileManagerService;
         creatorBlendshapeEditorFoldout = EditorPrefs.GetBool("MCB_CreatorMode_BlendshapeEditorFoldout", false);
     }
 
     private void ApplyCustomFbxForModelEntry(GameObject targetFbx, GameObject customFbx)
     {
-        if (editor.customBaseTarget == null || targetFbx == null || customFbx == null)
+        if (session.customBaseTarget == null || targetFbx == null || customFbx == null)
         {
             return;
         }
@@ -73,7 +77,7 @@ public partial class CreatorModeModule
 
             AssetDatabase.ImportAsset(customPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 
-            Transform avatarRoot = AvatarPaths.Root(editor.customBaseTarget);
+            Transform avatarRoot = AvatarPaths.Root(session.customBaseTarget);
             var smrPaths = CollectTargetedSmrPathsForModelEntry(avatarRoot, targetPath, targetFbx, customFbx);
             if (smrPaths.Count == 0)
             {
@@ -83,7 +87,7 @@ public partial class CreatorModeModule
             Undo.IncrementCurrentGroup();
             int undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("Apply Custom FBX Meshes");
-            Undo.RecordObject(editor.customBaseTarget, "Apply Custom FBX Meshes");
+            Undo.RecordObject(session.customBaseTarget, "Apply Custom FBX Meshes");
 
             int refreshedCount = SmrPathService.RefreshTargetMeshesFromFbx(
                 avatarRoot,
@@ -104,7 +108,7 @@ public partial class CreatorModeModule
 
             SaveTemporaryInternalVersion("custom FBX apply");
 
-            EditorUtility.SetDirty(editor.customBaseTarget);
+            EditorUtility.SetDirty(session.customBaseTarget);
             MCBLogger.Log($"[MCB] Applied custom FBX '{customPath}' to {refreshedCount} renderer(s) mapped from target '{targetPath}'.");
         }
         catch (Exception ex)
@@ -126,7 +130,7 @@ public partial class CreatorModeModule
 
     private void ApplyCustomAvatarForModelEntry(GameObject targetFbx, GameObject customFbx, Avatar customAvatar)
     {
-        if (editor.customBaseTarget == null || targetFbx == null || customAvatar == null)
+        if (session.customBaseTarget == null || targetFbx == null || customAvatar == null)
         {
             return;
         }
@@ -135,9 +139,9 @@ public partial class CreatorModeModule
         {
             if (customFbx == null)
             {
-                AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(editor.customBaseTarget), customAvatar);
+                AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(session.customBaseTarget), customAvatar);
                 SaveTemporaryInternalVersion("custom avatar apply");
-                EditorUtility.SetDirty(editor.customBaseTarget);
+                EditorUtility.SetDirty(session.customBaseTarget);
                 return;
             }
             string targetPath = AssetDatabase.GetAssetPath(targetFbx);
@@ -152,7 +156,7 @@ public partial class CreatorModeModule
             {
                 AssetDatabase.ImportAsset(targetPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
             }
-            Transform avatarRoot = AvatarPaths.Root(editor.customBaseTarget);
+            Transform avatarRoot = AvatarPaths.Root(session.customBaseTarget);
             var smrPaths = SmrPathService.CollectSmrPathsForFbx(avatarRoot, targetPath);
             if (smrPaths.Count == 0)
             {
@@ -168,9 +172,9 @@ public partial class CreatorModeModule
                 avatarRoot);
 
             SaveTemporaryInternalVersion("custom avatar apply");
-            new VersionActions(editor, networkService, fileManagerService).StartRecalculateCurrentFbxHash();
+            session.actions.StartRecalculateCurrentFbxHash();
 
-            EditorUtility.SetDirty(editor.customBaseTarget);
+            EditorUtility.SetDirty(session.customBaseTarget);
             MCBLogger.Log($"[MCB] Applied custom Avatar '{AssetDatabase.GetAssetPath(customAvatar)}' to target '{targetPath}'.");
         }
         catch (Exception ex)
@@ -205,9 +209,9 @@ public partial class CreatorModeModule
             }
 
             avatarProp.objectReferenceValue = result.avatar;
-            editor.serializedObject.ApplyModifiedProperties();
-            EditorUtility.SetDirty(editor.customBaseTarget);
-            AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(editor.customBaseTarget), result.avatar);
+            session.serializedObject.ApplyModifiedProperties();
+            EditorUtility.SetDirty(session.customBaseTarget);
+            AvatarDefinitionGenerationService.SetRootAnimatorAvatar(AvatarPaths.Root(session.customBaseTarget), result.avatar);
             SaveTemporaryInternalVersion("avatar generation");
 
             MCBLogger.Log($"[MCB] Generated custom base Avatar '{result.avatarPath}'. {result.message}");
@@ -221,33 +225,33 @@ public partial class CreatorModeModule
 
     private void SyncModelFileBuildEntryCount()
     {
-        if (editor.modelFileBuildEntriesProp == null || editor.baseFbxFilesProp == null) return;
+        if (session.modelFileBuildEntriesProp == null || session.baseFbxFilesProp == null) return;
 
-        while (editor.modelFileBuildEntriesProp.arraySize < editor.baseFbxFilesProp.arraySize)
+        while (session.modelFileBuildEntriesProp.arraySize < session.baseFbxFilesProp.arraySize)
         {
-            editor.modelFileBuildEntriesProp.InsertArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize);
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize - 1);
+            session.modelFileBuildEntriesProp.InsertArrayElementAtIndex(session.modelFileBuildEntriesProp.arraySize);
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(session.modelFileBuildEntriesProp.arraySize - 1);
             entry.FindPropertyRelative("customFbx").objectReferenceValue = null;
             var externalCustomFbxPath = entry.FindPropertyRelative("externalCustomFbxPath");
             if (externalCustomFbxPath != null) externalCustomFbxPath.stringValue = "";
             entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue = null;
         }
 
-        while (editor.modelFileBuildEntriesProp.arraySize > editor.baseFbxFilesProp.arraySize)
+        while (session.modelFileBuildEntriesProp.arraySize > session.baseFbxFilesProp.arraySize)
         {
-            editor.modelFileBuildEntriesProp.DeleteArrayElementAtIndex(editor.modelFileBuildEntriesProp.arraySize - 1);
+            session.modelFileBuildEntriesProp.DeleteArrayElementAtIndex(session.modelFileBuildEntriesProp.arraySize - 1);
         }
     }
 
     private bool AreModelFileBuildEntriesValid()
     {
         SyncModelFileBuildEntryCount();
-        if (editor.modelFileBuildEntriesProp == null) return true;
+        if (session.modelFileBuildEntriesProp == null) return true;
 
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
-            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var sourceFbx = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             var customFbx = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
             var externalCustomFbxPath = entry.FindPropertyRelative("externalCustomFbxPath")?.stringValue;
             var avatar = entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
@@ -291,12 +295,12 @@ public partial class CreatorModeModule
     private bool HasModelFileBuildEntryPayload()
     {
         SyncModelFileBuildEntryCount();
-        if (editor.modelFileBuildEntriesProp == null || editor.baseFbxFilesProp == null) return false;
+        if (session.modelFileBuildEntriesProp == null || session.baseFbxFilesProp == null) return false;
 
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
-            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var sourceFbx = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             var customFbx = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
             var externalCustomFbxPath = entry.FindPropertyRelative("externalCustomFbxPath")?.stringValue;
             var avatar = entry.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
@@ -305,19 +309,19 @@ public partial class CreatorModeModule
         }
 
         // Meshes Mixer committed on the base become their model's custom FBX when the version is built.
-        return VersionAvatarMeshes.Find(editor).Committed.Count > 0;
+        return VersionAvatarMeshes.Find(session).Committed.Count > 0;
     }
 
     private bool HasSuggestRealisticPayload()
     {
-        return editor.includeSuggestRealisticForCreatorProp != null &&
-               editor.includeSuggestRealisticForCreatorProp.boolValue &&
-               GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count > 0;
+        return session.includeSuggestRealisticForCreatorProp != null &&
+               session.includeSuggestRealisticForCreatorProp.boolValue &&
+               GetSerializedStringList(session.suggestRealisticMeshPathsForCreatorProp).Count > 0;
     }
 
     private void SaveTemporaryInternalVersion(string reason)
     {
-        if (isRestoringFromVersionState || editor?.customBaseTarget == null)
+        if (isRestoringFromVersionState || session?.customBaseTarget == null)
         {
             return;
         }
@@ -330,12 +334,12 @@ public partial class CreatorModeModule
         }
 
         bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
-                                 editor.avatarLogicPrefabProp.objectReferenceValue != null ||
-                                 (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue != null) ||
-                                 editor.includeDynamicNormalsBodyForCreatorProp.boolValue ||
-                                 editor.includeDynamicNormalsFlexingForCreatorProp.boolValue ||
+                                 session.avatarLogicPrefabProp.objectReferenceValue != null ||
+                                 (session.includeCustomVeinsForCreatorProp.boolValue && session.customVeinsNormalMapProp.objectReferenceValue != null) ||
+                                 session.includeDynamicNormalsBodyForCreatorProp.boolValue ||
+                                 session.includeDynamicNormalsFlexingForCreatorProp.boolValue ||
                                  HasTypedCustomization() || HasSuggestRealisticPayload() ||
-                                 editor.customBlendshapesForCreatorProp.arraySize > 0;
+                                 session.customBlendshapesForCreatorProp.arraySize > 0;
         if (!hasVersionPayload)
         {
             return;
@@ -352,9 +356,9 @@ public partial class CreatorModeModule
             }
 
             // The artifact is already committed and persisted as unsubmitted.
-            editor.LoadUnsubmittedVersions(true);
-            editor.selectedVersionForAction = artifact.Metadata;
-            editor.selectedCustomVersionForAction = null;
+            session.LoadUnsubmittedVersions(true);
+            session.selectedVersionForAction = artifact.Metadata;
+            session.selectedCustomVersionForAction = null;
             MCBLogger.Log($"[CreatorMode] Saved temporary internal version {artifact.Metadata.version} after {reason}.");
         }
         catch (Exception ex)
@@ -369,7 +373,7 @@ public partial class CreatorModeModule
 
         if (buildError != null)
         {
-            editor.warningsModule.AddWarning(buildError.Message, MessageType.Warning, "Temporary Version Not Saved");
+            session.warningsModule.AddWarning(buildError.Message, MessageType.Warning, "Temporary Version Not Saved");
         }
     }
 
@@ -379,7 +383,7 @@ public partial class CreatorModeModule
             return;
 
         // Add the selected blendshape to the list
-        var prop = editor.customBlendshapesForCreatorProp;
+        var prop = session.customBlendshapesForCreatorProp;
         int index = prop.arraySize;
         prop.arraySize++;
         var element = prop.GetArrayElementAtIndex(index);
@@ -388,7 +392,7 @@ public partial class CreatorModeModule
         element.FindPropertyRelative("isSlider").boolValue = false;
         element.FindPropertyRelative("isSliderDefault").boolValue = false;
         element.FindPropertyRelative("correctiveBlendshapes").arraySize = 0;
-        editor.serializedObject.ApplyModifiedProperties();
+        session.serializedObject.ApplyModifiedProperties();
     }
 
     private CorrectiveActivationType ApplyCorrectiveTypeChange(
@@ -440,13 +444,13 @@ public partial class CreatorModeModule
     {
         SyncModelFileBuildEntryCount();
         var signatureParts = new List<string>();
-        for (int entryIndex = 0; entryIndex < editor.modelFileBuildEntriesProp.arraySize; entryIndex++)
+        for (int entryIndex = 0; entryIndex < session.modelFileBuildEntriesProp.arraySize; entryIndex++)
         {
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
             var fbxObject = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
-            if (fbxObject == null && editor.baseFbxFilesProp != null && entryIndex < editor.baseFbxFilesProp.arraySize)
+            if (fbxObject == null && session.baseFbxFilesProp != null && entryIndex < session.baseFbxFilesProp.arraySize)
             {
-                fbxObject = editor.baseFbxFilesProp.GetArrayElementAtIndex(entryIndex).objectReferenceValue as GameObject;
+                fbxObject = session.baseFbxFilesProp.GetArrayElementAtIndex(entryIndex).objectReferenceValue as GameObject;
             }
             if (fbxObject == null) continue;
 
@@ -464,13 +468,13 @@ public partial class CreatorModeModule
 
         var names = new HashSet<string>(StringComparer.Ordinal);
 
-        for (int entryIndex = 0; entryIndex < editor.modelFileBuildEntriesProp.arraySize; entryIndex++)
+        for (int entryIndex = 0; entryIndex < session.modelFileBuildEntriesProp.arraySize; entryIndex++)
         {
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(entryIndex);
             var fbxObject = entry.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
-            if (fbxObject == null && editor.baseFbxFilesProp != null && entryIndex < editor.baseFbxFilesProp.arraySize)
+            if (fbxObject == null && session.baseFbxFilesProp != null && entryIndex < session.baseFbxFilesProp.arraySize)
             {
-                fbxObject = editor.baseFbxFilesProp.GetArrayElementAtIndex(entryIndex).objectReferenceValue as GameObject;
+                fbxObject = session.baseFbxFilesProp.GetArrayElementAtIndex(entryIndex).objectReferenceValue as GameObject;
             }
             if (fbxObject == null) continue;
 
@@ -513,12 +517,12 @@ public partial class CreatorModeModule
     private List<SuggestRealisticMeshOption> GetSuggestRealisticMeshOptions()
     {
         var options = new List<SuggestRealisticMeshOption>();
-        if (editor?.customBaseTarget == null)
+        if (session?.customBaseTarget == null)
         {
             return options;
         }
 
-        Transform root = AvatarPaths.Root(editor.customBaseTarget);
+        Transform root = AvatarPaths.Root(session.customBaseTarget);
         if (root == null)
         {
             return options;
@@ -526,7 +530,7 @@ public partial class CreatorModeModule
 
         var targetFbxPaths = GetCreatorTargetFbxPaths();
         var pathsByFbx = SmrPathService.CollectSmrPathsByFbx(root, targetFbxPaths);
-        var selectedAsset = editor.GetSelectedAsset();
+        var selectedAsset = Asset;
         foreach (string targetFbxPath in targetFbxPaths)
         {
             bool hasLiveEntries = pathsByFbx.TryGetValue(targetFbxPath, out var liveEntries) &&
@@ -576,14 +580,14 @@ public partial class CreatorModeModule
     private List<string> GetCreatorTargetFbxPaths()
     {
         var paths = new List<string>();
-        if (editor?.baseFbxFilesProp == null)
+        if (session?.baseFbxFilesProp == null)
         {
             return paths;
         }
 
-        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        for (int i = 0; i < session.baseFbxFilesProp.arraySize; i++)
         {
-            var fbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var fbx = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             string path = fbx != null ? AssetDatabase.GetAssetPath(fbx) : null;
             if (!string.IsNullOrWhiteSpace(path))
             {
@@ -758,13 +762,13 @@ public partial class CreatorModeModule
         lastParentVersionForVeins = newParent;
         if (!isRestoringFromVersionState && newParent != null)
         {
-            editor.serializedObject.ApplyModifiedProperties();
-            editor.customBaseTarget.creatorCustomization = VersionCustomization.Read(newParent.extraCustomization);
-            editor.serializedObject.Update();
+            session.serializedObject.ApplyModifiedProperties();
+            session.customBaseTarget.creatorCustomization = VersionCustomization.Read(newParent.extraCustomization);
+            session.serializedObject.Update();
         }
 
-        var includeProp = editor.includeCustomVeinsForCreatorProp;
-        var textureProp = editor.customVeinsNormalMapProp;
+        var includeProp = session.includeCustomVeinsForCreatorProp;
+        var textureProp = session.customVeinsNormalMapProp;
 
         // Only auto-populate if parent supports custom veins
         if (ParentSupportsCustomVeins(newParent))
@@ -796,8 +800,8 @@ public partial class CreatorModeModule
         // If parent doesn't support custom veins, don't uncheck or clear - just leave it as is
         
         // Auto-populate dynamic normals checkboxes from parent version
-        var includeBodyProp = editor.includeDynamicNormalsBodyForCreatorProp;
-        var includeFlexingProp = editor.includeDynamicNormalsFlexingForCreatorProp;
+        var includeBodyProp = session.includeDynamicNormalsBodyForCreatorProp;
+        var includeFlexingProp = session.includeDynamicNormalsFlexingForCreatorProp;
         
         if (newParent?.extraCustomization != null && !isRestoringFromVersionState)
         {
@@ -816,13 +820,13 @@ public partial class CreatorModeModule
 
             var parentSuggestRealisticPaths = ExtraCustomizationUtils.GetStringList(newParent.extraCustomization, SuggestRealisticKey);
             if (parentSuggestRealisticPaths.Count > 0 &&
-                editor.includeSuggestRealisticForCreatorProp != null &&
-                editor.suggestRealisticMeshPathsForCreatorProp != null)
+                session.includeSuggestRealisticForCreatorProp != null &&
+                session.suggestRealisticMeshPathsForCreatorProp != null)
             {
-                editor.includeSuggestRealisticForCreatorProp.boolValue = true;
-                if (GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count == 0)
+                session.includeSuggestRealisticForCreatorProp.boolValue = true;
+                if (GetSerializedStringList(session.suggestRealisticMeshPathsForCreatorProp).Count == 0)
                 {
-                    SetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp, parentSuggestRealisticPaths);
+                    SetSerializedStringList(session.suggestRealisticMeshPathsForCreatorProp, parentSuggestRealisticPaths);
                 }
             }
         }
@@ -866,10 +870,10 @@ public partial class CreatorModeModule
             imported.Add(dst);
         }
 
-        Undo.RecordObject(editor.customBaseTarget, "Import Parent Blendshapes");
-        editor.customBaseTarget.customBlendshapesForCreator = imported;
-        EditorUtility.SetDirty(editor.customBaseTarget);
-        editor.serializedObject.Update();
+        Undo.RecordObject(session.customBaseTarget, "Import Parent Blendshapes");
+        session.customBaseTarget.customBlendshapesForCreator = imported;
+        EditorUtility.SetDirty(session.customBaseTarget);
+        session.serializedObject.Update();
     }
 
     private static void CopyCorrectivesToSerialized(SerializedProperty blendshapeElement, CorrectiveBlendshapeEntry[] source)
@@ -897,7 +901,7 @@ public partial class CreatorModeModule
         }
         else
         {
-            Version baseVersion = editor.ParseVersion(currentVersionStr);
+            Version baseVersion = session.ParseVersion(currentVersionStr);
             newVersionMajor = baseVersion.Major; 
             newVersionMinor = baseVersion.Minor; 
             newVersionPatch = baseVersion.Build + 1;
@@ -906,10 +910,10 @@ public partial class CreatorModeModule
     
     private void PopulateParentVersionDropdown()
     {
-        var applied = editor.customBaseTarget.appliedCustomBaseVersion;
+        var applied = session.customBaseTarget.appliedCustomBaseVersion;
         compatibleParentVersions = VersionRepository.GetCreatorParentVersions(
-                editor.GetSelectedAsset()?.id ?? 0, editor.serverVersions, editor.importedVersions, applied)
-            .OrderByDescending(v => editor.ParseVersion(v.version)).ToList();
+                Asset?.id ?? 0, session.serverVersions, session.importedVersions, applied)
+            .OrderByDescending(v => session.ParseVersion(v.version)).ToList();
         parentVersionDisplayOptions = compatibleParentVersions.Select(v => $"{v.version} ({v.scope})").ToList();
         defaultParentIndex = compatibleParentVersions.FindIndex(v => v.Equals(applied));
         if (defaultParentIndex < 0) defaultParentIndex = compatibleParentVersions.Count > 0 ? 0 : -1;
@@ -930,7 +934,7 @@ public partial class CreatorModeModule
     {
         string baseVersionString = selectedParentVersionObject?.version;
         if (string.IsNullOrEmpty(baseVersionString)) return true;
-        return editor.CompareVersions(newVersionString, baseVersionString) > 0;
+        return session.CompareVersions(newVersionString, baseVersionString) > 0;
     }
 
     private bool RequiresParentVersion()
@@ -971,14 +975,14 @@ public partial class CreatorModeModule
     private IEnumerator BuildNewVersionCoroutineCore(Action<VersionArtifact> completed, bool takeAvatarMeshes)
     {
         TakenFromAvatar = Array.Empty<VersionAvatarMeshes.Taken>();
-        var logicPrefab = editor.avatarLogicPrefabProp.objectReferenceValue as GameObject;
-        bool shouldIncludeCustomVeins = editor.includeCustomVeinsForCreatorProp.boolValue;
-        var customVeinsTexture = editor.customVeinsNormalMapProp.objectReferenceValue as Texture2D;
-        bool shouldIncludeDynamicNormalsBody = editor.includeDynamicNormalsBodyForCreatorProp.boolValue;
-        bool shouldIncludeDynamicNormalsFlexing = editor.includeDynamicNormalsFlexingForCreatorProp.boolValue;
-        var suggestRealisticMeshPaths = GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp);
-        bool shouldIncludeSuggestRealistic = editor.includeSuggestRealisticForCreatorProp != null &&
-                                             editor.includeSuggestRealisticForCreatorProp.boolValue;
+        var logicPrefab = session.avatarLogicPrefabProp.objectReferenceValue as GameObject;
+        bool shouldIncludeCustomVeins = session.includeCustomVeinsForCreatorProp.boolValue;
+        var customVeinsTexture = session.customVeinsNormalMapProp.objectReferenceValue as Texture2D;
+        bool shouldIncludeDynamicNormalsBody = session.includeDynamicNormalsBodyForCreatorProp.boolValue;
+        bool shouldIncludeDynamicNormalsFlexing = session.includeDynamicNormalsFlexingForCreatorProp.boolValue;
+        var suggestRealisticMeshPaths = GetSerializedStringList(session.suggestRealisticMeshPathsForCreatorProp);
+        bool shouldIncludeSuggestRealistic = session.includeSuggestRealisticForCreatorProp != null &&
+                                             session.includeSuggestRealisticForCreatorProp.boolValue;
 
         if (shouldIncludeCustomVeins)
         {
@@ -996,7 +1000,7 @@ public partial class CreatorModeModule
         string defaultAviVersion = selectedParentVersionObject?.defaultAviVersion ?? InitialDefaultAviVersion;
 
         // Convert CreatorBlendshapeEntry list to CustomBlendshapeEntry array.
-        var customBlendshapeEntries = editor.customBaseTarget.customBlendshapesForCreator
+        var customBlendshapeEntries = session.customBaseTarget.customBlendshapesForCreator
             .Select(entry =>
             {
                 var corrective = (entry.correctiveBlendshapes ?? new List<CreatorCorrectiveBlendshapeEntry>())
@@ -1025,7 +1029,7 @@ public partial class CreatorModeModule
 
         // Corrective and mode animations ship in the logic package so their GUIDs resolve for users.
         var fixedByAnimationAssetPaths = CollectAnimationAssetPathsFromFixedBy(customBlendshapeEntries).Concat(ModeAnimationAssetPaths()).Distinct().ToList();
-        var selectedAsset = editor.GetSelectedAsset();
+        var selectedAsset = Asset;
         if (selectedAsset == null || selectedAsset.id <= 0)
         {
             throw new InvalidOperationException("Select a custom base asset before building a version.");
@@ -1039,22 +1043,22 @@ public partial class CreatorModeModule
         }
         // Builds started without the form (MCP) get the same version rule as the form's buttons and the server.
         VersionPublisher.ValidateNewVersionNumber(newVersionString, selectedParentVersionObject?.version,
-            selectedParentVersionObject != null ? null : VersionRepository.GetCreatorParentVersions(assetId, editor.serverVersions,
-                editor.importedVersions, editor.customBaseTarget.appliedCustomBaseVersion).Select(v => v.version),
-            editor.CompareVersions);
+            selectedParentVersionObject != null ? null : VersionRepository.GetCreatorParentVersions(assetId, session.serverVersions,
+                session.importedVersions, session.customBaseTarget.appliedCustomBaseVersion).Select(v => v.version),
+            session.CompareVersions);
 
         EditorUtility.DisplayProgressBar("Preparing Build", "Creating version package...", 0.2f);
 
         SyncModelFileBuildEntryCount();
         // With a dialog or without (MCP, temporary versions): a Mixer working copy is not built, committed meshes go into
         // their model's custom FBX before the entries are read.
-        var shown = VersionAvatarMeshes.Find(editor.customBaseTarget, editor);
+        var shown = VersionAvatarMeshes.Find(session.customBaseTarget, session);
         string inSession = VersionAvatarMeshes.InSessionMessage(shown.InSession.Select(s => s.Renderer));
         if (inSession != null) throw new InvalidOperationException(inSession);
         if (shown.Committed.Count > 0 && takeAvatarMeshes)
         {
             EditorUtility.DisplayProgressBar("Preparing Build", "Writing the meshes Mixer committed into custom FBX files...", 0.25f);
-            TakenFromAvatar = VersionAvatarMeshes.TakeIntoEntries(editor.customBaseTarget, editor.serializedObject, shown.Committed);
+            TakenFromAvatar = VersionAvatarMeshes.TakeIntoEntries(session.customBaseTarget, session.serializedObject, shown.Committed);
             yield return null;
         }
         else if (shown.Committed.Count > 0)
@@ -1062,10 +1066,10 @@ public partial class CreatorModeModule
                                  VersionAvatarMeshes.LeftOutMessage(shown.Committed.Select(s => s.Renderer)));
         var packageEntries = new List<FileManagerService.ModelFilePackageEntry>();
         var sourceFbxByPath = new Dictionary<string, GameObject>(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
-            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
-            var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var sourceFbx = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var entryProp = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             var customFbx = entryProp.FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
             string externalCustomFbxPath = entryProp.FindPropertyRelative("externalCustomFbxPath")?.stringValue;
             var customAvatar = entryProp.FindPropertyRelative("customBaseAvatar").objectReferenceValue as Avatar;
@@ -1084,7 +1088,7 @@ public partial class CreatorModeModule
             string localTargetPath = MCBUtils.ToUnityPath(sourceFbxPath);
             sourceFbxByPath[localTargetPath] = sourceFbx;
 
-            var pathOverride = AvatarPathOverrideService.FindOverrideForLocalTarget(editor.customBaseTarget, localTargetPath);
+            var pathOverride = AvatarPathOverrideService.FindOverrideForLocalTarget(session.customBaseTarget, localTargetPath);
             string referenceSourcePath = !string.IsNullOrWhiteSpace(pathOverride?.referenceSourcePath)
                 ? AvatarPathOverrideService.NormalizeUnityPath(pathOverride.referenceSourcePath)
                 : localTargetPath;
@@ -1111,12 +1115,12 @@ public partial class CreatorModeModule
 
         bool useAdvancedMeshReplacement =
             FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) &&
-            editor.useAdvancedMeshReplacementForCreatorProp != null &&
-            editor.useAdvancedMeshReplacementForCreatorProp.boolValue;
+            session.useAdvancedMeshReplacementForCreatorProp != null &&
+            session.useAdvancedMeshReplacementForCreatorProp.boolValue;
         bool useHdiffFbxDelta =
             !useAdvancedMeshReplacement &&
-            editor.useHdiffFbxDeltaForCreatorProp != null &&
-            editor.useHdiffFbxDeltaForCreatorProp.boolValue;
+            session.useHdiffFbxDeltaForCreatorProp != null &&
+            session.useHdiffFbxDeltaForCreatorProp.boolValue;
         foreach (var packageEntry in packageEntries)
         {
             string sourceUnityPath = !string.IsNullOrWhiteSpace(packageEntry.localTargetPath)
@@ -1133,7 +1137,7 @@ public partial class CreatorModeModule
                                              !string.IsNullOrWhiteSpace(packageEntry.externalCustomFbxPath));
             // Paths from the avatar's root, where a version apply looks them up (an avatar under an organizer object too).
             packageEntry.smrPaths = CollectTargetedSmrPathsForModelEntry(
-                AvatarPaths.Root(editor.customBaseTarget),
+                AvatarPaths.Root(session.customBaseTarget),
                 sourceUnityPath,
                 sourceFbx,
                 packageEntry.customFbx);
@@ -1251,7 +1255,7 @@ public partial class CreatorModeModule
         }
 
         var extraCustomization = ExtraCustomizationUtils.CloneEntries(selectedParentVersionObject?.extraCustomization);
-        var customization = editor.customBaseTarget.creatorCustomization.Clone();
+        var customization = session.customBaseTarget.creatorCustomization.Clone();
         customization.rendererLayout = CompleteRendererLayout(customization.rendererLayout, packageEntries.Where(e => e.rendererSlots != null).SelectMany(e => e.rendererSlots));
         customization.Validate();
         customization.Write(extraCustomization);
@@ -1329,7 +1333,7 @@ public partial class CreatorModeModule
             ComputeFormSignature(),
             // One plain package serves every original; XOR versions are re-encrypted for each selected original.
             protection.xor ? OriginalBaseLibrary.Versions(selectedAsset).Where(v => OriginalBaseLibrary.Selection(selectedAsset).Contains(v.key)).ToArray() : null,
-            protection.xor ? OriginalBaseLibrary.ActiveKey(selectedAsset) : null, editor.customBaseTarget.creatorCustomization,
+            protection.xor ? OriginalBaseLibrary.ActiveKey(selectedAsset) : null, session.customBaseTarget.creatorCustomization,
             OriginalModelPaths());
     }
 
@@ -1337,9 +1341,9 @@ public partial class CreatorModeModule
     private List<string> OriginalModelPaths()
     {
         var paths = new List<string>();
-        for (int i = 0; i < (editor.baseFbxFilesProp?.arraySize ?? 0); i++)
+        for (int i = 0; i < (session.baseFbxFilesProp?.arraySize ?? 0); i++)
         {
-            var model = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue;
+            var model = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue;
             string path = model != null ? AssetDatabase.GetAssetPath(model) : null;
             if (!string.IsNullOrWhiteSpace(path)) paths.Add(path);
         }
@@ -1355,31 +1359,31 @@ public partial class CreatorModeModule
     private string ComputeFormSignature()
     {
         var canonical = new System.Text.StringBuilder(512);
-        var supportAsset = editor.GetSelectedAsset();
+        var supportAsset = Asset;
         if (supportAsset != null) canonical.Append(string.Join(",", OriginalBaseLibrary.Selection(supportAsset).OrderBy(key => key, StringComparer.Ordinal)));
         canonical.Append(newVersionMajor).Append('.').Append(newVersionMinor).Append('.').Append(newVersionPatch);
         canonical.Append('|').Append(newVersionScope);
         canonical.Append('|').Append(newVersionTitle);
         canonical.Append('|').Append(newChangelog);
         canonical.Append('|').Append(selectedParentVersionObject?.version);
-        canonical.Append('|').Append(GetAssetPathOf(editor.avatarLogicPrefabProp));
-        canonical.Append('|').Append(editor.includeCustomVeinsForCreatorProp.boolValue ? GetAssetPathOf(editor.customVeinsNormalMapProp) ?? "veins" : null);
-        canonical.Append('|').Append(editor.customBaseTarget.creatorCustomization.Signature());
+        canonical.Append('|').Append(GetAssetPathOf(session.avatarLogicPrefabProp));
+        canonical.Append('|').Append(session.includeCustomVeinsForCreatorProp.boolValue ? GetAssetPathOf(session.customVeinsNormalMapProp) ?? "veins" : null);
+        canonical.Append('|').Append(session.customBaseTarget.creatorCustomization.Signature());
         var protectionSignature = ResolveVersionProtection();
         canonical.Append('|').Append(protectionSignature.xor).Append(',').Append(protectionSignature.discordRole);
-        canonical.Append('|').Append(editor.includeDynamicNormalsBodyForCreatorProp.boolValue);
-        canonical.Append('|').Append(editor.includeDynamicNormalsFlexingForCreatorProp.boolValue);
-        canonical.Append('|').Append(editor.useAdvancedMeshReplacementForCreatorProp != null && editor.useAdvancedMeshReplacementForCreatorProp.boolValue);
-        canonical.Append('|').Append(editor.useHdiffFbxDeltaForCreatorProp != null && editor.useHdiffFbxDeltaForCreatorProp.boolValue);
+        canonical.Append('|').Append(session.includeDynamicNormalsBodyForCreatorProp.boolValue);
+        canonical.Append('|').Append(session.includeDynamicNormalsFlexingForCreatorProp.boolValue);
+        canonical.Append('|').Append(session.useAdvancedMeshReplacementForCreatorProp != null && session.useAdvancedMeshReplacementForCreatorProp.boolValue);
+        canonical.Append('|').Append(session.useHdiffFbxDeltaForCreatorProp != null && session.useHdiffFbxDeltaForCreatorProp.boolValue);
         canonical.Append('|').Append(HasSuggestRealisticPayload()
-            ? string.Join(",", GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp))
+            ? string.Join(",", GetSerializedStringList(session.suggestRealisticMeshPathsForCreatorProp))
             : null);
 
         SyncModelFileBuildEntryCount();
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
-            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue;
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var sourceFbx = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue;
             canonical.Append("|entry:")
                 .Append(sourceFbx != null ? AssetDatabase.GetAssetPath(sourceFbx) : null).Append(';')
                 .Append(GetAssetPathOf(entry.FindPropertyRelative("customFbx"))).Append(';')
@@ -1388,7 +1392,7 @@ public partial class CreatorModeModule
         }
 
         canonical.Append("|blendshapes:").Append(JsonConvert.SerializeObject(
-            editor.customBaseTarget != null ? editor.customBaseTarget.customBlendshapesForCreator : null));
+            session.customBaseTarget != null ? session.customBaseTarget.customBlendshapesForCreator : null));
 
         return VersionManifest.ComputeStringHash(canonical.ToString());
     }
@@ -1405,16 +1409,13 @@ public partial class CreatorModeModule
     /// to clear the pending-build state and refresh the lists — the folder deletion or
     /// publish transition already happened in the repository.
     /// </summary>
-    public void RemoveUnsubmittedVersion(CustomBaseVersion versionToRemove)
+    // A version deleted from the version list (the session reads its lists again): the form forgets it was built.
+    private void OnUnsubmittedVersionRemoved(CustomBaseVersion versionToRemove)
     {
         if (builtPendingVersion != null && builtPendingVersion.Equals(versionToRemove))
         {
             ClearBuiltPendingVersion();
         }
-
-        VersionRepository.InvalidateCache();
-        editor.LoadUnsubmittedVersions(true);
-        editor.Repaint();
     }
 
     private void PopulateFieldsFromVersion(CustomBaseVersion ver)
@@ -1422,7 +1423,7 @@ public partial class CreatorModeModule
         isRestoringFromVersionState = true;
         try
         {
-            var parsedVersion = editor.ParseVersion(ver.version);
+            var parsedVersion = session.ParseVersion(ver.version);
             newVersionMajor = parsedVersion.Major;
             newVersionMinor = parsedVersion.Minor;
             newVersionPatch = parsedVersion.Build;
@@ -1496,17 +1497,17 @@ public partial class CreatorModeModule
     // form picked by itself).
     private bool CreatorFormHasOwnContent()
     {
-        editor.serializedObject.Update();
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        session.serializedObject.Update();
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
             if (entry.FindPropertyRelative("customFbx")?.objectReferenceValue != null ||
                 entry.FindPropertyRelative("customBaseAvatar")?.objectReferenceValue != null ||
                 !string.IsNullOrWhiteSpace(entry.FindPropertyRelative("externalCustomFbxPath")?.stringValue))
                 return true;
         }
-        string veins = AssetDatabase.GetAssetPath(editor.customVeinsNormalMapProp.objectReferenceValue);
-        return editor.avatarLogicPrefabProp.objectReferenceValue != null || editor.customBlendshapesForCreatorProp.arraySize > 0 ||
+        string veins = AssetDatabase.GetAssetPath(session.customVeinsNormalMapProp.objectReferenceValue);
+        return session.avatarLogicPrefabProp.objectReferenceValue != null || session.customBlendshapesForCreatorProp.arraySize > 0 ||
                (!string.IsNullOrEmpty(veins) && veins != autoAssignedVeinsTexturePath);
     }
 
@@ -1574,7 +1575,7 @@ public partial class CreatorModeModule
                 (versionFile.sourceModelFileId.HasValue && file.id == versionFile.sourceModelFileId.Value ||
                  string.Equals(MCBUtils.ToUnityPath(file.path), normalizedSourcePath, StringComparison.OrdinalIgnoreCase)));
             string localTargetPath = AvatarPathOverrideService.ResolveLocalTargetPath(
-                editor.customBaseTarget,
+                session.customBaseTarget,
                 sourceFile,
                 updateStoredPathFromGuid: false);
             if (!string.IsNullOrWhiteSpace(localTargetPath))
@@ -1583,10 +1584,10 @@ public partial class CreatorModeModule
             }
         }
 
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
-            var entryProp = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
-            var sourceFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var entryProp = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(i);
+            var sourceFbx = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             string sourcePath = sourceFbx != null ? MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(sourceFbx)) : null;
             ModelFileData versionFile = null;
             if (!string.IsNullOrWhiteSpace(sourcePath))
@@ -1600,11 +1601,11 @@ public partial class CreatorModeModule
             {
                 customAvatarPath = MCBUtils.GetVersionAvatarPath(ver, Path.GetFileName(customAvatarPath));
             }
-            else if (fillFromParent && (versionFile == null || editor.modelFileBuildEntriesProp.arraySize == 1))
+            else if (fillFromParent && (versionFile == null || session.modelFileBuildEntriesProp.arraySize == 1))
             {
                 // A model the parent's metadata does not match (its original moved): its avatar by the model's name.
                 customAvatarPath = FileManagerService.VersionModelAvatarPath(MCBUtils.GetVersionDataPath(ver), sourcePath,
-                    editor.modelFileBuildEntriesProp.arraySize);
+                    session.modelFileBuildEntriesProp.arraySize);
             }
             var restoredCustomFbx = AssetDatabase.LoadAssetAtPath<GameObject>(customFbxPath);
             bool externalFbx = restoredCustomFbx == null && !string.IsNullOrWhiteSpace(customFbxPath);
@@ -1624,13 +1625,13 @@ public partial class CreatorModeModule
             if (!AssignFormAsset(entryProp.FindPropertyRelative("customBaseAvatar"), AssetDatabase.LoadAssetAtPath<Avatar>(customAvatarPath), fillFromParent))
                 parentFill.fromFolder.Add("custom avatar");
         }
-        if (editor.useAdvancedMeshReplacementForCreatorProp != null)
+        if (session.useAdvancedMeshReplacementForCreatorProp != null)
         {
-            editor.useAdvancedMeshReplacementForCreatorProp.boolValue = NativeMeshPayloadService.VersionUsesAdvancedMesh(ver);
+            session.useAdvancedMeshReplacementForCreatorProp.boolValue = NativeMeshPayloadService.VersionUsesAdvancedMesh(ver);
         }
-        if (editor.useHdiffFbxDeltaForCreatorProp != null)
+        if (session.useHdiffFbxDeltaForCreatorProp != null)
         {
-            editor.useHdiffFbxDeltaForCreatorProp.boolValue = (ver.versionFiles ?? Array.Empty<ModelFileData>())
+            session.useHdiffFbxDeltaForCreatorProp.boolValue = (ver.versionFiles ?? Array.Empty<ModelFileData>())
                 .Any(file => !string.IsNullOrWhiteSpace(GetMetadataString(file, HdiffService.DeltaFormatMetadataKey)));
         }
         string logicPrefabPath = ver.logicPrefabPath;
@@ -1640,7 +1641,7 @@ public partial class CreatorModeModule
         if (fillFromParent && (string.IsNullOrWhiteSpace(logicPrefabPath) || AssetDatabase.LoadAssetAtPath<GameObject>(logicPrefabPath) == null))
             logicPrefabPath = FileManagerService.VersionLogicPrefabPath(ver, out logicNeedsImport);
         var logicPrefab = string.IsNullOrWhiteSpace(logicPrefabPath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(logicPrefabPath);
-        if (!AssignFormAsset(editor.avatarLogicPrefabProp, logicPrefab, fillFromParent))
+        if (!AssignFormAsset(session.avatarLogicPrefabProp, logicPrefab, fillFromParent))
         {
             if (logicNeedsImport) parentFill.logicNeedsImport = true;
             else parentFill.fromFolder.Add("logic prefab");
@@ -1649,15 +1650,15 @@ public partial class CreatorModeModule
         if (fillFromParent && (ver.customBlendshapes == null || ver.customBlendshapes.Length == 0))
         {
             // Never cleared: the form keeps the blendshapes it has.
-            if (editor.customBlendshapesForCreatorProp.arraySize > 0) parentFill.missing.Add("blendshapes");
+            if (session.customBlendshapesForCreatorProp.arraySize > 0) parentFill.missing.Add("blendshapes");
         }
         else
         {
-            editor.customBlendshapesForCreatorProp.ClearArray();
+            session.customBlendshapesForCreatorProp.ClearArray();
             for (int i = 0; i < (ver.customBlendshapes?.Length ?? 0); i++)
             {
-                editor.customBlendshapesForCreatorProp.InsertArrayElementAtIndex(i);
-                var element = editor.customBlendshapesForCreatorProp.GetArrayElementAtIndex(i);
+                session.customBlendshapesForCreatorProp.InsertArrayElementAtIndex(i);
+                var element = session.customBlendshapesForCreatorProp.GetArrayElementAtIndex(i);
                 element.FindPropertyRelative("name").stringValue = ver.customBlendshapes[i].name;
                 element.FindPropertyRelative("defaultValue").stringValue = ver.customBlendshapes[i].defaultValue;
                 element.FindPropertyRelative("isSlider").boolValue = ver.customBlendshapes[i].isSlider;
@@ -1667,33 +1668,33 @@ public partial class CreatorModeModule
         }
 
         bool includeCustomVeins = ver.includeCustomVeins ?? ExtraCustomizationUtils.HasFlag(ver.extraCustomization, CustomVeinsKey);
-        editor.includeCustomVeinsForCreatorProp.boolValue = includeCustomVeins;
+        session.includeCustomVeinsForCreatorProp.boolValue = includeCustomVeins;
 
         string veinsTexturePath = ver.customVeinsTexturePath;
         // As for the logic prefab: the creator's texture when this project has it, else the parent folder's copy.
         if (fillFromParent && includeCustomVeins &&
             (string.IsNullOrEmpty(veinsTexturePath) || AssetDatabase.LoadAssetAtPath<Texture2D>(veinsTexturePath) == null))
             veinsTexturePath = MCBUtils.GetVersionVeinsTexturePath(ver);
-        if (!AssignFormAsset(editor.customVeinsNormalMapProp, AssetDatabase.LoadAssetAtPath<Texture2D>(veinsTexturePath), fillFromParent) && includeCustomVeins)
+        if (!AssignFormAsset(session.customVeinsNormalMapProp, AssetDatabase.LoadAssetAtPath<Texture2D>(veinsTexturePath), fillFromParent) && includeCustomVeins)
             parentFill.fromFolder.Add("veins texture");
 
-        string assignedPath = AssetDatabase.GetAssetPath(editor.customVeinsNormalMapProp.objectReferenceValue);
+        string assignedPath = AssetDatabase.GetAssetPath(session.customVeinsNormalMapProp.objectReferenceValue);
         string parentPath = MCBUtils.GetVersionVeinsTexturePath(selectedParentVersionObject);
         autoAssignedVeinsTexturePath = (!string.IsNullOrEmpty(assignedPath) && assignedPath == parentPath) ? assignedPath : null;
         lastParentVersionForVeins = selectedParentVersionObject;
 
-        if (editor.includeSuggestRealisticForCreatorProp != null && editor.suggestRealisticMeshPathsForCreatorProp != null)
+        if (session.includeSuggestRealisticForCreatorProp != null && session.suggestRealisticMeshPathsForCreatorProp != null)
         {
             var suggestRealisticPaths = ExtraCustomizationUtils.GetStringList(ver.extraCustomization, SuggestRealisticKey);
-            editor.includeSuggestRealisticForCreatorProp.boolValue = suggestRealisticPaths.Count > 0;
-            SetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp, suggestRealisticPaths);
+            session.includeSuggestRealisticForCreatorProp.boolValue = suggestRealisticPaths.Count > 0;
+            SetSerializedStringList(session.suggestRealisticMeshPathsForCreatorProp, suggestRealisticPaths);
         }
 
-        editor.serializedObject.ApplyModifiedProperties();
-        editor.customBaseTarget.creatorCustomization = VersionCustomization.Read(ver.extraCustomization);
-        EditorUtility.SetDirty(editor.customBaseTarget);
-        editor.serializedObject.Update();
-        editor.Repaint();
+        session.serializedObject.ApplyModifiedProperties();
+        session.customBaseTarget.creatorCustomization = VersionCustomization.Read(ver.extraCustomization);
+        EditorUtility.SetDirty(session.customBaseTarget);
+        session.serializedObject.Update();
+        session.Repaint();
     }
 
     // Filling from a parent only sets fields it can resolve; restoring a saved build sets each field to what the build had.
@@ -1714,7 +1715,7 @@ public partial class CreatorModeModule
     private List<Dictionary<string, string>> ResolveSourceMetasForPath(string sourceUnityPath)
     {
         string normalizedPath = MCBUtils.ToUnityPath(sourceUnityPath);
-        var selectedAsset = editor.GetSelectedAsset();
+        var selectedAsset = Asset;
         var sourceFile = selectedAsset?.sourceFiles?.FirstOrDefault(file =>
             file != null &&
             string.Equals(file.type, "FBX", StringComparison.OrdinalIgnoreCase) &&
@@ -1824,7 +1825,7 @@ public partial class CreatorModeModule
         }
 
         pendingBuildRecoveryAttempted = true;
-        var selectedAsset = editor.GetSelectedAsset();
+        var selectedAsset = Asset;
         if (selectedAsset == null || selectedAsset.id <= 0)
         {
             pendingBuildRecoveryAttempted = false; // retry once an asset is selected
@@ -1854,17 +1855,17 @@ public partial class CreatorModeModule
         // Build and apply hold the process-wide guard together: an MCP build or another avatar's publish waits.
         if (!VersionOperationGuard.TryAcquire("building and applying a version", out var operation, out string busy))
         {
-            editor.submitError = busy;
-            editor.warningsModule.AddWarning(busy, MessageType.Warning, "Build not started");
+            session.submitError = busy;
+            session.warningsModule.AddWarning(busy, MessageType.Warning, "Build not started");
             RefreshEditorUi();
             yield break;
         }
-        editor.isSubmitting = true;
-        editor.submitError = "";
-        editor.warningsModule.Clear();
+        session.isSubmitting = true;
+        session.submitError = "";
+        session.warningsModule.Clear();
         // Left out because the creator chose so: said after the build too.
-        string leftOut = takeAvatarMeshes ? null : VersionAvatarMeshes.LeftOutMessage(VersionAvatarMeshes.Find(editor).Committed.Select(s => s.Renderer));
-        editor.Repaint();
+        string leftOut = takeAvatarMeshes ? null : VersionAvatarMeshes.LeftOutMessage(VersionAvatarMeshes.Find(session).Committed.Select(s => s.Renderer));
+        session.Repaint();
 
         VersionArtifact builtArtifact = null;
         Exception buildError = null;
@@ -1876,8 +1877,8 @@ public partial class CreatorModeModule
             if (buildError != null)
             {
                 ClearBuiltPendingVersion();
-                editor.submitError = OperationErrorReporter.Report(
-                    editor,
+                session.submitError = OperationErrorReporter.Report(
+                    session,
                     OperationErrorClassifier.Classify(buildError, "Building the version"),
                     "Build Failed");
             }
@@ -1886,25 +1887,25 @@ public partial class CreatorModeModule
                 // The artifact (version folder + version.json + manifest) is already
                 // committed and persisted as unsubmitted by VersionBuilder.
                 string taken = VersionAvatarMeshes.TakenMessage(TakenFromAvatar);
-                if (taken != null) editor.warningsModule.AddWarning(taken, MessageType.Info, "Taken from the avatar");
-                if (leftOut != null) editor.warningsModule.AddWarning(leftOut, MessageType.Warning, "Not in this version");
+                if (taken != null) session.warningsModule.AddWarning(taken, MessageType.Info, "Taken from the avatar");
+                if (leftOut != null) session.warningsModule.AddWarning(leftOut, MessageType.Warning, "Not in this version");
                 var metadata = builtArtifact.Metadata;
                 creatorWindow?.Built(metadata);
                 RememberPendingBuild(metadata, builtArtifact.Manifest?.formSignature);
-                editor.LoadUnsubmittedVersions(true);
-                var versionActions = new VersionActions(editor, networkService, fileManagerService);
+                session.LoadUnsubmittedVersions(true);
 
                 AssetDatabase.Refresh();
                 while(EditorApplication.isCompiling || EditorApplication.isUpdating) { yield return null; }
 
                 // Apply the newly built version
-                yield return versionActions.ApplyOrResetCoroutine(metadata, false);
+                // On the avatar's own operations: the Inspector's button shows this switch's progress, and its guard holds.
+                yield return session.actions.ApplyOrResetCoroutine(metadata, false);
 
                 // Keep the creator form on the temporary version we just built: applying it can
                 // change the applied/selected version and re-suggest a next version number,
                 // which would otherwise reset the form (and disable Publish).
-                editor.selectedVersionForAction = metadata;
-                editor.selectedCustomVersionForAction = null;
+                session.selectedVersionForAction = metadata;
+                session.selectedCustomVersionForAction = null;
                 previouslySelectedVersion = metadata;
                 PopulateFieldsFromVersion(metadata);
                 RememberPendingBuild(metadata, builtArtifact.Manifest?.formSignature);
@@ -1913,12 +1914,12 @@ public partial class CreatorModeModule
         finally
         {
             operation.Dispose();
-            editor.isSubmitting = false;
+            session.isSubmitting = false;
             EditorUtility.ClearProgressBar();
-            editor.Repaint();
+            session.Repaint();
         }
 
-        RefreshSiblingVersionLists();
+        session.RefreshSiblingVersionLists();
         RefreshEditorUi();
     }
 
@@ -1945,10 +1946,7 @@ public partial class CreatorModeModule
     /// </summary>
     public IEnumerator UploadUnsubmittedVersionCoroutine(CustomBaseVersion unsubmittedVersion)
     {
-        yield return VersionPublisher.PublishCoroutine(
-            editor,
-            networkService,
-            fileManagerService,
+        yield return session.Publish(
             unsubmittedVersion,
             onPublished: () =>
             {
@@ -1958,21 +1956,7 @@ public partial class CreatorModeModule
                     ClearBuiltPendingVersion();
                 }
             });
-        RefreshSiblingVersionLists();
         RefreshEditorUi();
-    }
-
-    private void RefreshSiblingVersionLists()
-    {
-        foreach (var other in Resources.FindObjectsOfTypeAll<MCBEditor>())
-        {
-            if (other == editor || other.target == null || other.GetSelectedAsset()?.id != editor.GetSelectedAsset()?.id) continue;
-            other.LoadUnsubmittedVersions(true);
-            other.LoadImportedVersions(true);
-            other.serverVersions = editor.serverVersions.ToList();
-            other.serializedObject.Update();
-            other.RefreshUiToolkitSections();
-        }
     }
 }
 #endif

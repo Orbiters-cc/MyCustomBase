@@ -36,9 +36,9 @@ public partial class CreatorModeModule
 
     private void BuildSuccessUIToolkit()
     {
-        editor.LoadUnsubmittedVersions();
-        var pending = editor.unsubmittedVersions.Where(v => v != null && v.assetId == editor.GetSelectedAsset().id)
-            .OrderByDescending(v => editor.ParseVersion(v.version)).ToList();
+        session.LoadUnsubmittedVersions();
+        var pending = session.unsubmittedVersions.Where(v => v != null && v.assetId == Asset.id)
+            .OrderByDescending(v => session.ParseVersion(v.version)).ToList();
         var built = pending.FirstOrDefault(v => v.version == creatorWindow.builtVersion && v.defaultAviVersion == creatorWindow.builtDefaultVersion);
         var heading = new Label(built != null ? "Version built successfully" : "Build complete");
         heading.AddToClassList("mcb-build-success__title");
@@ -59,13 +59,13 @@ public partial class CreatorModeModule
             creatorWindow.showBuildSuccess = false;
             ClearBuiltPendingVersion();
             newVersionTitle = ""; newChangelog = "";
-            previouslySelectedVersion = editor.selectedVersionForAction;
+            previouslySelectedVersion = session.selectedVersionForAction;
             PopulateParentVersionDropdown();
-            var latest = editor.GetAllVersions().Concat(pending).OrderByDescending(v => editor.ParseVersion(v.version)).FirstOrDefault();
+            var latest = session.GetAllVersions().Concat(pending).OrderByDescending(v => session.ParseVersion(v.version)).FirstOrDefault();
             SetDefaultVersionNumbers(latest);
             RefreshUIToolkit();
         });
-        create.SetEnabled(!editor.isSubmitting);
+        create.SetEnabled(!session.isSubmitting);
         create.AddToClassList("mcb-build-success__create");
         creatorRoot.Add(create);
         creatorRoot.Add(CreateSectionLabel("Unpublished versions"));
@@ -80,20 +80,20 @@ public partial class CreatorModeModule
             row.Add(CreateSavedBuildUploadButton(version, "Upload"));
             creatorRoot.Add(row);
         }
-        if (!string.IsNullOrEmpty(editor.submitError))
-            creatorRoot.Add(CreateHelpBox(editor.submitError, HelpBoxMessageType.Error));
+        if (!string.IsNullOrEmpty(session.submitError))
+            creatorRoot.Add(CreateHelpBox(session.submitError, HelpBoxMessageType.Error));
     }
 
     private Button CreateSavedBuildUploadButton(CustomBaseVersion version, string label)
     {
-        var button = CreateTextButton(editor.isSubmitting ? "Uploading…" : label, "Upload this saved build without rebuilding it.", () =>
+        var button = CreateTextButton(session.isSubmitting ? "Uploading…" : label, "Upload this saved build without rebuilding it.", () =>
         {
-            if (editor.isSubmitting) return;
+            if (session.isSubmitting) return;
             EditorCoroutineUtility.StartCoroutineOwnerless(UploadUnsubmittedVersionCoroutine(version));
             RefreshUIToolkit();
         });
         button.AddToClassList("mcb-button--primary");
-        button.SetEnabled(!editor.isSubmitting);
+        button.SetEnabled(!session.isSubmitting);
         return button;
     }
 }

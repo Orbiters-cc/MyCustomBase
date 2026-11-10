@@ -286,10 +286,10 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
             }
             record.OnDisk = record.applied;
         }
-        foreach (var editor in Resources.FindObjectsOfTypeAll<MCBEditor>())
+        foreach (var session in McbSession.Live)
         {
-            editor.versionModule?.actions?.StartRecalculateCurrentFbxHash();
-            editor.Repaint();
+            session.actions.StartRecalculateCurrentFbxHash();
+            session.Repaint();
         }
         if (failures.Count > 0)
             MCBLogger.LogError("[MCB] The version switch was " + (undoing ? "undone" : "redone") + " in the scene, but these files could not be restored:\n" + string.Join("\n", failures));

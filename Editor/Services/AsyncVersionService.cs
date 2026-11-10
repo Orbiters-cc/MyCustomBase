@@ -108,7 +108,8 @@ public class AsyncVersionService
             {
                 var error = "Could not calculate FBX hash";
                 taskManager.CompleteTask(taskId, true, error);
-                OnVersionFetchError?.Invoke(request, error);
+                // After an await: the sessions hearing it change the UI, so on the main thread as the other answers.
+                taskManager.ExecuteOnMainThread(() => OnVersionFetchError?.Invoke(request, error));
                 return (new List<CustomBaseVersion>(), null, error);
             }
 
@@ -134,7 +135,7 @@ public class AsyncVersionService
             // Step 3: Fetch from server
             taskManager.UpdateTaskProgress(taskId, 0.5f, "Fetching from server...");
             
-            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(assetId)}?d={baseFbxHash}&sourceKey={sourceVersionKey}";
+            string url = $"{MCBUtils.getApiUrl()}{MCBUtils.GetAssetVersionEndpoint(assetId)}?d={Uri.EscapeDataString(baseFbxHash)}&sourceKey={Uri.EscapeDataString(sourceVersionKey ?? "")}";
             var fetchTask = taskManager.ExecuteOnMainThreadAsync(() => networkService.FetchVersionsAsync(url, authToken));
 
             // Wait for network request with progress updates

@@ -240,7 +240,7 @@ public static class AvatarAssetDiscoveryService
         byte[] requestBytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(requestPayload));
         string requestSummary = BuildRequestSummary(url, normalizedPaths, filterOnlyCompatible);
 
-        if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
+        if (McbSession.ShouldDeferBackgroundNetworkRefresh())
         {
             CompleteDiscoveryRequest(cacheKey, null, null, onComplete);
             yield break;
@@ -259,7 +259,7 @@ public static class AvatarAssetDiscoveryService
             UnityWebRequestAsyncOperation operation = request.SendWebRequest();
             while (!operation.isDone)
             {
-                if (MCBEditor.ShouldDeferBackgroundNetworkRefresh())
+                if (McbSession.ShouldDeferBackgroundNetworkRefresh())
                 {
                     request.Abort();
                     CompleteDiscoveryRequest(cacheKey, null, null, onComplete);
