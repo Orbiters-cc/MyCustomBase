@@ -54,7 +54,6 @@ public partial class CreatorModeModule
         public bool hasRequiredVersionMetadata;
         public string metadataWarning;
         public bool canAttemptSubmit;
-        public bool canSubmit;
     }
 
     public void DetachUIToolkit()
@@ -1436,7 +1435,7 @@ public partial class CreatorModeModule
             hasAttemptedToolkitSubmit = true;
             refreshValidation();
             CreatorSubmissionValidation validation = GetCreatorSubmissionValidation();
-            if (!validation.canSubmit)
+            if (!validation.canAttemptSubmit)
             {
                 return;
             }
@@ -1551,12 +1550,10 @@ public partial class CreatorModeModule
                                 (!requiresParentVersion || selectedParentVersionObject != null) &&
                                 isVersionValid &&
                                 hasRequiredVersionMetadata;
-        bool canSubmit = canAttemptSubmit && hasRequiredVersionMetadata;
 
         if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
         {
             canAttemptSubmit = false;
-            canSubmit = false;
         }
 
         if (editor.includeSuggestRealisticForCreatorProp != null &&
@@ -1564,7 +1561,6 @@ public partial class CreatorModeModule
             GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count == 0)
         {
             canAttemptSubmit = false;
-            canSubmit = false;
         }
 
         return new CreatorSubmissionValidation
@@ -1574,8 +1570,7 @@ public partial class CreatorModeModule
             versionWarning = $"New version must be higher than the selected parent version (v{baseVer}).",
             hasRequiredVersionMetadata = hasRequiredVersionMetadata,
             metadataWarning = metadataValidationMessage,
-            canAttemptSubmit = canAttemptSubmit,
-            canSubmit = canSubmit
+            canAttemptSubmit = canAttemptSubmit
         };
     }
 
