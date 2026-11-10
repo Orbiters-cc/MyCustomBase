@@ -78,17 +78,14 @@ public partial class VersionActions
 
         string originalFbxPath = EnsureOriginalFbxKeyPath(version, patchFile, fbxPath, "XOR FBX patch");
 
-        byte[] baseData = File.ReadAllBytes(originalFbxPath);
-        byte[] binData = File.ReadAllBytes(binPath);
-        byte[] transformedData = fileManagerService.XorTransform(baseData, binData);
         string tempOutputPath = HdiffService.CreateTempWorkPath(".fbx");
         try
         {
-            File.WriteAllBytes(tempOutputPath, transformedData);
+            // Streamed, in blocks: the model, the patch and the result are never held whole. The result's hash is taken
+            // as it is written; the copy into place reads the final file back against it (WriteVerifiedCopy).
+            string actualOutputHash = MCBXor.TransformFile(originalFbxPath, binPath, tempOutputPath, fileOperation);
             if (!string.IsNullOrWhiteSpace(patchFile?.outputHash))
             {
-                string actualOutputHash = MCBHashing.HashFile(tempOutputPath);
-                ContentHash.Remember(tempOutputPath, actualOutputHash);
                 if (!string.Equals(actualOutputHash, patchFile.outputHash, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidDataException(
@@ -96,7 +93,7 @@ public partial class VersionActions
                 }
             }
 
-            fileManagerService.ReplaceFbxWithCustomCopy(fbxPath, tempOutputPath);
+            fileManagerService.ReplaceFbxWithCustomCopy(fbxPath, tempOutputPath, fileOperation);
         }
         finally
         {
@@ -144,7 +141,7 @@ public partial class VersionActions
                 }
             }
 
-            fileManagerService.ReplaceFbxWithCustomCopy(fbxPath, tempOutputPath);
+            fileManagerService.ReplaceFbxWithCustomCopy(fbxPath, tempOutputPath, fileOperation);
         }
         finally
         {
@@ -172,7 +169,7 @@ public partial class VersionActions
         var known = versions.Append(session?.customBaseTarget != null ? session.customBaseTarget.appliedCustomBaseVersion : null)
             .Concat(session?.GetAllVersions() ?? Enumerable.Empty<CustomBaseVersion>())
             .Where(value => value != null).Distinct().ToList();
-        if (fileManagerService.RefreshStaleOriginalBackup(fbxPath, known) == FileManagerService.OriginalBackupState.Unknown)
+        if (fileManagerService.RefreshStaleOriginalBackup(fbxPath, known, operation: fileOperation) == FileManagerService.OriginalBackupState.Unknown)
             MCBLogger.LogWarning($"[VersionActions] {Path.GetFileName(fbxPath)} differs from its original-base backup and from every known version: the backup is used as the original.");
     }
 
@@ -188,7 +185,7 @@ public partial class VersionActions
         string originalFbxPath = FileManagerService.GetOriginalBasePath(fbxPath);
         if (!File.Exists(originalFbxPath))
         {
-            string currentHash = ContentHash.Proof(fbxPath);
+            string currentHash = ContentHash.Proof(fbxPath, fileOperation);
             bool currentMatchesReference = string.Equals(currentHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase);
             if (!currentMatchesReference)
             {
@@ -200,7 +197,7 @@ public partial class VersionActions
                     originalFbxPath);
             }
 
-            fileManagerService.CreateBackup(fbxPath);
+            fileManagerService.CreateBackup(fbxPath, fileOperation);
             originalFbxPath = FileManagerService.GetOriginalBasePath(fbxPath);
         }
 
@@ -209,7 +206,7 @@ public partial class VersionActions
             throw new FileNotFoundException($"Apply failed: original FBX key file could not be prepared for {operation}.", originalFbxPath);
         }
 
-        string originalHash = ContentHash.Proof(originalFbxPath);
+        string originalHash = ContentHash.Proof(originalFbxPath, fileOperation);
         if (!string.Equals(originalHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
@@ -235,7 +232,7 @@ public partial class VersionActions
             throw new InvalidDataException("HDiff patch is missing source file hash metadata.");
         }
 
-        string actualHash = ContentHash.Proof(originalFbxPath);
+        string actualHash = ContentHash.Proof(originalFbxPath, fileOperation);
         if (!string.Equals(actualHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
@@ -290,7 +287,7 @@ public partial class VersionActions
         foreach (string path in pathsToRestore)
         {
             RefreshOriginalBackup(path, version);
-            fileManagerService.ForceRestoreBackupAtPath(path);
+            fileManagerService.ForceRestoreBackupAtPath(path, operation: fileOperation);
         }
     }
 
@@ -572,11 +569,11 @@ public partial class VersionActions
         foreach (string path in GetResetAffectedFbxPaths(previousVersion, fbxPath).Union(GetCustomAvatarFbxPaths(previousVersion), StringComparer.OrdinalIgnoreCase))
         {
             bool changed = false;
-            if (!patchedNext.Contains(path) && fileManagerService.BackupExists(path) && !fileManagerService.FbxMatchesBackupAtPath(path))
+            if (!patchedNext.Contains(path) && fileManagerService.BackupExists(path) && !fileManagerService.FbxMatchesBackupAtPath(path, fileOperation))
             {
                 RefreshOriginalBackup(path, previousVersion, nextVersion);
-                if (fileManagerService.FbxMatchesBackupAtPath(path)) continue;
-                fileManagerService.ForceRestoreBackupAtPath(path);
+                if (fileManagerService.FbxMatchesBackupAtPath(path, fileOperation)) continue;
+                fileManagerService.ForceRestoreBackupAtPath(path, operation: fileOperation);
                 changed = true;
             }
             if (!avatarNext.Contains(path) && RestoreOriginalImporter(root, previousVersion, path)) changed = true;
@@ -859,7 +856,7 @@ public partial class VersionActions
         foreach (string path in affectedPaths.Where(fileManagerService.BackupExists))
         {
             RefreshOriginalBackup(path, versions.ToArray());
-            fileManagerService.ForceRestoreBackupAtPath(path);
+            fileManagerService.ForceRestoreBackupAtPath(path, operation: fileOperation);
         }
 
         // Native versions assign the Animator Avatar directly. Repointing the FBX

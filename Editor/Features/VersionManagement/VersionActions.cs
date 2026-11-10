@@ -456,7 +456,30 @@ public partial class VersionActions
         }
     }
 
+    // The proofs of the switch running now (null outside its synchronous stretch). Never kept across a yield: the files
+    // may change between frames. Inside it, a file's hash is read from its bytes once and reused while its length and
+    // write time stay the same (ContentHash.Operation), instead of once per check.
+    private ContentHash.Operation fileOperation;
+
     private void ApplyOrResetCore(CustomBaseVersion version, bool isReset, bool finalize = true)
+    {
+        // One synchronous stretch (a reset nested in a custom version's install joins that one).
+        var outer = fileOperation;
+        using (ContentHash.Operation.Join(outer, out var operation))
+        {
+            fileOperation = operation;
+            try
+            {
+                ApplyOrResetCoreInOperation(version, isReset, finalize);
+            }
+            finally
+            {
+                fileOperation = outer;
+            }
+        }
+    }
+
+    private void ApplyOrResetCoreInOperation(CustomBaseVersion version, bool isReset, bool finalize)
     {
         // The intro spans frames: a refit may have started meanwhile.
         if (RefitBlocksSwitch())
