@@ -1917,9 +1917,9 @@ public static partial class NativeMeshPayloadService
                 blendShape.frames.Add(new PreparedBlendShapeFrameData
                 {
                     weight = reader.ReadSingle(),
-                    deltaVertices = ReadSparseVector3Array(reader, vertexCount),
-                    deltaNormals = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertexCount) : null,
-                    deltaTangents = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertexCount) : null
+                    vertices = ReadSparseDeltas(reader, vertexCount),
+                    normals = reader.ReadBoolean() ? ReadSparseDeltas(reader, vertexCount) : null,
+                    tangents = reader.ReadBoolean() ? ReadSparseDeltas(reader, vertexCount) : null
                 });
             }
 
@@ -2063,6 +2063,9 @@ public static partial class NativeMeshPayloadService
         mesh.bounds = data.bounds;
         int frameCount = data.blendShapes?.Sum(shape => shape.frames?.Count ?? 0) ?? 0;
         int framesAdded = 0;
+        // Frames stay sparse until here: each is spread into the same three vertex-sized arrays for Unity to copy, which
+        // are then cleared at the indices it wrote. Peak memory is the sparse deltas plus three arrays per mesh.
+        Vector3[] scratchVertices = null, scratchNormals = null, scratchTangents = null;
         var budget = System.Diagnostics.Stopwatch.StartNew();
         var call = new System.Diagnostics.Stopwatch();
         double maximumCallMs = 0;
@@ -2073,9 +2076,15 @@ public static partial class NativeMeshPayloadService
             {
                 foreach (var frame in blendShape.frames ?? new List<PreparedBlendShapeFrameData>())
                 {
+                    Vector3[] deltaVertices = frame.vertices.Spread(ref scratchVertices, vertexCount);
+                    Vector3[] deltaNormals = frame.normals.Spread(ref scratchNormals, vertexCount);
+                    Vector3[] deltaTangents = frame.tangents.Spread(ref scratchTangents, vertexCount);
                     call.Restart();
-                    mesh.AddBlendShapeFrame(blendShape.name, frame.weight, frame.deltaVertices, frame.deltaNormals, frame.deltaTangents);
+                    mesh.AddBlendShapeFrame(blendShape.name, frame.weight, deltaVertices, deltaNormals, deltaTangents);
                     maximumCallMs = Math.Max(maximumCallMs, call.Elapsed.TotalMilliseconds);
+                    frame.vertices.Unspread(deltaVertices);
+                    frame.normals.Unspread(deltaNormals);
+                    frame.tangents.Unspread(deltaTangents);
                     framesAdded++;
                     if (yieldToEditor && budget.Elapsed.TotalMilliseconds >= 8)
                     {
@@ -2094,6 +2103,24 @@ public static partial class NativeMeshPayloadService
         {
             if (!finished) UnityEngine.Object.DestroyImmediate(mesh);
         }
+    }
+
+    // The dense array AddBlendShapeFrame takes: the mesh's scratch array filled at the written indices (Unity copies it), or
+    // a new array when the stream's length is not the mesh's, passed on as the payload declares it.
+    private static Vector3[] Spread(this SparseDeltas deltas, ref Vector3[] scratch, int vertexCount)
+    {
+        if (deltas == null) return null;
+        if (deltas.length != vertexCount) return deltas.ToDense();
+        if (scratch == null) scratch = new Vector3[vertexCount];
+        for (int i = 0; i < deltas.indices.Length; i++) scratch[deltas.indices[i]] = deltas.values[i];
+        return scratch;
+    }
+
+    // Zeroes what Spread wrote, so the scratch array is all zeros again for the next frame.
+    private static void Unspread(this SparseDeltas deltas, Vector3[] spread)
+    {
+        if (deltas == null || spread == null) return;
+        for (int i = 0; i < deltas.indices.Length; i++) spread[deltas.indices[i]] = default;
     }
 
     private static float Lerp(float from, float to, float value)
@@ -2186,9 +2213,33 @@ public static partial class NativeMeshPayloadService
     internal sealed class PreparedBlendShapeFrameData
     {
         public float weight;
-        public Vector3[] deltaVertices;
-        public Vector3[] deltaNormals;
-        public Vector3[] deltaTangents;
+        public SparseDeltas vertices;
+        /// <summary>Null when the payload stores no normal deltas for this frame (likewise <see cref="tangents"/>).</summary>
+        public SparseDeltas normals;
+        public SparseDeltas tangents;
+
+        // Dense copies for previews that read single frames.
+        public Vector3[] deltaVertices => vertices?.ToDense();
+        public Vector3[] deltaNormals => normals?.ToDense();
+        public Vector3[] deltaTangents => tangents?.ToDense();
+    }
+
+    /// <summary>
+    /// One blendshape delta stream as the payload stores it: the length of the vertex array it describes and the written
+    /// (index, delta) pairs, in file order (a repeated index keeps its last delta, as when the array was filled in place).
+    /// </summary>
+    internal sealed class SparseDeltas
+    {
+        public int length;
+        public int[] indices;
+        public Vector3[] values;
+
+        public Vector3[] ToDense()
+        {
+            var dense = new Vector3[length];
+            for (int i = 0; i < indices.Length; i++) dense[indices[i]] = values[i];
+            return dense;
+        }
     }
 
     private static void WriteStringList(BinaryWriter writer, List<string> values)
@@ -2332,9 +2383,9 @@ public static partial class NativeMeshPayloadService
         return lower.Contains("muscle") || lower.Contains("flex");
     }
 
-    // A sparse array expands a few bytes into a whole vertex array: its length is bounded by its mesh's vertices (which were
-    // read from the payload's own bytes) and every expansion is charged to the payload's budget.
-    private static Vector3[] ReadSparseVector3Array(PayloadReader reader, int vertexCount)
+    // A sparse array stands for a whole vertex array: its length is bounded by its mesh's vertices (which were read from the
+    // payload's own bytes) and the vertex array it stands for is charged to the payload's budget, as when it was expanded.
+    private static SparseDeltas ReadSparseDeltas(PayloadReader reader, int vertexCount)
     {
         int length = reader.ReadInt32();
         int nonZeroCount = reader.ReadCount(16, "blendshape deltas");
@@ -2344,7 +2395,7 @@ public static partial class NativeMeshPayloadService
         }
 
         reader.Expand(length * 12L, "blendshape deltas");
-        var values = new Vector3[length];
+        var deltas = new SparseDeltas { length = length, indices = new int[nonZeroCount], values = new Vector3[nonZeroCount] };
         for (int i = 0; i < nonZeroCount; i++)
         {
             int index = reader.ReadInt32();
@@ -2354,10 +2405,11 @@ public static partial class NativeMeshPayloadService
                 throw new InvalidDataException("Native mesh payload has a blendshape delta outside its mesh.");
             }
 
-            values[index] = value;
+            deltas.indices[i] = index;
+            deltas.values[i] = value;
         }
 
-        return values;
+        return deltas;
     }
 
     private static void WriteVector4Array(BinaryWriter writer, Vector4[] values)
