@@ -186,20 +186,29 @@ public sealed class McbHttpTests
     public IEnumerator MCBsTimeLimitEndsACallTheServerDoesNotAnswer()
     {
         var release = new TaskCompletionSource<bool>();
-        using (var server = new Server(async context => { await Task.WhenAny(release.Task, Task.Delay(15000)); await Write(context, 200, "{}"); }))
+        var answered = new TaskCompletionSource<bool>();
+        using (var server = new Server(async context =>
+               {
+                   try { await Task.WhenAny(release.Task, Task.Delay(15000)); await Write(context, 200, "{}"); }
+                   finally { answered.TrySetResult(true); }
+               }))
         {
-            try
-            {
-                var started = DateTime.UtcNow;
-                var call = McbHttp.TextAsync(server.Root + "slow", null, MCBRequestPolicy.Diagnostics("Test"), 1);
-                yield return Wait(call, 10);
-                var error = call.Exception?.GetBaseException() as OrbitersHttpException;
-                Assert.That(error, Is.Not.Null, "a timeout is an OrbitersHttpException");
-                Assert.That(error.TimedOut, Is.True);
-                Assert.That(error.Offline, Is.True);
-                Assert.That((DateTime.UtcNow - started).TotalSeconds, Is.LessThan(8), "ended at MCB's limit, not OrbitersHttp's 90 s");
-            }
-            finally { release.TrySetResult(true); }
+            var started = DateTime.UtcNow;
+            var call = McbHttp.TextAsync(server.Root + "slow", null, MCBRequestPolicy.Diagnostics("Test"), 1);
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!call.IsCompleted && DateTime.UtcNow < deadline) yield return null;
+            double seconds = (DateTime.UtcNow - started).TotalSeconds;
+            // The held request is answered and closed before the listener goes: no connection outlives this test.
+            release.TrySetResult(true);
+            deadline = DateTime.UtcNow.AddSeconds(5);
+            while (!answered.Task.IsCompleted && DateTime.UtcNow < deadline) yield return null;
+
+            Assert.That(call.IsCompleted, Is.True, "the request did not end");
+            var error = call.Exception?.GetBaseException() as OrbitersHttpException;
+            Assert.That(error, Is.Not.Null, "a timeout is an OrbitersHttpException");
+            Assert.That(error.TimedOut, Is.True);
+            Assert.That(error.Offline, Is.True);
+            Assert.That(seconds, Is.LessThan(8), "ended at MCB's limit, not OrbitersHttp's 90 s");
         }
     }
 
