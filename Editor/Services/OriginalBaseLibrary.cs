@@ -35,14 +35,14 @@ public static class OriginalBaseLibrary
         if (ContentHash.Verify(cached, file.hash)) return cached;
         if (MCBUtils.TryResolveProjectAssetPath(file.path, out _, out string fullPath))
         {
-            foreach (string candidate in new[] { FileManagerService.GetOriginalBasePath(fullPath), fullPath + ".old", fullPath })
+            foreach (string candidate in new[] { FileManagerService.GetOriginalBasePath(fullPath), fullPath })
                 if (ContentHash.Verify(candidate, file.hash)) { Cache(candidate); return cached; }
         }
         // A renamed project FBX is valid only when its exact original hash matches.
         foreach (string guid in AssetDatabase.FindAssets("t:Model"))
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
-            foreach (string candidate in new[] { FileManagerService.GetOriginalBasePath(path), path + ".old", path })
+            foreach (string candidate in new[] { FileManagerService.GetOriginalBasePath(path), path })
                 if (ContentHash.Verify(candidate, file.hash)) { Cache(candidate); return cached; }
         }
         throw new FileNotFoundException("Import the original FBX for " + file.path + " (" + file.hash.Substring(0, 12) + ") in Support new version.");
