@@ -89,3 +89,29 @@ public sealed class McbViewRefreshTests
         }
     }
 }
+
+public sealed class VersionActionsAppliedStateScopeTests
+{
+    private static int Depth(VersionActions actions) =>
+        (int)typeof(VersionActions).GetField("appliedScopeDepth", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(actions);
+
+    [Test]
+    public void NestedScopesEndWithTheOutermostAndDisposingTwiceIsHarmless()
+    {
+        var actions = new VersionActions(null, null, null);
+        var outer = actions.AppliedStateScope();
+        var inner = actions.AppliedStateScope();
+        Assert.That(Depth(actions), Is.EqualTo(2));
+        inner.Dispose();
+        inner.Dispose();
+        Assert.That(Depth(actions), Is.EqualTo(1));
+        outer.Dispose();
+        Assert.That(Depth(actions), Is.Zero);
+        // Without an avatar nothing is applied, inside a scope or not.
+        using (actions.AppliedStateScope())
+        {
+            Assert.That(actions.IsVersionCurrentlyApplied(new CustomBaseVersion { version = "1.0.0" }), Is.False);
+            Assert.That(actions.HasAppliedCustomBaseEvidence(), Is.False);
+        }
+    }
+}

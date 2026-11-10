@@ -3802,6 +3802,50 @@ public class VersionActions
                    version).Count > 0;
     }
 
+    // One build of the version section asks which version is applied once per row and per button. Inside an
+    // AppliedStateScope the answer (a merge and sort of every version, a walk of the avatar's renderers, maybe a scan of
+    // the versions folder) is worked out once: nothing the section builds changes it.
+    private int appliedScopeDepth;
+    private bool appliedInScopeResolved;
+    private CustomBaseVersion appliedInScope;
+    private bool? evidenceInScope;
+
+    /// <summary>Until disposed, the applied version and the applied-base evidence are resolved once and reused.</summary>
+    public IDisposable AppliedStateScope()
+    {
+        appliedScopeDepth++;
+        return new AppliedScope(this);
+    }
+
+    private sealed class AppliedScope : IDisposable
+    {
+        private VersionActions owner;
+        public AppliedScope(VersionActions owner) { this.owner = owner; }
+
+        public void Dispose()
+        {
+            if (owner == null) return;
+            if (--owner.appliedScopeDepth == 0)
+            {
+                owner.appliedInScopeResolved = false;
+                owner.appliedInScope = null;
+                owner.evidenceInScope = null;
+            }
+            owner = null;
+        }
+    }
+
+    private CustomBaseVersion AppliedVersionForView()
+    {
+        if (appliedScopeDepth == 0) return ResolvePersistedAppliedVersion();
+        if (!appliedInScopeResolved)
+        {
+            appliedInScope = ResolvePersistedAppliedVersion();
+            appliedInScopeResolved = true;
+        }
+        return appliedInScope;
+    }
+
     public bool IsVersionCurrentlyApplied(CustomBaseVersion version)
     {
         if (version == null || version == VersionListDrawer.RESET_VERSION || editor?.customBaseTarget == null)
@@ -3809,7 +3853,7 @@ public class VersionActions
             return false;
         }
 
-        var applied = ResolvePersistedAppliedVersion();
+        var applied = AppliedVersionForView();
         return applied != null && version.Equals(applied);
     }
 
@@ -3820,11 +3864,14 @@ public class VersionActions
             return false;
         }
 
-        return NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
-                   AvatarPaths.Root(editor.customBaseTarget)).Count > 0 ||
-               ResolvePersistedAppliedVersion() != null ||
-               editor.isCustomBase ||
-               editor.currentIsCustom;
+        if (appliedScopeDepth > 0 && evidenceInScope.HasValue) return evidenceInScope.Value;
+        bool evidence = NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(
+                            AvatarPaths.Root(editor.customBaseTarget)).Count > 0 ||
+                        AppliedVersionForView() != null ||
+                        editor.isCustomBase ||
+                        editor.currentIsCustom;
+        if (appliedScopeDepth > 0) evidenceInScope = evidence;
+        return evidence;
     }
 
     public bool IsDefaultBaseCurrentlyApplied()

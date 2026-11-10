@@ -193,13 +193,17 @@ public partial class VersionManagementModule
 
         versionRoot.style.display = DisplayStyle.Flex;
         editor.serializedObject.Update();
-        try
+        // Every row and the main button ask which version is applied: worked out once for the whole section.
+        using (actions.AppliedStateScope())
         {
-            BuildUIToolkit(versionRoot);
-        }
-        finally
-        {
-            editor.serializedObject.ApplyModifiedProperties();
+            try
+            {
+                BuildUIToolkit(versionRoot);
+            }
+            finally
+            {
+                editor.serializedObject.ApplyModifiedProperties();
+            }
         }
     }
 
