@@ -62,7 +62,7 @@ public static class MCBAuthoringTool
                 {
                     environment = MCBAuthoringService.Environment(),
                     targets = Resources.FindObjectsOfTypeAll<MyCustomBase>().Where(o => o.gameObject.scene.IsValid()).Select(o => new { target_id = o.GetInstanceID(), avatar = o.transform.root.name }).ToArray(),
-                    versions = VersionRepository.Scan().unsubmitted.Concat(VersionRepository.Scan().imported).Select(v => new { v.assetId, v.version, v.defaultAviVersion, v.sourceVersionKey, v.isUnsubmitted }).ToArray(),
+                    versions = LocalVersions(),
                     draftSchema = JObject.FromObject(new MCBAuthoringService.Draft()), registrationSchema = JObject.FromObject(new MCBAuthoringService.Registration())
                 } : MCBAuthoringService.Inspect(MCBAuthoringService.Target(p.target_id)));
             if (active != null) throw new InvalidOperationException("An MCB authoring operation is running: " + active.Id);
@@ -159,10 +159,18 @@ public static class MCBAuthoringTool
         }
         catch (Exception ex) { return new ErrorResponse(ex.Message); }
     }
+    // One scan for both lists.
+    private static object LocalVersions()
+    {
+        var scan = VersionRepository.Scan();
+        return scan.unsubmitted.Concat(scan.imported).Select(v => new { v.assetId, v.version, v.defaultAviVersion, v.sourceVersionKey, v.isUnsubmitted }).ToArray();
+    }
+
     private static CustomBaseVersion Version(JObject data)
     {
         var requested = data?.ToObject<CustomBaseVersion>() ?? throw new ArgumentException("Provide assetId, version, defaultAviVersion and sourceVersionKey.");
-        var matches = VersionRepository.Scan(true).unsubmitted.Concat(VersionRepository.Scan().imported).Where(v => v.assetId == requested.assetId && v.version == requested.version
+        var scan = VersionRepository.Scan(true);
+        var matches = scan.unsubmitted.Concat(scan.imported).Where(v => v.assetId == requested.assetId && v.version == requested.version
             && v.defaultAviVersion == requested.defaultAviVersion && v.sourceVersionKey == requested.sourceVersionKey).ToArray();
         if (matches.Length != 1) throw new InvalidOperationException("Version identity must select exactly one local artifact; inspect lists available versions.");
         return matches[0];
