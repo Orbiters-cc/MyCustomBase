@@ -5,7 +5,6 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using System;
-using System.Reflection;
 
 /// <summary>
 /// A simple utility class to run Editor Coroutines.
@@ -106,40 +105,11 @@ public static class EditorCoroutineUtility
         {
             var yielded = coroutine.Current;
 
-            // Handle WaitWhile - check if condition is still true
-            if (yielded is WaitWhile waitWhile)
+            // WaitWhile, WaitUntil, WaitForSecondsRealtime and any other custom wait: through their public keepWaiting
+            // (WaitWhile and WaitUntil evaluate their predicate there).
+            if (yielded is CustomYieldInstruction wait)
             {
-                // Use reflection to get the predicate from WaitWhile
-                var predicateField = typeof(WaitWhile).GetField("m_Predicate", BindingFlags.NonPublic | BindingFlags.Instance);
-                if (predicateField != null)
-                {
-                    var predicate = predicateField.GetValue(waitWhile) as System.Func<bool>;
-                    if (predicate != null && predicate())
-                    {
-                        // Condition is still true, keep waiting
-                        return true;
-                    }
-                }
-                // Condition is false or we couldn't get it, move to next
-                return AdvanceCoroutine(coroutine);
-            }
-
-            // Handle WaitUntil - check if condition is now true
-            if (yielded is WaitUntil waitUntil)
-            {
-                // Use reflection to get the predicate from WaitUntil
-                var predicateField = typeof(WaitUntil).GetField("m_Predicate", BindingFlags.NonPublic | BindingFlags.Instance);
-                if (predicateField != null)
-                {
-                    var predicate = predicateField.GetValue(waitUntil) as System.Func<bool>;
-                    if (predicate != null && !predicate())
-                    {
-                        // Condition is still false, keep waiting
-                        return true;
-                    }
-                }
-                // Condition is true or we couldn't get it, move to next
-                return AdvanceCoroutine(coroutine);
+                return wait.keepWaiting || AdvanceCoroutine(coroutine);
             }
 
             // Handle WaitForSeconds (though less useful in editor)

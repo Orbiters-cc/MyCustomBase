@@ -89,6 +89,8 @@ public static class AvatarAssetDiscoveryService
         AssemblyReloadEvents.beforeAssemblyReload += () =>
         {
             MCBImageCache.ReleaseAll(ThumbnailCache);
+            // HideAndDontSave textures outlive the reload: released here, or each reload leaks one per shown asset.
+            MCBImageCache.ReleaseAll(SavedThumbnails);
             EditorApplication.delayCall -= RepaintAllViews;
             PendingThumbnailDownloads.Clear();
             PendingDiscoveryRequests.Clear();
@@ -565,6 +567,7 @@ public static class AvatarAssetDiscoveryService
         imageGeneration++;
         bypassDiskImages = true;
         MCBImageCache.ReleaseAll(ThumbnailCache);
+        MCBImageCache.ReleaseAll(SavedThumbnails);
         FailedImageDownloads.Clear();
         PendingThumbnailDownloads.Clear();
         QueueRepaintAllViews();

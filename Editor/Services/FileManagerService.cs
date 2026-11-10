@@ -594,9 +594,10 @@ public class FileManagerService
                token.All(character => char.IsLetterOrDigit(character) || character == '-');
     }
     
-    public byte[] XorTransform(byte[] baseData, byte[] keyData)
+    /// <summary><paramref name="data"/> XORed with <paramref name="key"/> (the original model) repeated; as long as the data.</summary>
+    public byte[] XorTransform(byte[] key, byte[] data)
     {
-        return MCBXor.Transform(baseData, keyData);
+        return MCBXor.Transform(key, data);
     }
 
     public void UnzipAndMove(string zipPath, string extractPath, string finalDestinationPath, Action<string> validateExtracted = null,
