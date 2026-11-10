@@ -471,7 +471,9 @@ public class AdvancedModeModule
                                 }
                                 else
                                 {
-                                    fbxHash = MCBUtils.CalculateFileHash(absolutePath);
+                                    // From the bytes, as the check is for (never the cached advisory hash).
+                                    try { fbxHash = ContentHash.Proof(absolutePath); }
+                                    catch (IOException) { fbxHash = null; }
                                     if (string.IsNullOrEmpty(fbxHash))
                                     {
                                         fbxHashError = "Failed to compute hash.";

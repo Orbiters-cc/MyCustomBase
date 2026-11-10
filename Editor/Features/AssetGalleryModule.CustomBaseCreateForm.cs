@@ -548,7 +548,8 @@ public partial class AssetGalleryModule
 
         try
         {
-            string hash = MCBUtils.CalculateFileHash(path);
+            // Proof: the original it names is the key a version is encrypted against.
+            string hash = ContentHash.Proof(path);
             if (string.IsNullOrWhiteSpace(hash))
             {
                 createError = "Could not hash the selected FBX.";
@@ -717,7 +718,8 @@ public partial class AssetGalleryModule
                 inventory.Add(new AvatarBaseSourceMatcher.LocalFile
                 {
                     path = path,
-                    hash = MCBUtils.CalculateFileHash(fullPath)
+                    // Proof: a match here decides which files the submit registers and which keys it installs.
+                    hash = ContentHash.Proof(fullPath)
                 });
             }
             catch (Exception ex)
@@ -741,7 +743,7 @@ public partial class AssetGalleryModule
                 inventory.Add(new AvatarBaseSourceMatcher.LocalFile
                 {
                     path = targetPath,
-                    hash = MCBUtils.CalculateFileHash(fullPath),
+                    hash = ContentHash.Proof(fullPath),
                     tag = new ExistingOriginalBaseKey
                     {
                         localTargetPath = targetPath,
@@ -1297,7 +1299,8 @@ public partial class AssetGalleryModule
             if (!MCBUtils.TryResolveProjectAssetPath(normalizedPath, out normalizedPath, out string fullPath) ||
                 !File.Exists(fullPath)) continue;
 
-            string hash = MCBUtils.CalculateFileHash(fullPath);
+            // Proof: the hashes registered with the server for the new custom base.
+            string hash = ContentHash.Proof(fullPath);
             if (string.IsNullOrWhiteSpace(hash)) continue;
 
             var metas = new List<Dictionary<string, string>>();
@@ -1558,7 +1561,8 @@ public partial class AssetGalleryModule
             MCBUtils.TryResolveProjectAssetPath(assetPath, out _, out string fullPath) &&
             File.Exists(fullPath))
         {
-            return MCBUtils.CalculateFileHash(fullPath) ?? assetPath;
+            // Advisory: only tells one request from another (a retry of the same form is the same request).
+            return ContentHash.Advisory(fullPath) ?? assetPath;
         }
 
         try
