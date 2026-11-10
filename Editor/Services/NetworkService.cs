@@ -587,10 +587,10 @@ public class NetworkService
 
         onProgress?.Invoke(1f, stagedId == null ? (ulong)Math.Max(0, result.Bytes) : (ulong)packageBytes);
         if (result.Cancelled) return (false, null, "The upload was cancelled.", true);
-        // An answer proves the server reachable. No answer takes MCB offline only when the connection itself failed
-        // (OrbitersHttp.Offline): a stalled upload does not, as before.
-        if (result.StatusCode == 0 && OrbitersHttp.Offline) MCBConnectivityMonitor.ReportAnswer(url, 0, result.Error, MCBRequestPolicy.Backend("Upload version"));
-        else MCBConnectivityMonitor.ReportAnswer(url, result.StatusCode, result.Error, MCBRequestPolicy.Transfer("Upload version"));
+        // An answer proves the server reachable. No answer takes MCB offline, as a failed UnityWebRequest did, unless the
+        // upload stalled: a stall never did.
+        if (UploadStalled(result)) MCBConnectivityMonitor.ReportAnswer(url, result.StatusCode, result.Error, MCBRequestPolicy.Transfer("Upload version"));
+        else MCBConnectivityMonitor.ReportAnswer(url, result.StatusCode, result.Error, MCBRequestPolicy.Backend("Upload version"));
 
         if (!result.Success)
         {
@@ -602,6 +602,15 @@ public class NetworkService
 
         return (true, result.Body, null, false);
     }
+
+    /// <summary>
+    /// Whether an upload ended because nothing moved for <see cref="OrbitersHttp.StallSeconds"/>, read from this upload's
+    /// own result: no answer, not cancelled, not cut off, and OrbitersHttp's stall message (its result has no stall flag).
+    /// A connection that failed or broke off says so in other words.
+    /// </summary>
+    internal static bool UploadStalled(OrbitersTransferResult result) =>
+        result != null && !result.Success && !result.Cancelled && !result.CutOff && result.StatusCode == 0 &&
+        (result.Error ?? string.Empty).StartsWith("The upload timed out:", StringComparison.Ordinal);
 
     /// <summary>Packages above this go up in parts (Cloudflare's 100 MB request limit in front of production).</summary>
     private const long StageAbovePackageBytes = 90L * 1024 * 1024;
@@ -694,7 +703,7 @@ public class NetworkService
         CreatorVersionMetadataUpdateResponse response;
         try
         {
-            // MCB allowed 300 s; OrbitersHttp's API limit (90 s) ends the call first.
+            // MCB's 300 s, as before: McbHttp sends it as a call without a limit of its own (OrbitersHttp's API limit is 90 s).
             response = await McbHttp.JsonAsync<CreatorVersionMetadataUpdateResponse>(HttpMethod.Put, url, authToken, payload,
                 MCBRequestPolicy.Backend("Update version metadata"), GetTimeoutSeconds(NetworkRequestType.Upload));
         }

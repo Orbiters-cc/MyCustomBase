@@ -25,11 +25,19 @@ internal static class McbHttp
     /// <summary>Sends <paramref name="payload"/> as JSON (none when null) and reads the answer as <typeparamref name="T"/>.</summary>
     internal static Task<T> JsonAsync<T>(HttpMethod method, string url, string token, object payload, MCBRequestPolicy policy, int timeoutSeconds,
         CancellationToken cancellation = default) =>
-        Run(url, policy, timeoutSeconds, cancellation, limit => OrbitersHttp.JsonAsync<T>(method, url, payload, token, limit));
+        Run(url, policy, timeoutSeconds, cancellation, limit => OrbitersHttp.JsonAsync<T>(method, url, payload, token, limit, kind: KindFor(timeoutSeconds)));
 
     /// <summary>GET as text.</summary>
     internal static Task<string> TextAsync(string url, string token, MCBRequestPolicy policy, int timeoutSeconds, CancellationToken cancellation = default) =>
-        Run(url, policy, timeoutSeconds, cancellation, limit => OrbitersHttp.TextAsync(url, token, limit));
+        Run(url, policy, timeoutSeconds, cancellation, limit => OrbitersHttp.TextAsync(url, token, limit, KindFor(timeoutSeconds)));
+
+    /// <summary>
+    /// The OrbitersHttp kind whose own limit never ends a call before MCB's <paramref name="timeoutSeconds"/> does: an API
+    /// call (90 s) when MCB's limit is within it, else a transfer, which has no total limit of its own (a JSON call of that
+    /// kind has no stall watch either: MCB's limit is then its only one). Its retry rule is the same: GET and HEAD once.
+    /// </summary>
+    internal static OrbitersHttpKind KindFor(int timeoutSeconds) =>
+        timeoutSeconds > 0 && TimeSpan.FromSeconds(timeoutSeconds) <= OrbitersHttp.TimeoutOf(OrbitersHttpKind.Api) ? OrbitersHttpKind.Api : OrbitersHttpKind.Transfer;
 
     /// <summary>
     /// Runs <paramref name="call"/> with a token that ends at MCB's time limit (or when <paramref name="cancellation"/>

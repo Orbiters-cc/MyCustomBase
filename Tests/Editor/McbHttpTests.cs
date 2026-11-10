@@ -203,6 +203,32 @@ public sealed class McbHttpTests
         }
     }
 
+    // No moved call gets a shorter limit than it had: OrbitersHttp's own limit for the kind McbHttp picks is never below MCB's.
+    [Test]
+    public void OrbitersHttpNeverEndsACallBeforeMCBsLimit()
+    {
+        foreach (NetworkRequestType type in Enum.GetValues(typeof(NetworkRequestType)))
+        {
+            int seconds = NetworkService.GetTimeoutSeconds(type);
+            var inner = OrbitersHttp.TimeoutOf(McbHttp.KindFor(seconds));
+            Assert.That(inner == System.Threading.Timeout.InfiniteTimeSpan || inner >= TimeSpan.FromSeconds(seconds), Is.True, type + ": " + seconds + " s");
+        }
+        Assert.That(McbHttp.KindFor(NetworkService.GetTimeoutSeconds(NetworkRequestType.Upload)), Is.EqualTo(OrbitersHttpKind.Transfer), "the 300 s metadata update");
+    }
+
+    // A stalled upload never took MCB offline; one whose connection failed or broke off did. Read from the upload's own result.
+    [Test]
+    public void OnlyAStalledUploadIsNotAConnectivityFailure()
+    {
+        OrbitersTransferResult Failed(long status, string error, bool cutOff = false, bool cancelled = false) =>
+            new OrbitersTransferResult { StatusCode = status, Error = error, CutOff = cutOff, Cancelled = cancelled };
+        Assert.That(NetworkService.UploadStalled(Failed(0, $"The upload timed out: nothing moved for {OrbitersHttp.StallSeconds:0} seconds.")), Is.True);
+        Assert.That(NetworkService.UploadStalled(Failed(0, OrbitersHttp.StatusMessage(0))), Is.False);
+        Assert.That(NetworkService.UploadStalled(Failed(0, "The upload broke off: connection reset")), Is.False);
+        Assert.That(NetworkService.UploadStalled(Failed(502, "Orbiters answered HTTP 502.")), Is.False);
+        Assert.That(NetworkService.UploadStalled(Failed(0, "The upload was cancelled.", cancelled: true)), Is.False);
+    }
+
     // The connectivity monitor hears an MCB request through OrbitersHttp as it heard one through UnityWebRequest.
     [Test]
     public void AnswersAreReportedUnderTheRequestsPolicyAsBefore()

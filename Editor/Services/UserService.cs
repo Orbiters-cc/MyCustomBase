@@ -184,9 +184,11 @@ public class UserService
             Texture2D texture;
             try
             {
-                // A picture: OrbitersHttp sends it once and ends it at its picture limit (8 s), before MCB's 10 s.
-                texture = await McbHttp.Run(avatarUrl, policy, NetworkService.GetTimeoutSeconds(NetworkRequestType.AvatarDownload), default,
-                    limit => OrbitersHttp.TextureAsync(avatarUrl, null, limit));
+                // MCB's 10 s, as before: asked as an API call (OrbitersHttp's picture limit, 8 s, would end it first), so a
+                // failed first try is tried again once within those 10 s.
+                int seconds = NetworkService.GetTimeoutSeconds(NetworkRequestType.AvatarDownload);
+                texture = await McbHttp.Run(avatarUrl, policy, seconds, default,
+                    limit => OrbitersHttp.TextureAsync(avatarUrl, null, limit, McbHttp.KindFor(seconds)));
             }
             catch (Exception ex) when (ex is OrbitersHttpException || ex is UriFormatException || ex is ArgumentException)
             {
