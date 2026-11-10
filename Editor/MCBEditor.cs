@@ -668,8 +668,8 @@ public class MCBEditor : UnityEditor.Editor
     {
         bool versionsChanged = pathGroups.Any(paths => paths != null && paths.Any(IsInVersionsFolder));
         if (!versionsChanged) return;
-        // Without an inspector the next one to open scans again (sessions read their lists again when one opens).
-        if (LiveEditors.Count == 0) VersionRepository.InvalidateCache();
+        // Nothing shows the versions (no Inspector, no session): the next one to open scans again.
+        if (LiveEditors.Count == 0 && McbSession.Live.Count == 0) VersionRepository.InvalidateCache();
         else
         {
             versionsChangedPending = true;
@@ -708,7 +708,8 @@ public class MCBEditor : UnityEditor.Editor
         bool versionsChanged = versionsChangedPending;
         versionsChangedPending = false;
         LiveEditors.RemoveAll(editor => editor == null);
-        if (LiveEditors.Count == 0)
+        var sessions = McbSession.Live;
+        if (LiveEditors.Count == 0 && sessions.Count == 0)
         {
             if (versionsChanged) VersionRepository.InvalidateCache();
             return;
@@ -716,12 +717,17 @@ public class MCBEditor : UnityEditor.Editor
 
         SmrPathService.InvalidateCache();
         if (versionsChanged) VersionRepository.Scan(true);
-        // Each avatar's session once, however many Inspectors show it.
-        foreach (var session in McbSession.Live)
+        // Each avatar's session once, however many Inspectors show it, and whether or not one does (a creator window, an
+        // update asked from Mixer): its lists are the project's, its views hear it.
+        foreach (var session in sessions)
         {
             session.InvalidateDetectedAvatarFbxCache();
-            if (versionsChanged) session.LoadImportedVersions();
+            if (!versionsChanged) continue;
+            session.LoadImportedVersions();
+            session.LoadUnsubmittedVersions();
+            session.RequestRefresh(McbViewParts.Versions | McbViewParts.Creator);
         }
+        // Presentation only: the Inspectors' galleries and dependency prompts.
         foreach (var editor in LiveEditors.ToArray())
         {
             editor.projectRefreshPending = true;
