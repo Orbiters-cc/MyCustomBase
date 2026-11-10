@@ -145,7 +145,9 @@ public static class EditorCoroutineUtility
                 return false;
             }
 
-            if (coroutine.Current is IEnumerator nestedCoroutine)
+            // A custom wait is an IEnumerator too, but is waited on through keepWaiting only (MoveNext above): run as a
+            // nested coroutine as well, it would be waited on twice (WaitForSecondsRealtime starts over once it ends).
+            if (coroutine.Current is IEnumerator nestedCoroutine && !(nestedCoroutine is CustomYieldInstruction))
             {
                 _coroutineStack.Push(nestedCoroutine);
             }

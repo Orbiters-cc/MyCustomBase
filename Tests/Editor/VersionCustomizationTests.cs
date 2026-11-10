@@ -206,6 +206,7 @@ public class VersionCustomizationTests
     // under the names MCB gives them, and the order holds.
     [Test] public void McbBuildStepsKeepTheirPlaceAmongTheToolkitsSteps()
     {
+        Assert.That(McbBuildSteps.MissingSteps, Is.Empty, "a Toolkit step MCB orders against is gone");
         foreach (var type in new[] { McbBuildSteps.Attachments, McbBuildSteps.AttachmentsFinish, McbBuildSteps.SurfaceFollow, McbBuildSteps.BuiltAnimations })
             Assert.That(type, Is.Not.Null, "a Toolkit step MCB orders against was renamed");
         var steps = Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Select(s => s.GetType()).ToList();
