@@ -476,19 +476,11 @@ public partial class VersionListDrawer
         card.Add(content);
 
         string effectiveChangelog = changelogTextOverride ?? ver?.changelog;
-        bool shouldShowChangelog = false;
-        if (displayAllChangelogs)
-        {
-            shouldShowChangelog = !string.IsNullOrEmpty(effectiveChangelog);
-        }
-        else
-        {
-            string changelogKey = changelogKeyOverride ?? (ver == RESET_VERSION ? "reset_base" : $"{ver?.version}_{ver?.scope}");
-            shouldShowChangelog = !string.IsNullOrEmpty(changelogKey) &&
-                                  individualChangelogStates.ContainsKey(changelogKey) &&
-                                  individualChangelogStates[changelogKey] &&
-                                  !string.IsNullOrEmpty(effectiveChangelog);
-        }
+        string changelogKey = changelogKeyOverride ?? (ver == RESET_VERSION ? "reset_base" : $"{ver?.version}_{ver?.scope}");
+        bool shouldShowChangelog = !string.IsNullOrEmpty(changelogKey) &&
+                                   individualChangelogStates.ContainsKey(changelogKey) &&
+                                   individualChangelogStates[changelogKey] &&
+                                   !string.IsNullOrEmpty(effectiveChangelog);
 
         if (shouldShowChangelog)
         {

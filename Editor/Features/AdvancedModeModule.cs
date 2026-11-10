@@ -98,16 +98,6 @@ public class AdvancedModeModule
         EditorIssueReporter.RefreshListener();
     }
 
-    public void Draw()
-    {
-        EditorGUILayout.Space();
-
-        if (GUILayout.Button("Advanced Options", GUILayout.Width(140f)))
-        {
-            MCBAdvancedModeWindow.Open(editor, this);
-        }
-    }
-
     // Small accessories (piercings, studs) follow the body's blendshapes at build: Toolkit's Follow Body Blendshapes on
     // the avatar root, in "small accessories" mode. The toggle adds or removes that component.
     private void DrawKeepAccessoriesOnBody()

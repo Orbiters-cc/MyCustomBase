@@ -178,8 +178,6 @@ public class MCBEditor : UnityEditor.Editor
         // Load user custom versions
         userCustomVersions = UserCustomVersionService.Instance.GetAll();
         
-        // Initialize modules
-        creatorModule.Initialize();
         CheckAuthentication();
         AuthenticationService.Changed += SyncAuthentication;
         OrbitersEnvironment.Changed += SyncAuthentication;

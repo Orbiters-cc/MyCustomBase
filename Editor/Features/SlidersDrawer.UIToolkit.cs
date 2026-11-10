@@ -153,14 +153,7 @@ public partial class SlidersDrawer
         if (entries.Count != sliderNames.Count || !sliderNames.SequenceEqual(currentNames))
         {
             UpdateSliderData();
-            selectableChipGroup.SetOptions(sliderNames);
-
-            HashSet<int> initialSelection = GetInitialSelection(entries);
-            selectedIndices = initialSelection;
-
-            suppressSelectionCallback = true;
-            selectableChipGroup.SetSelection(initialSelection);
-            suppressSelectionCallback = false;
+            selectedIndices = GetInitialSelection(entries);
         }
 
         return entries;

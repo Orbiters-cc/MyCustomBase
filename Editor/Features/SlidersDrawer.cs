@@ -7,12 +7,10 @@ using UnityEngine;
 public partial class SlidersDrawer
 {
     private readonly MCBEditor editor;
-    private readonly SelectableChipGroup selectableChipGroup;
     private readonly Texture2D sideImage;
 
     private List<string> sliderNames = new List<string>();
     private HashSet<int> selectedIndices = new HashSet<int>();
-    private bool suppressSelectionCallback;
     
     private double lastMenuNameChangeTime;
     private bool hasPendingMenuNameUpdate;
@@ -35,7 +33,6 @@ public partial class SlidersDrawer
         HashSet<int> initialSelection = GetInitialSelection(entries);
 
         selectedIndices = initialSelection;
-        selectableChipGroup = new SelectableChipGroup(sliderNames, initialSelection, OnSliderSelectionChanged);
     }
 
     public void RequestApplyDebounced()
@@ -131,8 +128,6 @@ public partial class SlidersDrawer
     private void OnSliderSelectionChanged(HashSet<int> selection)
     {
         selectedIndices = new HashSet<int>(selection);
-
-        if (suppressSelectionCallback) return;
 
         PersistSliderSelectionOverride();
         RequestApplyDebounced();

@@ -97,7 +97,6 @@ public partial class AssetGalleryModule
     private readonly CustomBaseCreateForm customBaseCreateForm;
     private readonly PhotoshootPanel photoshootPanel;
 
-    private Vector2 scrollPosition;
     private string lastAvatarSignature;
     private string loadingAvatarSignature;
     private bool hasFetchedCompatibleAssets;
@@ -108,7 +107,6 @@ public partial class AssetGalleryModule
     private bool isCreatingCustomBase;
     private bool isSubmittingCustomBase;
     private string createError;
-    private Vector2 createFormScrollPosition;
     private Texture2D createThumbnail;
     private Texture2D createBanner;
     private bool isEditingSelectedAssetMedia;

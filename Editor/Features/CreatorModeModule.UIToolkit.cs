@@ -134,8 +134,6 @@ public partial class CreatorModeModule
             wasToolkitCreatorModeVisible = true;
         }
 
-        creatorModeFoldout = true;
-
         if (creatorWindow.showBuildSuccess)
         {
             BuildSuccessUIToolkit();
@@ -1048,7 +1046,6 @@ public partial class CreatorModeModule
         var blendshapesProp = editor.customBlendshapesForCreatorProp;
         if (blendshapesProp == null || blendshapesProp.arraySize == 0)
         {
-            ClearAllCorrectiveSearchFields();
             root.Add(CreateHelpBox("Add blendshapes above to create corrective links.", HelpBoxMessageType.None));
             return;
         }
@@ -1169,7 +1166,7 @@ public partial class CreatorModeModule
         {
             ApplyCreatorChange(() =>
             {
-                ApplyCorrectiveTypeChange(typeProp, stringProp, fieldKey, currentType, (CorrectiveActivationType)evt.newValue);
+                ApplyCorrectiveTypeChange(typeProp, stringProp, currentType, (CorrectiveActivationType)evt.newValue);
             });
         });
         var label = CreateMutedLabel(labelSuffix);
