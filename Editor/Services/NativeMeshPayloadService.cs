@@ -724,17 +724,14 @@ public static partial class NativeMeshPayloadService
         MCBLogger.Log(
             $"[NativeMeshPayloadProfile] Materializing payload asset cache version={version.version} compression={payloadCompression} bin={FormatByteSize(binBytes)} plain={IsPlainPayloadTransform(patchFile.transform)}");
 
-        byte[] binData = File.ReadAllBytes(binPath);
-        LogApplyProfile("Read advanced mesh .bin", step, total, $"bytes={FormatByteSize(binData.LongLength)}");
-        byte[] payloadBytes = binData;
-        if (!IsPlainPayloadTransform(patchFile.transform))
-        {
-            byte[] baseData = File.ReadAllBytes(originalFbxPath);
-            payloadBytes = fileManagerService.XorTransform(baseData, binData);
-            LogApplyProfile("XOR decrypted native mesh payload", step, total, $"bytes={FormatByteSize(payloadBytes.LongLength)}");
-        }
-
-        NativeMeshPayloadAsset payload = WriteBinaryPayloadAsset(payloadAssetPath, payloadBytes, payloadHash, payloadCompression);
+        // The same preparation and commit as the asynchronous apply, run on the calling thread.
+        var prepared = PrepareNativeMeshPayloadData(binPath, originalFbxPath, null, null,
+            Path.GetFileNameWithoutExtension(MCBUtils.ToUnityPath(payloadAssetPath)), payloadHash, payloadCompression,
+            new NativeMeshPayloadPreparationStatus());
+        LogApplyProfile("Prepared native mesh payload", step, total, $"renderers={prepared.renderers.Count}");
+        NativeMeshPayloadAsset payload = null;
+        MCBWork.Drain(CommitPreparedPayloadAssetCoroutine(payloadAssetPath, prepared, payloadHash, payloadCompression, null,
+            result => payload = result, yieldToEditor: false));
         LogApplyProfile("Wrote native mesh payload asset cache", step, total, $"path={payloadAssetPath} renderers={payload.renderers.Count} bones={payload.bones.Count}");
         return payload;
     }
@@ -1598,148 +1595,6 @@ public static partial class NativeMeshPayloadService
         return Mathf.Abs(denominator) < 0.000001f ? 1f : numerator / denominator;
     }
 
-    private static NativeMeshPayloadAsset WriteBinaryPayloadAsset(string assetPath, byte[] payloadBytes, string payloadHash, string payloadCompression)
-    {
-        string normalizedPath = MCBUtils.ToUnityPath(assetPath);
-        EnsureAssetFolder(Path.GetDirectoryName(normalizedPath)?.Replace('\\', '/'));
-
-        var existing = LoadPayloadAsset(normalizedPath);
-        if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
-        {
-            return existing;
-        }
-
-        DeleteAssetFile(normalizedPath);
-
-        string assetName = Path.GetFileNameWithoutExtension(normalizedPath);
-        var payload = ReadBinaryPayloadAsset(payloadBytes, assetName, payloadHash, payloadCompression);
-        payload.payloadCompression = NormalizePayloadCompression(payloadCompression);
-        AssetDatabase.CreateAsset(payload, normalizedPath);
-        foreach (var renderer in payload.renderers ?? new List<NativeMeshPayloadRenderer>())
-        {
-            if (renderer?.mesh != null)
-            {
-                AssetDatabase.AddObjectToAsset(renderer.mesh, payload);
-            }
-        }
-
-        AssetDatabase.SetMainObject(payload, normalizedPath);
-        EditorUtility.SetDirty(payload);
-        AssetDatabase.SaveAssetIfDirty(payload);
-
-        return payload;
-    }
-
-    private static NativeMeshPayloadAsset ReadBinaryPayloadAsset(byte[] payloadBytes, string assetName, string payloadHash, string payloadCompression)
-    {
-        if (!payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash);
-        if (payloadCompression == MCBCompression.Lz4 || payloadCompression == MCBCompression.Zstd)
-            payloadBytes = MCBCompression.Decode(payloadBytes, payloadCompression);
-        if (payloadHash.StartsWith("raw:", StringComparison.Ordinal)) VerifyPayloadHash(payloadBytes, payloadHash.Substring(4));
-        if (payloadBytes == null || payloadBytes.Length == 0)
-        {
-            throw new InvalidDataException("Native mesh payload is empty.");
-        }
-
-        var total = System.Diagnostics.Stopwatch.StartNew();
-        var step = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            using (var reader = PayloadReader.Open(payloadBytes, PayloadUsesGZip(payloadCompression)))
-            {
-                return ReadBinaryPayloadAssetContents(reader, assetName, payloadHash, total, step);
-            }
-        }
-        catch (InvalidDataException ex)
-        {
-            throw new InvalidDataException("Native mesh payload could not be read with the expected MCB payload format.", ex);
-        }
-    }
-
-    private static NativeMeshPayloadAsset ReadBinaryPayloadAssetContents(
-        PayloadReader reader,
-        string assetName,
-        string payloadHash,
-        System.Diagnostics.Stopwatch total,
-        System.Diagnostics.Stopwatch step)
-    {
-        string magic = reader.ReadString();
-        if (!string.Equals(magic, BinaryPayloadMagic, StringComparison.Ordinal))
-        {
-            throw new InvalidDataException("Native mesh payload is not an MCB binary payload.");
-        }
-
-        int version = reader.ReadInt32();
-        if (version != PayloadVersion)
-        {
-            throw new InvalidDataException($"Unsupported native mesh payload version: {version}");
-        }
-
-        var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
-        payload.name = assetName;
-        payload.payloadVersion = version;
-        payload.sourceFbxPath = reader.ReadString();
-        payload.sourceFbxHash = reader.ReadString();
-        payload.payloadHash = payloadHash;
-
-        int rendererCount = reader.ReadCount(PayloadReader.MinRendererBytes, "renderers");
-        LogApplyProfile("Read payload header", step, total, $"renderers={rendererCount}");
-        var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
-        for (int i = 0; i < rendererCount; i++)
-        {
-            var rendererStep = System.Diagnostics.Stopwatch.StartNew();
-            var record = new NativeMeshPayloadRenderer
-            {
-                avatarPath = reader.ReadString(),
-                fbxMeshPath = reader.ReadString(),
-                meshName = reader.ReadString(),
-                rendererName = reader.ReadString(),
-                localPosition = ReadVector3(reader),
-                localRotation = ReadQuaternion(reader),
-                localScale = ReadVector3(reader),
-                rootBonePath = reader.ReadString(),
-                bonePaths = ReadStringList(reader)
-            };
-
-            record.mesh = ReadMesh(reader);
-            record.mesh.name = BuildUniqueSubAssetName($"{record.mesh.name}_{ShortHash(payloadHash)}", usedMeshNames);
-            payload.renderers.Add(record);
-            MCBLogger.Log(
-                $"[NativeMeshPayloadProfile] Read renderer {i + 1}/{rendererCount} '{record.rendererName}' mesh='{record.mesh.name}' " +
-                $"verts={record.mesh.vertexCount} subMeshes={record.mesh.subMeshCount} blendShapes={record.mesh.blendShapeCount}: " +
-                $"step={rendererStep.Elapsed.TotalMilliseconds:F1} ms total={total.Elapsed.TotalMilliseconds:F1} ms");
-            step.Restart();
-        }
-
-        int boneCount = reader.ReadCount(PayloadReader.MinBoneBytes, "bones");
-        for (int i = 0; i < boneCount; i++)
-        {
-            payload.bones.Add(new NativeMeshPayloadBone
-            {
-                path = reader.ReadString(),
-                localPosition = ReadVector3(reader),
-                localRotation = ReadQuaternion(reader),
-                localScale = ReadVector3(reader)
-            });
-        }
-
-        LogApplyProfile("Read payload bone transform table", step, total, $"bones={boneCount}");
-        int authoringPoseBoneCount = reader.ReadCount(PayloadReader.MinBoneBytes, "authoring pose bones");
-        for (int i = 0; i < authoringPoseBoneCount; i++)
-        {
-            payload.authoringPoseBones.Add(new NativeMeshPayloadAuthoringPoseBone
-            {
-                path = reader.ReadString(),
-                localPositionOffset = ReadVector3(reader),
-                localRotationDelta = ReadQuaternion(reader),
-                localScaleMultiplier = ReadVector3(reader)
-            });
-        }
-
-        LogApplyProfile("Read payload authoring pose delta table", step, total, $"bones={authoringPoseBoneCount}");
-        return payload;
-    }
-
     // Turns Read/Write on in the model's import settings (the payload reads the vertices) and imports it again: the mesh
     // object stays the same one. Only a mesh that isn't an imported model's stays unreadable.
     private static void MakeReadable(Mesh mesh)
@@ -1842,83 +1697,6 @@ public static partial class NativeMeshPayloadService
                 }
             }
         }
-    }
-
-    private static Mesh ReadMesh(PayloadReader reader)
-    {
-        var total = System.Diagnostics.Stopwatch.StartNew();
-        var step = System.Diagnostics.Stopwatch.StartNew();
-        var mesh = new Mesh();
-        mesh.name = reader.ReadString();
-        mesh.indexFormat = (IndexFormat)reader.ReadInt32();
-
-        var vertices = ReadVector3Array(reader);
-        mesh.vertices = vertices;
-
-        var normals = ReadVector3Array(reader);
-        if (normals.Length == vertices.Length) mesh.normals = normals;
-
-        var tangents = ReadVector4Array(reader);
-        if (tangents.Length == vertices.Length) mesh.tangents = tangents;
-
-        var colors = ReadColor32Array(reader);
-        if (colors.Length == vertices.Length) mesh.colors32 = colors;
-
-        for (int channel = 0; channel < 8; channel++)
-        {
-            var uvs = ReadVector4List(reader);
-            if (uvs.Count == vertices.Length)
-            {
-                mesh.SetUVs(channel, uvs);
-            }
-        }
-
-        var boneWeights = ReadBoneWeightArray(reader);
-        if (boneWeights.Length == vertices.Length) mesh.boneWeights = boneWeights;
-
-        var bindposes = ReadMatrixArray(reader);
-        if (bindposes.Length > 0) mesh.bindposes = bindposes;
-        LogApplyProfile(
-            $"Read mesh '{mesh.name}' vertex streams",
-            step,
-            total,
-            $"verts={vertices.Length} normals={normals.Length} tangents={tangents.Length} bindposes={bindposes.Length}");
-
-        int subMeshCount = reader.ReadCount(PayloadReader.MinSubMeshBytes, "submeshes");
-        mesh.subMeshCount = subMeshCount;
-        for (int i = 0; i < subMeshCount; i++)
-        {
-            var topology = (MeshTopology)reader.ReadInt32();
-            var indices = ReadIntArray(reader);
-            mesh.SetIndices(indices, topology, i, false);
-        }
-
-        mesh.bounds = ReadBounds(reader);
-        LogApplyProfile($"Read mesh '{mesh.name}' submeshes", step, total, $"subMeshes={subMeshCount}");
-
-        int blendShapeCount = reader.ReadCount(PayloadReader.MinBlendShapeBytes, "blendshapes");
-        int blendShapeFrameCount = 0;
-        for (int shape = 0; shape < blendShapeCount; shape++)
-        {
-            string shapeName = reader.ReadString();
-            int frameCount = reader.ReadCount(PayloadReader.MinBlendShapeFrameBytes, "blendshape frames");
-            blendShapeFrameCount += frameCount;
-            for (int frame = 0; frame < frameCount; frame++)
-            {
-                float weight = reader.ReadSingle();
-                var deltaVertices = ReadSparseVector3Array(reader, vertices.Length);
-                var deltaNormals = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertices.Length) : null;
-                var deltaTangents = reader.ReadBoolean() ? ReadSparseVector3Array(reader, vertices.Length) : null;
-                mesh.AddBlendShapeFrame(shapeName, weight, deltaVertices, deltaNormals, deltaTangents);
-            }
-        }
-        LogApplyProfile(
-            $"Read mesh '{mesh.name}' blendshapes",
-            step,
-            total,
-            $"blendShapes={blendShapeCount} frames={blendShapeFrameCount}");
-
-        return mesh;
     }
 
     private static PreparedPayloadAssetData PrepareNativeMeshPayloadData(
@@ -2157,7 +1935,8 @@ public static partial class NativeMeshPayloadService
         string payloadHash,
         string payloadCompression,
         Action<float, string> reportProgress,
-        Action<NativeMeshPayloadAsset> completed)
+        Action<NativeMeshPayloadAsset> completed,
+        bool yieldToEditor = true)
     {
         string normalizedPath = MCBUtils.ToUnityPath(assetPath);
         EnsureAssetFolder(Path.GetDirectoryName(normalizedPath)?.Replace('\\', '/'));
@@ -2201,7 +1980,7 @@ public static partial class NativeMeshPayloadService
             var createMesh = CreateMeshFromPreparedDataCoroutine(preparedRenderer.mesh,
                 mesh => renderer.mesh = mesh,
                 progress => reportProgress?.Invoke((i + progress) / Math.Max(1, rendererCount) * 0.72f,
-                    $"Creating Unity mesh {i + 1}/{rendererCount}..."));
+                    $"Creating Unity mesh {i + 1}/{rendererCount}..."), yieldToEditor);
             while (createMesh.MoveNext()) yield return createMesh.Current;
             payload.renderers.Add(renderer);
             reportProgress?.Invoke(rendererCount > 0 ? (i + 1f) / rendererCount * 0.72f : 0.72f, $"Creating Unity mesh {i + 1}/{rendererCount}...");
