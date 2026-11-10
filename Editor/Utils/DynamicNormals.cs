@@ -328,11 +328,16 @@ namespace MCBEditorUtils
                                 incremental = new IncrementalFrameNormals(baker, originalMesh, baseMesh, indicesWithSamePosNorm);
                                 bakeMs += step.Elapsed.TotalMilliseconds;
                             }
+                            step.Restart();
+                            List<int> changed = null;
                             if (incremental != null)
                             {
-                                step.Restart();
                                 originalMesh.GetBlendShapeFrameVertices(shapeIndex, frameIndex, deltaVertices, sourceDeltaNormals, ignored);
-                                var changed = incremental.Solve(deltaVertices, sourceDeltaNormals, frameNormals, frameTangents);
+                                // Null when the frame may regroup seam vertices: the full bake below handles that frame.
+                                changed = incremental.Solve(deltaVertices, sourceDeltaNormals, frameNormals, frameTangents);
+                            }
+                            if (changed != null)
+                            {
                                 Array.Clear(deltaNormals, 0, vertexCount);
                                 Array.Clear(deltaTangents, 0, vertexCount);
                                 foreach (int v in changed)

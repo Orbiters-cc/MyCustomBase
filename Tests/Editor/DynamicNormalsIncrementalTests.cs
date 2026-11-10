@@ -130,6 +130,68 @@ public sealed class DynamicNormalsIncrementalTests
         Assert.IsTrue(actual[("muscle bulge", 1)].normals.Any(v => v.sqrMagnitude > 1e-4f), "The bulge changes normals.");
     }
 
+    // Three triangles: A and B share an edge's positions with split vertices and different normals (a hard edge), C has
+    // A's normals. "flex merge normal" gives B's vertex on the edge A's normal (a normal-only merge); "muscle merge
+    // position" moves C's corner exactly onto A's corner with the same normal (a positional merge). The full bake groups
+    // both pairs into new seams; the incremental path must leave those frames to it.
+    SkinnedMeshRenderer HardEdgeRig()
+    {
+        var up = new Vector3(0, 0, 1);
+        var side = new Vector3(0, 1, 0);
+        var mesh = new Mesh { name = "Body" };
+        created.Add(mesh);
+        mesh.vertices = new[]
+        {
+            new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(0, 1, 0),
+            new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(1, 1, 1),
+            new Vector3(2, 0, 0), new Vector3(3, 0, 0), new Vector3(2, 1, 0)
+        };
+        mesh.triangles = new[] { 0, 1, 2, 3, 5, 4, 6, 8, 7 }; // C faces away from A: merged, their normals cancel
+        mesh.uv = new[] { Vector2.zero, Vector2.right, Vector2.up, Vector2.right, Vector2.up, Vector2.one, Vector2.zero, Vector2.right, Vector2.up };
+        mesh.normals = new[] { up, up, up, side, side, side, up, up, up };
+        mesh.RecalculateTangents();
+        mesh.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, 9).ToArray();
+        mesh.bindposes = new[] { Matrix4x4.identity };
+        var deltaNormals = new Vector3[9];
+        deltaNormals[3] = up - side; // exactly (0, -1, 1): side + delta == up
+        mesh.AddBlendShapeFrame("flex merge normal", 100, new Vector3[9], deltaNormals, null);
+        var moved = new Vector3[9];
+        moved[6] = new Vector3(-1, 0, 0); // (2, 0, 0) + (-1, 0, 0) == vertex 1's (1, 0, 0)
+        mesh.AddBlendShapeFrame("muscle merge position", 100, moved, null, null);
+        var apart = new Vector3[9];
+        apart[7] = new Vector3(0, 0, .25f);
+        mesh.AddBlendShapeFrame("muscle apart", 100, apart, null, null);
+
+        var root = new GameObject("Rig");
+        created.Add(root);
+        var hips = new GameObject("Hips").transform;
+        hips.SetParent(root.transform, false);
+        var body = new GameObject("Body");
+        body.transform.SetParent(root.transform, false);
+        var renderer = body.AddComponent<SkinnedMeshRenderer>();
+        renderer.sharedMesh = mesh;
+        renderer.bones = new[] { hips };
+        renderer.rootBone = hips;
+        return renderer;
+    }
+
+    [Test] public void FramesThatMergeSeamsMatchTheFullRebake()
+    {
+        var renderer = HardEdgeRig();
+        var shapes = new[] { "flex merge normal", "muscle merge position", "muscle apart" };
+        var expected = LegacyCapture(renderer, shapes, null);
+        var actual = DynamicNormals.CaptureNormalFrames(renderer, shapes);
+        foreach (var key in expected.Keys)
+            for (int i = 0; i < renderer.sharedMesh.vertexCount; i++)
+            {
+                Assert.LessOrEqual((expected[key].normals[i] - actual[key].normals[i]).magnitude, Tolerance, $"normal {i} of {key}");
+                Assert.LessOrEqual((expected[key].tangents[i] - actual[key].tangents[i]).magnitude, Tolerance, $"tangent {i} of {key}");
+            }
+        // The merges are real: the full bake averaged the pair, so their deltas moved.
+        Assert.Greater(expected[("flex merge normal", 0)].normals[1].sqrMagnitude + expected[("flex merge normal", 0)].normals[3].sqrMagnitude, 1e-6f);
+        Assert.Greater(expected[("muscle merge position", 0)].normals[1].sqrMagnitude, 1e-6f);
+    }
+
     // ---- MCB 1.12.24's capture: every frame skinned, recalculated and seam-averaged over the whole mesh.
 
     static Dictionary<(string, int), (Vector3[] normals, Vector3[] tangents)> LegacyCapture(SkinnedMeshRenderer smr, IList<string> shapes,
