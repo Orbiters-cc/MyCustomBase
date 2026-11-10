@@ -59,9 +59,9 @@ public partial class CreatorModeModule
             creatorWindow.showBuildSuccess = false;
             ClearBuiltPendingVersion();
             newVersionTitle = ""; newChangelog = "";
-            previouslySelectedVersion = session.selectedVersionForAction;
+            previouslySelectedVersion = SelectedVersionOfOwnAsset();
             PopulateParentVersionDropdown();
-            var latest = session.GetAllVersions().Concat(pending).OrderByDescending(v => session.ParseVersion(v.version)).FirstOrDefault();
+            var latest = session.GetAllVersions(Asset).Concat(pending).OrderByDescending(v => session.ParseVersion(v.version)).FirstOrDefault();
             SetDefaultVersionNumbers(latest);
             RefreshUIToolkit();
         });

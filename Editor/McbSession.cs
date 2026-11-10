@@ -99,9 +99,34 @@ public sealed partial class McbSession
     public List<CustomBaseVersion> serverVersions = new List<CustomBaseVersion>();
     public List<CustomBaseVersion> importedVersions = new List<CustomBaseVersion>();
     public List<CustomBaseVersion> unsubmittedVersions = new List<CustomBaseVersion>();
-    public CustomBaseVersion recommendedVersion, selectedVersionForAction;
+    public CustomBaseVersion recommendedVersion;
     public List<UserCustomVersionEntry> userCustomVersions = new List<UserCustomVersionEntry>();
-    public UserCustomVersionEntry selectedCustomVersionForAction;
+    private CustomBaseVersion selectedVersion;
+    private UserCustomVersionEntry selectedCustomVersion;
+
+    /// <summary>The version picked for the main action; every write announces it to all the avatar's views (Versions).</summary>
+    public CustomBaseVersion selectedVersionForAction
+    {
+        get => selectedVersion;
+        set
+        {
+            if (ReferenceEquals(selectedVersion, value)) return;
+            selectedVersion = value;
+            announce.Request(McbViewParts.Versions);
+        }
+    }
+
+    /// <summary>The saved custom version picked instead (experimental); announced as <see cref="selectedVersionForAction"/>.</summary>
+    public UserCustomVersionEntry selectedCustomVersionForAction
+    {
+        get => selectedCustomVersion;
+        set
+        {
+            if (ReferenceEquals(selectedCustomVersion, value)) return;
+            selectedCustomVersion = value;
+            announce.Request(McbViewParts.Versions);
+        }
+    }
     public bool currentIsCustom;
 
     // --- Busy state (runtime only: a domain reload ends the coroutines running these) ---

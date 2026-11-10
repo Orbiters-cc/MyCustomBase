@@ -56,6 +56,8 @@ public partial class CreatorModeModule
         Asset = asset;
         this.networkService = session.networkService;
         this.fileManagerService = session.fileManagerService;
+        // Its versions are kept for it, apart from the gallery's selection (cached ones at once).
+        session.Track(asset);
         creatorBlendshapeEditorFoldout = EditorPrefs.GetBool("MCB_CreatorMode_BlendshapeEditorFoldout", false);
     }
 
@@ -912,7 +914,7 @@ public partial class CreatorModeModule
     {
         var applied = session.customBaseTarget.appliedCustomBaseVersion;
         compatibleParentVersions = VersionRepository.GetCreatorParentVersions(
-                Asset?.id ?? 0, session.serverVersions, session.importedVersions, applied)
+                Asset?.id ?? 0, session.ServerVersionsOf(Asset), session.importedVersions, applied)
             .OrderByDescending(v => session.ParseVersion(v.version)).ToList();
         parentVersionDisplayOptions = compatibleParentVersions.Select(v => $"{v.version} ({v.scope})").ToList();
         defaultParentIndex = compatibleParentVersions.FindIndex(v => v.Equals(applied));
@@ -1043,7 +1045,7 @@ public partial class CreatorModeModule
         }
         // Builds started without the form (MCP) get the same version rule as the form's buttons and the server.
         VersionPublisher.ValidateNewVersionNumber(newVersionString, selectedParentVersionObject?.version,
-            selectedParentVersionObject != null ? null : VersionRepository.GetCreatorParentVersions(assetId, session.serverVersions,
+            selectedParentVersionObject != null ? null : VersionRepository.GetCreatorParentVersions(assetId, session.ServerVersionsOf(Asset),
                 session.importedVersions, session.customBaseTarget.appliedCustomBaseVersion).Select(v => v.version),
             session.CompareVersions);
 
@@ -1418,8 +1420,21 @@ public partial class CreatorModeModule
         }
     }
 
+    /// <summary>The version picked in the avatar's lists when it is one of this form's asset; null for another asset's.</summary>
+    internal CustomBaseVersion SelectedVersionOfOwnAsset()
+    {
+        var selected = session.selectedVersionForAction;
+        return selected != null && Asset != null && selected.assetId == Asset.id ? selected : null;
+    }
+
     private void PopulateFieldsFromVersion(CustomBaseVersion ver)
     {
+        // Another asset's version never fills this form: its build would carry that version's settings under this asset.
+        if (ver == null || Asset == null || ver.assetId != Asset.id)
+        {
+            MCBLogger.LogWarning($"[CreatorMode] Version {ver?.version} belongs to another asset than this form's; the form was not changed.");
+            return;
+        }
         isRestoringFromVersionState = true;
         try
         {
@@ -1558,6 +1573,8 @@ public partial class CreatorModeModule
 
     private void ApplyVersionContentToForm(CustomBaseVersion ver, bool fillFromParent)
     {
+        // A version of another asset never configures this form's models (see PopulateFieldsFromVersion).
+        if (ver == null || Asset == null || ver.assetId != Asset.id) return;
         SyncModelFileBuildEntryCount();
         var versionFilesBySourcePath = new Dictionary<string, ModelFileData>(StringComparer.OrdinalIgnoreCase);
         foreach (var versionFile in ver.versionFiles ?? Array.Empty<ModelFileData>())
@@ -1919,7 +1936,7 @@ public partial class CreatorModeModule
             session.Repaint();
         }
 
-        session.RefreshSiblingVersionLists();
+        session.RefreshSiblingVersionLists(Asset?.id ?? 0);
         RefreshEditorUi();
     }
 

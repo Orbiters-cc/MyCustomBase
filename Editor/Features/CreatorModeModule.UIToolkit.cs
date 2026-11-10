@@ -152,14 +152,16 @@ public partial class CreatorModeModule
         }
 
         PopulateParentVersionDropdown();
-        if (session.selectedVersionForAction != previouslySelectedVersion)
+        // Only a version of this window's asset fills the form (the Inspector may pick another asset's meanwhile).
+        var picked = SelectedVersionOfOwnAsset();
+        if (picked != previouslySelectedVersion)
         {
-            if (session.selectedVersionForAction != null && session.selectedVersionForAction.isUnsubmitted)
+            if (picked != null && picked.isUnsubmitted)
             {
-                PopulateFieldsFromVersion(session.selectedVersionForAction);
+                PopulateFieldsFromVersion(picked);
             }
 
-            previouslySelectedVersion = session.selectedVersionForAction;
+            previouslySelectedVersion = picked;
         }
 
         var content = new VisualElement();

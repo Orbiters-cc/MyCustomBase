@@ -96,8 +96,9 @@ public static class VersionPublisher
         }
         if (!success) yield break;
         onPublished?.Invoke();
-        // Forced: one running for the same request makes this one run after it, so the list shows the new version.
-        editor.RefreshVersions();
+        // The published version's asset, whatever the gallery shows. Forced: one running for the same request makes this one
+        // run after it, so the list shows the new version.
+        editor.RefreshVersionsOf(version.assetId);
         // The checkpoint names the published asset, which need not be the gallery's selection (creator window, MCP).
         string publishedAssetName = ResolvePublishedAssetName(version, assetName,
             new[] { editor.GetSelectedAsset() }.Concat(McbSession.Live.Select(other => other.GetSelectedAsset())));

@@ -151,6 +151,18 @@ public sealed partial class McbSession
             .OrderByDescending(v => VersionNumber(v.version)).ToList();
     }
 
+    /// <summary>
+    /// The versions of this asset, as a version list shows them: its server versions (<see cref="ServerVersionsOf"/>) merged
+    /// with the local ones; for the gallery's selection, <see cref="GetAllVersions()"/>.
+    /// </summary>
+    public List<CustomBaseVersion> GetAllVersions(AvatarDiscoveredAsset asset)
+    {
+        if (asset == null || SelectedAsset != null && SelectedAsset.id == asset.id) return GetAllVersions();
+        if (!HasServerAccess) return GetAllVersions();
+        return VersionRepository.MergeAvailableVersions(asset.id, ServerVersionsOf(asset), importedVersions, unsubmittedVersions, OriginalBaseLibrary.ActiveKey(asset))
+            .OrderByDescending(v => VersionNumber(v.version)).ToList();
+    }
+
     public Version ParseVersion(string v) => VersionNumber(v);
 
     /// <summary>A version label as a comparable number ("0.5" reads as 0.5.0; anything unreadable as 0.0).</summary>
@@ -217,6 +229,89 @@ public sealed partial class McbSession
         AsyncVersionService.Instance.StartVersionFetchInBackground(fbxPath, authToken, selectedAsset.id, useCache: false, sourceVersionKey: sourceVersionKey);
     }
 
+    // --- The server versions of the other assets views work on (a creator window's, a published version's), kept by the
+    // request they answer, apart from the gallery's selection: a view on asset A never shows B's list, and B's selection
+    // never refreshes A's. ---
+    private sealed class AssetVersions
+    {
+        public AvatarDiscoveredAsset Asset;
+        // The request the list answers: it is shown only while the model, account and original are still those.
+        public VersionFetchRequest Answers;
+        public List<CustomBaseVersion> Versions = new List<CustomBaseVersion>();
+        public CustomBaseVersion Recommended;
+    }
+
+    private readonly Dictionary<int, AssetVersions> assetVersions = new Dictionary<int, AssetVersions>();
+
+    /// <summary>
+    /// A view works on this asset (a creator window, MCP's draft): its server versions are kept from now on, read from the
+    /// cache at once and fetched in the background when none are cached.
+    /// </summary>
+    public void Track(AvatarDiscoveredAsset asset)
+    {
+        if (asset == null || asset.id <= 0) return;
+        if (!assetVersions.TryGetValue(asset.id, out var entry)) assetVersions[asset.id] = entry = new AssetVersions();
+        entry.Asset = asset;
+        string fbxPath = GetCurrentFBXPath();
+        if (string.IsNullOrEmpty(fbxPath) || !HasServerAccess || CurrentAnswer(entry)) return;
+        string key = OriginalBaseLibrary.ActiveKey(asset);
+        var cached = AsyncVersionService.Instance.GetCachedVersions(fbxPath, authToken, asset.id, key);
+        if (cached.versions.Count > 0)
+        {
+            entry.Answers = new VersionFetchRequest(fbxPath, authToken, asset.id, key);
+            entry.Versions = new List<CustomBaseVersion>(cached.versions);
+            entry.Recommended = cached.recommended;
+            return;
+        }
+        AsyncVersionService.Instance.StartVersionFetchInBackground(fbxPath, authToken, asset.id, useCache: true, sourceVersionKey: key);
+    }
+
+    /// <summary>The server versions of this asset: the gallery's list when it is the selection, else the tracked asset's.</summary>
+    public List<CustomBaseVersion> ServerVersionsOf(AvatarDiscoveredAsset asset)
+    {
+        if (asset == null) return new List<CustomBaseVersion>();
+        if (SelectedAsset != null && SelectedAsset.id == asset.id) return serverVersions;
+        return assetVersions.TryGetValue(asset.id, out var entry) && CurrentAnswer(entry) ? entry.Versions : new List<CustomBaseVersion>();
+    }
+
+    private bool CurrentAnswer(AssetVersions entry) =>
+        entry.Answers != null && entry.Answers.Matches(GetCurrentFBXPath(), authToken, entry.Asset.id, OriginalBaseLibrary.ActiveKey(entry.Asset));
+
+    // An answer for a tracked asset is kept for it (whichever view asked); true when one took it.
+    private bool KeepForTrackedAsset(VersionFetchRequest request, List<CustomBaseVersion> versions, CustomBaseVersion recommended)
+    {
+        if (request == null || !assetVersions.TryGetValue(request.assetId, out var entry)) return false;
+        if (!request.Matches(GetCurrentFBXPath(), authToken, entry.Asset.id, OriginalBaseLibrary.ActiveKey(entry.Asset))) return false;
+        entry.Answers = request;
+        entry.Versions = new List<CustomBaseVersion>(versions ?? new List<CustomBaseVersion>());
+        entry.Recommended = recommended;
+        RequestRefresh(McbViewParts.Creator);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads this asset's versions from the server again (a publication of one of its versions), whichever asset the
+    /// gallery shows: the selection's own fetch when it is the selection, else the tracked asset's, kept for it.
+    /// </summary>
+    public void RefreshVersionsOf(int assetId)
+    {
+        if (assetId <= 0) return;
+        if (SelectedAsset != null && SelectedAsset.id == assetId)
+        {
+            RefreshVersions();
+            return;
+        }
+        if (!assetVersions.TryGetValue(assetId, out var entry))
+        {
+            MCBLogger.Log($"[McbSession] No view of asset {assetId} on this avatar: its versions are read when one opens.");
+            return;
+        }
+        string fbxPath = GetCurrentFBXPath();
+        if (string.IsNullOrEmpty(fbxPath) || !HasServerAccess) return;
+        AsyncVersionService.Instance.StartVersionFetchInBackground(fbxPath, authToken, assetId, useCache: false,
+            sourceVersionKey: OriginalBaseLibrary.ActiveKey(entry.Asset));
+    }
+
     // The member's fetch answers nobody any more (another asset or account): it no longer shows as running.
     private void EndUserFetch()
     {
@@ -239,6 +334,7 @@ public sealed partial class McbSession
     private void OnVersionsUpdated(VersionFetchRequest request, List<CustomBaseVersion> versions, CustomBaseVersion recommended)
     {
         bool userFetch = AnswersUserFetch(request);
+        KeepForTrackedAsset(request, versions, recommended);
         if (!IsCurrentVersionRequest(request))
         {
             if (userFetch) EndUserFetch();
@@ -362,18 +458,22 @@ public sealed partial class McbSession
     public System.Collections.IEnumerator Publish(CustomBaseVersion version, Action onPublished = null, bool interactive = true, string assetName = null)
     {
         yield return VersionPublisher.PublishCoroutine(this, networkService, fileManagerService, version, onPublished, interactive, assetName);
-        RefreshSiblingVersionLists();
+        RefreshSiblingVersionLists(version != null ? version.assetId : 0);
     }
 
-    /// <summary>A build or publication changed the version folders: the sessions showing the same asset read their lists again.</summary>
-    internal void RefreshSiblingVersionLists()
+    /// <summary>
+    /// A build or publication of this asset changed the version folders: this session and the others showing the asset read
+    /// their local lists again (the server's answer reaches every session that asked for it).
+    /// </summary>
+    internal void RefreshSiblingVersionLists(int assetId)
     {
+        LoadUnsubmittedVersions(true);
+        LoadImportedVersions(true);
         foreach (var other in Live)
         {
-            if (other == this || other.SelectedAsset?.id != SelectedAsset?.id) continue;
+            if (other == this || other.SelectedAsset == null || other.SelectedAsset.id != assetId) continue;
             other.LoadUnsubmittedVersions(true);
             other.LoadImportedVersions(true);
-            other.serverVersions = serverVersions.ToList();
             other.serializedObject.Update();
             other.RequestRefresh(McbViewParts.All);
         }
