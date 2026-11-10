@@ -12,48 +12,47 @@ namespace MCBEditorUtils
         /// <summary>
         /// The normals and tangents of one blendshape frame, recomputed only where the frame changes them.
         /// <para>
-        /// The full bake computed, per frame and over every vertex: the skinned mesh (BakeMesh), Unity's RecalculateNormals,
-        /// the UV-seam average over vertices with the same baked position and normal, and RecalculateTangents. A vertex's
+        /// The full bake computed, per frame and over every vertex: the skinned mesh (BakeMesh), the seam groups (vertices
+        /// with exactly the same baked position and normal), Unity's RecalculateNormals, the seam average and
+        /// RecalculateTangents. Here the frame is still baked by Unity (positions and normals exactly as the full bake sees
+        /// them), but only the vertices whose baked position or normal differs from the rest bake are looked at. A vertex's
         /// normal depends only on the triangles around it and on its seam partners, its tangent on those triangles and its
-        /// own normal; vertices away from the frame's moved triangles keep their rest values, so their deltas stay zero.
-        /// The affected vertices (corners of triangles with a moved vertex, their seam partners, and the seam groups of
-        /// vertices whose normal delta changes their seam key) are recomputed with the same Unity calls on a small mesh that
-        /// holds every triangle around them, in the full mesh's triangle order.
+        /// own normal, so the affected vertices (corners of triangles with a moved vertex, and the members of every seam
+        /// group a changed vertex belongs to) are recomputed with the same Unity calls on a small mesh holding every
+        /// triangle around them, in the full mesh's triangle order; the others keep their rest values and a zero delta.
         /// </para>
         /// <para>
-        /// Skinning is linear in a vertex's position: a moved vertex's baked position is its rest bake plus its delta times
-        /// its skinning matrix, measured once with three bakes of unit-offset copies (Unity's own skinning, weights and
-        /// quality). Seam groups are the rest pose's, split per frame where members no longer share a position and normal.
-        /// Against the full bake the results differ by float rounding only (the linearised skinning, about 1e-6 on unit
-        /// vectors). A frame that may change which vertices share a seam (a merge across rest groups, by position or by a
-        /// normal-only delta, or an uncertain split) is left to the full bake, so this path runs only where it is
-        /// equivalent (<see cref="SeamGroupsHold"/>).
+        /// Seam groups are decided with the full bake's own rule (<see cref="PosNorm"/> keys in a dictionary) in its own
+        /// space (baked positions and normals). When a changed vertex's key equals the key of a vertex outside its rest
+        /// group, the frame would regroup: <see cref="Solve"/> returns null and the caller runs the full bake for it.
+        /// Otherwise the frame's groups are the rest groups split by exact key, which is what this path averages.
         /// </para>
         /// </summary>
         private sealed class IncrementalFrameNormals : IDisposable
         {
+            readonly SkinnedMeshRenderer baker;
             readonly int vertexCount;
-            readonly Vector3[] restPositions, sourceNormals, jx, jy, jz, framePositions;
+            readonly Vector3[] restPositions, restNormals;
             readonly Vector2[] uvs;
             readonly int[] triangles, triangleStart, vertexTriangles, groupOf;
-            readonly List<int[]> groups;
+            readonly List<int[]> groups = new List<int[]>();
+            // The full bake's grouping of the rest pose: key -> the vertices holding it, in vertex order.
+            readonly Dictionary<PosNorm, List<int>> restKeys = new Dictionary<PosNorm, List<int>>();
+            readonly Mesh frameBake = new Mesh { hideFlags = HideFlags.HideAndDontSave };
             readonly Mesh local = new Mesh { hideFlags = HideFlags.HideAndDontSave, indexFormat = IndexFormat.UInt32 };
 
             // Per-frame marks, reset by moving to a new stamp instead of clearing.
-            readonly int[] vertexMark, triangleMark, groupMark, localIndex;
+            readonly int[] vertexMark, triangleMark, groupMark, localIndex, changedMark;
             int stamp;
-            readonly List<int> affected = new List<int>(), touchedGroups = new List<int>(), frameTriangles = new List<int>(),
-                localVertices = new List<int>(), localTriangles = new List<int>(), seam = new List<int>();
-            readonly List<bool> seamDone = new List<bool>();
+            readonly List<Vector3> framePositionList = new List<Vector3>(), frameNormalList = new List<Vector3>();
+            Vector3[] framePositions, frameNormals;
+            readonly List<int> affected = new List<int>(), changed = new List<int>(), touchedGroups = new List<int>(),
+                frameTriangles = new List<int>(), localVertices = new List<int>(), localTriangles = new List<int>();
+            readonly Dictionary<PosNorm, int> changedKeys = new Dictionary<PosNorm, int>();
+            readonly Dictionary<PosNorm, List<int>> seamKeys = new Dictionary<PosNorm, List<int>>();
             readonly List<Vector3> localPositions = new List<Vector3>(), localNormals = new List<Vector3>();
             readonly List<Vector2> localUvs = new List<Vector2>();
             readonly List<Vector4> localTangents = new List<Vector4>();
-            // Seam membership checks: rest positions shared by several vertices, and this frame's changed vertices.
-            readonly Dictionary<(long, long, long), List<int>> restGrid = new Dictionary<(long, long, long), List<int>>();
-            readonly Dictionary<(long, long, long), List<int>> frameGrid = new Dictionary<(long, long, long), List<int>>();
-            readonly List<int> touched = new List<int>();
-            readonly int[] touchedMark;
-            readonly Vector3[] sourcePositions;
 
             /// <summary>Only meshes made of triangles: other topologies run the full bake.</summary>
             public static bool Supports(Mesh mesh)
@@ -63,16 +62,16 @@ namespace MCBEditorUtils
                 return true;
             }
 
-            /// <param name="baker">Skins with the rest pose's bones; its mesh is swapped for the unit bakes and put back.</param>
-            /// <param name="restBake">The rest pose's bake, before its normals were recalculated.</param>
-            /// <param name="restGroups">The seam groups of <paramref name="restBake"/>, members in vertex order.</param>
-            public IncrementalFrameNormals(SkinnedMeshRenderer baker, Mesh originalMesh, Mesh restBake, List<int[]> restGroups)
+            /// <param name="baker">The full bake's renderer: rest pose bones, every blendshape at 0.</param>
+            public IncrementalFrameNormals(SkinnedMeshRenderer baker, Mesh originalMesh)
             {
+                this.baker = baker;
                 vertexCount = originalMesh.vertexCount;
-                restPositions = restBake.vertices;
-                framePositions = (Vector3[])restPositions.Clone();
-                sourceNormals = originalMesh.normals;
-                if (sourceNormals.Length != vertexCount) sourceNormals = new Vector3[vertexCount];
+                // The rest bake before any normal is recalculated: what the full bake groups at rest.
+                baker.BakeMesh(frameBake);
+                restPositions = frameBake.vertices;
+                restNormals = frameBake.normals;
+                if (restNormals.Length != vertexCount) restNormals = new Vector3[vertexCount];
                 var uvList = new List<Vector2>();
                 originalMesh.GetUVs(0, uvList);
                 uvs = uvList.Count == vertexCount ? uvList.ToArray() : null;
@@ -90,63 +89,27 @@ namespace MCBEditorUtils
                 Array.Copy(triangleStart, next, vertexCount);
                 for (int i = 0; i < triangles.Length; i++) vertexTriangles[next[triangles[i]]++] = i / 3;
 
-                groups = restGroups;
+                // As StoreIndicesWithSamePositionAndNormal on the rest bake.
                 groupOf = new int[vertexCount];
-                for (int v = 0; v < vertexCount; v++) groupOf[v] = -1;
-                for (int g = 0; g < groups.Count; g++) foreach (int v in groups[g]) groupOf[v] = g;
-
-                MeasureSkinning(baker, originalMesh, out jx, out jy, out jz);
+                for (int v = 0; v < vertexCount; v++)
+                {
+                    groupOf[v] = -1;
+                    var key = new PosNorm(restPositions[v], restNormals[v]);
+                    if (!restKeys.TryGetValue(key, out var list)) restKeys.Add(key, list = new List<int>(1));
+                    list.Add(v);
+                }
+                foreach (var list in restKeys.Values)
+                {
+                    if (list.Count < 2) continue;
+                    foreach (int v in list) groupOf[v] = groups.Count;
+                    groups.Add(list.ToArray());
+                }
 
                 vertexMark = new int[vertexCount];
                 localIndex = new int[vertexCount];
-                touchedMark = new int[vertexCount];
-                sourcePositions = originalMesh.vertices;
-                for (int v = 0; v < vertexCount; v++)
-                {
-                    var cell = Cell(sourcePositions[v]);
-                    if (!restGrid.TryGetValue(cell, out var list)) restGrid[cell] = list = new List<int>(1);
-                    list.Add(v);
-                }
+                changedMark = new int[vertexCount];
                 triangleMark = new int[triangleCount];
                 groupMark = new int[groups.Count];
-            }
-
-            // A vertex's baked position moves by J·delta: J's columns are the bakes of copies offset by one unit per axis.
-            static void MeasureSkinning(SkinnedMeshRenderer baker, Mesh originalMesh, out Vector3[] x, out Vector3[] y, out Vector3[] z)
-            {
-                var vertices = originalMesh.vertices;
-                var basis = new Mesh { hideFlags = HideFlags.HideAndDontSave, indexFormat = IndexFormat.UInt32 };
-                var bake = new Mesh { hideFlags = HideFlags.HideAndDontSave };
-                try
-                {
-                    basis.vertices = vertices;
-                    var bonesPerVertex = originalMesh.GetBonesPerVertex();
-                    if (bonesPerVertex.Length == vertices.Length) basis.SetBoneWeights(bonesPerVertex, originalMesh.GetAllBoneWeights());
-                    basis.bindposes = originalMesh.bindposes;
-                    baker.sharedMesh = basis;
-                    baker.BakeMesh(bake);
-                    var rest = bake.vertices;
-                    var shifted = new Vector3[vertices.Length];
-                    Vector3[] Column(Vector3 axis)
-                    {
-                        for (int i = 0; i < shifted.Length; i++) shifted[i] = vertices[i] + axis;
-                        basis.vertices = shifted;
-                        baker.BakeMesh(bake);
-                        var moved = bake.vertices;
-                        for (int i = 0; i < moved.Length; i++) moved[i] -= rest[i];
-                        return moved;
-                    }
-                    x = Column(Vector3.right);
-                    y = Column(Vector3.up);
-                    z = Column(Vector3.forward);
-                }
-                finally
-                {
-                    baker.sharedMesh = originalMesh;
-                    for (int i = 0; i < originalMesh.blendShapeCount; i++) baker.SetBlendShapeWeight(i, 0f);
-                    Object.DestroyImmediate(basis);
-                    Object.DestroyImmediate(bake);
-                }
             }
 
             int NextStamp()
@@ -156,59 +119,55 @@ namespace MCBEditorUtils
                     Array.Clear(vertexMark, 0, vertexMark.Length);
                     Array.Clear(triangleMark, 0, triangleMark.Length);
                     Array.Clear(groupMark, 0, groupMark.Length);
-                    Array.Clear(touchedMark, 0, touchedMark.Length);
+                    Array.Clear(changedMark, 0, changedMark.Length);
                     stamp = 0;
                 }
                 return ++stamp;
             }
 
             /// <summary>
-            /// Recomputes a frame given its deltas, writes the recomputed normal and tangent of each vertex it may change
-            /// into <paramref name="normals"/> and <paramref name="tangents"/> (the other entries are left alone) and returns
-            /// those vertices. Returns null when the frame may change which vertices share a seam (see
-            /// <see cref="SeamGroupsHold"/>): the caller then runs the full bake for that frame.
+            /// Bakes the frame, writes the recomputed normal and tangent of each vertex it may change into
+            /// <paramref name="normals"/> and <paramref name="tangents"/> (the other entries are left alone) and returns those
+            /// vertices; null when the frame regroups seam vertices (<see cref="SeamGroupsHold"/>), for the full bake.
             /// </summary>
-            public List<int> Solve(Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] normals, Vector4[] tangents)
+            public List<int> Solve(int shapeIndex, float frameWeight, Vector3[] normals, Vector4[] tangents)
             {
                 affected.Clear();
+                changed.Clear();
                 touchedGroups.Clear();
-                touched.Clear();
-                int frame = NextStamp();
+                baker.SetBlendShapeWeight(shapeIndex, frameWeight);
+                try { baker.BakeMesh(frameBake); }
+                finally { baker.SetBlendShapeWeight(shapeIndex, 0f); }
+                frameBake.GetVertices(framePositionList);
+                frameBake.GetNormals(frameNormalList);
+                if (framePositionList.Count != vertexCount || frameNormalList.Count != vertexCount) return null;
+                if (framePositions == null) { framePositions = new Vector3[vertexCount]; frameNormals = new Vector3[vertexCount]; }
+                framePositionList.CopyTo(framePositions);
+                frameNormalList.CopyTo(frameNormals);
 
+                int frame = NextStamp();
                 for (int v = 0; v < vertexCount; v++)
                 {
-                    Vector3 d = deltaVertices[v];
-                    bool normalChanged = deltaNormals != null && deltaNormals[v] != Vector3.zero;
-                    if (d.x != 0f || d.y != 0f || d.z != 0f)
+                    // Exact component comparison: any change may move the vertex out of (or into) a seam group.
+                    bool moved = !SameBits(framePositions[v], restPositions[v]);
+                    if (!moved && SameBits(frameNormals[v], restNormals[v])) continue;
+                    changedMark[v] = frame;
+                    changed.Add(v);
+                    if (groupOf[v] >= 0) TouchGroup(groupOf[v], frame);
+                    if (!moved) continue;
+                    for (int k = triangleStart[v]; k < triangleStart[v + 1]; k++)
                     {
-                        touchedMark[v] = frame;
-                        touched.Add(v);
-                        framePositions[v] = restPositions[v] + jx[v] * d.x + jy[v] * d.y + jz[v] * d.z;
-                        for (int k = triangleStart[v]; k < triangleStart[v + 1]; k++)
-                        {
-                            int t = vertexTriangles[k];
-                            if (triangleMark[t] == frame) continue;
-                            triangleMark[t] = frame;
-                            for (int c = 0; c < 3; c++) Mark(triangles[3 * t + c], frame);
-                        }
-                    }
-                    else
-                    {
-                        framePositions[v] = restPositions[v];
-                        // The vertex stays, but its seam key changes with its normal delta.
-                        if (normalChanged)
-                        {
-                            touchedMark[v] = frame;
-                            touched.Add(v);
-                            if (groupOf[v] >= 0) TouchGroup(groupOf[v], frame);
-                        }
+                        int t = vertexTriangles[k];
+                        if (triangleMark[t] == frame) continue;
+                        triangleMark[t] = frame;
+                        for (int c = 0; c < 3; c++) Mark(triangles[3 * t + c], frame);
                     }
                 }
+                if (!SeamGroupsHold(frame)) return null;
                 for (int i = 0; i < affected.Count; i++)
                     if (groupOf[affected[i]] >= 0) TouchGroup(groupOf[affected[i]], frame);
                 foreach (int g in touchedGroups)
                     foreach (int v in groups[g]) Mark(v, frame);
-                if (!SeamGroupsHold(deltaVertices, deltaNormals, frame)) return null;
                 if (affected.Count == 0) return affected;
 
                 // Every triangle around an affected vertex, in the full mesh's order.
@@ -250,7 +209,7 @@ namespace MCBEditorUtils
                 local.SetTriangles(localTriangles, 0, false);
                 local.RecalculateNormals();
                 local.GetNormals(localNormals);
-                foreach (int g in touchedGroups) AverageSeam(groups[g], deltaNormals);
+                foreach (int g in touchedGroups) AverageSeam(groups[g]);
                 local.SetNormals(localNormals);
                 local.RecalculateTangents();
                 local.GetTangents(localTangents);
@@ -266,74 +225,33 @@ namespace MCBEditorUtils
                 return affected;
             }
 
+            static bool SameBits(Vector3 a, Vector3 b) => a.x.Equals(b.x) && a.y.Equals(b.y) && a.z.Equals(b.z);
+
             /// <summary>
-            /// Whether the full bake would group this frame's vertices as the rest pose's seam groups split by
-            /// <see cref="AverageSeam"/>. The full bake regroups every vertex by exact baked position and normal; only a
-            /// vertex whose position or normal delta is non-zero can change its key. Compared before skinning (rest
-            /// position plus delta, which is what Unity skins, and normal plus delta), with margins so that rounding can
-            /// only send a frame to the full bake, never keep a regrouped one here. False when a changed vertex comes within
-            /// 1e-5 of a vertex outside its rest group with a normal within 1e-4 (a merge by position or by a normal-only
-            /// delta), or when two members of a rest group, one of them changed, are that close without being exactly
-            /// equal, or are equal but skinned by different matrices.
+            /// Whether the full bake's grouping of this frame is the rest groups split by key. Only a changed vertex can
+            /// change its key; unchanged vertices keep their rest keys. The frame regroups when a changed vertex's key, as
+            /// the full bake's dictionary sees it, is held by an unchanged vertex outside its rest group or by a changed
+            /// vertex of another rest group (or by one outside any group).
             /// </summary>
-            bool SeamGroupsHold(Vector3[] deltaVertices, Vector3[] deltaNormals, int frame)
+            bool SeamGroupsHold(int frame)
             {
-                if (touched.Count == 0) return true;
-                frameGrid.Clear();
-                foreach (int v in touched)
+                changedKeys.Clear();
+                foreach (int v in changed)
                 {
-                    var cell = Cell(FrameSource(v, deltaVertices));
-                    if (!frameGrid.TryGetValue(cell, out var list)) frameGrid[cell] = list = new List<int>(1);
-                    list.Add(v);
-                }
-                foreach (int v in touched)
-                {
-                    Vector3 position = FrameSource(v, deltaVertices), normal = SeamNormal(v, deltaNormals);
-                    var cell = Cell(position);
-                    for (int x = -1; x <= 1; x++)
-                        for (int y = -1; y <= 1; y++)
-                            for (int z = -1; z <= 1; z++)
-                            {
-                                var near = (cell.Item1 + x, cell.Item2 + y, cell.Item3 + z);
-                                if (restGrid.TryGetValue(near, out var resting))
-                                    foreach (int w in resting)
-                                        if (w != v && touchedMark[w] != frame && !SameRestGroup(v, w) &&
-                                            Close(position, sourcePositions[w]) && Near(normal, SeamNormal(w, deltaNormals))) return false;
-                                if (frameGrid.TryGetValue(near, out var moved))
-                                    foreach (int w in moved)
-                                        if (w != v && !SameRestGroup(v, w) &&
-                                            Close(position, FrameSource(w, deltaVertices)) && Near(normal, SeamNormal(w, deltaNormals))) return false;
-                            }
-                }
-                foreach (int g in touchedGroups)
-                {
-                    var members = groups[g];
-                    for (int i = 0; i < members.Length; i++)
-                        for (int j = i + 1; j < members.Length; j++)
-                        {
-                            int a = members[i], b = members[j];
-                            if (touchedMark[a] != frame && touchedMark[b] != frame) continue;
-                            Vector3 pa = FrameSource(a, deltaVertices), pb = FrameSource(b, deltaVertices);
-                            Vector3 na = SeamNormal(a, deltaNormals), nb = SeamNormal(b, deltaNormals);
-                            if (!Close(pa, pb) || !Near(na, nb)) continue;
-                            if (!pa.Equals(pb) || !na.Equals(nb) || !jx[a].Equals(jx[b]) || !jy[a].Equals(jy[b]) || !jz[a].Equals(jz[b])) return false;
-                        }
+                    var key = new PosNorm(framePositions[v], frameNormals[v]);
+                    if (restKeys.TryGetValue(key, out var holders))
+                        foreach (int w in holders)
+                            if (w != v && changedMark[w] != frame && !SameRestGroup(v, w)) return false;
+                    if (changedKeys.TryGetValue(key, out int other))
+                    {
+                        if (!SameRestGroup(v, other)) return false;
+                    }
+                    else changedKeys.Add(key, v);
                 }
                 return true;
             }
 
-            Vector3 FrameSource(int v, Vector3[] deltaVertices) => sourcePositions[v] + deltaVertices[v];
-
-            const float CellSize = 1e-4f;
-
-            static (long, long, long) Cell(Vector3 p) =>
-                ((long)Math.Floor(p.x / (double)CellSize), (long)Math.Floor(p.y / (double)CellSize), (long)Math.Floor(p.z / (double)CellSize));
-
-            static bool Close(Vector3 a, Vector3 b) => (a - b).sqrMagnitude < 1e-10f;
-
             bool SameRestGroup(int a, int b) => groupOf[a] >= 0 && groupOf[a] == groupOf[b];
-
-            static bool Near(Vector3 a, Vector3 b) => (a - b).sqrMagnitude < 1e-8f;
 
             void Mark(int v, int frame)
             {
@@ -350,24 +268,20 @@ namespace MCBEditorUtils
                 touchedGroups.Add(g);
             }
 
-            // As ReRecalculateNormalsInUVSeams: members that still share a position and normal share the normalised mean
-            // of their recalculated normals, summed in vertex order.
-            void AverageSeam(int[] members, Vector3[] deltaNormals)
+            // As StoreIndicesWithSamePositionAndNormal then ReRecalculateNormalsInUVSeams, on one rest group: members are
+            // grouped by the full bake's key in the same kind of dictionary, and each group of two or more shares the
+            // normalised mean of their recalculated normals, summed in vertex order.
+            void AverageSeam(int[] members)
             {
-                seamDone.Clear();
-                for (int i = 0; i < members.Length; i++) seamDone.Add(false);
-                for (int i = 0; i < members.Length; i++)
+                seamKeys.Clear();
+                foreach (int v in members)
                 {
-                    if (seamDone[i]) continue;
-                    Vector3 position = framePositions[members[i]], normal = SeamNormal(members[i], deltaNormals);
-                    seam.Clear();
-                    for (int j = i; j < members.Length; j++)
-                    {
-                        int other = members[j];
-                        if (seamDone[j] || !framePositions[other].Equals(position) || !SeamNormal(other, deltaNormals).Equals(normal)) continue;
-                        seamDone[j] = true;
-                        seam.Add(other);
-                    }
+                    var key = new PosNorm(framePositions[v], frameNormals[v]);
+                    if (!seamKeys.TryGetValue(key, out var list)) seamKeys.Add(key, list = new List<int>(members.Length));
+                    list.Add(v);
+                }
+                foreach (var seam in seamKeys.Values)
+                {
                     if (seam.Count < 2) continue;
                     var sum = Vector3.zero;
                     foreach (int v in seam) if (localIndex[v] >= 0) sum += localNormals[localIndex[v]];
@@ -377,9 +291,11 @@ namespace MCBEditorUtils
                 }
             }
 
-            Vector3 SeamNormal(int v, Vector3[] deltaNormals) => deltaNormals != null ? sourceNormals[v] + deltaNormals[v] : sourceNormals[v];
-
-            public void Dispose() => Object.DestroyImmediate(local);
+            public void Dispose()
+            {
+                Object.DestroyImmediate(local);
+                Object.DestroyImmediate(frameBake);
+            }
         }
 #endif
     }
