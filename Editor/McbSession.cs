@@ -338,8 +338,12 @@ public sealed partial class McbSession
     public void BeginBackgroundRefresh()
     {
         if (customBaseTarget == null) return;
-        // Edits made on the component without this view (scripts, Undo) are read again.
+        // Edits made on the component without this view (scripts, Undo) are read again, and so are the local versions: the
+        // versions folder may have changed while no view of the avatar was open (the repository's scan is cached).
         serializedObject.Update();
+        LoadImportedVersions();
+        LoadUnsubmittedVersions();
+        userCustomVersions = UserCustomVersionService.Instance.GetAll();
         MCBConnectivityMonitor.EnsureCheckStarted(authToken);
         MCBPackageVersionService.EnsureCheckStarted(authToken);
         MCBPerformance.EnsureStarted(this);
