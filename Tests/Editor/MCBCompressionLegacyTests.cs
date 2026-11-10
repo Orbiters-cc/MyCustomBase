@@ -12,7 +12,9 @@ using NUnit.Framework;
 /// </summary>
 public sealed class MCBCompressionLegacyTests
 {
-    // ---- MCB 1.12.24 (MCBCompression.Encode/Decode before streaming and parallel blocks)
+    // ---- MCB 1.12.24 (MCBCompression.Encode/Decode before streaming and parallel blocks). A reference for the bytes
+    // only: the old validation (header, block size and bound checks, error messages) is left out, so it decodes only the
+    // well-formed containers these tests give it; rejection is tested against MCBCompression itself.
 
     static class Legacy
     {
@@ -106,6 +108,7 @@ public sealed class MCBCompressionLegacyTests
     [TestCase(MCBCompression.Zstd, 17 * 4 * 1024 * 1024 + 5)]
     [TestCase(MCBCompression.Lz4, 0)]
     [TestCase(MCBCompression.Lz4, 1000)]
+    [TestCase(MCBCompression.Lz4, 3 * 4 * 1024 * 1024 - 7)]
     [TestCase(MCBCompression.Lz4, 17 * 4 * 1024 * 1024 + 5)]
     public void EncoderAndDecoderMatchTheLegacyCodec(string codec, int length)
     {
@@ -151,14 +154,15 @@ public sealed class MCBCompressionLegacyTests
         Assert.IsTrue(MCBCompression.Decode(Container(frame), MCBCompression.Zstd).SequenceEqual(Text));
     }
 
-    // ---- Historical GZIP payloads (single file, no codec container): still read, hash over the GZIP bytes.
+    // ---- Historical GZIP payloads (single file, no codec container): still read, hash over the GZIP bytes. The payload is
+    // the 1.12.24 writer's (NativeMeshPayloadLegacyFormat), compressed as that release's GZIP path did.
 
     [Test] public void HistoricalGzipPayloadParsesLikeThePlainOne()
     {
         var source = NativeMeshPayloadFormatTests.SyntheticMesh("Body DynamicNormals", 200);
         try
         {
-            byte[] plain = NativeMeshPayloadFormatTests.WriteWithService(source);
+            byte[] plain = NativeMeshPayloadFormatTests.Payload(writer => NativeMeshPayloadLegacyFormat.WriteMesh(writer, source, source.name));
             byte[] gzip;
             using (var stream = new MemoryStream())
             {

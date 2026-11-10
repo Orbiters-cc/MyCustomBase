@@ -247,7 +247,7 @@ public class PersistentCache
     // Only reconstructible data goes through this cache (advisory file hashes, server version lists): a save lost to a
     // crash costs a re-hash or a re-fetch, never user data. Keep it that way.
     private static readonly double SaveDelay = 2d;
-    // A domain reload or quit waits this long at most for a write already running (a stuck disk must not hang the editor).
+    // A domain reload or quit waits this long at most for the worker's write (a stalled disk must not hang the editor).
     private const int FlushWaitMilliseconds = 30000;
     private bool saveRequested;
     private double saveDueAt;
@@ -258,7 +258,7 @@ public class PersistentCache
     }
 
     // Before a domain reload or quit: a requested save is snapshotted now, and every snapshot still pending or being
-    // written by the worker is on disk before this returns, whatever saveRequested said.
+    // written by the worker is on disk before this returns (whatever saveRequested said), within FlushWaitMilliseconds.
     private void FlushPendingSave()
     {
         bool requested;
@@ -271,23 +271,20 @@ public class PersistentCache
             lock (writeLock) pendingJson = json;
         }
 
+        // The disk write stays on the worker (started here if none runs); this thread only waits for it, and for no longer
+        // than FlushWaitMilliseconds, so a stalled disk delays the reload or quit by that much at most.
+        bool start;
+        lock (writeLock)
+        {
+            if (!writing && pendingJson == null) return;
+            start = !writing;
+            if (start) writing = true;
+        }
+        if (start) Task.Run(WritePendingSnapshots);
         var waited = System.Diagnostics.Stopwatch.StartNew();
         while (true)
         {
-            bool writeHere;
-            lock (writeLock)
-            {
-                if (!writing && pendingJson == null) return;
-                writeHere = !writing;
-                if (writeHere) writing = true;
-            }
-            if (writeHere)
-            {
-                // Writes every pending snapshot, then clears the writing flag.
-                WritePendingSnapshots();
-                return;
-            }
-            // The worker is writing: it also takes any snapshot left pending before it stops.
+            lock (writeLock) if (!writing && pendingJson == null) return;
             if (waited.ElapsedMilliseconds > FlushWaitMilliseconds)
             {
                 MCBLogger.LogWarning("[PersistentCache] The cache file is still being written; the editor goes on without waiting further.");

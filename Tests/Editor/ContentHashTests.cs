@@ -281,4 +281,23 @@ public sealed class ContentHashTests
         ReplaceSilently(blob, B);
         Assert.IsFalse(ContentHash.Verify(blob, Reference(A), A.Length), "Reused blobs and manifest outputs are read again.");
     }
+
+    [Test] public void AFailedReadDropsEveryCachedHashOfTheFile()
+    {
+        string path = Settled("locked.bin", A);
+        Assert.AreEqual(Reference(A), ContentHash.Advisory(path));
+        using (var operation = new ContentHash.Operation())
+        {
+            operation.Record(path, Reference(B));
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            File.SetLastWriteTimeUtc(path, written.AddSeconds(-1)); // the recorded stamp no longer matches: a read is due
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.Throws<IOException>(() => ContentHash.Proof(path, operation));
+                Assert.IsNull(ContentHash.GetIfCached(path), "The advisory entry went with the failed read.");
+            }
+            File.SetLastWriteTimeUtc(path, written);
+            Assert.AreEqual(Reference(A), ContentHash.Proof(path, operation), "The operation's entry went too: the bytes are read.");
+        }
+    }
 }

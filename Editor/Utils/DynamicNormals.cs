@@ -263,7 +263,6 @@ namespace MCBEditorUtils
                     var baseTangents = baseMesh.tangents;
 
                     var ignored = new Vector3[originalMesh.vertexCount];
-                    var sourceDeltaNormals = new Vector3[originalMesh.vertexCount];
                     var frameNormals = new Vector3[originalMesh.vertexCount];
                     var frameTangents = new Vector4[originalMesh.vertexCount];
                     var recomputed = new bool[originalMesh.vertexCount];
@@ -325,16 +324,16 @@ namespace MCBEditorUtils
                             if (incremental == null && IncrementalFrameNormals.Supports(originalMesh))
                             {
                                 step.Restart();
-                                incremental = new IncrementalFrameNormals(baker, originalMesh, baseMesh, indicesWithSamePosNorm);
+                                incremental = new IncrementalFrameNormals(baker, originalMesh);
                                 bakeMs += step.Elapsed.TotalMilliseconds;
                             }
                             step.Restart();
                             List<int> changed = null;
                             if (incremental != null)
                             {
-                                originalMesh.GetBlendShapeFrameVertices(shapeIndex, frameIndex, deltaVertices, sourceDeltaNormals, ignored);
-                                // Null when the frame may regroup seam vertices: the full bake below handles that frame.
-                                changed = incremental.Solve(deltaVertices, sourceDeltaNormals, frameNormals, frameTangents);
+                                originalMesh.GetBlendShapeFrameVertices(shapeIndex, frameIndex, deltaVertices, ignored, ignored);
+                                // Null when the frame regroups seam vertices: the full bake below handles that frame.
+                                changed = incremental.Solve(shapeIndex, frameWeight, frameNormals, frameTangents);
                             }
                             if (changed != null)
                             {

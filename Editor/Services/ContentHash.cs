@@ -236,6 +236,11 @@ public static class ContentHash
             }
         }
 
+        internal void Remove(string full)
+        {
+            lock (proven) if (!disposed) proven.Remove(full);
+        }
+
         /// <summary>
         /// The operation wrote <paramref name="path"/> from bytes whose hash it computed or verified itself (a staged copy
         /// checked before it was moved into place, a stream hashed as it was written).
@@ -295,19 +300,28 @@ public static class ContentHash
     /// </summary>
     static string ReadStable(string full, Action<float> progress, bool persist, int attempts = ReadAttempts, Operation operation = null)
     {
-        for (int attempt = 0; attempt < attempts; attempt++)
+        try
         {
-            if (!Stamp(full, out var before)) throw new FileNotFoundException("The file vanished before it was read.", full);
-            long started = DateTime.UtcNow.Ticks;
-            string hash = MCBHashing.HashFile(full, progress);
-            if (!Stamp(full, out var after)) throw new FileNotFoundException("The file vanished while it was read.", full);
-            if (!after.Equals(before)) continue;
-            operation?.Put(full, before, hash);
-            StoreAdvisory(full, before, hash, started, persist);
-            return hash;
+            for (int attempt = 0; attempt < attempts; attempt++)
+            {
+                if (!Stamp(full, out var before)) throw new FileNotFoundException("The file vanished before it was read.", full);
+                long started = DateTime.UtcNow.Ticks;
+                string hash = MCBHashing.HashFile(full, progress);
+                if (!Stamp(full, out var after)) throw new FileNotFoundException("The file vanished while it was read.", full);
+                if (!after.Equals(before)) continue;
+                operation?.Put(full, before, hash);
+                StoreAdvisory(full, before, hash, started, persist);
+                return hash;
+            }
+            throw new IOException($"'{Path.GetFileName(full)}' kept changing while it was read.");
         }
-        Forget(full);
-        throw new IOException($"'{Path.GetFileName(full)}' kept changing while it was read.");
+        catch
+        {
+            // Whatever failed (the read itself included), nothing cached may still describe this file.
+            Forget(full);
+            operation?.Remove(full);
+            throw;
+        }
     }
 
     // A hash read from the bytes is also a good advisory answer, unless the read was too close to the last write.

@@ -1088,8 +1088,7 @@ public class FileManagerService
         IReadOnlyList<MeshBlendshapeSelection> dynamicNormalSelections = null,
         // The avatar's original base models (all of them, also those the version leaves unchanged): the logic package
         // never ships them, what they use, or their base's folder.
-        IEnumerable<string> originalModelPaths = null,
-        ContentHash.Operation operation = null)
+        IEnumerable<string> originalModelPaths = null)
     {
         string newVersionDataPath = versionFolderUnityPath;
         if (string.IsNullOrEmpty(newVersionDataPath))
@@ -1097,8 +1096,6 @@ public class FileManagerService
             throw new ArgumentException("A valid version folder path is required to create a version package.");
         }
 
-        // One build: each source is read once, and the outputs it writes are recorded as it writes them.
-        using var owned = ContentHash.Operation.Join(operation, out var proof);
         {
             MCBUtils.EnsureDirectoryExists(newVersionDataPath, canBeFilePath: false);
 
@@ -1128,7 +1125,7 @@ public class FileManagerService
                     throw new InvalidOperationException($"Target model file entry {i + 1} has an invalid avatar asset reference.");
 
                 string safeBaseName = SanitizeFileName(Path.GetFileNameWithoutExtension(entry.sourceFbxPath));
-                entry.sourceHash = ContentHash.Proof(entry.sourceFbxPath, proof);
+                entry.sourceHash = ContentHash.Proof(entry.sourceFbxPath);
 
                 GameObject importedExternalFbx = null;
                 string importedExternalFbxPath = null;
@@ -1168,11 +1165,6 @@ public class FileManagerService
                             entry.advancedRendererCount = payloadResult.rendererCount;
                             entry.binUnityPath = binUnityPath;
                             entry.binHash = payloadResult.binHash;
-                            // The variants were hashed as they were written: the manifest needs no second read.
-                            string variantFolder = Path.GetDirectoryName(Path.GetFullPath(binUnityPath));
-                            foreach (var part in entry.payloadParts)
-                                foreach (var variant in part?.variants ?? new List<MCBPayloadVariant>())
-                                    proof.Record(Path.Combine(variantFolder, variant.path), variant.hash);
 
                             // Avatar replacement is explicit and optional, also for Blender exports.
                         }
@@ -1184,6 +1176,8 @@ public class FileManagerService
                             string sourceFbxPath = entry.sourceFbxPath, binFullPath = Path.GetFullPath(binUnityPath);
                             var patching = System.Threading.Tasks.Task.Run(() =>
                             {
+                                // One synchronous stretch on the worker: the patch it writes is recorded, nothing outlives it.
+                                using var proof = new ContentHash.Operation();
                                 var result = new FbxPatchResult { outputHash = ContentHash.Proof(customFbxPath, proof) };
                                 if (useHdiff)
                                     result.wroteHdiff = HdiffService.TryWriteXorEncryptedDiffBin(sourceFbxPath, customFbxPath, binFullPath, this,
@@ -1245,7 +1239,7 @@ public class FileManagerService
                     }
 
                     entry.avatarUnityPath = avatarUnityPath;
-                    entry.avatarHash = ContentHash.Proof(Path.GetFullPath(avatarUnityPath), proof);
+                    entry.avatarHash = ContentHash.Proof(Path.GetFullPath(avatarUnityPath));
                 }
             }
 
