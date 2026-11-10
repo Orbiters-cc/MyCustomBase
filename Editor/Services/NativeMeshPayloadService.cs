@@ -253,7 +253,8 @@ public static partial class NativeMeshPayloadService
         if (sourcePoseRoot == null) RequireOriginalModelImported(sourceFbxPath);
 
         GameObject payloadSource = customFbx;
-        byte[] baseData = File.ReadAllBytes(fullSourcePath);
+        // The original model (the XOR key) is read on a worker while the renderers and normals are prepared.
+        var keyRead = Task.Run(() => File.ReadAllBytes(fullSourcePath));
         var rendererSources = ResolvePayloadRendererSources(payloadSource, smrPaths);
         if (rendererSources.Count == 0)
         {
@@ -302,6 +303,8 @@ public static partial class NativeMeshPayloadService
             Directory.CreateDirectory(outputDirectory);
         }
 
+        while (!keyRead.IsCompleted) yield return null;
+        byte[] baseData = keyRead.GetAwaiter().GetResult();
         var metrics = new NativeMeshPayloadBuildMetrics();
         if (createDeliveryVariants)
         {

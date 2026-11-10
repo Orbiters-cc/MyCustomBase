@@ -1176,21 +1176,29 @@ public class FileManagerService
                         }
                         else
                         {
-                            entry.outputHash = ContentHash.Get(customFbxPath);
-
-                            bool wroteHdiff = false;
+                            // The diff (zstd level 21) and its check, the XOR and the hashes run on a worker: the editor keeps
+                            // drawing meanwhile. HDiff's libraries are loaded here first, on the main thread.
+                            bool useHdiff = entry.useHdiffFbxDelta && HdiffService.IsAvailable(out _);
+                            string sourceFbxPath = entry.sourceFbxPath, binFullPath = Path.GetFullPath(binUnityPath);
+                            var patching = System.Threading.Tasks.Task.Run(() =>
+                            {
+                                var result = new FbxPatchResult { outputHash = ContentHash.Get(customFbxPath) };
+                                if (useHdiff)
+                                    result.wroteHdiff = HdiffService.TryWriteXorEncryptedDiffBin(sourceFbxPath, customFbxPath, binFullPath, this,
+                                        out result.hdiffInfo, out result.hdiffFailureReason);
+                                // Streamed: the custom model XORed with the original, a block at a time (hash remembered).
+                                if (!result.wroteHdiff) MCBXor.TransformFile(sourceFbxPath, customFbxPath, binFullPath);
+                                result.binHash = ContentHash.Get(binFullPath);
+                                return result;
+                            });
+                            while (!patching.IsCompleted) yield return null;
+                            var patch = patching.GetAwaiter().GetResult();
+                            entry.outputHash = patch.outputHash;
                             if (entry.useHdiffFbxDelta)
                             {
-                                wroteHdiff = HdiffService.TryWriteXorEncryptedDiffBin(
-                                    entry.sourceFbxPath,
-                                    customFbxPath,
-                                    Path.GetFullPath(binUnityPath),
-                                    this,
-                                    out var hdiffInfo,
-                                    out string hdiffFailureReason);
-
-                                if (wroteHdiff)
+                                if (patch.wroteHdiff)
                                 {
+                                    var hdiffInfo = patch.hdiffInfo;
                                     entry.usedHdiffFbxDelta = true;
                                     entry.hdiffBuildInfo = hdiffInfo;
                                     entry.patchTransform = ModelFileTransforms.HdiffXorBinToFbx;
@@ -1200,20 +1208,16 @@ public class FileManagerService
                                 }
                                 else
                                 {
+                                    string hdiffFailureReason = useHdiff ? patch.hdiffFailureReason : UnavailableHdiffReason();
                                     entry.hdiffFallbackReason = hdiffFailureReason;
                                     MCBLogger.LogWarning($"[FileManager] Falling back to XOR FBX patch for '{safeBaseName}': {hdiffFailureReason}");
                                 }
                             }
 
-                            if (!wroteHdiff)
-                            {
-                                // Streamed: the custom model XORed with the original, a block at a time (hash remembered).
-                                MCBXor.TransformFile(entry.sourceFbxPath, customFbxPath, Path.GetFullPath(binUnityPath));
-                                entry.patchTransform = ModelFileTransforms.XorBinToFbx;
-                            }
+                            if (!patch.wroteHdiff) entry.patchTransform = ModelFileTransforms.XorBinToFbx;
 
                             entry.binUnityPath = binUnityPath;
-                            entry.binHash = ContentHash.Get(Path.GetFullPath(binUnityPath));
+                            entry.binHash = patch.binHash;
                         }
                     }
                 }
@@ -1250,6 +1254,19 @@ public class FileManagerService
             AssetDatabase.Refresh();
             while (MCBWork.EditorBusy) yield return null;
         }
+    }
+
+    private sealed class FbxPatchResult
+    {
+        public string outputHash, binHash, hdiffFailureReason;
+        public bool wroteHdiff;
+        public HdiffService.BuildInfo hdiffInfo;
+    }
+
+    private static string UnavailableHdiffReason()
+    {
+        HdiffService.IsAvailable(out string reason);
+        return reason;
     }
 
     /// <summary>

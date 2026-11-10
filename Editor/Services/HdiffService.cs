@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using UnityEditor;
 using UnityEngine;
 
@@ -249,10 +250,10 @@ public static class HdiffService
         }
     }
 
+    /// <summary>Usable from worker threads: the project folder is the editor's working directory.</summary>
     public static string CreateTempWorkPath(string extension)
     {
-        string projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        string tempFolder = Path.Combine(projectPath, "Library", "MCB", "HdiffTemp");
+        string tempFolder = Path.GetFullPath(Path.Combine("Library", "MCB", "HdiffTemp"));
         Directory.CreateDirectory(tempFolder);
         string safeExtension = string.IsNullOrWhiteSpace(extension) ? ".tmp" : extension;
         if (!safeExtension.StartsWith(".", StringComparison.Ordinal))
@@ -377,7 +378,7 @@ internal static class MCBHdiffPatchTrust
         }
 
         string normalizedPath = Path.GetFullPath(path);
-        string projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string projectPath = Path.GetFullPath("."); // the editor's working directory: readable from worker threads
         bool isTrustedPath = GetCandidatePaths(projectPath, fileName)
             .Any(candidate => PathsEqual(candidate, normalizedPath));
 
@@ -509,6 +510,7 @@ internal static class MCBHdiffPatchWrapper
         IntPtr diffFileName,
         IntPtr outNewPath);
 
+    private static readonly object NativeGate = new object();
     private static bool s_dllsLoaded;
     private static IntPtr s_hdiffzHandle = IntPtr.Zero;
     private static IntPtr s_hpatchzHandle = IntPtr.Zero;
@@ -564,6 +566,8 @@ internal static class MCBHdiffPatchWrapper
 #if UNITY_EDITOR_WIN
         EnsureDllsLoaded();
 
+        // The native callbacks go through static slots: one HDiff call at a time, whichever thread makes it.
+        Monitor.Enter(NativeGate);
         s_hdiffLogCallback = logCallback;
         s_hdiffErrorCallback = errorCallback;
         try
@@ -590,6 +594,7 @@ internal static class MCBHdiffPatchWrapper
         {
             s_hdiffLogCallback = null;
             s_hdiffErrorCallback = null;
+            Monitor.Exit(NativeGate);
         }
 #else
         throw new PlatformNotSupportedException("HDiff creation requires the Windows Editor native HDiffPatch DLLs.");
@@ -606,6 +611,7 @@ internal static class MCBHdiffPatchWrapper
 #if UNITY_EDITOR_WIN
         EnsurePatchExportsLoaded();
 
+        Monitor.Enter(NativeGate);
         s_hpatchLogCallback = logCallback;
         s_hpatchErrorCallback = errorCallback;
         try
@@ -619,6 +625,7 @@ internal static class MCBHdiffPatchWrapper
         {
             s_hpatchLogCallback = null;
             s_hpatchErrorCallback = null;
+            Monitor.Exit(NativeGate);
         }
 #else
         throw new PlatformNotSupportedException("HDiff apply requires the Windows Editor native HDiffPatch DLLs.");
@@ -761,7 +768,7 @@ internal static class MCBHdiffPatchWrapper
             return;
         }
 
-        string projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string projectPath = Path.GetFullPath("."); // the editor's working directory: readable from worker threads
         string libraryDir = Path.Combine(projectPath, "Library", "MCB", "Hdiff");
         string hdiffzPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hdiffz.dll");
         string hpatchzPath = MCBHdiffPatchTrust.EnsureTrustedCopy(projectPath, libraryDir, "hpatchz.dll");
