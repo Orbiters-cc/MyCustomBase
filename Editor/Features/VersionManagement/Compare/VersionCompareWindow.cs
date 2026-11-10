@@ -55,6 +55,11 @@ internal sealed class VersionCompareWindow : EditorWindow
     private SegmentedControl lookControl, layoutControl, referenceControl;
     private readonly Dictionary<ComparedPart, VisualElement> partRows = new Dictionary<ComparedPart, VisualElement>();
     private float spin;
+    private IVisualElementScheduledItem tick;
+    // The Apply button shows whether the version is on the avatar, which only changes when an operation of the avatar
+    // ends or the scene changes: it is refreshed then, never per frame.
+    [NonSerialized] private McbAvatarViewModel watched;
+    [NonSerialized] private bool applyRefreshQueued;
 
     public static void Open(MCBEditor editor, CustomBaseVersion version)
     {
@@ -79,6 +84,7 @@ internal sealed class VersionCompareWindow : EditorWindow
 
     private void OnDisable()
     {
+        Watch(null);
         stage?.Dispose();
         comparison?.Dispose();
         comparison = null;
@@ -93,6 +99,7 @@ internal sealed class VersionCompareWindow : EditorWindow
         editor = owner;
         target = owner.customBaseTarget;
         version = shown;
+        Watch(owner.ViewModel);
         // What this version changed: compared with the version before it, or with the original base for its first version.
         previous = VersionRepository.PreviousInHistory(shown, owner.GetAllVersions(), owner.CompareVersions);
         previousOnAvatar = previous != null && owner.versionModule?.actions != null && owner.versionModule.actions.IsVersionCurrentlyApplied(previous);
@@ -118,6 +125,34 @@ internal sealed class VersionCompareWindow : EditorWindow
     }
 
     private VersionActions Actions => LiveEditor()?.versionModule?.actions;
+
+    private void Watch(McbAvatarViewModel model)
+    {
+        if (watched != null) watched.Changed -= OnAvatarChanged;
+        EditorApplication.hierarchyChanged -= QueueRefreshApply;
+        Undo.undoRedoPerformed -= QueueRefreshApply;
+        watched = model;
+        if (model == null) return;
+        model.Changed += OnAvatarChanged;
+        EditorApplication.hierarchyChanged += QueueRefreshApply;
+        Undo.undoRedoPerformed += QueueRefreshApply;
+    }
+
+    private void OnAvatarChanged(McbViewParts parts)
+    {
+        if ((parts & (McbViewParts.Busy | McbViewParts.Versions)) != 0) QueueRefreshApply();
+    }
+
+    private void QueueRefreshApply()
+    {
+        if (applyRefreshQueued || this == null) return;
+        applyRefreshQueued = true;
+        rootVisualElement.schedule.Execute(() =>
+        {
+            applyRefreshQueued = false;
+            RefreshApply();
+        });
+    }
 
     // The inspector that opened the window may have been rebuilt since (selection changes): use the live one.
     private MCBEditor LiveEditor()
@@ -180,7 +215,8 @@ internal sealed class VersionCompareWindow : EditorWindow
         applyCaption.AddToClassList("mcb-cmp__apply-caption");
         footer.Add(applyCaption);
 
-        root.schedule.Execute(Tick).Every(16);
+        tick?.Pause();
+        tick = root.schedule.Execute(Tick).Every(16);
         RefreshApply();
     }
 
@@ -392,12 +428,16 @@ internal sealed class VersionCompareWindow : EditorWindow
             }
             else RequestDownload();
         }
-
-        RefreshApply();
+        else if (overlay.style.display == DisplayStyle.None)
+        {
+            // Nothing to spin or pump until the overlay shows again (SetOverlay).
+            tick?.Pause();
+        }
     }
 
     private void SetOverlay(string step, float progress, string detail)
     {
+        tick?.Resume();
         overlay.style.display = DisplayStyle.Flex;
         overlay.RemoveFromClassList("mcb-cmp-stage__overlay--hidden");
         overlay.RemoveFromClassList("mcb-cmp-stage__overlay--error");
