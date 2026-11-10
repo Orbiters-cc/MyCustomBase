@@ -953,6 +953,22 @@ internal sealed class VersionMeshComparison : IDisposable
         bool layoutChanged = parts.Any(p => weighted[p].before == null || weighted[p].after == null);
         var beforeUnion = layoutChanged ? Union(parts.Where(p => weighted[p].before != null).Select(p => (weighted[p].before, p.Before.Triangles))) : default;
         var afterUnion = layoutChanged ? Union(parts.Where(p => weighted[p].after != null).Select(p => (weighted[p].after, p.After.Triangles))) : default;
+        bool SameTopology(ComparedPart part) => part.Before.FromFile == part.After.FromFile && weighted[part].before.Length == weighted[part].after.Length;
+        // Measured against a union, every part's points are searched in one call per side: the union's surface grid is
+        // built twice in all, instead of twice per part (each point's distance does not depend on the other points). A
+        // union without triangles is measured point to point, where the query's own length matters: per part then.
+        var toBeforeUnion = new Dictionary<ComparedPart, float[]>();
+        var toAfterUnion = new Dictionary<ComparedPart, float[]>();
+        if (layoutChanged)
+        {
+            var measured = parts.Where(p => weighted[p].before != null && weighted[p].after != null && !SameTopology(p)).ToList();
+            if (beforeUnion.triangles.Length >= 3)
+                SplitByPart(measured, MeshComparison.SurfaceDistances(beforeUnion.points, beforeUnion.triangles,
+                    Concat(measured.Select(p => weighted[p].after)), size), p => weighted[p].after.Length, toBeforeUnion);
+            if (afterUnion.triangles.Length >= 3)
+                SplitByPart(measured, MeshComparison.SurfaceDistances(afterUnion.points, afterUnion.triangles,
+                    Concat(measured.Select(p => weighted[p].before)), size), p => weighted[p].before.Length, toAfterUnion);
+        }
 
         // Parts one by one: each search already uses half the cores, the other half keeps the editor smooth.
         foreach (var part in parts)
@@ -973,12 +989,12 @@ internal sealed class VersionMeshComparison : IDisposable
                 continue;
             }
 
-            bool sameTopology = part.Before.FromFile == part.After.FromFile && b.Length == a.Length;
+            bool sameTopology = SameTopology(part);
             part.AfterDistances = sameTopology ? MeshComparison.Distances(b, a, size)
-                : layoutChanged ? MeshComparison.SurfaceDistances(beforeUnion.points, beforeUnion.triangles, a, size)
+                : layoutChanged ? toBeforeUnion.TryGetValue(part, out var toBefore) ? toBefore : MeshComparison.SurfaceDistances(beforeUnion.points, beforeUnion.triangles, a, size)
                 : MeshComparison.SurfaceDistances(b, part.Before.Triangles, a, size);
             part.BeforeDistances = sameTopology ? part.AfterDistances
-                : layoutChanged ? MeshComparison.SurfaceDistances(afterUnion.points, afterUnion.triangles, b, size)
+                : layoutChanged ? toAfterUnion.TryGetValue(part, out var toAfter) ? toAfter : MeshComparison.SurfaceDistances(afterUnion.points, afterUnion.triangles, b, size)
                 : MeshComparison.SurfaceDistances(a, part.After.Triangles, b, size);
             // Measured to the other surface, a re-exported mesh is never exactly on it: allow for that.
             float moved = sameTopology ? threshold : Mathf.Max(threshold, size * 5e-4f);
@@ -1039,6 +1055,26 @@ internal sealed class VersionMeshComparison : IDisposable
     }
 
     // GeometryUtility.CalculateBounds only runs on the main thread.
+    private static Vector3[] Concat(IEnumerable<Vector3[]> pieces)
+    {
+        var all = new List<Vector3>();
+        foreach (var piece in pieces) all.AddRange(piece);
+        return all.ToArray();
+    }
+
+    // The distances of a concatenated query, back to the part each point came from.
+    private static void SplitByPart(List<ComparedPart> parts, float[] distances, Func<ComparedPart, int> length, Dictionary<ComparedPart, float[]> into)
+    {
+        int offset = 0;
+        foreach (var part in parts)
+        {
+            var slice = new float[length(part)];
+            Array.Copy(distances, offset, slice, 0, slice.Length);
+            offset += slice.Length;
+            into[part] = slice;
+        }
+    }
+
     private static (Vector3[] points, int[] triangles) Union(IEnumerable<(Vector3[] points, int[] triangles)> pieces)
     {
         var points = new List<Vector3>();
