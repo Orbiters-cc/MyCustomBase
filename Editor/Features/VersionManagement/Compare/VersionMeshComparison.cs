@@ -1089,7 +1089,6 @@ internal sealed class VersionMeshComparison : IDisposable
         return parts;
     }
 
-    // GeometryUtility.CalculateBounds only runs on the main thread.
     private static Vector3[] Concat(IEnumerable<Vector3[]> pieces)
     {
         var all = new List<Vector3>();
@@ -1110,6 +1109,7 @@ internal sealed class VersionMeshComparison : IDisposable
         }
     }
 
+    // GeometryUtility.CalculateBounds only runs on the main thread.
     private static (Vector3[] points, int[] triangles) Union(IEnumerable<(Vector3[] points, int[] triangles)> pieces)
     {
         var points = new List<Vector3>();

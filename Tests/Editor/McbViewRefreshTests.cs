@@ -114,4 +114,50 @@ public sealed class VersionActionsAppliedStateScopeTests
             Assert.That(actions.HasAppliedCustomBaseEvidence(), Is.False);
         }
     }
+
+    // A real resolution through the avatar's applied marker: inside a scope the first answer is kept (the section is built
+    // from one state), outside it every question resolves again.
+    [Test]
+    public void AScopeKeepsTheResolvedAnswerAndTheNextQuestionAfterItResolvesAgain()
+    {
+        var go = new GameObject("McbAppliedScopeTest");
+        try
+        {
+            var target = go.AddComponent<MyCustomBase>();
+            // Avoid OnEnable: a real inspector starts background services and reads the user's account.
+            var inspector = (MCBEditor)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(MCBEditor));
+            inspector.customBaseTarget = target;
+            inspector.serverVersions = new List<CustomBaseVersion>();
+            inspector.importedVersions = new List<CustomBaseVersion>();
+            inspector.unsubmittedVersions = new List<CustomBaseVersion>();
+            var first = new CustomBaseVersion { assetId = 7, version = "1.0.0" };
+            var second = new CustomBaseVersion { assetId = 7, version = "1.1.0" };
+            target.appliedCustomBaseVersion = first;
+            var actions = new VersionActions(inspector, null, null);
+
+            Assert.That(actions.IsVersionCurrentlyApplied(first), Is.True, "resolved from the applied marker");
+            using (actions.AppliedStateScope())
+            {
+                Assert.That(actions.IsVersionCurrentlyApplied(first), Is.True);
+                Assert.That(actions.HasAppliedCustomBaseEvidence(), Is.True);
+                target.appliedCustomBaseVersion = second;
+                Assert.That(actions.IsVersionCurrentlyApplied(first), Is.True, "kept for the rest of the build");
+                Assert.That(actions.IsVersionCurrentlyApplied(second), Is.False);
+                target.appliedCustomBaseVersion = null;
+                Assert.That(actions.HasAppliedCustomBaseEvidence(), Is.True, "kept for the rest of the build");
+                target.appliedCustomBaseVersion = second;
+            }
+
+            Assert.That(actions.IsVersionCurrentlyApplied(second), Is.True, "resolved again after the scope");
+            Assert.That(actions.IsVersionCurrentlyApplied(first), Is.False);
+            target.appliedCustomBaseVersion = null;
+            Assert.That(actions.HasAppliedCustomBaseEvidence(), Is.False);
+            using (actions.AppliedStateScope())
+                Assert.That(actions.IsVersionCurrentlyApplied(second), Is.False, "a new scope starts from the state now");
+        }
+        finally
+        {
+            Object.DestroyImmediate(go);
+        }
+    }
 }
