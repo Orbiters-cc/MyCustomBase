@@ -216,8 +216,10 @@ namespace MCBEditorUtils
                     }
 
                 local.Clear();
+                local.indexFormat = IndexFormat.UInt32;
                 local.SetVertices(localPositions);
                 if (uvs != null) local.SetUVs(0, localUvs);
+                local.subMeshCount = 1;
                 local.SetTriangles(localTriangles, 0, false);
                 local.RecalculateNormals();
                 local.GetNormals(localNormals);
