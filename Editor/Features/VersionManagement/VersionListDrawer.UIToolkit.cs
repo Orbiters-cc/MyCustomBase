@@ -448,6 +448,7 @@ public partial class VersionListDrawer
 
             evt.StopPropagation();
             evt.PreventDefault();
+            item.EnableInClassList("mcb-version-item--selected", !isSelected);
             RefreshVersionUi();
         });
 
@@ -583,6 +584,7 @@ public partial class VersionListDrawer
 
                 evt.StopPropagation();
                 evt.PreventDefault();
+                item.EnableInClassList("mcb-version-item--selected", !isSelected);
                 RefreshVersionUi();
             });
         }
@@ -1252,9 +1254,11 @@ public partial class VersionListDrawer
         return false;
     }
 
+    // Rebuilt once on the next frame, however many rows, user infos and avatars ask in between; a clicked row shows its
+    // selection at once (its class is set where it is clicked).
     private void RefreshVersionUi()
     {
-        editor.versionModule?.RefreshUIToolkit();
+        editor.RequestRefresh(McbViewParts.Versions);
         editor.Repaint();
     }
 }
