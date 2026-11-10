@@ -100,7 +100,7 @@ public partial class BlendshapeDrawer
             return false;
         }
 
-        var avatarRoot = editor.customBaseTarget.transform.root;
+        var avatarRoot = AvatarPaths.Root(editor.customBaseTarget);
         var renderers = GetTargetBlendshapeRenderers(avatarRoot).ToArray();
         if (renderers.Length == 0)
         {

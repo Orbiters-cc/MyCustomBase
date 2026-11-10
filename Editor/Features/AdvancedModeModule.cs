@@ -102,8 +102,7 @@ public class AdvancedModeModule
     // the avatar root, in "small accessories" mode. The toggle adds or removes that component.
     private void DrawKeepAccessoriesOnBody()
     {
-        var root = editor.customBaseTarget.GetComponentInParent<VRC.SDK3.Avatars.Components.VRCAvatarDescriptor>(true);
-        var avatar = root != null ? root.gameObject : editor.customBaseTarget.transform.root.gameObject;
+        var avatar = AvatarPaths.Root(editor.customBaseTarget).gameObject;
         var follow = avatar.GetComponent<Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow>();
         bool on = follow != null && follow.scope == Orbiters.Toolkit.VRChat.OrbitersSurfaceFollow.Scope.SmallAccessories;
         var label = new GUIContent(

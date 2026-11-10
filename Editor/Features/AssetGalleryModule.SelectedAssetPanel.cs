@@ -383,7 +383,7 @@ public partial class AssetGalleryModule
         {
             if (refreshVersions)
             {
-                SceneMeshDotEffectService.PlayAvatarSweep(editor.customBaseTarget != null ? editor.customBaseTarget.transform.root : null, 1);
+                SceneMeshDotEffectService.PlayAvatarSweep(editor.customBaseTarget != null ? AvatarPaths.Root(editor.customBaseTarget) : null, 1);
             }
 
             commentDraft = "";

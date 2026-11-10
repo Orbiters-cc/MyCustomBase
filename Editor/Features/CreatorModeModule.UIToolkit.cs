@@ -561,7 +561,7 @@ public partial class CreatorModeModule
         var actions = CreateCreatorRow();
         actions.Add(CreateTextButton("Build rig on this avatar", "Adds the contacts and a VRCFury controller to the avatar in the scene, to try the correctives in Gesture Manager or VRChat.", () =>
         {
-            var avatar = customBase.transform.root.gameObject;
+            var avatar = AvatarPaths.Root(customBase).gameObject;
             var renderers = avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true)
                 .GroupBy(renderer => renderer.name).ToDictionary(group => group.Key, group => group.First());
             var result = MuscleDriverGenerator.Generate(avatar, set, renderers,
@@ -573,7 +573,7 @@ public partial class CreatorModeModule
         }));
         actions.Add(CreateTextButton("Remove rig", "Removes the XMuscles contacts and controller from the avatar in the scene.", () =>
         {
-            MuscleDriverGenerator.Remove(customBase.transform.root.gameObject);
+            MuscleDriverGenerator.Remove(AvatarPaths.Root(customBase).gameObject);
             xmusclesMessage = null;
             RefreshEditorUi();
         }));

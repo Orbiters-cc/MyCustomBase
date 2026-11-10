@@ -1573,7 +1573,7 @@ public class MCBEditor : UnityEditor.Editor
         int loops = Mathf.Clamp(customBaseTarget.pendingSceneMeshDotEffectLoops, 1, 8);
         customBaseTarget.pendingSceneMeshDotEffectLoops = 0;
         EditorUtility.SetDirty(customBaseTarget);
-        SceneMeshDotEffectService.PlayAvatarSweep(customBaseTarget.transform != null ? customBaseTarget.transform.root : null, loops);
+        SceneMeshDotEffectService.PlayAvatarSweep(customBaseTarget.transform != null ? AvatarPaths.Root(customBaseTarget) : null, loops);
     }
 
     /// <summary>Local version lists are served by the VersionRepository scan, which
@@ -1727,7 +1727,8 @@ public class MCBEditor : UnityEditor.Editor
             return new List<string>();
         }
 
-        Transform root = customBaseTarget.transform.root;
+        // The avatar (its descriptor), not the scene root it may share with other avatars.
+        Transform root = AvatarPaths.Root(customBaseTarget);
         int rootInstanceId = root != null ? root.GetInstanceID() : 0;
         string sharedCacheKey = BuildDetectedAvatarFbxCacheKey(rootInstanceId);
         if (!detectedAvatarFbxCacheDirty &&
@@ -1866,8 +1867,8 @@ public class MCBEditor : UnityEditor.Editor
         int rootInstanceId = 0;
         try
         {
-            rootInstanceId = customBaseTarget != null && customBaseTarget.transform != null && customBaseTarget.transform.root != null
-                ? customBaseTarget.transform.root.GetInstanceID()
+            rootInstanceId = customBaseTarget != null && customBaseTarget.transform != null
+                ? AvatarPaths.Root(customBaseTarget).GetInstanceID()
                 : 0;
         }
         catch

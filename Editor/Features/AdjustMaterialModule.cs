@@ -103,7 +103,7 @@ public class AdjustMaterialModule
             return false;
         }
 
-        Transform root = target.transform != null ? target.transform.root : null;
+        Transform root = target.transform != null ? AvatarPaths.Root(target) : null;
         if (root == null)
         {
             return false;

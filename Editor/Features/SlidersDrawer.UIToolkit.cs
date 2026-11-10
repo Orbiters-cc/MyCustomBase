@@ -163,7 +163,7 @@ public partial class SlidersDrawer
         var allEntries = GetSliderEntries();
         var selectedEntries = selectedIndices.Select(index => allEntries[index]).ToList();
         
-        GameObject avatarRoot = editor.customBaseTarget.transform.root.gameObject;
+        GameObject avatarRoot = AvatarPaths.Root(editor.customBaseTarget).gameObject;
         string menuName = editor.customBaseTarget.slidersMenuName;
 
         System.Action applyAction = () => {
@@ -200,7 +200,7 @@ public partial class SlidersDrawer
             return false;
         }
 
-        GameObject avatarRoot = editor.customBaseTarget.transform.root?.gameObject;
+        GameObject avatarRoot = AvatarPaths.Root(editor.customBaseTarget).gameObject;
         if (avatarRoot == null)
         {
             return false;
@@ -275,7 +275,7 @@ public partial class SlidersDrawer
         }
 
         Transform root = editor.customBaseTarget != null && editor.customBaseTarget.transform != null
-            ? editor.customBaseTarget.transform.root
+            ? AvatarPaths.Root(editor.customBaseTarget)
             : null;
         Transform slidersTransform = root != null ? root.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME) : null;
         if (slidersTransform == null)
@@ -316,7 +316,7 @@ public partial class SlidersDrawer
             return entries;
         }
 
-        GameObject avatarRoot = editor.customBaseTarget.transform.root?.gameObject;
+        GameObject avatarRoot = AvatarPaths.Root(editor.customBaseTarget).gameObject;
         if (avatarRoot != null)
         {
             Transform slidersTransform = avatarRoot.transform.Find(VRCFuryService.SLIDERS_GAMEOBJECT_NAME);

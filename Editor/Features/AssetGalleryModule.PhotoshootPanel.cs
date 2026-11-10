@@ -124,7 +124,7 @@ public partial class AssetGalleryModule
     private GameObject GetCurrentPhotoshootAvatarRoot()
     {
         return editor?.customBaseTarget != null
-            ? editor.customBaseTarget.transform.root.gameObject
+            ? AvatarPaths.Root(editor.customBaseTarget).gameObject
             : null;
     }
 

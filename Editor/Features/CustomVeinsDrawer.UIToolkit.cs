@@ -177,7 +177,7 @@ public partial class CustomVeinsDrawer
     private bool EnsureMaterialService()
     {
         Transform root = editor?.customBaseTarget != null && editor.customBaseTarget.transform != null
-            ? editor.customBaseTarget.transform.root
+            ? AvatarPaths.Root(editor.customBaseTarget)
             : null;
 
         if (root == null)
