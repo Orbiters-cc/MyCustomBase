@@ -211,11 +211,12 @@ public class VersionCustomizationTests
             Assert.That(type, Is.Not.Null, "a Toolkit step MCB orders against was renamed");
         var steps = Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Select(s => s.GetType()).ToList();
         int At(Type t) => steps.IndexOf(t);
-        Assert.That(At(typeof(VersionCustomizationCaptureHook)), Is.GreaterThanOrEqualTo(0).And.LessThan(At(McbBuildSteps.Attachments)));
+        Assert.That(At(typeof(VersionCustomizationCaptureHook)), Is.GreaterThanOrEqualTo(0).And.LessThan(At(McbBuildSteps.Attachments)), "an earlier phase than the attachment copies");
         Assert.That(At(typeof(VersionCustomizationSurveyHook)), Is.GreaterThan(At(McbBuildSteps.BuiltAnimations)));
         int Order(Type t) => Orbiters.Toolkit.Editor.VRChat.Build.BuildPhases.Order(Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Single(s => s.GetType() == t).Phase);
-        // Against the other tools' callbacks, as at -10105, -9500 and -8800.
-        Assert.That(Order(typeof(VersionCustomizationCaptureHook)), Is.GreaterThan(-10105).And.LessThan(-10060));
+        // Against the other tools' callbacks, as at -10105 (where the SDK ran it before ReFit's kept fits, which shared the
+        // number, and after ReFit's capture at -10110), -9500 and -8800.
+        Assert.That(Order(typeof(VersionCustomizationCaptureHook)), Is.GreaterThan(-10110).And.LessThan(-10105));
         Assert.That(Order(typeof(VersionCustomizationSurveyHook)), Is.GreaterThan(-10000).And.LessThan(-9010));
         Assert.That(Order(typeof(VersionCustomizationApplyHook)), Is.GreaterThan(-8956).And.LessThan(-1100));
     }

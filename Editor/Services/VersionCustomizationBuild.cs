@@ -317,12 +317,13 @@ internal static class McbBuildSteps
     }
 }
 
+// Where its SDK callback ran: it shared -10105 with ReFit's kept fits and the SDK ran MCB's first (the Toolkit's phase
+// of that name records how that is known), so before them, and before the attachment copies of the next phase.
 internal sealed class VersionCustomizationCaptureHook : BuildStep
 {
-    public override BuildPhase Phase => BuildPhase.BeforeVrcFury;
-    public override IReadOnlyList<Type> Before => new[] { McbBuildSteps.Attachments };
+    public override BuildPhase Phase => BuildPhase.BeforeRefitKeptFits;
     public override string Owner => "MCB";
-    public override bool Run(BuildContext context) => McbBuildSteps.Run(this, Before, VersionCustomizationBuild.Capture, context.Avatar);
+    public override bool Run(BuildContext context) => McbBuildSteps.Run(VersionCustomizationBuild.Capture, context.Avatar);
 }
 
 // Right after VRCFury (-10000) built the avatar's animations, before face tracking (-9010) and the correctives (-9000).
