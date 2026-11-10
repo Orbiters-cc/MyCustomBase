@@ -342,7 +342,7 @@ public sealed class VersionSafetyRegressionTests
         // A version output MCB did not write itself (another editor, an older MCB) is known from the version.
         File.WriteAllText(target, "version C");
         var versionC = new CustomBaseVersion { versionFiles = new[] { new ModelFileData {
-            transform = ModelFileTransforms.XorBinToFbx, outputHash = manager.CalculateFileHash(target) } } };
+            transform = ModelFileTransforms.XorBinToFbx, outputHash = ContentHash.Get(target) } } };
         Assert.AreEqual(FileManagerService.OriginalBackupState.AppliedVersion, manager.RefreshStaleOriginalBackup(target, new[] { versionC }));
         Assert.AreEqual("original A", File.ReadAllText(backup));
 

@@ -331,8 +331,8 @@ public static partial class NativeMeshPayloadService
 
             var result = new NativeMeshPayloadBuildResult
             {
-                payloadHash = BytesToHex(payloadSha.Hash),
-                binHash = BytesToHex(binSha.Hash),
+                payloadHash = MCBHashing.Hex(payloadSha.Hash),
+                binHash = MCBHashing.Hex(binSha.Hash),
                 payloadCompression = compressPayload ? PayloadCompressionGZip : PayloadCompressionNone,
                 rendererCount = rendererSources.Count,
                 payloadBytes = payloadHashStream.BytesWritten,
@@ -467,7 +467,7 @@ public static partial class NativeMeshPayloadService
         var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
         payload.payloadVersion = PayloadVersion;
         payload.sourceFbxPath = StripOriginalSuffix(MCBUtils.ToUnityPath(sourceFbxPath)) ?? "";
-        payload.sourceFbxHash = SourceFbxHash(sourceFbxPath) ?? "";
+        payload.sourceFbxHash = ContentHash.Get(sourceFbxPath) ?? "";
         payload.payloadHash = payloadHash;
         var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
         var usedAssetNames = new HashSet<string>(StringComparer.Ordinal);
@@ -1371,7 +1371,7 @@ public static partial class NativeMeshPayloadService
         bool bindSource = true)
     {
         Transform customRoot = customFbx.transform;
-        string sourceFbxHash = SourceFbxHash(sourceFbxPath);
+        string sourceFbxHash = ContentHash.Get(sourceFbxPath);
         var rendererRecordsForBones = new List<NativeMeshPayloadRenderer>();
         var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
 
@@ -1478,21 +1478,6 @@ public static partial class NativeMeshPayloadService
             .ToList();
     }
 
-    // The source model's hash, read again only when the file changed (hashing a large model takes seconds).
-    private static readonly Dictionary<string, (DateTime written, long length, string hash)> sourceHashes =
-        new Dictionary<string, (DateTime, long, string)>(StringComparer.OrdinalIgnoreCase);
-
-    private static string SourceFbxHash(string sourceFbxPath)
-    {
-        string fullPath = Path.GetFullPath(sourceFbxPath);
-        if (!File.Exists(fullPath)) return MCBUtils.CalculateFileHash(fullPath);
-        var info = new FileInfo(fullPath);
-        if (sourceHashes.TryGetValue(fullPath, out var known) && known.written == info.LastWriteTimeUtc && known.length == info.Length) return known.hash;
-        string hash = MCBUtils.CalculateFileHash(fullPath);
-        sourceHashes[fullPath] = (info.LastWriteTimeUtc, info.Length, hash);
-        return hash;
-    }
-
     private static List<NativeMeshPayloadAuthoringPoseBone> BuildAuthoringPoseDeltas(
         string sourceFbxPath,
         Transform customRoot,
@@ -1557,7 +1542,7 @@ public static partial class NativeMeshPayloadService
     {
         if (string.IsNullOrEmpty(modelPath) || string.IsNullOrEmpty(hash)) return false;
         string fullPath = Path.GetFullPath(MCBUtils.ToUnityPath(modelPath));
-        return File.Exists(fullPath) && string.Equals(MCBUtils.CalculateFileHash(fullPath), hash, StringComparison.OrdinalIgnoreCase);
+        return ContentHash.Verify(fullPath, hash);
     }
 
     private static Transform ResolveSourcePoseRoot(string sourceFbxPath)
@@ -1588,7 +1573,7 @@ public static partial class NativeMeshPayloadService
         string originalPath = Path.GetFullPath(FileManagerService.GetOriginalBasePath(modelPath));
         string importedPath = Path.GetFullPath(modelPath);
         if (!File.Exists(originalPath) || !File.Exists(importedPath)) return;
-        if (MCBUtils.CalculateFileHash(importedPath) == MCBUtils.CalculateFileHash(originalPath)) return;
+        if (ContentHash.SameContent(importedPath, originalPath)) return;
         throw new InvalidOperationException(
             $"'{Path.GetFileName(modelPath)}' is currently replaced by a version's model, not its original. Reset the avatar to its original base, then build again.");
     }
@@ -3743,17 +3728,6 @@ public static partial class NativeMeshPayloadService
         {
             AssetDatabase.CreateFolder(parentFolder, folderName);
         }
-    }
-
-    private static string BytesToHex(byte[] hash)
-    {
-        var builder = new StringBuilder();
-        foreach (byte b in hash ?? Array.Empty<byte>())
-        {
-            builder.Append(b.ToString("x2"));
-        }
-
-        return builder.ToString();
     }
 
     private static string ShortHash(string hash)

@@ -59,8 +59,10 @@ public static class MCBMeshDelivery
     static bool HasVerifiedBlob(MCBPayloadVariant v)
     {
         string path = BlobPath(v);
-        if (!File.Exists(path) || new FileInfo(path).Length != v.bytes || MCBUtils.CalculateFileHash(path) != v.hash) return false;
+        if (!ContentHash.Verify(path, v.hash, v.bytes)) return false;
         Touch(path);
+        // Touching changed its write time: the blob is still the one just verified.
+        ContentHash.Remember(path, v.hash);
         return true;
     }
 
@@ -73,7 +75,7 @@ public static class MCBMeshDelivery
 
     internal static void StoreVerifiedBlob(MCBPayloadVariant variant, string source)
     {
-        if (new FileInfo(source).Length != variant.bytes || MCBUtils.CalculateFileHash(source) != variant.hash)
+        if (!ContentHash.Verify(source, variant.hash, variant.bytes))
             throw new InvalidDataException("Mesh blob failed integrity verification.");
         lock (CacheLock) {
             if (HasVerifiedBlob(variant)) return;
@@ -86,6 +88,7 @@ public static class MCBMeshDelivery
                 catch (IOException) when (HasVerifiedBlob(variant)) { }
                 catch (UnauthorizedAccessException) when (HasVerifiedBlob(variant)) { }
                 Touch(path);
+                ContentHash.Remember(path, variant.hash);
             } finally {
                 try { if (File.Exists(temp)) File.Delete(temp); }
                 catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
@@ -156,7 +159,7 @@ public static class MCBMeshDelivery
             string commonPath = Path.Combine(staging, "common.zip");
             var common = await clock.Time(() => network.DownloadFileAsync(url + "&meshCommon=1", commonPath, onDownloadedBytes: bytes => report(0, bytes), authToken: authToken, maxBytes: manifest.commonBytes));
             if (!common.success) throw new IOException(common.error);
-            bool commonValid = await Task.Run(() => new FileInfo(commonPath).Length == manifest.commonBytes && MCBUtils.CalculateFileHash(commonPath) == manifest.commonHash);
+            bool commonValid = await Task.Run(() => ContentHash.Verify(commonPath, manifest.commonHash, manifest.commonBytes));
             if (!commonValid) throw new InvalidDataException("Common version package failed integrity verification.");
             report(0, (ulong)manifest.commonBytes);
             Directory.CreateDirectory(CacheRoot);

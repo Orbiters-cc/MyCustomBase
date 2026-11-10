@@ -494,7 +494,7 @@ public static class AvatarAssetDiscoveryService
         }
         if (!File.Exists(fullPath)) return null;
 
-        string hash = await AsyncHashService.Instance.CalculateFileHashAsync(fullPath, null, true);
+        string hash = await ContentHash.GetAsync(fullPath);
         if (string.IsNullOrWhiteSpace(hash)) return null;
 
         return new ModelFileData

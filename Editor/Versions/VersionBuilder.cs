@@ -149,7 +149,7 @@ public static class VersionBuilder
             inputs.Add(new VersionManifestInput
             {
                 path = unityPath,
-                hash = MCBUtils.CalculateFileHash(fullPath),
+                hash = ContentHash.Get(fullPath),
                 kind = kind
             });
         }

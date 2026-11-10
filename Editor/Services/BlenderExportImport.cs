@@ -593,7 +593,7 @@ internal static partial class BlenderExportImport
                 model = model,
                 modelIndex = modelIndex,
                 sourceFbxPath = sourceFbxPath,
-                contentKey = MCBUtils.PathHash(MCBUtils.CalculateFileHash(sourceFbxPath)),
+                contentKey = MCBUtils.PathHash(ContentHash.Get(sourceFbxPath)),
                 target = target,
                 advancedMesh = ShouldUseAdvancedMesh(manifest, model),
             };

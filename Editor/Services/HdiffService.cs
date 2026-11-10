@@ -144,7 +144,7 @@ public static class HdiffService
             {
                 HdiffPatchResult check = MCBHdiffPatchWrapper.ApplyPatch(baseFbxPath, tempHdiffPath, roundTripPath);
                 if (check != HdiffPatchResult.HPATCH_SUCCESS ||
-                    !string.Equals(fileManagerService.CalculateFileHash(roundTripPath), fileManagerService.CalculateFileHash(modifiedFbxPath), StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(MCBHashing.HashFile(roundTripPath), ContentHash.Get(modifiedFbxPath), StringComparison.OrdinalIgnoreCase))
                 {
                     failureReason = "HDiff patch did not reproduce the modified FBX (" + check + ").";
                     return false;
@@ -442,7 +442,8 @@ internal static class MCBHdiffPatchTrust
             return false;
         }
 
-        actualHash = ComputeSha256(path);
+        // Pins the native library about to be loaded: always read, never a cached hash.
+        actualHash = MCBHashing.HashFile(path).ToUpperInvariant();
         return string.Equals(actualHash, normalizedExpectedHash, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -462,16 +463,6 @@ internal static class MCBHdiffPatchTrust
         return string.IsNullOrWhiteSpace(hash)
             ? null
             : hash.Trim().Replace("-", string.Empty).ToUpperInvariant();
-    }
-
-    private static string ComputeSha256(string path)
-    {
-        using (var stream = File.OpenRead(path))
-        using (var sha256 = SHA256.Create())
-        {
-            byte[] hash = sha256.ComputeHash(stream);
-            return BitConverter.ToString(hash).Replace("-", string.Empty);
-        }
     }
 #endif
 }

@@ -10,9 +10,8 @@ public static partial class NativeMeshPayloadService
     static void VerifyPayloadHash(byte[] payload, string expected)
     {
         if (payload == null || string.IsNullOrWhiteSpace(expected)) throw new InvalidDataException("Advanced mesh payload hash is missing.");
-        using (var sha = MCBHashing.CreateSha256())
-            if (!string.Equals(BytesToHex(sha.ComputeHash(payload)), expected, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("Advanced mesh payload verification failed. Download this version again before applying it.");
+        if (!string.Equals(MCBHashing.HashBytes(payload), expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Advanced mesh payload verification failed. Download this version again before applying it.");
     }
 
     static NativeMeshPayloadBuildResult WriteDeliveryVariants(string sourcePath, GameObject source,
@@ -82,8 +81,7 @@ public static partial class NativeMeshPayloadService
                 if (variants.Count > 0 && variants[0].bytes > SingleCodecPayloadBytes) break;
                 byte[] encoded = MCBCompression.Encode(plain, codec);
                 string path = variants.Count == 0 ? outputPath : Path.ChangeExtension(outputPath, codec.ToLowerInvariant() + ".bin");
-                string outputHash;
-                using (var sha = MCBHashing.CreateSha256()) outputHash = BytesToHex(sha.ComputeHash(encoded));
+                string outputHash = MCBHashing.HashBytes(encoded);
                 writtenPaths.Add(path);
                 string binHash;
                 using (var sha = MCBHashing.CreateSha256())
@@ -100,8 +98,9 @@ public static partial class NativeMeshPayloadService
                         if (sink != hashing) sink.Dispose();
                     }
                     hashing.CompleteHash();
-                    binHash = BytesToHex(sha.Hash);
+                    binHash = MCBHashing.Hex(sha.Hash);
                 }
+                ContentHash.Remember(path, binHash);
                 variants.Add(new MCBPayloadVariant {
                     codec = codec, path = Path.GetFileName(path), hash = binHash,
                     outputHash = outputHash, bytes = encoded.Length, decodedBytes = plain.Length
@@ -110,7 +109,7 @@ public static partial class NativeMeshPayloadService
             if (variants.Count == 0) throw new PlatformNotSupportedException("No MCB mesh codec is available for this Editor platform.");
             var primary = variants[0];
             return new NativeMeshPayloadBuildResult {
-                contentHash = HashBytes(plain),
+                contentHash = MCBHashing.HashBytes(plain),
                 variants = variants, payloadHash = primary.outputHash, binHash = primary.hash,
                 payloadCompression = primary.codec, rendererCount = rendererCount, payloadBytes = primary.bytes,
                 blendShapeVertexBytes = metrics.blendShapeVertexBytes,

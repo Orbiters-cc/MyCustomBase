@@ -246,7 +246,7 @@ public sealed class CustomBaseSourceSetupTransaction : IDisposable
             result.Add(new AvatarBaseSourceMatcher.LocalFile
             {
                 path = path,
-                hash = MCBUtils.CalculateFileHash(fullPath)
+                hash = ContentHash.Get(fullPath)
             });
         }
         return result;
@@ -273,7 +273,7 @@ public sealed class CustomBaseSourceSetupTransaction : IDisposable
             {
                 throw new InvalidOperationException($"Invalid original/default source FBX for '{normalizedTarget}'.");
             }
-            string actualHash = MCBUtils.CalculateFileHash(externalPath);
+            string actualHash = ContentHash.Get(externalPath);
             if (!string.Equals(actualHash, request.referenceHash, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidDataException($"Original/default source FBX changed after mapping for '{normalizedTarget}'.");
@@ -282,7 +282,7 @@ public sealed class CustomBaseSourceSetupTransaction : IDisposable
             string originalBaseFullPath = MCBUtils.ResolveProjectAssetFullPath(FileManagerService.GetOriginalBasePath(normalizedTarget));
             if (File.Exists(originalBaseFullPath))
             {
-                string existingHash = MCBUtils.CalculateFileHash(originalBaseFullPath);
+                string existingHash = ContentHash.Get(originalBaseFullPath);
                 if (!string.Equals(existingHash, request.referenceHash, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidDataException($"Existing original-base key has different content: {FileManagerService.GetOriginalBasePath(normalizedTarget)}");

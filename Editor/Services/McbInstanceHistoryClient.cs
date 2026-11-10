@@ -315,7 +315,7 @@ public static class McbInstanceHistoryClient
     {
         try
         {
-            return string.Equals(MCBUtils.CalculateFileHash(fullPath), expectedHash, StringComparison.OrdinalIgnoreCase);
+            return ContentHash.Verify(fullPath, expectedHash);
         }
         catch
         {

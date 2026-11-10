@@ -25,7 +25,7 @@ using Newtonsoft.Json;
 public class VersionManifestFile
 {
     public string path;   // relative path inside the version folder (forward slashes)
-    public string hash;   // SHA-256 hex (same convention as MCBUtils.CalculateFileHash)
+    public string hash;   // SHA-256 hex (MCBHashing.Hex)
     public long bytes;
 }
 
@@ -97,20 +97,7 @@ public class VersionManifest
     }
 
     /// <summary>SHA-256 hex of an arbitrary string (used for the form signature).</summary>
-    public static string ComputeStringHash(string value)
-    {
-        using (var sha256 = SHA256.Create())
-        {
-            byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(value ?? string.Empty));
-            var builder = new StringBuilder(hashBytes.Length * 2);
-            foreach (byte b in hashBytes)
-            {
-                builder.Append(b.ToString("x2"));
-            }
-
-            return builder.ToString();
-        }
-    }
+    public static string ComputeStringHash(string value) => MCBHashing.HashString(value);
 }
 
 #endif

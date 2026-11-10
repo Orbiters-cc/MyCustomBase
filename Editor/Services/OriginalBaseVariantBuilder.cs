@@ -42,18 +42,17 @@ public static class OriginalBaseVariantBuilder
                 // Archive delivery stores the chosen codec under the primary payload path.
                 // Mesh delivery and local builds retain each codec's own path.
                 string CodecInput(MCBPayloadVariant codec) => new[] { codec.path, originalPatch.path }
-                    .Select(path => Path.Combine(folder, path)).FirstOrDefault(path => File.Exists(path) && MCBUtils.CalculateFileHash(path) == codec.hash);
+                    .Select(path => Path.Combine(folder, path)).FirstOrDefault(path => ContentHash.Verify(path, codec.hash));
                 codecs = codecs.Where(c => CodecInput(c) != null).ToArray();
                 if (codecs.Length == 0) throw new InvalidDataException("No verified historical mesh codec is available.");
                 foreach (var codec in codecs)
                 {
                     string sourcePath = CodecInput(codec);
-                    if (MCBUtils.CalculateFileHash(sourcePath) != codec.hash) throw new InvalidDataException("Historical mesh payload failed its hash check.");
+                    if (!ContentHash.Verify(sourcePath, codec.hash)) throw new InvalidDataException("Historical mesh payload failed its hash check.");
                     byte[] encoded = MCBXor.Transform(oldKey, File.ReadAllBytes(sourcePath));
                     if (Hash(encoded) != codec.outputHash) throw new InvalidDataException("Original FBX cannot decrypt this mesh payload.");
                     codec.path = VariantPath(codec.path);
-                    Write(folder, codec.path, MCBXor.Transform(newKey, encoded));
-                    codec.hash = MCBUtils.CalculateFileHash(Path.Combine(folder, codec.path));
+                    codec.hash = Write(folder, codec.path, MCBXor.Transform(newKey, encoded));
                 }
                 var primary = codecs.FirstOrDefault(v => v.codec == patch.compression) ?? codecs[0];
                 patch.path = primary.path; patch.hash = primary.hash; patch.outputHash = primary.outputHash; patch.compression = primary.codec;
@@ -63,7 +62,7 @@ public static class OriginalBaseVariantBuilder
             else
             {
                 string input = Path.Combine(folder, originalPatch.path);
-                if (MCBUtils.CalculateFileHash(input) != originalPatch.hash) throw new InvalidDataException("Historical payload failed its hash check.");
+                if (!ContentHash.Verify(input, originalPatch.hash)) throw new InvalidDataException("Historical payload failed its hash check.");
                 byte[] output;
                 if (originalPatch.transform == ModelFileTransforms.DirectAsset) output = File.ReadAllBytes(input);
                 else
@@ -81,7 +80,7 @@ public static class OriginalBaseVariantBuilder
                     output = MCBXor.Transform(newKey, decoded);
                 }
                 patch.path = VariantPath(originalPatch.path);
-                Write(folder, patch.path, output); patch.hash = Hash(output);
+                patch.hash = Write(folder, patch.path, output);
                 // An Avatar-only patch names its own file as the custom Avatar: follow the rename.
                 if (patch.metadata.TryGetValue("customAvatarPath", out object avatarPath) &&
                     string.Equals(Path.GetFileName(Convert.ToString(avatarPath)), Path.GetFileName(originalPatch.path), StringComparison.OrdinalIgnoreCase))
@@ -111,10 +110,14 @@ public static class OriginalBaseVariantBuilder
         metadata.originalBaseVersions = results.ToArray();
     }
     static string PayloadName(string path) => System.Text.RegularExpressions.Regex.Replace(Path.GetFileName(path), "^(original-[a-f0-9]{64}-)+", "");
-    static void Write(string folder, string relative, byte[] data)
+    // Writes the file and returns its hash, remembered for the build's manifest.
+    static string Write(string folder, string relative, byte[] data)
     {
         string path = Path.Combine(folder, relative); Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllBytes(path, data);
+        string hash = Hash(data);
+        ContentHash.Remember(path, hash);
+        return hash;
     }
-    static string Hash(byte[] bytes) { using (var sha = MCBHashing.CreateSha256()) return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant(); }
+    static string Hash(byte[] bytes) => MCBHashing.HashBytes(bytes);
 }
 #endif

@@ -96,7 +96,7 @@ public static class VersionApplyResetInvariantHealthCheck
                     {
                         id = 1,
                         path = targetPath,
-                        hash = fileManager.CalculateFileHash(targetPath),
+                        hash = ContentHash.Get(targetPath),
                         type = "FBX",
                         role = "SOURCE"
                     }

@@ -53,7 +53,6 @@ public class AsyncVersionService
     }
 
     private readonly NetworkService networkService;
-    private readonly AsyncHashService hashService;
     private readonly PersistentCache cache;
     private readonly AsyncTaskManager taskManager;
 
@@ -68,7 +67,6 @@ public class AsyncVersionService
     private AsyncVersionService()
     {
         networkService = new NetworkService();
-        hashService = AsyncHashService.Instance; 
         cache = PersistentCache.Instance;
         taskManager = AsyncTaskManager.Instance;
     }
@@ -205,13 +203,13 @@ public class AsyncVersionService
 
     private Task<string> GetBaseFbxHashAsync(string fbxPath)
     {
-        return hashService.CalculateFileHashAsync(GetBaseFbxHashPath(fbxPath));
+        return ContentHash.GetAsync(GetBaseFbxHashPath(fbxPath), showProgress: true);
     }
 
     private string GetBaseFbxHashIfCached(string fbxPath)
     {
         if (string.IsNullOrEmpty(fbxPath)) return null;
-        return hashService.GetHashIfCached(GetBaseFbxHashPath(fbxPath));
+        return ContentHash.GetIfCached(GetBaseFbxHashPath(fbxPath));
     }
 
     public void StartVersionFetchInBackground(string fbxPath, string authToken, int assetId, bool useCache = true, string sourceVersionKey = null)

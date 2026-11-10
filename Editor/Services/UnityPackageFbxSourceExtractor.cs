@@ -174,7 +174,9 @@ public static class UnityPackageFbxSourceExtractor
                     }
                 }
                 sha256.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                result[record.Guid] = (outputPath, string.Concat(sha256.Hash.Select(b => b.ToString("x2"))));
+                string hash = MCBHashing.Hex(sha256.Hash);
+                ContentHash.Remember(outputPath, hash);
+                result[record.Guid] = (outputPath, hash);
             }
 
             totalBytes += record.Size;

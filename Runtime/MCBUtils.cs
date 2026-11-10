@@ -179,7 +179,10 @@ public static class MCBUtils
         return MODEL_ENDPOINT.Replace(":assetId", assetId.ToString());
     }
 
-    // Calculates SHA256 hash of a file
+    /// <summary>
+    /// Uncached SHA-256 of a file. Old entry point kept for the callers in Editor/Features: editor code uses ContentHash,
+    /// which caches by path, length and write time.
+    /// </summary>
     public static string CalculateFileHash(string filePath)
     {
         if (!File.Exists(filePath))
@@ -187,20 +190,7 @@ public static class MCBUtils
             MCBLogger.LogError($"[MCBUtils] File not found for hashing: {filePath}");
             return null;
         }
-
-        using (var sha256 = MCBHashing.CreateSha256())
-        {
-            using (var stream = File.OpenRead(filePath))
-            {
-                byte[] hashBytes = sha256.ComputeHash(stream);
-                StringBuilder builder = new StringBuilder();
-                foreach (byte b in hashBytes)
-                {
-                    builder.Append(b.ToString("x2"));
-                }
-                return builder.ToString();
-            }
-        }
+        return MCBHashing.HashFile(filePath);
     }
 
     // Validates the token with the server

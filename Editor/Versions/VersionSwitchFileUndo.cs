@@ -307,17 +307,7 @@ internal sealed class VersionSwitchFileUndo : ScriptableObject
             MCBLogger.LogError("[MCB] The version switch was " + (undoing ? "undone" : "redone") + ", but these generated meshes were deleted since; apply the version again:\n" + string.Join("\n", missing));
     }
 
-    private static bool SameContent(string a, string b)
-    {
-        if (!File.Exists(b) || new FileInfo(a).Length != new FileInfo(b).Length) return false;
-        using (var sha = SHA256.Create())
-        {
-            byte[] first, second;
-            using (var stream = File.OpenRead(a)) first = sha.ComputeHash(stream);
-            using (var stream = File.OpenRead(b)) second = sha.ComputeHash(stream);
-            return first.SequenceEqual(second);
-        }
-    }
+    private static bool SameContent(string a, string b) => ContentHash.SameContent(a, b);
 
     private static string MetaGuid(string metaPath)
     {

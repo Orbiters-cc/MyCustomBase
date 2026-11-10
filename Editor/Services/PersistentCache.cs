@@ -154,6 +154,9 @@ public class PersistentCache
         }
     }
 
+    /// <summary>The cache when something already created it, else null (it may only be created on the main thread).</summary>
+    internal static PersistentCache Existing => _instance;
+
     private const string CACHE_FILE_NAME = "mcb_cache.json";
     private static readonly TimeSpan VERSION_CACHE_MAX_AGE = TimeSpan.FromHours(1); // Cache versions for 1 hour
     private static readonly TimeSpan HASH_CACHE_MAX_AGE = TimeSpan.FromDays(7); // Cache hashes for 7 days
