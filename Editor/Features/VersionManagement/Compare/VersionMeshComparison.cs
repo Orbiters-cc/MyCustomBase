@@ -147,6 +147,32 @@ internal sealed class MeshSource
         return true;
     }
 
+    // Which points share a position (a UV seam): it depends only on Points, so it is worked out once per mesh, not on
+    // every comparison and reference switch. A reference is assigned whole, so two worker threads at worst build it twice.
+    private sealed class Weld
+    {
+        public int[] Ids;
+        public int Count;
+    }
+
+    private Weld weld;
+
+    private Weld WeldMap()
+    {
+        var cached = weld;
+        if (cached != null && cached.Ids.Length == Points.Length) return cached;
+        var ids = new Dictionary<Vector3, int>();
+        var map = new Weld { Ids = new int[Points.Length] };
+        for (int i = 0; i < map.Ids.Length; i++)
+        {
+            if (!ids.TryGetValue(Points[i], out int id)) ids[Points[i]] = id = ids.Count;
+            map.Ids[i] = id;
+        }
+        map.Count = ids.Count;
+        weld = map;
+        return map;
+    }
+
     /// <summary>Per drawable vertex, from per point values.</summary>
     public T[] Map<T>(T[] perPoint)
     {
@@ -171,14 +197,9 @@ internal sealed class MeshSource
         }
         else
         {
-            var ids = new Dictionary<Vector3, int>();
-            weld = new int[weightedPoints.Length];
-            for (int i = 0; i < weld.Length; i++)
-            {
-                if (!ids.TryGetValue(Points[i], out int id)) ids[Points[i]] = id = ids.Count;
-                weld[i] = id;
-            }
-            count = ids.Count;
+            var map = WeldMap();
+            weld = map.Ids;
+            count = map.Count;
         }
 
         var sums = new Vector3[count];
@@ -506,6 +527,7 @@ internal sealed class VersionMeshComparison : IDisposable
         PreviousProblem = problem;
         PreviousVersion = null;
         PreviousOnAvatar = false;
+        offered.Clear();
         if (targets == null) return;
         foreach (var fbx in targets)
         {
@@ -553,6 +575,18 @@ internal sealed class VersionMeshComparison : IDisposable
     /// other meshes than this version and than the other references offered.
     /// </summary>
     public bool Offers(CompareReference reference)
+    {
+        // Each answer is a pass over every part's points; the window asks for all three after every comparison.
+        if (offered.TryGetValue(reference, out bool known)) return known;
+        bool offers = OffersUncached(reference);
+        offered[reference] = offers;
+        return offers;
+    }
+
+    // Answers of Offers for the sources and previous version loaded now (cleared when either changes).
+    private readonly Dictionary<CompareReference, bool> offered = new Dictionary<CompareReference, bool>();
+
+    private bool OffersUncached(CompareReference reference)
     {
         switch (reference)
         {
@@ -643,6 +677,7 @@ internal sealed class VersionMeshComparison : IDisposable
         Dictionary<VersionActions.VersionModelPatch, NativeMeshPayloadService.PreparedPayloadAssetData> prepared)
     {
         sources.Clear();
+        offered.Clear();
         var byKey = new Dictionary<string, PartSources>(StringComparer.Ordinal);
         var rendererOf = new Dictionary<string, SkinnedMeshRenderer>(StringComparer.Ordinal);
         // The original model's own slot names of each renderer's mesh, for a version's mesh that keeps the original's slots.
