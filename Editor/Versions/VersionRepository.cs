@@ -642,7 +642,8 @@ public static class VersionRepository
         CustomBaseVersion metadata,
         bool unsubmitted,
         string formSignature,
-        List<VersionManifestInput> inputs)
+        List<VersionManifestInput> inputs,
+        ContentHash.Operation operation = null)
     {
         var manifest = new VersionManifest
         {
@@ -668,7 +669,7 @@ public static class VersionRepository
             manifest.outputs.Add(new VersionManifestFile
             {
                 path = relative,
-                hash = ContentHash.Get(file),
+                hash = ContentHash.Proof(file, operation),
                 bytes = new FileInfo(file).Length
             });
         }

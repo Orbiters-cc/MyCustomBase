@@ -145,7 +145,7 @@ public static class HdiffService
             {
                 HdiffPatchResult check = MCBHdiffPatchWrapper.ApplyPatch(baseFbxPath, tempHdiffPath, roundTripPath);
                 if (check != HdiffPatchResult.HPATCH_SUCCESS ||
-                    !string.Equals(MCBHashing.HashFile(roundTripPath), ContentHash.Get(modifiedFbxPath), StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(MCBHashing.HashFile(roundTripPath), ContentHash.Proof(modifiedFbxPath), StringComparison.OrdinalIgnoreCase))
                 {
                     failureReason = "HDiff patch did not reproduce the modified FBX (" + check + ").";
                     return false;

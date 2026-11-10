@@ -374,7 +374,7 @@ public static class AvatarPathOverrideService
                 File.Copy(backup.targetFullPath, backup.rollbackPath, false);
                 File.Copy(backup.backupFullPath, backup.replacementPath, false);
                 if (!string.Equals(
-                        ContentHash.Get(backup.backupFullPath),
+                        ContentHash.Proof(backup.backupFullPath),
                         MCBHashing.HashFile(backup.replacementPath),
                         StringComparison.OrdinalIgnoreCase))
                 {
@@ -499,7 +499,7 @@ public static class AvatarPathOverrideService
         if (!ProjectFileExists(unityPath)) return null;
         try
         {
-            return ContentHash.Get(MCBUtils.ResolveProjectAssetFullPath(unityPath));
+            return ContentHash.Proof(MCBUtils.ResolveProjectAssetFullPath(unityPath));
         }
         catch
         {
@@ -609,8 +609,8 @@ public static class AvatarPathOverrideService
 
         if (File.Exists(newFullPath))
         {
-            string oldHash = ContentHash.Get(oldFullPath);
-            string newHash = ContentHash.Get(newFullPath);
+            string oldHash = ContentHash.Proof(oldFullPath);
+            string newHash = ContentHash.Proof(newFullPath);
             if (!string.Equals(oldHash, newHash, StringComparison.OrdinalIgnoreCase))
             {
                 error = $"Destination sidecar already exists with different content: {newUnityPath}";

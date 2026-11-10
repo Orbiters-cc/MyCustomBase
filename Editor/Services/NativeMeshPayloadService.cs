@@ -471,7 +471,7 @@ public static partial class NativeMeshPayloadService
         var payload = ScriptableObject.CreateInstance<NativeMeshPayloadAsset>();
         payload.payloadVersion = PayloadVersion;
         payload.sourceFbxPath = StripOriginalSuffix(MCBUtils.ToUnityPath(sourceFbxPath)) ?? "";
-        payload.sourceFbxHash = ContentHash.Get(sourceFbxPath) ?? "";
+        payload.sourceFbxHash = ContentHash.Proof(sourceFbxPath) ?? "";
         payload.payloadHash = payloadHash;
         var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
         var usedAssetNames = new HashSet<string>(StringComparer.Ordinal);

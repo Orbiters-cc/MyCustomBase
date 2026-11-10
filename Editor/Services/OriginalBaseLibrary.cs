@@ -19,7 +19,7 @@ public static class OriginalBaseLibrary
     public static string Cache(string path)
     {
         if (!File.Exists(path) || new FileInfo(path).Length == 0) throw new InvalidDataException("Choose a non-empty original FBX file.");
-        string hash = ContentHash.Get(path);
+        string hash = ContentHash.Proof(path);
         if (string.IsNullOrEmpty(hash)) throw new FileNotFoundException("Original FBX is missing.", path);
         Directory.CreateDirectory(Root);
         string destination = Path.Combine(Root, hash + ".originalbase");

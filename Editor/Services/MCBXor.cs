@@ -63,9 +63,10 @@ public static class MCBXor
 
     /// <summary>
     /// Writes <paramref name="inputPath"/> XORed with the file at <paramref name="keyPath"/> to <paramref name="outputPath"/>
-    /// (replaced), reading both in blocks, and returns the SHA-256 of what it wrote (remembered by <see cref="ContentHash"/>).
+    /// (replaced), reading both in blocks, and returns the SHA-256 of the bytes it wrote, hashed as they were written
+    /// (an advisory hash for <see cref="ContentHash"/>, and a proof inside <paramref name="operation"/>).
     /// </summary>
-    public static string TransformFile(string keyPath, string inputPath, string outputPath)
+    public static string TransformFile(string keyPath, string inputPath, string outputPath, ContentHash.Operation operation = null)
     {
         string hash;
         using (var key = OpenRead(keyPath))
@@ -88,6 +89,7 @@ public static class MCBXor
             hash = MCBHashing.Hex(sha.Hash);
         }
         ContentHash.Remember(outputPath, hash);
+        operation?.Record(outputPath, hash);
         return hash;
     }
 

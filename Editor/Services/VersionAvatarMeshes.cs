@@ -257,7 +257,7 @@ internal static class VersionAvatarMeshes
         var key = new Hash128();
         key.Append(held);
         key.Append(sourcePath);
-        key.Append(fromExternal ? ContentHash.Get(sourcePath) ?? "" : AssetDatabase.GetAssetDependencyHash(sourcePath).ToString());
+        key.Append(fromExternal ? ContentHash.Proof(sourcePath) ?? "" : AssetDatabase.GetAssetDependencyHash(sourcePath).ToString());
         string unityPath = MCBUtils.CombineUnityPath(folder, BlenderExportImport.ImportFileStem(index, target, MCBUtils.PathHash(key.ToString())) + ".fbx");
         if (AssetDatabase.LoadAssetAtPath<GameObject>(unityPath) != null) return unityPath;
 

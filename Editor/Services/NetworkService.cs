@@ -662,7 +662,7 @@ public class NetworkService
         Action<float, ulong> onProgress, System.Threading.CancellationToken cancellationToken)
     {
         long size = new FileInfo(zipFilePath).Length;
-        string hash = await Task.Run(() => ContentHash.Get(zipFilePath), cancellationToken);
+        string hash = await Task.Run(() => ContentHash.Proof(zipFilePath), cancellationToken);
         string root = MCBUtils.getApiUrl() + "/package-uploads";
         string uploadId; int partBytes, parts;
         using (var create = new UnityWebRequest(root, UnityWebRequest.kHttpVerbPOST))

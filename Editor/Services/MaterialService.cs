@@ -162,7 +162,7 @@ public class MaterialService
     {
         try
         {
-            string hash = ContentHash.Get(unityPath);
+            string hash = ContentHash.Proof(unityPath);
             return hash == null ? null : Convert.ToBase64String(MCBHashing.FromHex(hash));
         }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is NotSupportedException)

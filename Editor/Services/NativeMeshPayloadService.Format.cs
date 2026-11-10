@@ -32,7 +32,7 @@ public static partial class NativeMeshPayloadService
         bool bindSource = true)
     {
         Transform customRoot = customFbx.transform;
-        string sourceFbxHash = ContentHash.Get(sourceFbxPath);
+        string sourceFbxHash = ContentHash.Proof(sourceFbxPath);
         var rendererRecordsForBones = new List<NativeMeshPayloadRenderer>();
         var usedMeshNames = new HashSet<string>(StringComparer.Ordinal);
 

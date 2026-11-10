@@ -50,7 +50,7 @@ public static partial class MCBReFitIntegration
 
     private static CustomBaseOriginal ImportOriginal(string fbxPath, string backup, string bodyPath)
     {
-        string hash = ContentHash.Get(backup);
+        string hash = ContentHash.Proof(backup);
         if (string.IsNullOrEmpty(hash)) throw new FileNotFoundException("The original base backup could not be read.", backup);
         string folder = OriginalImportFolder + "/" + hash.Substring(0, 16);
         AcquireOriginalImport(folder);

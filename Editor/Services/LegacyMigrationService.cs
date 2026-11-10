@@ -406,7 +406,7 @@ public static class LegacyMigrationService
             if (!known.TryGetValue(model, out bool isOriginal))
             {
                 var info = new FileInfo(Path.GetFullPath(model));
-                string hash = info.Exists && info.Length <= MaxBytes ? ContentHash.Get(model)?.ToLowerInvariant() : null;
+                string hash = info.Exists && info.Length <= MaxBytes ? ContentHash.Proof(model)?.ToLowerInvariant() : null;
                 known[model] = isOriginal = hash != null && wanted.Contains(hash);
             }
             if (!isOriginal) result.Add((path, model));
@@ -425,7 +425,7 @@ public static class LegacyMigrationService
             if (!hashes.TryGetValue(path, out string hash))
             {
                 var info = new FileInfo(Path.GetFullPath(path));
-                hashes[path] = hash = info.Exists && info.Length <= MaxBytes ? ContentHash.Get(path)?.ToLowerInvariant() : null;
+                hashes[path] = hash = info.Exists && info.Length <= MaxBytes ? ContentHash.Proof(path)?.ToLowerInvariant() : null;
             }
             return hash != null && wanted.Contains(hash);
         }

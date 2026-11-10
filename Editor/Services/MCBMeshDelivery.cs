@@ -61,8 +61,6 @@ public static class MCBMeshDelivery
         string path = BlobPath(v);
         if (!ContentHash.Verify(path, v.hash, v.bytes)) return false;
         Touch(path);
-        // Touching changed its write time: the blob is still the one just verified.
-        ContentHash.Remember(path, v.hash);
         return true;
     }
 
@@ -88,7 +86,6 @@ public static class MCBMeshDelivery
                 catch (IOException) when (HasVerifiedBlob(variant)) { }
                 catch (UnauthorizedAccessException) when (HasVerifiedBlob(variant)) { }
                 Touch(path);
-                ContentHash.Remember(path, variant.hash);
             } finally {
                 try { if (File.Exists(temp)) File.Delete(temp); }
                 catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }

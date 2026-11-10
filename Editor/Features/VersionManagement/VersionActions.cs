@@ -2127,7 +2127,7 @@ public class VersionActions
         string originalFbxPath = FileManagerService.GetOriginalBasePath(fbxPath);
         if (!File.Exists(originalFbxPath))
         {
-            string currentHash = ContentHash.Get(fbxPath);
+            string currentHash = ContentHash.Proof(fbxPath);
             bool currentMatchesReference = string.Equals(currentHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase);
             if (!currentMatchesReference)
             {
@@ -2148,7 +2148,7 @@ public class VersionActions
             throw new FileNotFoundException($"Apply failed: original FBX key file could not be prepared for {operation}.", originalFbxPath);
         }
 
-        string originalHash = ContentHash.Get(originalFbxPath);
+        string originalHash = ContentHash.Proof(originalFbxPath);
         if (!string.Equals(originalHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
@@ -2174,7 +2174,7 @@ public class VersionActions
             throw new InvalidDataException("HDiff patch is missing source file hash metadata.");
         }
 
-        string actualHash = ContentHash.Get(originalFbxPath);
+        string actualHash = ContentHash.Proof(originalFbxPath);
         if (!string.Equals(actualHash, sourceFile.hash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
