@@ -58,7 +58,9 @@ public sealed class MCBCreatorWindow : EditorWindow
     {
         // Inspector/domain reloads must not destroy the window's saved context. The editor stays referenced: the
         // window's OnDisable destroys it. Dropping it here (its OnDisable can run first during a reload) leaked one
-        // live editor, background services included, per reload.
+        // live editor, background services included, per reload. The draft is kept first: the window's own OnDisable
+        // may come after this and find no module.
+        if (module != null) draftJson = module.SaveWindowDraft();
         module = null;
     }
 
@@ -96,11 +98,6 @@ public sealed class MCBCreatorWindow : EditorWindow
         var held = new HashSet<MCBEditor>(Resources.FindObjectsOfTypeAll<MCBCreatorWindow>().Select(w => w.sourceEditor).Where(e => e != null));
         foreach (var orphan in Resources.FindObjectsOfTypeAll<MCBEditor>().Where(e => e.name == OwnedEditorName && !held.Contains(e) && !e.isSubmitting))
             DestroyImmediate(orphan);
-    }
-
-    private void Update()
-    {
-        if (module != null) draftJson = module.SaveWindowDraft();
     }
 
     internal void Built(CustomBaseVersion version)
