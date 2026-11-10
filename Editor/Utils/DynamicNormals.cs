@@ -369,13 +369,19 @@ namespace MCBEditorUtils
                                 continue;
                             }
 
-                            var bakedMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+                            // A frame the incremental path handed back was baked already: its bake is taken over as is.
+                            var handedBack = incremental?.TakeBake();
+                            var bakedMesh = handedBack ?? new Mesh { hideFlags = HideFlags.HideAndDontSave };
+                            bool baked = handedBack != null;
                             try
                             {
                                 step.Restart();
-                                baker.SetBlendShapeWeight(shapeIndex, frameWeight);
-                                baker.BakeMesh(bakedMesh);
-                                baker.SetBlendShapeWeight(shapeIndex, 0f);
+                                if (!baked)
+                                {
+                                    baker.SetBlendShapeWeight(shapeIndex, frameWeight);
+                                    baker.BakeMesh(bakedMesh);
+                                    baker.SetBlendShapeWeight(shapeIndex, 0f);
+                                }
                                 bakeMs += step.Elapsed.TotalMilliseconds;
 
                                 step.Restart();

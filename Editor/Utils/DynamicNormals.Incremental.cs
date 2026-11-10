@@ -38,7 +38,9 @@ namespace MCBEditorUtils
             readonly List<int[]> groups = new List<int[]>();
             // The full bake's grouping of the rest pose: key -> the vertices holding it, in vertex order.
             readonly Dictionary<PosNorm, List<int>> restKeys = new Dictionary<PosNorm, List<int>>();
-            readonly Mesh frameBake = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            Mesh frameBake = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            // Whether frameBake holds the bake of the frame Solve just handed back (null), untouched since.
+            bool bakeHandedBack;
             readonly Mesh local = new Mesh { hideFlags = HideFlags.HideAndDontSave, indexFormat = IndexFormat.UInt32 };
 
             // Per-frame marks, reset by moving to a new stamp instead of clearing.
@@ -132,6 +134,7 @@ namespace MCBEditorUtils
             /// </summary>
             public List<int> Solve(int shapeIndex, float frameWeight, Vector3[] normals, Vector4[] tangents)
             {
+                bakeHandedBack = false;
                 affected.Clear();
                 changed.Clear();
                 touchedGroups.Clear();
@@ -140,7 +143,7 @@ namespace MCBEditorUtils
                 finally { baker.SetBlendShapeWeight(shapeIndex, 0f); }
                 frameBake.GetVertices(framePositionList);
                 frameBake.GetNormals(frameNormalList);
-                if (framePositionList.Count != vertexCount || frameNormalList.Count != vertexCount) return null;
+                if (framePositionList.Count != vertexCount || frameNormalList.Count != vertexCount) return HandBack();
                 if (framePositions == null) { framePositions = new Vector3[vertexCount]; frameNormals = new Vector3[vertexCount]; }
                 framePositionList.CopyTo(framePositions);
                 frameNormalList.CopyTo(frameNormals);
@@ -163,7 +166,7 @@ namespace MCBEditorUtils
                         for (int c = 0; c < 3; c++) Mark(triangles[3 * t + c], frame);
                     }
                 }
-                if (!SeamGroupsHold(frame)) return null;
+                if (!SeamGroupsHold(frame)) return HandBack();
                 for (int i = 0; i < affected.Count; i++)
                     if (groupOf[affected[i]] >= 0) TouchGroup(groupOf[affected[i]], frame);
                 foreach (int g in touchedGroups)
@@ -223,6 +226,25 @@ namespace MCBEditorUtils
                     tangents[v] = localTangents[index];
                 }
                 return affected;
+            }
+
+            List<int> HandBack()
+            {
+                bakeHandedBack = true;
+                return null;
+            }
+
+            /// <summary>
+            /// The frame's bake when the last <see cref="Solve"/> handed the frame back (the full bake then needs no second
+            /// BakeMesh), else null. The caller owns and destroys the mesh it gets.
+            /// </summary>
+            public Mesh TakeBake()
+            {
+                if (!bakeHandedBack) return null;
+                bakeHandedBack = false;
+                var bake = frameBake;
+                frameBake = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+                return bake;
             }
 
             static bool SameBits(Vector3 a, Vector3 b) => a.x.Equals(b.x) && a.y.Equals(b.y) && a.z.Equals(b.z);

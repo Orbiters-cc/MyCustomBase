@@ -61,7 +61,9 @@ public class UserCustomVersionService
     /// <summary>
     /// Saves the model at <paramref name="fbxUnityPath"/> (and its Avatar) as a custom version unless an entry already
     /// holds exactly these bytes. Both decisions are proofs: the model is hashed from its bytes, an existing entry counts
-    /// only when its saved copy still holds them, and a new copy is verified before its identity is recorded.
+    /// only when its saved copy still holds them, and a new copy is verified before its identity is recorded. The copy goes
+    /// into a folder of its own, created by this call (<see cref="WriteBackup"/>): no earlier backup is ever overwritten
+    /// or removed.
     /// </summary>
     /// <param name="created">Whether a new entry was saved.</param>
     public UserCustomVersionEntry SaveCurrent(string fbxUnityPath, Transform root, out bool created)
@@ -75,7 +77,6 @@ public class UserCustomVersionService
                                           ContentHash.Verify(e.backupFbxPath, currentHash, operation: proof));
         if (existing != null) return existing;
 
-        string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
         string folder = MCBUtils.USER_VERSIONS_DIR;
         if (!AssetDatabase.IsValidFolder(MCBUtils.ASSETS_BASE_FOLDER))
         {
@@ -86,43 +87,34 @@ public class UserCustomVersionService
             AssetDatabase.CreateFolder(MCBUtils.ASSETS_BASE_FOLDER, "userVersions");
         }
 
-        string customFolderName = $"custom{timestamp}";
-        string customFolderPath = MCBUtils.CombineUnityPath(folder, customFolderName);
-        AssetDatabase.CreateFolder(folder, customFolderName);
-
-        // Copy FBX
-        string fbxFileName = Path.GetFileName(fbxUnityPath);
-        string destFbxPath = MCBUtils.CombineUnityPath(customFolderPath, fbxFileName);
-        if (!AssetDatabase.CopyAsset(fbxUnityPath, destFbxPath))
+        DateTime now = DateTime.Now;
+        SavedBackup backup;
+        try
         {
-            // Fallback to file copy
-            try
-            {
-                File.Copy(Path.GetFullPath(fbxUnityPath), Path.GetFullPath(destFbxPath), true);
-            }
-            catch (Exception ex)
-            {
-                MCBLogger.LogError($"[MCB] Failed to copy custom FBX: {ex.Message}");
-            }
+            backup = WriteBackup(Path.GetFullPath(folder), Path.GetFullPath(fbxUnityPath), currentHash, now);
         }
-
-        // The copy is read back: a model that changed since it was hashed is not recorded under that hash.
-        if (!ContentHash.Verify(destFbxPath, currentHash))
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is InvalidDataException)
         {
-            MCBLogger.LogError($"[MCB] The custom FBX changed while it was saved; nothing was recorded: {fbxUnityPath}");
-            if (!AssetDatabase.DeleteAsset(customFolderPath))
-                try { Directory.Delete(Path.GetFullPath(customFolderPath), true); }
-                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+            MCBLogger.LogError($"[MCB] The custom FBX could not be saved; nothing was recorded ({ex.Message}): {fbxUnityPath}");
             return null;
         }
 
-        // Determine avatar asset and copy it if possible
+        string customFolderPath = MCBUtils.CombineUnityPath(folder, Path.GetFileName(backup.folder));
+        string destFbxPath = MCBUtils.CombineUnityPath(customFolderPath, Path.GetFileName(backup.fbx));
+        // Imports only this folder: the copied import settings carry a GUID of their own.
+        AssetDatabase.ImportAsset(customFolderPath, ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceSynchronousImport);
+
+        // Determine avatar asset and copy it if possible (into this call's folder, never over an existing file)
         string avatarAssetSourcePath = TryGetAvatarAssetPath(fbxUnityPath, root);
         string copiedAvatarAssetPath = null;
         if (!string.IsNullOrEmpty(avatarAssetSourcePath) && File.Exists(Path.GetFullPath(avatarAssetSourcePath)))
         {
             string destAvatarPath = MCBUtils.CombineUnityPath(customFolderPath, "custom avatar.asset");
-            if (AssetDatabase.CopyAsset(avatarAssetSourcePath, destAvatarPath))
+            if (File.Exists(Path.GetFullPath(destAvatarPath)))
+            {
+                MCBLogger.LogWarning($"[MCB] Could not copy avatar asset: {destAvatarPath} already exists.");
+            }
+            else if (AssetDatabase.CopyAsset(avatarAssetSourcePath, destAvatarPath))
             {
                 copiedAvatarAssetPath = destAvatarPath;
             }
@@ -130,7 +122,7 @@ public class UserCustomVersionService
             {
                 try
                 {
-                    File.Copy(Path.GetFullPath(avatarAssetSourcePath), Path.GetFullPath(destAvatarPath), true);
+                    File.Copy(Path.GetFullPath(avatarAssetSourcePath), Path.GetFullPath(destAvatarPath), false);
                     copiedAvatarAssetPath = destAvatarPath;
                 }
                 catch (Exception ex)
@@ -144,7 +136,7 @@ public class UserCustomVersionService
 
         var entry = new UserCustomVersionEntry
         {
-            detectionDate = timestamp,
+            detectionDate = now.ToString("yyyy-MM-dd_HHmmss"),
             appliedUserAviHash = currentHash,
             ownerId = auth?.user,
             backupFbxPath = destFbxPath,
@@ -154,6 +146,70 @@ public class UserCustomVersionService
         SaveAll();
         created = true;
         return entry;
+    }
+
+    internal sealed class SavedBackup
+    {
+        public string folder, fbx;
+    }
+
+    /// <summary>
+    /// File-system part of <see cref="SaveCurrent"/>, no asset database: creates a new folder under
+    /// <paramref name="rootFullPath"/> (its name ends in a random suffix and is checked not to exist, so two saves in the
+    /// same second never share one), copies the model and its import settings (with a new GUID) into it without
+    /// overwriting anything, and reads the copy back. When the copy does not hold <paramref name="expectedHash"/>, or
+    /// anything fails, it removes only the files it created, each only while it still holds what it wrote, and the folder
+    /// only when that leaves it empty, then throws.
+    /// </summary>
+    internal static SavedBackup WriteBackup(string rootFullPath, string sourceFbxFullPath, string expectedHash, DateTime now)
+    {
+        Directory.CreateDirectory(rootFullPath);
+        string stamp = now.ToString("yyyy-MM-dd_HHmmss");
+        string folderFull;
+        do folderFull = Path.Combine(rootFullPath, "custom" + stamp + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        while (Directory.Exists(folderFull) || File.Exists(folderFull));
+        Directory.CreateDirectory(folderFull);
+
+        var written = new List<(string path, string hash)>();
+        try
+        {
+            string fbx = Path.Combine(folderFull, Path.GetFileName(sourceFbxFullPath));
+            try { File.Copy(sourceFbxFullPath, fbx, false); }
+            catch
+            {
+                // A partial copy in this call's own new folder.
+                if (File.Exists(fbx)) File.Delete(fbx);
+                throw;
+            }
+            string copied = ContentHash.Proof(fbx);
+            written.Add((fbx, copied));
+            if (!string.Equals(copied, expectedHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("the model changed while it was saved");
+
+            string sourceMeta = sourceFbxFullPath + ".meta";
+            if (File.Exists(sourceMeta))
+            {
+                string meta = fbx + ".meta";
+                string text = System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(sourceMeta), @"(?m)^guid: [0-9a-f]{32}",
+                    "guid: " + Guid.NewGuid().ToString("N"));
+                using (var stream = new FileStream(meta, FileMode.CreateNew, FileAccess.Write))
+                using (var writer = new StreamWriter(stream)) writer.Write(text);
+                written.Add((meta, ContentHash.Proof(meta)));
+            }
+            return new SavedBackup { folder = folderFull, fbx = fbx };
+        }
+        catch
+        {
+            for (int i = written.Count - 1; i >= 0; i--)
+            {
+                var (path, hash) = written[i];
+                try { if (ContentHash.Verify(path, hash)) File.Delete(path); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+            }
+            try { if (Directory.Exists(folderFull) && Directory.GetFileSystemEntries(folderFull).Length == 0) Directory.Delete(folderFull, false); }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+            throw;
+        }
     }
 
     public bool Delete(UserCustomVersionEntry entry)
