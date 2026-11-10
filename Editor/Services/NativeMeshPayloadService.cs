@@ -680,43 +680,17 @@ public static partial class NativeMeshPayloadService
         string originalFbxPath,
         FileManagerService fileManagerService)
     {
-        if (version == null)
-        {
-            throw new ArgumentNullException(nameof(version));
-        }
-
-        if (patchFile == null)
-        {
-            throw new ArgumentNullException(nameof(patchFile));
-        }
-
         if (fileManagerService == null)
         {
             throw new ArgumentNullException(nameof(fileManagerService));
         }
 
-        if (!IsAdvancedMeshPatchTransform(patchFile.transform))
-        {
-            throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(patchFile.outputHash))
-        {
-            throw new InvalidDataException("Native mesh payload metadata is missing outputHash.");
-        }
-
-        if (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath))
-        {
-            throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
-        }
-
-        RequireOriginalKey(patchFile, originalFbxPath);
-
-        string payloadHash = GetPayloadIdentity(patchFile);
-        string payloadCompression = ResolvePayloadCompression(patchFile);
-        string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
-        var existing = LoadPayloadAsset(payloadAssetPath);
-        if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
+        var request = PayloadRequest.Resolve(version, patchFile, binPath, originalFbxPath);
+        string payloadHash = request.payloadHash;
+        string payloadCompression = request.payloadCompression;
+        string payloadAssetPath = request.assetPath;
+        var existing = request.FindCached();
+        if (existing != null)
         {
             MCBLogger.Log($"[NativeMeshPayloadProfile] Using cached native mesh payload asset: {payloadAssetPath}");
             return existing;
@@ -753,9 +727,7 @@ public static partial class NativeMeshPayloadService
     /// <summary>The payload an earlier apply cached for this patch, or null: reading it is faster than decoding (main thread).</summary>
     internal static NativeMeshPayloadAsset FindCachedPayload(CustomBaseVersion version, ModelFileData patchFile)
     {
-        string payloadHash = GetPayloadIdentity(patchFile);
-        var cached = LoadPayloadAsset(GetGeneratedPayloadPath(version, patchFile, payloadHash));
-        return CachedPayloadMatches(cached, payloadHash, ResolvePayloadCompression(patchFile)) ? cached : null;
+        return PayloadRequest.Of(version, patchFile).FindCached();
     }
 
     public static NativeMeshPayloadPreparationPreload StartEncryptedPayloadPreparation(
@@ -766,38 +738,12 @@ public static partial class NativeMeshPayloadService
         Task<byte[]> binDataTask = null,
         Task<byte[]> originalFbxDataTask = null)
     {
-        if (version == null)
-        {
-            throw new ArgumentNullException(nameof(version));
-        }
-
-        if (patchFile == null)
-        {
-            throw new ArgumentNullException(nameof(patchFile));
-        }
-
-        if (!IsAdvancedMeshPatchTransform(patchFile.transform))
-        {
-            throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(patchFile.outputHash))
-        {
-            throw new InvalidDataException("Native mesh payload metadata is missing outputHash.");
-        }
-
-        if (binDataTask == null && (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath)))
-        {
-            throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
-        }
-
-        if (originalFbxDataTask == null) RequireOriginalKey(patchFile, originalFbxPath);
-
-        string payloadHash = GetPayloadIdentity(patchFile);
-        string payloadCompression = ResolvePayloadCompression(patchFile);
-        string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
-        var existing = LoadPayloadAsset(payloadAssetPath);
-        if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
+        var request = PayloadRequest.Resolve(version, patchFile, binPath, originalFbxPath,
+            binInMemory: binDataTask != null, keyInMemory: originalFbxDataTask != null);
+        string payloadHash = request.payloadHash;
+        string payloadCompression = request.payloadCompression;
+        string payloadAssetPath = request.assetPath;
+        if (request.FindCached() != null)
         {
             return null;
         }
@@ -833,43 +779,17 @@ public static partial class NativeMeshPayloadService
         Action<NativeMeshPayloadAsset> completed,
         NativeMeshPayloadPreparationPreload preparationPreload = null)
     {
-        if (version == null)
-        {
-            throw new ArgumentNullException(nameof(version));
-        }
-
-        if (patchFile == null)
-        {
-            throw new ArgumentNullException(nameof(patchFile));
-        }
-
         if (fileManagerService == null)
         {
             throw new ArgumentNullException(nameof(fileManagerService));
         }
 
-        if (!IsAdvancedMeshPatchTransform(patchFile.transform))
-        {
-            throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(patchFile.outputHash))
-        {
-            throw new InvalidDataException("Native mesh payload metadata is missing outputHash.");
-        }
-
-        if (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath))
-        {
-            throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
-        }
-
-        RequireOriginalKey(patchFile, originalFbxPath);
-
-        string payloadHash = GetPayloadIdentity(patchFile);
-        string payloadCompression = ResolvePayloadCompression(patchFile);
-        string payloadAssetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash);
-        var existing = LoadPayloadAsset(payloadAssetPath);
-        if (CachedPayloadMatches(existing, payloadHash, payloadCompression))
+        var request = PayloadRequest.Resolve(version, patchFile, binPath, originalFbxPath);
+        string payloadHash = request.payloadHash;
+        string payloadCompression = request.payloadCompression;
+        string payloadAssetPath = request.assetPath;
+        var existing = request.FindCached();
+        if (existing != null)
         {
             MCBLogger.Log($"[NativeMeshPayloadProfile] Using cached native mesh payload asset: {payloadAssetPath}");
             reportProgress?.Invoke(1f, "Loaded cached advanced mesh...");
@@ -2189,6 +2109,70 @@ public static partial class NativeMeshPayloadService
     private static float Lerp(float from, float to, float value)
     {
         return from + (to - from) * Math.Max(0f, Math.Min(1f, value));
+    }
+
+    /// <summary>
+    /// A patch's payload identity, codec and cache asset path, after the checks every entry point makes before it reads
+    /// a payload.
+    /// </summary>
+    private sealed class PayloadRequest
+    {
+        public string payloadHash;
+        public string payloadCompression;
+        public string assetPath;
+
+        /// <param name="binInMemory">The .bin arrives in memory: no file to check.</param>
+        /// <param name="keyInMemory">The original model arrives in memory: no key file to check.</param>
+        public static PayloadRequest Resolve(CustomBaseVersion version, ModelFileData patchFile, string binPath, string originalFbxPath,
+            bool binInMemory = false, bool keyInMemory = false)
+        {
+            if (version == null)
+            {
+                throw new ArgumentNullException(nameof(version));
+            }
+
+            if (patchFile == null)
+            {
+                throw new ArgumentNullException(nameof(patchFile));
+            }
+
+            if (!IsAdvancedMeshPatchTransform(patchFile.transform))
+            {
+                throw new InvalidDataException($"Native mesh payload has unsupported transform '{patchFile.transform}'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(patchFile.outputHash))
+            {
+                throw new InvalidDataException("Native mesh payload metadata is missing outputHash.");
+            }
+
+            if (!binInMemory && (string.IsNullOrWhiteSpace(binPath) || !File.Exists(binPath)))
+            {
+                throw new FileNotFoundException("Native mesh .bin file not found.", binPath);
+            }
+
+            if (!keyInMemory) RequireOriginalKey(patchFile, originalFbxPath);
+            return Of(version, patchFile);
+        }
+
+        /// <summary>Identity and cache path only, without checks (for cache lookups).</summary>
+        public static PayloadRequest Of(CustomBaseVersion version, ModelFileData patchFile)
+        {
+            string payloadHash = GetPayloadIdentity(patchFile);
+            return new PayloadRequest
+            {
+                payloadHash = payloadHash,
+                payloadCompression = ResolvePayloadCompression(patchFile),
+                assetPath = GetGeneratedPayloadPath(version, patchFile, payloadHash)
+            };
+        }
+
+        /// <summary>The payload asset an earlier apply cached for this identity and codec, or null.</summary>
+        public NativeMeshPayloadAsset FindCached()
+        {
+            var cached = LoadPayloadAsset(assetPath);
+            return CachedPayloadMatches(cached, payloadHash, payloadCompression) ? cached : null;
+        }
     }
 
     internal sealed class NativeMeshPayloadPreparationStatus
