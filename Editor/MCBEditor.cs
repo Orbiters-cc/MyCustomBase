@@ -151,6 +151,8 @@ public class MCBEditor : UnityEditor.Editor
         viewModel = McbAvatarViewModel.For(customBaseTarget);
         viewModel.Changed += OnViewModelChanged;
         viewRefresh = new McbViewRefresh(RefreshSections);
+        // Views that act through an inspector of this avatar (the compare window) look for it again.
+        viewModel.MarkChanged(McbViewParts.Versions);
         fetchAttempted = false;
         
         // Initialize async services first
@@ -218,7 +220,11 @@ public class MCBEditor : UnityEditor.Editor
         AuthenticationService.Changed -= SyncAuthentication;
         OrbitersEnvironment.Changed -= SyncAuthentication;
         asyncInitializationScheduled = false;
-        if (viewModel != null) viewModel.Changed -= OnViewModelChanged;
+        if (viewModel != null)
+        {
+            viewModel.Changed -= OnViewModelChanged;
+            viewModel.MarkChanged(McbViewParts.Versions);
+        }
         viewRefresh?.Cancel();
         dependencyInstallerModule?.DetachUIToolkit();
         dependencyInstallerModule?.Dispose();
@@ -375,6 +381,8 @@ public class MCBEditor : UnityEditor.Editor
                 !string.IsNullOrEmpty(customBaseTarget.appliedCustomBaseVersionString))
                 versionModule?.actions.UpdateAppliedVersionAndState();
             versionModule?.RefreshUIToolkit();
+            // Its versions or their applied state changed: the avatar's other views (the compare window) hear it.
+            ViewModel.MarkChanged(McbViewParts.Versions);
         });
         if (Has(McbViewParts.AvatarOptions)) Section(() => avatarOptionsModule?.RefreshUIToolkit());
         if (Has(McbViewParts.Status)) Section(RefreshStatusMessagesUIToolkit);

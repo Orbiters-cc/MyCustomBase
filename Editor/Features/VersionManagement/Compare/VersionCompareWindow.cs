@@ -131,12 +131,18 @@ internal sealed class VersionCompareWindow : EditorWindow
         if (watched != null) watched.Changed -= OnAvatarChanged;
         EditorApplication.hierarchyChanged -= QueueRefreshApply;
         Undo.undoRedoPerformed -= QueueRefreshApply;
+        Selection.selectionChanged -= QueueRefreshApply;
         watched = model;
         if (model == null) return;
+        // Inspectors of the avatar come and go with the selection: each announces itself on the avatar's model when it is
+        // created and when it goes (Versions), and its versions whenever they are shown again.
         model.Changed += OnAvatarChanged;
         EditorApplication.hierarchyChanged += QueueRefreshApply;
         Undo.undoRedoPerformed += QueueRefreshApply;
+        Selection.selectionChanged += QueueRefreshApply;
     }
+
+    private void OnFocus() => QueueRefreshApply();
 
     private void OnAvatarChanged(McbViewParts parts)
     {
