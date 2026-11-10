@@ -343,7 +343,7 @@ public static class MCBManagedRequest
     }
 }
 
-[InitializeOnLoad]
+// Made on first use (an MCB surface, a request reporting itself): nothing runs for a project that never touches MCB.
 public static partial class MCBConnectivityMonitor
 {
     private const string SessionKey = "MCB.PackageConnectivity.Started";
@@ -373,7 +373,23 @@ public static partial class MCBConnectivityMonitor
         LastCheckedUrl = SessionState.GetString(LastUrlKey, string.Empty);
         // No probe here: a domain reload keeps the session's result. The first MCB surface that needs the server starts
         // one (EnsureCheckStarted), failed requests report themselves, and an offline result is retried by PollRecovery.
-        EditorApplication.update += PollRecovery;
+        EnsureRecoveryPoll();
+    }
+
+    // The four values above, as they are now, kept for the next domain reload of this editor session.
+    private static void Persist()
+    {
+        SessionState.SetBool(SessionKey, HasCompleted);
+        SessionState.SetBool(ReachabilityKey, CanReachServer);
+        SessionState.SetString(FailureReportKey, FailureReport ?? string.Empty);
+        SessionState.SetString(LastUrlKey, LastCheckedUrl ?? string.Empty);
+    }
+
+    // Every change of the state: an offline result starts the recovery poll, and the views hear of it.
+    private static void Changed()
+    {
+        EnsureRecoveryPoll();
+        StatusChanged?.Invoke();
     }
 
     public static void EnsureCheckStarted(string authToken = null, bool force = false)
@@ -409,10 +425,7 @@ public static partial class MCBConnectivityMonitor
         failureDiagnosticsRunning = false;
         failureDiagnosticsStartedAt = 0d;
         LastCheckedUrl = null;
-        SessionState.SetBool(SessionKey, false);
-        SessionState.SetBool(ReachabilityKey, false);
-        SessionState.SetString(FailureReportKey, string.Empty);
-        SessionState.SetString(LastUrlKey, string.Empty);
+        Persist();
         _ = RunCheckAsync(authToken);
     }
 
@@ -428,13 +441,11 @@ public static partial class MCBConnectivityMonitor
         FailureReport = null;
         failureDiagnosticsRunning = false;
         failureDiagnosticsStartedAt = 0d;
-        SessionState.SetBool(SessionKey, true);
-        SessionState.SetBool(ReachabilityKey, true);
-        SessionState.SetString(FailureReportKey, string.Empty);
+        Persist();
 
         if (changed)
         {
-            StatusChanged?.Invoke();
+            Changed();
         }
     }
 
@@ -457,7 +468,7 @@ public static partial class MCBConnectivityMonitor
 
         if (RequestWarnings.Remove(key))
         {
-            StatusChanged?.Invoke();
+            Changed();
         }
     }
 
@@ -469,7 +480,7 @@ public static partial class MCBConnectivityMonitor
         }
 
         RequestWarnings.Clear();
-        StatusChanged?.Invoke();
+        Changed();
     }
 
     public static void ReportManagedUnityWebRequest(UnityWebRequest request, string requestUrl, MCBRequestPolicy policy)
@@ -656,7 +667,7 @@ public static partial class MCBConnectivityMonitor
             error = error,
             timestampUtc = DateTime.UtcNow
         };
-        StatusChanged?.Invoke();
+        Changed();
     }
 
     private static string BuildWarningKey(MCBRequestPolicy policy, string requestUrl)
@@ -728,11 +739,8 @@ public static partial class MCBConnectivityMonitor
             FailureReport = string.IsNullOrWhiteSpace(details)
                 ? "A network request failed before reaching the MCB server."
                 : details;
-            SessionState.SetBool(SessionKey, true);
-            SessionState.SetBool(ReachabilityKey, false);
-            SessionState.SetString(LastUrlKey, LastCheckedUrl ?? string.Empty);
-            SessionState.SetString(FailureReportKey, FailureReport ?? string.Empty);
-            StatusChanged?.Invoke();
+            Persist();
+            Changed();
             return;
         }
 
@@ -745,11 +753,8 @@ public static partial class MCBConnectivityMonitor
         FailureReport = string.IsNullOrWhiteSpace(details)
             ? "A network request failed before reaching the MCB server."
             : details;
-        SessionState.SetBool(SessionKey, true);
-        SessionState.SetBool(ReachabilityKey, false);
-        SessionState.SetString(LastUrlKey, LastCheckedUrl ?? string.Empty);
-        SessionState.SetString(FailureReportKey, FailureReport ?? string.Empty);
-        StatusChanged?.Invoke();
+        Persist();
+        Changed();
 
         _ = BuildFailureReportAsync(generation, diagnosticsUrl, details);
     }
@@ -769,8 +774,8 @@ public static partial class MCBConnectivityMonitor
             FailureReport = string.IsNullOrWhiteSpace(details)
                 ? report
                 : details + "\n\n" + report;
-            SessionState.SetString(FailureReportKey, FailureReport ?? string.Empty);
-            StatusChanged?.Invoke();
+            Persist();
+            Changed();
         }
         catch (Exception ex)
         {
@@ -783,8 +788,8 @@ public static partial class MCBConnectivityMonitor
             failureDiagnosticsStartedAt = 0d;
             FailureReport = (string.IsNullOrWhiteSpace(details) ? string.Empty : details + "\n\n") +
                             "Connectivity diagnostics failed unexpectedly.\n" + ex;
-            SessionState.SetString(FailureReportKey, FailureReport);
-            StatusChanged?.Invoke();
+            Persist();
+            Changed();
         }
         finally
         {
@@ -822,7 +827,7 @@ public static partial class MCBConnectivityMonitor
         FailureReport = null;
         LastCheckedUrl = ConnectivityDiagnosticsService.BuildConnectivityCheckUrl();
         SessionState.SetString(LastUrlKey, LastCheckedUrl ?? string.Empty);
-        StatusChanged?.Invoke();
+        Changed();
 
         try
         {
@@ -844,24 +849,21 @@ public static partial class MCBConnectivityMonitor
             }
 
             HasCompleted = true;
-            SessionState.SetBool(SessionKey, true);
-            SessionState.SetBool(ReachabilityKey, CanReachServer);
-            SessionState.SetString(FailureReportKey, FailureReport ?? string.Empty);
+            Persist();
         }
         catch (Exception ex)
         {
             FailureReport = "Connectivity monitor failed unexpectedly.\n" + ex;
             HasCompleted = true;
-            SessionState.SetBool(SessionKey, true);
-            SessionState.SetBool(ReachabilityKey, false);
-            SessionState.SetString(FailureReportKey, FailureReport);
+            CanReachServer = false;
+            Persist();
         }
         finally
         {
             IsRunning = false;
             failureDiagnosticsRunning = false;
             failureDiagnosticsStartedAt = 0d;
-            StatusChanged?.Invoke();
+            Changed();
         }
     }
 

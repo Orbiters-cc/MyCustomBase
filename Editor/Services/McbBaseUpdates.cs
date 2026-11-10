@@ -45,13 +45,6 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
     {
         AvatarObjectTools.RegisterUpdates(new McbBaseUpdates());
         CustomBases.Changed += _ => { Recommended.Clear(); Failures.Clear(); AvatarObjectTools.NotifyChanged(); };
-        EditorApplication.update += () =>
-        {
-            if (!versionsRead) return;
-            versionsRead = false;
-            Recommended.Clear();
-            AvatarObjectTools.NotifyChanged();
-        };
     }
 
     // The version service (and the cache it loads) starts with the first avatar a view asks about, not at every load.
@@ -61,6 +54,14 @@ internal sealed class McbBaseUpdates : IAvatarObjectUpdates
         {
             listening = true;
             AsyncVersionService.Instance.OnVersionsUpdated += (request, versions, recommended) => versionsRead = true;
+            // Polled from here on by the editor host (the flag may be set off the main thread), not from every load.
+            OrbitersEditorHost.EveryFrame("MCB base updates", () =>
+            {
+                if (!versionsRead) return;
+                versionsRead = false;
+                Recommended.Clear();
+                AvatarObjectTools.NotifyChanged();
+            });
         }
         return AsyncVersionService.Instance;
     }

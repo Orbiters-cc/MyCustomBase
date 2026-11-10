@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using Orbiters.Toolkit;
+using Orbiters.Toolkit.Editor;
 using Orbiters.Toolkit.Editor.Net;
 using System;
 using System.IO;
@@ -806,8 +807,13 @@ public static class MCBDownloadTempFiles
     static MCBDownloadTempFiles()
     {
         AssemblyReloadEvents.beforeAssemblyReload += DeleteTracked;
-        EditorApplication.delayCall += Sweep;
+        // Only when there is something to do: files a reload left behind, or the first sweep of this editor session.
+        if (!string.IsNullOrEmpty(SessionState.GetString(PendingSessionKey, string.Empty)) || !SessionState.GetBool(SweptSessionKey, false))
+            OrbitersEditorHost.Once("MCB download files", Sweep);
     }
+
+    // Leftovers of crashed editors are a day old at least: one listing of the temp folder per editor session is enough.
+    private const string SweptSessionKey = "MCB.DownloadTempFiles.Swept";
 
     /// <summary>Marks <paramref name="path"/> as a file of a download (or download work) running in this editor.</summary>
     public static void Track(string path)
@@ -868,6 +874,8 @@ public static class MCBDownloadTempFiles
         string pending = SessionState.GetString(PendingSessionKey, string.Empty);
         SessionState.EraseString(PendingSessionKey);
         foreach (string path in pending.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)) TryDelete(path);
+        if (SessionState.GetBool(SweptSessionKey, false)) return;
+        SessionState.SetBool(SweptSessionKey, true);
 
         try
         {

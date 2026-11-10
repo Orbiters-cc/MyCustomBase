@@ -2,6 +2,7 @@
 using System;
 using System.IO;
 using Newtonsoft.Json;
+using Orbiters.Toolkit.Editor;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEngine;
@@ -22,7 +23,6 @@ public static class MCBPackageVersionService
     private static string lastRequestedTokenKey;
     private static bool hasPendingForcedCheck;
     private static string pendingAuthToken;
-    private static bool hierarchyScanQueued;
 
     public static PackageVersionStatus CurrentStatus { get; private set; }
     public static event Action StatusChanged;
@@ -30,8 +30,10 @@ public static class MCBPackageVersionService
     static MCBPackageVersionService()
     {
         CurrentStatus = RestoreSessionStatus() ?? PackageVersionStatus.CreateDefault(CurrentPackageVersion);
-        EditorApplication.delayCall += OnInitialDelayCall;
-        EditorApplication.hierarchyChanged += OnHierarchyChanged;
+        // On the editor host, which also runs in a background editor (delayCall waits for a repaint); hierarchy changes
+        // come coalesced, once per frame, from the shared change bus.
+        OrbitersEditorHost.Once("MCB package version", OnInitialDelayCall);
+        EditorChangeBus.Changed += OnEditorChanged;
     }
 
     public static bool RequiresMajorUpdate
@@ -107,20 +109,9 @@ public static class MCBPackageVersionService
         }
     }
 
-    private static void OnHierarchyChanged()
+    private static void OnEditorChanged(EditorChanges changes)
     {
-        if (hierarchyScanQueued)
-        {
-            return;
-        }
-
-        hierarchyScanQueued = true;
-        EditorApplication.delayCall += ProcessQueuedHierarchyChanged;
-    }
-
-    private static void ProcessQueuedHierarchyChanged()
-    {
-        hierarchyScanQueued = false;
+        if (!changes.Hierarchy && !changes.StructureChanged) return;
         int currentCount = CountLoadedMCBComponents();
         bool addedComponent = lastKnownMCBCount >= 0 && currentCount > lastKnownMCBCount;
         lastKnownMCBCount = currentCount;
@@ -186,7 +177,7 @@ public static class MCBPackageVersionService
         }
         finally
         {
-            EditorApplication.delayCall += () =>
+            OrbitersEditorHost.Once("MCB package version status", () =>
             {
                 // A transient outage must not erase an already received support restriction.
                 if (IsConnectedState(statusToPublish.connectionState) || CurrentStatus == null || !CurrentStatus.hasChecked)
@@ -203,7 +194,7 @@ public static class MCBPackageVersionService
                     pendingAuthToken = null;
                     EnsureCheckStarted(tokenToRetry, true);
                 }
-            };
+            }, 0, HostWhen.Always);
         }
     }
 

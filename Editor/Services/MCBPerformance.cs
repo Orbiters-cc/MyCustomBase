@@ -9,7 +9,6 @@ using Newtonsoft.Json;
 using UnityEditor;
 using UnityEngine;
 
-[InitializeOnLoad]
 public static partial class MCBPerformance
 {
     const string PreferencePrefix = "MCB.Performance.";
@@ -21,14 +20,16 @@ public static partial class MCBPerformance
     static Task reportTask;
     static string apiUrl, token, preferenceKey, calibrationKey, environment, clientId, unityVersion, platform;
     static int cores, memoryGB;
-    static double nextAttempt, nextTick;
+    static double nextAttempt;
+    // The editor host's tick, from the first MCB Inspector of this script session on (nothing runs before: with no owner
+    // every tick only found MCB busy).
+    static IDisposable ticking;
     public static string Status { get; private set; } = "Waiting for MCB";
     public static bool Enabled { get => EditorPrefs.GetBool(PreferencePrefix + "Enabled", true); set { EditorPrefs.SetBool(PreferencePrefix + "Enabled", value); if (!value) PauseForeground(); } }
     public static bool ShareMeasurements { get => EditorPrefs.GetBool(PreferencePrefix + "Share", true); set { EditorPrefs.SetBool(PreferencePrefix + "Share", value); if (!value) while (reports.TryDequeue(out _)) { } } }
 
     static MCBPerformance()
     {
-        EditorApplication.update += Tick;
         AssemblyReloadEvents.beforeAssemblyReload += PauseForeground;
         EditorApplication.quitting += PauseForeground;
     }
@@ -37,6 +38,8 @@ public static partial class MCBPerformance
     {
         if (editor == null || string.IsNullOrWhiteSpace(editor.authToken) || Application.isBatchMode) return;
         owner = editor;
+        // Always: a tick while the editor compiles or plays cancels a calibration under way.
+        ticking ??= Orbiters.Toolkit.Editor.OrbitersEditorHost.Every("MCB performance", 0.5, Tick, Orbiters.Toolkit.Editor.HostWhen.Always);
         string url = MCBUtils.getApiUrl().TrimEnd('/');
         token = editor.authToken;
         if (apiUrl == url && profile != null) return;
@@ -88,8 +91,6 @@ public static partial class MCBPerformance
     static void Tick()
     {
         double now = EditorApplication.timeSinceStartup;
-        if (now < nextTick) return;
-        nextTick = now + 0.5;
         bool busy = owner == null || !owner.isAuthenticated || owner.isApplying || owner.isDownloading || owner.isSubmitting
             || EditorApplication.isPlayingOrWillChangePlaymode || MCBEditor.ShouldDeferBackgroundNetworkRefresh();
         if (busy) { cancellation?.Cancel(); return; }
