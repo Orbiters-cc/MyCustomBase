@@ -34,7 +34,7 @@ public partial class AssetGalleryModule
             createError = null;
             DisposeOriginalSourceExtractions();
             ResetPhotoshootState(destroyPreviewTexture: true);
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         });
         backButton.style.width = 165f;
         header.Add(backButton);
@@ -160,7 +160,7 @@ public partial class AssetGalleryModule
         nextButton = CreateTextButton(isSubmittingCustomBase ? "Creating..." : "Next", () =>
         {
             EditorCoroutineUtility.StartCoroutineOwnerless(CreateCustomBaseAssetCoroutine());
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         });
         nextButton.name = "mcb-create-next";
         nextButton.style.marginTop = 12f;
@@ -197,7 +197,7 @@ public partial class AssetGalleryModule
             selectedAvatarBaseIndex = Mathf.Max(0, options.IndexOf(evt.newValue));
             TryDetectSelectedAvatarBase(forceDefaultMode: true);
             ApplyCanonicalReferencePathsFromSelectedBase();
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         });
         form.Add(dropdown);
 
@@ -241,7 +241,7 @@ public partial class AssetGalleryModule
                 targetFbxFiles[index] = evt.newValue as GameObject;
                 createSceneModeExplicitlySelected = false;
                 TryDetectAvatarBaseFromTargets();
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
             });
             row.Add(field);
             var remove = CreateTextButton("-", () =>
@@ -250,7 +250,7 @@ public partial class AssetGalleryModule
                 targetFbxFiles.RemoveAt(index);
                 createSceneModeExplicitlySelected = false;
                 TryDetectAvatarBaseFromTargets();
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
             });
             remove.tooltip = "Remove target FBX";
             remove.style.width = 28f;
@@ -273,7 +273,7 @@ public partial class AssetGalleryModule
             createError = null;
             targetFbxFiles.Add(null);
             createSceneModeExplicitlySelected = false;
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         });
         addButton.style.width = 140f;
         addButton.style.marginTop = 6f;
@@ -304,7 +304,7 @@ public partial class AssetGalleryModule
                     : CreateCustomBaseSceneMode.DefaultBase,
                 explicitlySelected: true);
             createError = null;
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         });
         panel.Add(dropdown);
 
@@ -343,7 +343,7 @@ public partial class AssetGalleryModule
             DisposeOriginalSourceExtractions();
             originalSourceKeyCandidates.Clear();
             originalSourceKeyMappings.Clear();
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         }));
         form.Add(importRow);
 
@@ -373,7 +373,7 @@ public partial class AssetGalleryModule
             {
                 int selected = candidateOptions.IndexOf(evt.newValue) - 1;
                 SelectOriginalSourceCandidate(mapping, selected);
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
             });
             form.Add(candidateDropdown);
 
@@ -410,7 +410,7 @@ public partial class AssetGalleryModule
         ResetPhotoshootState(destroyPreviewTexture: true);
         LoadAvatarBasesIfNeeded();
         TryDetectAvatarBaseFromTargets();
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 
@@ -511,7 +511,7 @@ public partial class AssetGalleryModule
             {
                 extraction.Dispose();
                 createError = "No FBX files were found in the selected .unitypackage.";
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
                 return;
             }
 
@@ -538,7 +538,7 @@ public partial class AssetGalleryModule
             createError = $"Failed to read .unitypackage: {ex.Message}";
         }
 
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
     }
 
     private void BrowseOriginalFbx()
@@ -548,11 +548,12 @@ public partial class AssetGalleryModule
 
         try
         {
-            string hash = MCBUtils.CalculateFileHash(path);
+            // Proof: the original it names is the key a version is encrypted against.
+            string hash = ContentHash.Proof(path);
             if (string.IsNullOrWhiteSpace(hash))
             {
                 createError = "Could not hash the selected FBX.";
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
                 return;
             }
 
@@ -574,7 +575,7 @@ public partial class AssetGalleryModule
             createError = $"Failed to read FBX: {ex.Message}";
         }
 
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
     }
 
     private void AddOriginalSourceCandidate(OriginalSourceKeyCandidate candidate)
@@ -717,7 +718,8 @@ public partial class AssetGalleryModule
                 inventory.Add(new AvatarBaseSourceMatcher.LocalFile
                 {
                     path = path,
-                    hash = MCBUtils.CalculateFileHash(fullPath)
+                    // Proof: a match here decides which files the submit registers and which keys it installs.
+                    hash = ContentHash.Proof(fullPath)
                 });
             }
             catch (Exception ex)
@@ -741,7 +743,7 @@ public partial class AssetGalleryModule
                 inventory.Add(new AvatarBaseSourceMatcher.LocalFile
                 {
                     path = targetPath,
-                    hash = MCBUtils.CalculateFileHash(fullPath),
+                    hash = ContentHash.Proof(fullPath),
                     tag = new ExistingOriginalBaseKey
                     {
                         localTargetPath = targetPath,
@@ -944,7 +946,7 @@ public partial class AssetGalleryModule
         originalSourceKeyCandidates.Clear();
         originalSourceKeyMappings.Clear();
         detectedAvatarBaseStatus = "Provide and map the original/default FBX files you want MCB to use instead.";
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 
@@ -1085,7 +1087,7 @@ public partial class AssetGalleryModule
         }
 
         isLoadingAvatarBases = false;
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 
@@ -1114,7 +1116,7 @@ public partial class AssetGalleryModule
         {
             createError = ex.Message;
             isSubmittingCustomBase = false;
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             editor.Repaint();
             yield break;
         }
@@ -1148,7 +1150,7 @@ public partial class AssetGalleryModule
             if (supportedOriginalVersions.Select(v => v.key).Distinct().Count() != supportedOriginalVersions.Length) throw new InvalidOperationException("The same original files were added more than once.");
             metadata["originalBaseVersions"] = JArray.FromObject(supportedOriginalVersions);
         }
-        catch (Exception ex) { createError = ex.Message; isSubmittingCustomBase = false; editor.RefreshUiToolkitSections(); yield break; }
+        catch (Exception ex) { createError = ex.Message; isSubmittingCustomBase = false; editor.RequestRefresh(McbViewParts.All); yield break; }
         metadata["sourceFiles"] = JArray.FromObject(sourceFilePayload);
         if (int.TryParse(AuthenticationService.GetAuth()?.user, out int creatorId) && UserService.IsTrustedCreator(creatorId))
             metadata["protection"] = new JObject { ["xor"] = createProtection.xor, ["discordRole"] = createProtection.discordRole };
@@ -1274,7 +1276,7 @@ public partial class AssetGalleryModule
         }
 
         isSubmittingCustomBase = false;
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
         editor.Repaint();
     }
 
@@ -1297,7 +1299,8 @@ public partial class AssetGalleryModule
             if (!MCBUtils.TryResolveProjectAssetPath(normalizedPath, out normalizedPath, out string fullPath) ||
                 !File.Exists(fullPath)) continue;
 
-            string hash = MCBUtils.CalculateFileHash(fullPath);
+            // Proof: the hashes registered with the server for the new custom base.
+            string hash = ContentHash.Proof(fullPath);
             if (string.IsNullOrWhiteSpace(hash)) continue;
 
             var metas = new List<Dictionary<string, string>>();
@@ -1558,7 +1561,8 @@ public partial class AssetGalleryModule
             MCBUtils.TryResolveProjectAssetPath(assetPath, out _, out string fullPath) &&
             File.Exists(fullPath))
         {
-            return MCBUtils.CalculateFileHash(fullPath) ?? assetPath;
+            // Advisory: only tells one request from another (a retry of the same form is the same request).
+            return ContentHash.Advisory(fullPath) ?? assetPath;
         }
 
         try

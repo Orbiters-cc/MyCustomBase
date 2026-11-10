@@ -187,7 +187,7 @@ public class DependencyInstallerModule
         EditorApplication.delayCall += () =>
         {
             RefreshUIToolkit();
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             editor.Repaint();
         };
     }
@@ -197,7 +197,7 @@ public class DependencyInstallerModule
         EditorApplication.delayCall += () =>
         {
             RefreshUIToolkit();
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             editor.Repaint();
         };
     }

@@ -45,16 +45,12 @@ public static class MCBAuthoringService
     {
         public string renderer, target, customFbx;
     }
+    // The avatar's MCB session: the operations its views use, with or without an Inspector on it.
     private sealed class Session : IDisposable
     {
-        public readonly MCBEditor Editor;
-        private readonly bool owns;
-        public Session(MyCustomBase owner)
-        {
-            Editor = Resources.FindObjectsOfTypeAll<MCBEditor>().FirstOrDefault(e => e.customBaseTarget == owner);
-            if (Editor == null) { Editor = (MCBEditor)UnityEditor.Editor.CreateEditor(owner, typeof(MCBEditor)); owns = true; }
-        }
-        public void Dispose() { if (owns && Editor != null) UnityEngine.Object.DestroyImmediate(Editor); }
+        public readonly McbSession Editor;
+        public Session(MyCustomBase owner) { Editor = McbSession.For(owner); }
+        public void Dispose() { }
     }
 
     private const string EnvironmentFile = "mcb-environment.txt";
@@ -127,7 +123,7 @@ public static class MCBAuthoringService
         if (!string.IsNullOrWhiteSpace(draft.logicPrefab) && (logic == null || !draft.logicPrefab.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException("Logic must be a saved prefab.");
         using var session = new Session(owner);
-        session.Editor.creatorModule.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
+        new CreatorModeModule(session.Editor, draft.asset).ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
         Undo.RecordObject(owner, "Configure MCB authoring");
         UseModels(owner, sources, customs);
         owner.avatarLogicPrefab = logic; owner.creatorCustomization = draft.customization.Clone();
@@ -173,17 +169,18 @@ public static class MCBAuthoringService
         // One build or publish at a time across MCP and every creator window (each editor only knows its own isSubmitting).
         using var operation = VersionOperationGuard.Acquire("building version " + draft.version);
         using var session = new Session(owner); var editor = session.Editor;
+        // The draft's asset, whatever the avatar's gallery shows: the form builds for it alone.
+        var creator = new CreatorModeModule(editor, draft.asset);
         Action<VersionArtifact> built = artifact =>
         {
             File.WriteAllText(EnvironmentPath(artifact.Metadata.assetId), EnvironmentName);
-            complete(artifact, KeepTakenInDraft(owner, draft, editor.creatorModule.TakenFromAvatar));
+            complete(artifact, KeepTakenInDraft(owner, draft, creator.TakenFromAvatar));
         };
         if (editor.isSubmitting) throw new InvalidOperationException("This avatar already has an active operation.");
-        var previousAsset = editor.GetSelectedAsset();
         editor.isSubmitting = true;
         try
         {
-            editor.SetCreatorWindowAsset(draft.asset); editor.serializedObject.Update();
+            editor.serializedObject.Update();
             // Build exactly the saved draft: an open creator form may have loaded another version's settings meanwhile, and
             // opening the editor detects the scene avatar's own models, which differ from the draft's when a version is applied.
             var (sources, customs) = Models(draft);
@@ -196,11 +193,10 @@ public static class MCBAuthoringService
             owner.includeCustomVeinsForCreator = veins != null; owner.customVeinsNormalMap = veins;
             owner.includeSuggestRealisticForCreator = draft.suggestRealistic.Count > 0; owner.suggestRealisticMeshPathsForCreator = draft.suggestRealistic.ToList();
             editor.serializedObject.Update();
-            editor.creatorModule.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
-            yield return editor.creatorModule.BuildNewVersionCoroutine(built, operation);
+            creator.ConfigureVersionMetadata(draft.version, draft.title, draft.changelog, draft.scope, draft.parent);
+            yield return creator.BuildNewVersionCoroutine(built, operation);
         }
-        // The window's asset is restored whatever failed, including a draft model that no longer loads.
-        finally { editor.isSubmitting = false; EditorUtility.ClearProgressBar(); editor.SetCreatorWindowAsset(previousAsset); }
+        finally { editor.isSubmitting = false; EditorUtility.ClearProgressBar(); }
     }
 
     /// <summary>
@@ -230,7 +226,7 @@ public static class MCBAuthoringService
     public static IEnumerator Apply(MyCustomBase owner, CustomBaseVersion version)
     {
         using var session = new Session(owner);
-        yield return new VersionActions(session.Editor, new NetworkService(), new FileManagerService()).ApplyOrResetCoroutine(version, false);
+        yield return session.Editor.actions.ApplyOrResetCoroutine(version, false);
         if (owner.appliedCustomBaseAssetId != version.assetId || owner.appliedCustomBaseVersionString != version.version)
             throw new InvalidOperationException("Version application did not finish. Inspect MCB warnings and the Console.");
     }
@@ -251,7 +247,8 @@ public static class MCBAuthoringService
         var asset = offered?.assets?.FirstOrDefault(a => a.id == assetId) ?? throw new InvalidOperationException("The server does not offer asset "
             + assetId + " for this avatar" + (discoveryError != null ? ": " + discoveryError : "") + ". Offered: "
             + string.Join(", ", (offered?.assets ?? new List<AvatarDiscoveredAsset>()).Select(a => a.id + " " + a.name)) + ".");
-        editor.SetCreatorWindowAsset(asset);
+        // As the gallery does when the member picks it: the session lists and applies this asset's versions.
+        editor.Select(asset, refreshVersions: false);
         editor.SyncBaseFbxFilesFromSelectedAsset();
         var fetch = AsyncVersionService.Instance.FetchVersionsAsync(editor.GetCurrentFBXPath(), editor.authToken, assetId, useCache: false,
             sourceVersionKey: OriginalBaseLibrary.ActiveKey(asset));
@@ -261,9 +258,9 @@ public static class MCBAuthoringService
             + (fetchError != null ? ": " + fetchError : "") + ". Offered: " + string.Join(", ", (versions ?? new List<CustomBaseVersion>()).Select(v => v.version)) + ".");
         editor.serverVersions = versions;
         editor.warningsModule.Clear();
-        editor.versionModule.actions.StartVersionDownload(chosen, true);
+        editor.actions.StartVersionDownload(chosen, true);
         // Download and Apply runs as MCB's own coroutines: it is over once nothing downloads or applies any more.
-        do yield return null; while (editor.isDownloading || editor.isApplying || editor.versionModule.actions.ApplyProgress.IsRunning);
+        do yield return null; while (editor.isDownloading || editor.isApplying || editor.actions.ApplyProgress.IsRunning);
         var warnings = editor.warningsModule.Entries.Select(w => (w.title != null ? w.title + ": " : "") + w.message).ToArray();
         if (owner.appliedCustomBaseAssetId != assetId || owner.appliedCustomBaseVersionString != version)
             throw new InvalidOperationException("Version " + version + " was not applied." + (warnings.Length > 0 ? " MCB says: " + string.Join(" | ", warnings) : " Inspect the Console."));
@@ -273,7 +270,7 @@ public static class MCBAuthoringService
     public static IEnumerator Reset(MyCustomBase owner)
     {
         using var session = new Session(owner);
-        yield return new VersionActions(session.Editor, new NetworkService(), new FileManagerService()).ApplyOrResetCoroutine(null, true);
+        yield return session.Editor.actions.ApplyOrResetCoroutine(null, true);
         if (owner.appliedCustomBaseAssetId != 0 || !string.IsNullOrEmpty(owner.appliedCustomBaseVersionString))
             throw new InvalidOperationException("Reset did not finish. Inspect MCB warnings and the Console.");
     }
@@ -286,8 +283,7 @@ public static class MCBAuthoringService
         // The release checkpoint names the published asset: the draft's when it is this version's asset.
         var draft = string.IsNullOrWhiteSpace(owner.creatorAuthoringDraftJson) ? null : JsonConvert.DeserializeObject<Draft>(owner.creatorAuthoringDraftJson);
         string assetName = draft?.asset != null && draft.asset.id == version.assetId ? draft.asset.name : null;
-        yield return VersionPublisher.PublishCoroutine(session.Editor, new NetworkService(), new FileManagerService(), version, () => published = true,
-            interactive: false, assetName: assetName);
+        yield return session.Editor.Publish(version, () => published = true, interactive: false, assetName: assetName);
         if (!published) throw new InvalidOperationException(string.IsNullOrWhiteSpace(session.Editor.submitError)
             ? "Publication did not finish. Inspect MCB warnings and the Console." : session.Editor.submitError);
         complete();

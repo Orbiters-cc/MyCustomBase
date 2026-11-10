@@ -165,7 +165,12 @@ public partial class AssetGalleryModule
     private List<AvatarDiscoveredAsset> compatibleAssets = new List<AvatarDiscoveredAsset>();
     private List<AvatarDiscoveredAsset> allAssets = new List<AvatarDiscoveredAsset>();
 
-    public AvatarDiscoveredAsset SelectedAsset { get; private set; }
+    /// <summary>The asset shown: the avatar's session's, so every view of the avatar and its operations use the same one.</summary>
+    public AvatarDiscoveredAsset SelectedAsset
+    {
+        get => editor.Session.SelectedAsset;
+        private set => editor.Session.SetSelectedAsset(value);
+    }
     private string SelectedAssetIdPrefKey => $"MCB.SelectedAssetId.{ComputeStableHash(Application.dataPath)}";
 
     private class AssetInteractionState
@@ -490,18 +495,18 @@ public partial class AssetGalleryModule
         if (!editor.isAuthenticated)
         {
             ResetState(clearSelection: true);
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             return;
         }
 
         RefreshIfNeeded(force: true);
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
     }
 
     public void OnProjectChanged()
     {
         RefreshIfNeeded(force: true);
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
     }
 
     private void ResetState(bool clearSelection)

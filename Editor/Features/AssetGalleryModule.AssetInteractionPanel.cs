@@ -367,7 +367,7 @@ public partial class AssetGalleryModule
         UpdateLikeCountLabels(assetId, state.likeCount);
         if (!string.IsNullOrWhiteSpace(state.error))
         {
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         }
         else
         {
@@ -445,7 +445,7 @@ public partial class AssetGalleryModule
         isPostingComment = true;
         state.error = null;
         string commentText = commentDraft.Trim();
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
 
         var payload = new CreateInteractionRequest
         {
@@ -474,7 +474,7 @@ public partial class AssetGalleryModule
                         }
                         state.commentCount += 1;
                     }
-                    editor.RefreshUiToolkitSections();
+                    editor.RequestRefresh(McbViewParts.All);
                     editor.Repaint();
                 }));
     }
@@ -488,14 +488,14 @@ public partial class AssetGalleryModule
 
         editingCommentId = comment.id;
         editingCommentDraft = comment.content ?? "";
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
     }
 
     private void CancelEditComment()
     {
         editingCommentId = 0;
         editingCommentDraft = "";
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
     }
 
     private void UpdateSelectedAssetComment(int commentId)
@@ -518,7 +518,7 @@ public partial class AssetGalleryModule
         string nextContent = editingCommentDraft.Trim();
         isUpdatingComment = true;
         state.error = null;
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
 
         EditorCoroutineUtility.StartCoroutineOwnerless(
             InteractionService.UpdateInteractionCoroutine(
@@ -544,7 +544,7 @@ public partial class AssetGalleryModule
                         editingCommentDraft = "";
                     }
 
-                    editor.RefreshUiToolkitSections();
+                    editor.RequestRefresh(McbViewParts.All);
                     editor.Repaint();
                 }));
     }
@@ -569,7 +569,7 @@ public partial class AssetGalleryModule
 
         deletingCommentId = comment.id;
         state.error = null;
-        editor.RefreshUiToolkitSections();
+        editor.RequestRefresh(McbViewParts.All);
 
         EditorCoroutineUtility.StartCoroutineOwnerless(
             InteractionService.DeleteInteractionCoroutine(
@@ -593,7 +593,7 @@ public partial class AssetGalleryModule
                         }
                     }
 
-                    editor.RefreshUiToolkitSections();
+                    editor.RequestRefresh(McbViewParts.All);
                     editor.Repaint();
                 }));
     }

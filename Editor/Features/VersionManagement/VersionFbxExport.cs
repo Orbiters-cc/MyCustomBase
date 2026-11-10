@@ -100,23 +100,18 @@ internal static class VersionFbxExport
         if (string.IsNullOrWhiteSpace(patch.BinPath) || !File.Exists(patch.BinPath))
             throw new FileNotFoundException("this version's files are not downloaded: download it, then export again.");
         byte[] bytes;
-        if (patch.Hdiff)
+        string output = HdiffService.CreateTempWorkPath(".fbx");
+        try
         {
-            string output = HdiffService.CreateTempWorkPath(".fbx");
-            try
-            {
-                HdiffService.ApplyXorEncryptedPatchToTempFbx(patch.OriginalFbxPath, patch.BinPath, output, new FileManagerService());
-                bytes = File.ReadAllBytes(output);
-            }
-            finally
-            {
-                try { if (File.Exists(output)) File.Delete(output); }
-                catch (IOException) { }
-            }
+            // Decoded into a file (the XOR streamed in blocks), then read once: the original and the patch are never held whole.
+            if (patch.Hdiff) HdiffService.ApplyXorEncryptedPatchToTempFbx(patch.OriginalFbxPath, patch.BinPath, output, new FileManagerService());
+            else MCBXor.TransformFile(patch.OriginalFbxPath, patch.BinPath, output);
+            bytes = File.ReadAllBytes(output);
         }
-        else
+        finally
         {
-            bytes = MCBXor.Transform(File.ReadAllBytes(patch.OriginalFbxPath), File.ReadAllBytes(patch.BinPath));
+            try { if (File.Exists(output)) File.Delete(output); }
+            catch (IOException) { }
         }
         string expected = patch.Patch?.outputHash;
         if (!string.IsNullOrWhiteSpace(expected) && !string.Equals(Sha256(bytes), expected.Trim(), StringComparison.OrdinalIgnoreCase))

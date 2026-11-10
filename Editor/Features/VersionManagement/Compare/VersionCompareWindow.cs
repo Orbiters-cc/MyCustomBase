@@ -32,7 +32,7 @@ internal sealed class VersionCompareWindow : EditorWindow
         "After, with before as a ghost: see exactly where the shape moved."
     };
 
-    [NonSerialized] private MCBEditor editor;
+    [NonSerialized] private McbSession session;
     [NonSerialized] private MyCustomBase target;
     [NonSerialized] private CustomBaseVersion version;
     // The version before it in its history; null for its first version, compared with the original base.
@@ -58,12 +58,12 @@ internal sealed class VersionCompareWindow : EditorWindow
     private IVisualElementScheduledItem tick;
     // The Apply button shows whether the version is on the avatar, which only changes when an operation of the avatar
     // ends or the scene changes: it is refreshed then, never per frame.
-    [NonSerialized] private McbAvatarViewModel watched;
+    [NonSerialized] private McbSession watched;
     [NonSerialized] private bool applyRefreshQueued;
 
-    public static void Open(MCBEditor editor, CustomBaseVersion version)
+    public static void Open(McbSession session, CustomBaseVersion version)
     {
-        if (editor == null || version == null) return;
+        if (session == null || version == null) return;
         bool existed = HasOpenInstances<VersionCompareWindow>();
         var window = GetWindow<VersionCompareWindow>(false, "Version differences", true);
         window.minSize = new Vector2(880f, 560f);
@@ -73,7 +73,7 @@ internal sealed class VersionCompareWindow : EditorWindow
             var size = new Vector2(Mathf.Min(1220f, main.width - 80f), Mathf.Min(760f, main.height - 80f));
             window.position = new Rect(main.x + (main.width - size.x) * 0.5f, main.y + (main.height - size.y) * 0.5f, size.x, size.y);
         }
-        window.Begin(editor, version);
+        window.Begin(session, version);
     }
 
     private void OnEnable()
@@ -91,18 +91,18 @@ internal sealed class VersionCompareWindow : EditorWindow
         loading = null;
     }
 
-    private void Begin(MCBEditor owner, CustomBaseVersion shown)
+    private void Begin(McbSession owner, CustomBaseVersion shown)
     {
         comparison?.Dispose();
         comparison = null;
         loading = null;
-        editor = owner;
+        session = owner;
         target = owner.customBaseTarget;
         version = shown;
-        Watch(owner.ViewModel);
+        Watch(owner);
         // What this version changed: compared with the version before it, or with the original base for its first version.
         previous = VersionRepository.PreviousInHistory(shown, owner.GetAllVersions(), owner.CompareVersions);
-        previousOnAvatar = previous != null && owner.versionModule?.actions != null && owner.versionModule.actions.IsVersionCurrentlyApplied(previous);
+        previousOnAvatar = previous != null && owner.actions.IsVersionCurrentlyApplied(previous);
         originalName = OriginalName(owner, shown);
         reference = CompareReference.Previous;
         requested = null;
@@ -115,7 +115,7 @@ internal sealed class VersionCompareWindow : EditorWindow
     }
 
     // The original's name as the creator labelled it ("Novabeast V1.0"), else the base avatar's name.
-    private static string OriginalName(MCBEditor owner, CustomBaseVersion shown)
+    private static string OriginalName(McbSession owner, CustomBaseVersion shown)
     {
         var asset = owner.GetSelectedAsset();
         string label = string.IsNullOrEmpty(shown.sourceVersionKey) ? null
@@ -124,9 +124,9 @@ internal sealed class VersionCompareWindow : EditorWindow
         return string.IsNullOrWhiteSpace(label) ? null : label.Trim();
     }
 
-    private VersionActions Actions => LiveEditor()?.versionModule?.actions;
+    private VersionActions Actions => Live()?.actions;
 
-    private void Watch(McbAvatarViewModel model)
+    private void Watch(McbSession model)
     {
         if (watched != null) watched.Changed -= OnAvatarChanged;
         EditorApplication.hierarchyChanged -= QueueRefreshApply;
@@ -134,8 +134,7 @@ internal sealed class VersionCompareWindow : EditorWindow
         Selection.selectionChanged -= QueueRefreshApply;
         watched = model;
         if (model == null) return;
-        // Inspectors of the avatar come and go with the selection: each announces itself on the avatar's model when it is
-        // created and when it goes (Versions), and its versions whenever they are shown again.
+        // The avatar's session announces its operations and versions, whichever view (or none) started them.
         model.Changed += OnAvatarChanged;
         EditorApplication.hierarchyChanged += QueueRefreshApply;
         Undo.undoRedoPerformed += QueueRefreshApply;
@@ -160,13 +159,8 @@ internal sealed class VersionCompareWindow : EditorWindow
         });
     }
 
-    // The inspector that opened the window may have been rebuilt since (selection changes): use the live one.
-    private MCBEditor LiveEditor()
-    {
-        if (editor != null) return editor;
-        editor = Resources.FindObjectsOfTypeAll<MCBEditor>().FirstOrDefault(e => e != null && e.customBaseTarget == target);
-        return editor;
-    }
+    // The avatar's session, while its component exists (its scene open); no Inspector needs to show it.
+    private McbSession Live() => session != null && session.customBaseTarget != null ? session : null;
 
     // ---- Building ---------------------------------------------------------------------------------
 
@@ -356,12 +350,12 @@ internal sealed class VersionCompareWindow : EditorWindow
             else { DropPrevious($"Version {missing.version} is not downloaded, so this compares with the original."); StartLoading(); }
             return;
         }
-        var live = LiveEditor();
+        var live = Live();
         if (live == null) { Fail("Select your avatar in the scene, then open the differences again."); return; }
         SetOverlay(DownloadStep(missing), 0f, DownloadDetail(missing));
         if (live.isDownloading) return;
         requested = missing;
-        live.versionModule.actions.StartVersionDownload(missing, false);
+        live.actions.StartVersionDownload(missing, false);
     }
 
     private string DownloadStep(CustomBaseVersion download) => download == version ? "Downloading the version…" : $"Downloading version {download.version}…";
@@ -419,11 +413,11 @@ internal sealed class VersionCompareWindow : EditorWindow
         {
             var missing = MissingDownload();
             if (missing == null) { StartLoading(); return; }
-            var live = LiveEditor();
+            var live = Live();
             if (live == null) return;
             if (live.isDownloading)
             {
-                float progress = live.versionModule.actions.DownloadProgress;
+                float progress = live.actions.DownloadProgress;
                 bool ours = requested == missing;
                 SetOverlay(ours ? $"{DownloadStep(missing)} {Mathf.RoundToInt(progress * 100f)}%" : "Waiting for another download…", ours ? progress : 0f, DownloadDetail(missing));
             }
@@ -783,7 +777,7 @@ internal sealed class VersionCompareWindow : EditorWindow
     private void RefreshApply()
     {
         if (applyButton == null) return;
-        var live = LiveEditor();
+        var live = Live();
         bool applied = IsApplied();
         bool busy = live != null && (live.isDownloading || live.isApplying);
         applyButton.text = applied ? "Installed on your avatar" : $"Apply {version.version}";
@@ -797,9 +791,9 @@ internal sealed class VersionCompareWindow : EditorWindow
 
     private void Apply()
     {
-        var live = LiveEditor();
-        if (live?.versionModule == null) return;
-        if (live.versionModule.RequestApply(version)) Close();
+        var live = Live();
+        if (live == null) return;
+        if (live.RequestApply(version)) Close();
     }
 
     // ---- Small helpers ----------------------------------------------------------------------------

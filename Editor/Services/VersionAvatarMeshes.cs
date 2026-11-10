@@ -68,10 +68,10 @@ internal static class VersionAvatarMeshes
 
     /// <summary>
     /// The renderers of <paramref name="customBase"/> standing for its targets (the Blender card's, see
-    /// <see cref="BlenderExportImport.TargetRenderers(MyCustomBase, MCBEditor)"/>; <paramref name="editor"/> is the one
+    /// <see cref="BlenderExportImport.TargetRenderers(MyCustomBase, McbSession)"/>; <paramref name="editor"/> is the one
     /// showing the base, or null) that show a committed mesh or a Mixer working copy.
     /// </summary>
-    internal static Found Find(MyCustomBase customBase, MCBEditor editor)
+    internal static Found Find(MyCustomBase customBase, McbSession editor)
     {
         var found = new Found();
         if (customBase == null) return found;
@@ -87,8 +87,8 @@ internal static class VersionAvatarMeshes
         return found;
     }
 
-    /// <summary><see cref="Find(MyCustomBase, MCBEditor)"/> for the editor's base, for what the form shows: nothing when the avatar cannot be looked at (logged).</summary>
-    internal static Found Find(MCBEditor editor)
+    /// <summary><see cref="Find(MyCustomBase, McbSession)"/> for the editor's base, for what the form shows: nothing when the avatar cannot be looked at (logged).</summary>
+    internal static Found Find(McbSession editor)
     {
         try { return Find(editor != null ? editor.customBaseTarget : null, editor); }
         catch (Exception ex)
@@ -135,7 +135,7 @@ internal static class VersionAvatarMeshes
     /// Mixer committed after the build or left out of it, and meshes in a Mixer session. Null when nothing (or when the
     /// avatar cannot be looked at, logged).
     /// </summary>
-    internal static string NotInBuildMessage(MyCustomBase customBase, MCBEditor editor)
+    internal static string NotInBuildMessage(MyCustomBase customBase, McbSession editor)
     {
         if (customBase == null) return null;
         try

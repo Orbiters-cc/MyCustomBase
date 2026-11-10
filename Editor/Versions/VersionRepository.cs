@@ -686,7 +686,7 @@ public static class VersionRepository
     /// Returns a human-readable summary.
     /// (Absorbed from the deleted DiskSpaceService.)
     /// </summary>
-    public static string FlushRemovableData(MCBEditor editor)
+    public static string FlushRemovableData(McbSession editor)
     {
         long freedBytes = 0;
         int deletedFolders = 0;
@@ -767,7 +767,7 @@ public static class VersionRepository
     /// <summary>
     /// Version folders (normalized full paths) that are applied to an open avatar or hold files something still uses.
     /// </summary>
-    private static HashSet<string> CollectVersionFoldersInUse(MCBEditor editor, string progressTitle)
+    private static HashSet<string> CollectVersionFoldersInUse(McbSession editor, string progressTitle)
     {
         var keepFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void KeepFolder(string unityPath)

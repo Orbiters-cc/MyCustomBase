@@ -166,7 +166,7 @@ public static class OperationErrorReporter
     /// action dialog (currently: disk-full offers a one-click flush of removable data).
     /// Returns the user-facing message (callers usually store it in editor.submitError).
     /// </summary>
-    public static string Report(MCBEditor editor, OperationError error, string warningTitle)
+    public static string Report(McbSession editor, OperationError error, string warningTitle)
     {
         if (error == null)
         {
@@ -201,7 +201,7 @@ public static class OperationErrorReporter
         }
     }
 
-    private static void OfferFlush(MCBEditor editor, string message)
+    private static void OfferFlush(McbSession editor, string message)
     {
         if (EditorUtility.DisplayDialog(
                 "Disk Full",

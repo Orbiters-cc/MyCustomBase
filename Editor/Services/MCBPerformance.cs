@@ -13,7 +13,7 @@ using UnityEngine;
 public static partial class MCBPerformance
 {
     const string PreferencePrefix = "MCB.Performance.";
-    static MCBEditor owner;
+    static McbSession owner;
     static MCBPerformanceProfile profile;
     static Task<MCBPerformanceProfile> calibration;
     static CancellationTokenSource cancellation;
@@ -33,7 +33,7 @@ public static partial class MCBPerformance
         EditorApplication.quitting += PauseForeground;
     }
 
-    public static void EnsureStarted(MCBEditor editor)
+    public static void EnsureStarted(McbSession editor)
     {
         if (editor == null || string.IsNullOrWhiteSpace(editor.authToken) || Application.isBatchMode) return;
         owner = editor;
@@ -91,7 +91,7 @@ public static partial class MCBPerformance
         if (now < nextTick) return;
         nextTick = now + 0.5;
         bool busy = owner == null || !owner.isAuthenticated || owner.isApplying || owner.isDownloading || owner.isSubmitting
-            || EditorApplication.isPlayingOrWillChangePlaymode || MCBEditor.ShouldDeferBackgroundNetworkRefresh();
+            || EditorApplication.isPlayingOrWillChangePlaymode || McbSession.ShouldDeferBackgroundNetworkRefresh();
         if (busy) { cancellation?.Cancel(); return; }
         if (!Enabled) cancellation?.Cancel();
         if (calibration != null && calibration.IsCompleted) {

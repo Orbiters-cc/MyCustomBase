@@ -13,7 +13,7 @@ public partial class CreatorModeModule
     private bool originalsExpanded;
     private bool fallbacksExpanded;
     private bool materialSlotsExpanded;
-    private VersionCustomization Customization => editor.customBaseTarget.creatorCustomization;
+    private VersionCustomization Customization => session.customBaseTarget.creatorCustomization;
     private bool HasTypedCustomization() => Customization.modes.options.Count > 0 || Customization.twistBones.Count > 0
         || Customization.dynamicNormalBlendshapes.Count > 0 || !Customization.rendererLayout.IsEmpty || Customization.physic || Customization.squishy;
 
@@ -31,14 +31,14 @@ public partial class CreatorModeModule
 
     private void ChangeCustomization(Action action, bool refresh = false)
     {
-        editor.serializedObject.ApplyModifiedProperties();
-        Undo.RecordObject(editor.customBaseTarget, "Edit version customization");
+        session.serializedObject.ApplyModifiedProperties();
+        Undo.RecordObject(session.customBaseTarget, "Edit version customization");
         action();
         // New authoring uses explicit selections. The keyword shortcuts only populate that list.
-        editor.customBaseTarget.includeDynamicNormalsBodyForCreator = false;
-        editor.customBaseTarget.includeDynamicNormalsFlexingForCreator = false;
-        EditorUtility.SetDirty(editor.customBaseTarget);
-        editor.serializedObject.Update();
+        session.customBaseTarget.includeDynamicNormalsBodyForCreator = false;
+        session.customBaseTarget.includeDynamicNormalsFlexingForCreator = false;
+        EditorUtility.SetDirty(session.customBaseTarget);
+        session.serializedObject.Update();
         if (refresh) RefreshUIToolkit();
     }
 
@@ -47,7 +47,7 @@ public partial class CreatorModeModule
     /// <summary>The asset's protection, which its versions inherit (set when creating the asset or in its Edit panel).</summary>
     internal VersionProtection ResolveVersionProtection()
     {
-        var protection = editor.GetSelectedAsset()?.protection;
+        var protection = Asset?.protection;
         return new VersionProtection { xor = protection?.xor ?? true, discordRole = protection?.discordRole ?? false };
     }
 
@@ -67,7 +67,7 @@ public partial class CreatorModeModule
 
     private void BuildSupportedOriginalsSection(VisualElement root)
     {
-        var asset = editor.GetSelectedAsset();
+        var asset = Asset;
         if (asset == null) return;
         if (asset.UsesPlainPackages())
         {
@@ -117,14 +117,14 @@ public partial class CreatorModeModule
     {
         var result = new List<RendererSlotNames>();
         SyncModelFileBuildEntryCount();
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
-            var custom = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(i).FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
-            var target = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var custom = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(i).FindPropertyRelative("customFbx").objectReferenceValue as GameObject;
+            var target = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             if (custom == null || target == null) continue;
             try
             {
-                var smrPaths = CollectTargetedSmrPathsForModelEntry(AvatarPaths.Root(editor.customBaseTarget), AssetDatabase.GetAssetPath(target), target, custom);
+                var smrPaths = CollectTargetedSmrPathsForModelEntry(AvatarPaths.Root(session.customBaseTarget), AssetDatabase.GetAssetPath(target), target, custom);
                 result.AddRange(NativeMeshPayloadService.CollectRendererSlots(custom, smrPaths).Where(r => result.All(e => e.path != r.path)));
             }
             catch (Exception ex) { MCBLogger.LogWarning("[MCB] Could not read the custom renderers of " + custom.name + ": " + ex.Message); }
@@ -137,9 +137,9 @@ public partial class CreatorModeModule
     {
         var slots = new List<string>();
         var renderers = new List<string>();
-        for (int i = 0; i < editor.baseFbxFilesProp.arraySize; i++)
+        for (int i = 0; i < session.baseFbxFilesProp.arraySize; i++)
         {
-            var target = editor.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
+            var target = session.baseFbxFilesProp.GetArrayElementAtIndex(i).objectReferenceValue as GameObject;
             if (target == null) continue;
             foreach (var renderer in target.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             {
@@ -170,7 +170,7 @@ public partial class CreatorModeModule
 
     private void BuildMaterialSlotsSection(VisualElement root)
     {
-        if (!(editor.useAdvancedMeshReplacementForCreatorProp?.boolValue ?? false)) return;
+        if (!(session.useAdvancedMeshReplacementForCreatorProp?.boolValue ?? false)) return;
         var customs = CollectCustomRendererSlots();
         if (customs.Count == 0) return;
         var layout = Customization.rendererLayout;

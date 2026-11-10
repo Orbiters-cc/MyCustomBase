@@ -83,7 +83,7 @@ public partial class AssetGalleryModule
                 {
                     showNonMatchingAssets = true;
                     StartDiscovery(filterOnlyCompatible: false);
-                    editor.RefreshUiToolkitSections();
+                    editor.RequestRefresh(McbViewParts.All);
                 }));
             }
             galleryRoot.Add(retryRow);
@@ -142,7 +142,7 @@ public partial class AssetGalleryModule
             dropdown.RegisterValueChangedCallback(evt =>
             {
                 selectedAvatarBaseFilter = evt.newValue;
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
             });
             row.Add(dropdown);
         }
@@ -187,7 +187,7 @@ public partial class AssetGalleryModule
         card.RegisterCallback<ClickEvent>(evt =>
         {
             SelectAsset(asset, persist: true, refreshVersions: true);
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             evt.StopPropagation();
         });
 
@@ -234,7 +234,7 @@ public partial class AssetGalleryModule
         card.RegisterCallback<ClickEvent>(evt =>
         {
             OpenCreateCustomBaseForm();
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
             evt.StopPropagation();
         });
 
@@ -326,7 +326,7 @@ public partial class AssetGalleryModule
                 {
                     StartDiscovery(filterOnlyCompatible: false);
                 }
-                editor.RefreshUiToolkitSections();
+                editor.RequestRefresh(McbViewParts.All);
             }));
             root.Add(row);
             return;
@@ -335,7 +335,7 @@ public partial class AssetGalleryModule
         row.Add(CreateToolbarButton("Hide Non Matching Assets", () =>
         {
             showNonMatchingAssets = false;
-            editor.RefreshUiToolkitSections();
+            editor.RequestRefresh(McbViewParts.All);
         }));
         root.Add(row);
 
@@ -428,7 +428,13 @@ public partial class AssetGalleryModule
         }
 
         lastAvatarSignature = currentSignature;
-        ResetState(clearSelection: signatureChanged);
+        // The selection is the avatar's session's: a change of the avatar's models drops it, a view opened again on the
+        // same models does not (an operation of the session may be running on it).
+        var session = editor.Session;
+        bool modelsChanged = session.AssetListSignature != null &&
+                             !string.Equals(currentSignature, session.AssetListSignature, StringComparison.Ordinal);
+        session.AssetListSignature = currentSignature;
+        ResetState(clearSelection: modelsChanged);
         StartDiscovery(filterOnlyCompatible: true);
     }
 
@@ -504,7 +510,7 @@ public partial class AssetGalleryModule
                         {
                             isLoading = false;
                             loadingAvatarSignature = null;
-                            editor.RefreshUiToolkitSections();
+                            editor.RequestRefresh(McbViewParts.All);
                             editor.Repaint();
                         }
                         return;
@@ -516,7 +522,7 @@ public partial class AssetGalleryModule
 
                     ApplyDiscoveryResponse(response, filterOnlyCompatible);
 
-                    editor.RefreshUiToolkitSections();
+                    editor.RequestRefresh(McbViewParts.All);
                     editor.Repaint();
                 },
                 editor.customBaseTarget));

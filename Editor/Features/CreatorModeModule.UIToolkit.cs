@@ -20,7 +20,7 @@ public partial class CreatorModeModule
     public void OpenWindow()
     {
         if (!IsSelectedAssetOwnedByCurrentUser()) return;
-        var window = creatorWindow != null ? creatorWindow : MCBCreatorWindow.Open(editor, this);
+        var window = creatorWindow != null ? creatorWindow : MCBCreatorWindow.Open(session, this);
         window.Show();
         window.Focus();
     }
@@ -29,18 +29,35 @@ public partial class CreatorModeModule
     {
         creatorWindow = window;
         creatorRoot = root;
+        Listen(true);
         RefreshUIToolkit();
+    }
+
+    // The window shows the session's state: it refreshes when the session says its part changed.
+    private void Listen(bool on)
+    {
+        session.Changed -= OnSessionChanged;
+        session.UnsubmittedVersionRemoved -= OnUnsubmittedVersionRemoved;
+        if (!on) return;
+        session.Changed += OnSessionChanged;
+        session.UnsubmittedVersionRemoved += OnUnsubmittedVersionRemoved;
+    }
+
+    private void OnSessionChanged(McbViewParts parts)
+    {
+        if ((parts & McbViewParts.Creator) != 0) RefreshUIToolkit();
     }
 
     internal void WindowClosed()
     {
         creatorRoot = null;
         creatorWindow = null;
-        if (editor == null || editor.customBaseTarget == null) return;
-        editor.serializedObject.Update();
-        editor.isCreatorModeProp.boolValue = false;
-        editor.serializedObject.ApplyModifiedProperties();
-        editor.RefreshUiToolkitSections();
+        Listen(false);
+        if (session == null || session.customBaseTarget == null) return;
+        session.serializedObject.Update();
+        session.isCreatorModeProp.boolValue = false;
+        session.serializedObject.ApplyModifiedProperties();
+        session.RequestRefresh(McbViewParts.All);
     }
     private string blendshapeSearchText = string.Empty;
     private bool hasAttemptedToolkitSubmit;
@@ -58,6 +75,7 @@ public partial class CreatorModeModule
 
     public void DetachUIToolkit()
     {
+        Listen(false);
         creatorRoot = null;
         if (creatorWindow != null) creatorWindow.DetachAndClose();
         creatorWindow = null;
@@ -70,20 +88,20 @@ public partial class CreatorModeModule
             return;
         }
 
-        if (!creatorWindow.MatchesContext(editor) || !editor.isCreatorModeProp.boolValue)
+        if (!creatorWindow.Holds(this) || !session.isCreatorModeProp.boolValue)
         {
             creatorWindow.Close();
             return;
         }
 
-        editor.serializedObject.Update();
+        session.serializedObject.Update();
         try
         {
             BuildCreatorModeUIToolkit();
         }
         finally
         {
-            editor.serializedObject.ApplyModifiedProperties();
+            session.serializedObject.ApplyModifiedProperties();
         }
     }
 
@@ -95,10 +113,9 @@ public partial class CreatorModeModule
         creatorRoot.AddToClassList("mcb-creator");
         creatorRoot.AddToClassList("mcb-creator--window");
 
-        if (!editor.isAuthenticated ||
-            !editor.HasServerAccess ||
-            MCBPackageVersionService.RequiresMajorUpdate ||
-            editor.ShouldShowGalleryOnly())
+        if (!session.isAuthenticated ||
+            !session.HasServerAccess ||
+            MCBPackageVersionService.RequiresMajorUpdate)
         {
             creatorRoot.style.display = DisplayStyle.None;
             wasToolkitCreatorModeVisible = false;
@@ -114,7 +131,7 @@ public partial class CreatorModeModule
             return;
         }
 
-        if (!editor.isCreatorModeProp.boolValue)
+        if (!session.isCreatorModeProp.boolValue)
         {
             creatorRoot.style.display = DisplayStyle.None;
             wasToolkitCreatorModeVisible = false;
@@ -135,19 +152,21 @@ public partial class CreatorModeModule
         }
 
         PopulateParentVersionDropdown();
-        if (editor.selectedVersionForAction != previouslySelectedVersion)
+        // Only a version of this window's asset fills the form (the Inspector may pick another asset's meanwhile).
+        var picked = SelectedVersionOfOwnAsset();
+        if (picked != previouslySelectedVersion)
         {
-            if (editor.selectedVersionForAction != null && editor.selectedVersionForAction.isUnsubmitted)
+            if (picked != null && picked.isUnsubmitted)
             {
-                PopulateFieldsFromVersion(editor.selectedVersionForAction);
+                PopulateFieldsFromVersion(picked);
             }
 
-            previouslySelectedVersion = editor.selectedVersionForAction;
+            previouslySelectedVersion = picked;
         }
 
         var content = new VisualElement();
         content.AddToClassList("mcb-creator__content");
-        content.SetEnabled(!editor.isSubmitting);
+        content.SetEnabled(!session.isSubmitting);
         creatorRoot.Add(content);
 
         BuildCreatorFormHeaderUIToolkit(content);
@@ -156,7 +175,7 @@ public partial class CreatorModeModule
         BuildModelFileBuildEntriesUIToolkit(content);
         content.Add(CreateIconObjectField(
             "Avatar Logic Prefab",
-            editor.avatarLogicPrefabProp,
+            session.avatarLogicPrefabProp,
             typeof(GameObject),
             false,
             new MCBCreatorPrefabIconElement()));
@@ -173,9 +192,9 @@ public partial class CreatorModeModule
         BuildAdvancedMeshReplacementToggleUIToolkit(content);
         BuildVersionSubmissionSectionUIToolkit(content);
 
-        if (!string.IsNullOrEmpty(editor.submitError))
+        if (!string.IsNullOrEmpty(session.submitError))
         {
-            content.Add(CreateHelpBox("Submission Error: " + editor.submitError, HelpBoxMessageType.Error));
+            content.Add(CreateHelpBox("Submission Error: " + session.submitError, HelpBoxMessageType.Error));
         }
     }
 
@@ -195,7 +214,7 @@ public partial class CreatorModeModule
                 hasAttemptedToolkitSubmit = false;
                 creatorBlendshapeEditorFoldout = false;
                 wasToolkitCreatorModeVisible = false;
-                editor.isCreatorModeProp.boolValue = false;
+                session.isCreatorModeProp.boolValue = false;
             }, true, true);
         });
         cancelButton.AddToClassList("mcb-creator-form-header__cancel");
@@ -298,12 +317,12 @@ public partial class CreatorModeModule
         SyncModelFileBuildEntryCount();
 
         root.Add(CreateSectionLabel("Target Model Files"));
-        for (int i = 0; i < editor.modelFileBuildEntriesProp.arraySize; i++)
+        for (int i = 0; i < session.modelFileBuildEntriesProp.arraySize; i++)
         {
             int index = i;
-            var targetFbx = editor.baseFbxFilesProp.GetArrayElementAtIndex(index).objectReferenceValue as GameObject;
+            var targetFbx = session.baseFbxFilesProp.GetArrayElementAtIndex(index).objectReferenceValue as GameObject;
             string targetLabel = targetFbx != null ? AssetDatabase.GetAssetPath(targetFbx) : $"Target FBX {index + 1}";
-            var entry = editor.modelFileBuildEntriesProp.GetArrayElementAtIndex(index);
+            var entry = session.modelFileBuildEntriesProp.GetArrayElementAtIndex(index);
             var customFbxProp = entry.FindPropertyRelative("customFbx");
             var externalCustomFbxProp = entry.FindPropertyRelative("externalCustomFbxPath");
             var avatarProp = entry.FindPropertyRelative("customBaseAvatar");
@@ -335,7 +354,7 @@ public partial class CreatorModeModule
             customFbxRow.Add(customFbxField);
             var applyFbxButton = CreateTextButton("Apply", null, () =>
             {
-                editor.serializedObject.ApplyModifiedProperties();
+                session.serializedObject.ApplyModifiedProperties();
                 ApplyCustomFbxForModelEntry(targetFbx, customFbxProp.objectReferenceValue as GameObject);
                 RefreshEditorUi();
             });
@@ -377,7 +396,7 @@ public partial class CreatorModeModule
                 generateButton.SetEnabled(false);
                 avatarRow.schedule.Execute(() =>
                 {
-                    editor.serializedObject.ApplyModifiedProperties();
+                    session.serializedObject.ApplyModifiedProperties();
                     GenerateAvatarForModelEntry(targetFbx, customFbxProp.objectReferenceValue as GameObject, avatarProp, externalCustomFbxProp?.stringValue);
                     RefreshEditorUi();
                 });
@@ -388,7 +407,7 @@ public partial class CreatorModeModule
 
             var applyAvatarButton = CreateTextButton("Apply", null, () =>
             {
-                editor.serializedObject.ApplyModifiedProperties();
+                session.serializedObject.ApplyModifiedProperties();
                 ApplyCustomAvatarForModelEntry(targetFbx, customFbxProp.objectReferenceValue as GameObject, avatarProp.objectReferenceValue as Avatar);
                 RefreshEditorUi();
             });
@@ -404,8 +423,8 @@ public partial class CreatorModeModule
 
     private void BuildCustomVeinsSectionUIToolkit(VisualElement root)
     {
-        var includeProp = editor.includeCustomVeinsForCreatorProp;
-        var textureProp = editor.customVeinsNormalMapProp;
+        var includeProp = session.includeCustomVeinsForCreatorProp;
+        var textureProp = session.customVeinsNormalMapProp;
 
         var card = CreateCreatorPanel();
         card.AddToClassList("mcb-creator-option");
@@ -514,7 +533,7 @@ public partial class CreatorModeModule
     // being validated) a rig on this avatar to try them in Gesture Manager or VRChat.
     private void BuildXMusclesSectionUIToolkit(VisualElement root)
     {
-        var customBase = editor.customBaseTarget;
+        var customBase = session.customBaseTarget;
         if (customBase == null) return;
         var set = customBase.muscleCorrectives;
         int muscles = set?.muscles?.Count ?? 0;
@@ -579,7 +598,7 @@ public partial class CreatorModeModule
     // XMuscles correctives) brought back as the creator's custom FBX files.
     private void BuildBlenderSectionUIToolkit(VisualElement root)
     {
-        if (editor.customBaseTarget == null) return;
+        if (session.customBaseTarget == null) return;
         var card = CreateCreatorPanel();
         card.AddToClassList("mcb-creator-option");
         card.AddToClassList("mcb-blender");
@@ -595,14 +614,14 @@ public partial class CreatorModeModule
         head.Add(CreateSectionLabel("Blender"));
         card.Add(head);
 
-        var targets = BlenderExportImport.TargetFbxPaths(editor);
+        var targets = BlenderExportImport.TargetFbxPaths(session);
         if (targets.Count == 0)
             card.Add(CreateHelpBox("No target FBX was detected for this avatar. Assign or detect the base FBX first.", HelpBoxMessageType.Warning));
 
         if (McbBlenderCard.Mixer != null)
         {
             // An optional integration: when it fails, the rest of the creator form is still built.
-            try { McbBlenderCard.Mixer(card, editor, RefreshEditorUi); }
+            try { McbBlenderCard.Mixer(card, session, RefreshEditorUi); }
             catch (Exception ex)
             {
                 MCBLogger.LogWarning("[MCB] Mixer's part of the Blender card failed: " + ex);
@@ -618,18 +637,18 @@ public partial class CreatorModeModule
         if (latest != null)
         {
             var newest = CreateTextButton("Import the newest export", "Imports the export Blender just made: " + latest,
-                () => BlenderExportImport.Import(editor, latest));
+                () => BlenderExportImport.Import(session, latest));
             newest.SetEnabled(targets.Count > 0);
             actions.Add(newest);
         }
         var import = CreateTextButton("Import Blender export…",
             "Picks the manifest.json of an MCB export made in Blender: each exported model becomes the creator's custom FBX for its target (with a generated Avatar), or an advanced-mesh payload preview; XMuscles correctives come along.",
-            () => BlenderExportImport.PickAndImport(editor));
+            () => BlenderExportImport.PickAndImport(session));
         import.SetEnabled(targets.Count > 0);
         actions.Add(import);
         card.Add(actions);
         // Only this base's messages rebuild this form.
-        var shownBase = editor.customBaseTarget;
+        var shownBase = session.customBaseTarget;
         Action<MyCustomBase> onImportChanged = changed => { if (changed == shownBase) RefreshEditorUi(); };
         BlenderExportImport.Changed += onImportChanged;
         card.RegisterCallback<DetachFromPanelEvent>(_ => BlenderExportImport.Changed -= onImportChanged);
@@ -688,8 +707,8 @@ public partial class CreatorModeModule
 
     private void BuildSuggestRealisticSectionUIToolkit(VisualElement root)
     {
-        var includeProp = editor.includeSuggestRealisticForCreatorProp;
-        var pathsProp = editor.suggestRealisticMeshPathsForCreatorProp;
+        var includeProp = session.includeSuggestRealisticForCreatorProp;
+        var pathsProp = session.suggestRealisticMeshPathsForCreatorProp;
         if (includeProp == null || pathsProp == null)
         {
             return;
@@ -857,24 +876,24 @@ public partial class CreatorModeModule
         int index = parent.IndexOf(card);
         var built = new VisualElement();
         // As around the whole form's build (RefreshUIToolkit): the card's fields read and may clamp properties.
-        editor.serializedObject.Update();
+        session.serializedObject.Update();
         try
         {
             BuildBlendshapeEditorUIToolkit(built);
         }
         finally
         {
-            editor.serializedObject.ApplyModifiedProperties();
+            session.serializedObject.ApplyModifiedProperties();
         }
         card.RemoveFromHierarchy();
         parent.Insert(index, blendshapeEditorCard);
         refreshSubmissionValidation?.Invoke();
-        editor.Repaint();
+        session.Repaint();
     }
 
     private int GetExposedBlendshapeCount()
     {
-        var blendshapesProp = editor.customBlendshapesForCreatorProp;
+        var blendshapesProp = session.customBlendshapesForCreatorProp;
         if (blendshapesProp == null)
         {
             return 0;
@@ -916,7 +935,7 @@ public partial class CreatorModeModule
         header.Add(CreateTableHeaderLabel("", "mcb-creator-table__delete"));
         table.Add(header);
 
-        var blendshapesProp = editor.customBlendshapesForCreatorProp;
+        var blendshapesProp = session.customBlendshapesForCreatorProp;
         for (int i = 0; i < blendshapesProp.arraySize; i++)
         {
             int index = i;
@@ -1065,7 +1084,7 @@ public partial class CreatorModeModule
             return Enumerable.Empty<string>();
         }
 
-        var existingBlendshapeNames = editor.customBaseTarget.customBlendshapesForCreator.Select(e => e.name);
+        var existingBlendshapeNames = session.customBaseTarget.customBlendshapesForCreator.Select(e => e.name);
         return GetAllBlendshapeNamesFromCustomFbx()
             .Except(existingBlendshapeNames)
             .Where(shapeName => shapeName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
@@ -1077,7 +1096,7 @@ public partial class CreatorModeModule
     {
         root.Add(CreateSectionLabel("Blendshape Correctives"));
 
-        var blendshapesProp = editor.customBlendshapesForCreatorProp;
+        var blendshapesProp = session.customBlendshapesForCreatorProp;
         if (blendshapesProp == null || blendshapesProp.arraySize == 0)
         {
             root.Add(CreateHelpBox("Add blendshapes above to create corrective links.", HelpBoxMessageType.None));
@@ -1330,7 +1349,7 @@ public partial class CreatorModeModule
     private void BuildAdvancedMeshReplacementToggleUIToolkit(VisualElement root)
     {
         if (!FeatureFlags.IsEnabled(FeatureFlags.ALLOW_ADVANCED_REPLACEMENT_FOR_CREATOR) ||
-            editor.useAdvancedMeshReplacementForCreatorProp == null)
+            session.useAdvancedMeshReplacementForCreatorProp == null)
         {
             return;
         }
@@ -1340,10 +1359,10 @@ public partial class CreatorModeModule
         var advancedToggle = CreateToggle(
             "Use Advanced Mesh Replacement",
             "Submit model edits as an encrypted native Unity mesh payload instead of an encrypted replacement FBX.",
-            editor.useAdvancedMeshReplacementForCreatorProp.boolValue,
+            session.useAdvancedMeshReplacementForCreatorProp.boolValue,
             evt =>
             {
-                ApplyCreatorChange(() => editor.useAdvancedMeshReplacementForCreatorProp.boolValue = evt.newValue);
+                ApplyCreatorChange(() => session.useAdvancedMeshReplacementForCreatorProp.boolValue = evt.newValue);
             });
         var advancedText = new VisualElement();
         advancedText.AddToClassList("mcb-creator-advanced");
@@ -1355,7 +1374,7 @@ public partial class CreatorModeModule
         advancedRow.AddToClassList("mcb-creator-advanced-field");
         card.Add(advancedRow);
 
-        if (editor.useAdvancedMeshReplacementForCreatorProp.boolValue)
+        if (session.useAdvancedMeshReplacementForCreatorProp.boolValue)
         {
             card.Add(CreateHelpBox(
                 "MCB builds the available LZ4 and Zstd options automatically. Each user downloads one option, selected for their connection and computer. Meshes and skin weights are preserved exactly.",
@@ -1439,7 +1458,7 @@ public partial class CreatorModeModule
 
         var buttonRow = CreateCreatorRow();
         buttonRow.AddToClassList("mcb-creator-submit");
-        buildButton = CreateTextButton(editor.isSubmitting ? "Working..." : "Build Version", "Build the new version files and apply them locally as a temporary version.", () =>
+        buildButton = CreateTextButton(session.isSubmitting ? "Working..." : "Build Version", "Build the new version files and apply them locally as a temporary version.", () =>
         {
             hasAttemptedToolkitSubmit = true;
             refreshValidation();
@@ -1455,7 +1474,7 @@ public partial class CreatorModeModule
         buildButton.AddToClassList("mcb-creator-submit__button");
         buttonRow.Add(buildButton);
 
-        publishButton = CreateTextButton(editor.isSubmitting ? "Working..." : "Publish", "Upload the built version to the server and create a Mixer Git release checkpoint.", () =>
+        publishButton = CreateTextButton(session.isSubmitting ? "Working..." : "Publish", "Upload the built version to the server and create a Mixer Git release checkpoint.", () =>
         {
             if (!HasBuiltPendingVersion)
             {
@@ -1482,7 +1501,7 @@ public partial class CreatorModeModule
     private bool ConfirmAndBuild()
     {
         const string message = "This will build the new version files and apply them locally as a temporary version. Nothing is uploaded yet. The original FBX will be backed up.";
-        var shown = VersionAvatarMeshes.Find(editor);
+        var shown = VersionAvatarMeshes.Find(session);
         string inSession = VersionAvatarMeshes.InSessionMessage(shown.InSession.Select(s => s.Renderer));
         if (inSession != null)
         {
@@ -1519,18 +1538,18 @@ public partial class CreatorModeModule
         if (buildButton != null)
         {
             // Green while a build is needed, grayed out once the current form state has been built.
-            buildButton.SetEnabled(!editor.isSubmitting && validation.canAttemptSubmit && !hasPendingBuild);
+            buildButton.SetEnabled(!session.isSubmitting && validation.canAttemptSubmit && !hasPendingBuild);
             buildButton.EnableInClassList("mcb-button--primary", !hasPendingBuild);
-            buildButton.text = editor.isSubmitting ? "Working..." : "Build Version";
+            buildButton.text = session.isSubmitting ? "Working..." : "Build Version";
         }
 
         if (publishButton != null)
         {
             // Hidden until a build exists, so the first step only shows the Build button.
             publishButton.style.display = hasPendingBuild ? DisplayStyle.Flex : DisplayStyle.None;
-            publishButton.SetEnabled(!editor.isSubmitting && hasPendingBuild);
+            publishButton.SetEnabled(!session.isSubmitting && hasPendingBuild);
             publishButton.EnableInClassList("mcb-button--primary", hasPendingBuild);
-            publishButton.text = editor.isSubmitting ? "Working..." : "Publish";
+            publishButton.text = session.isSubmitting ? "Working..." : "Publish";
         }
     }
 
@@ -1543,31 +1562,31 @@ public partial class CreatorModeModule
         string defaultAviVersion = requiresParentVersion ? selectedParentVersionObject?.defaultAviVersion : InitialDefaultAviVersion;
         bool hasRequiredVersionMetadata = HasRequiredNewVersionMetadata(newVersionString, newVersionScope, newVersionTitle, defaultAviVersion, out string metadataValidationMessage);
 
-        bool hasCustomVeinsPayload = editor.includeCustomVeinsForCreatorProp.boolValue &&
-                                     editor.customVeinsNormalMapProp.objectReferenceValue != null;
-        bool hasDynamicNormalsPayload = editor.includeDynamicNormalsBodyForCreatorProp.boolValue ||
-                                        editor.includeDynamicNormalsFlexingForCreatorProp.boolValue || HasTypedCustomization();
+        bool hasCustomVeinsPayload = session.includeCustomVeinsForCreatorProp.boolValue &&
+                                     session.customVeinsNormalMapProp.objectReferenceValue != null;
+        bool hasDynamicNormalsPayload = session.includeDynamicNormalsBodyForCreatorProp.boolValue ||
+                                        session.includeDynamicNormalsFlexingForCreatorProp.boolValue || HasTypedCustomization();
         bool hasSuggestRealisticPayload = HasSuggestRealisticPayload();
         bool hasVersionPayload = HasModelFileBuildEntryPayload() ||
-                                 editor.avatarLogicPrefabProp.objectReferenceValue != null ||
+                                 session.avatarLogicPrefabProp.objectReferenceValue != null ||
                                  hasCustomVeinsPayload ||
                                  hasDynamicNormalsPayload ||
                                  hasSuggestRealisticPayload ||
-                                 editor.customBlendshapesForCreatorProp.arraySize > 0;
+                                 session.customBlendshapesForCreatorProp.arraySize > 0;
         bool canAttemptSubmit = AreModelFileBuildEntriesValid() &&
                                 hasVersionPayload &&
                                 (!requiresParentVersion || selectedParentVersionObject != null) &&
                                 isVersionValid &&
                                 hasRequiredVersionMetadata;
 
-        if (editor.includeCustomVeinsForCreatorProp.boolValue && editor.customVeinsNormalMapProp.objectReferenceValue == null)
+        if (session.includeCustomVeinsForCreatorProp.boolValue && session.customVeinsNormalMapProp.objectReferenceValue == null)
         {
             canAttemptSubmit = false;
         }
 
-        if (editor.includeSuggestRealisticForCreatorProp != null &&
-            editor.includeSuggestRealisticForCreatorProp.boolValue &&
-            GetSerializedStringList(editor.suggestRealisticMeshPathsForCreatorProp).Count == 0)
+        if (session.includeSuggestRealisticForCreatorProp != null &&
+            session.includeSuggestRealisticForCreatorProp.boolValue &&
+            GetSerializedStringList(session.suggestRealisticMeshPathsForCreatorProp).Count == 0)
         {
             canAttemptSubmit = false;
         }
@@ -1585,7 +1604,7 @@ public partial class CreatorModeModule
 
     private bool IsSelectedAssetOwnedByCurrentUser()
     {
-        var selectedAsset = editor.GetSelectedAsset();
+        var selectedAsset = Asset;
         if (selectedAsset == null || !selectedAsset.ownerId.HasValue)
         {
             return false;
@@ -1613,12 +1632,12 @@ public partial class CreatorModeModule
             return;
         }
 
-        editor.serializedObject.Update();
+        session.serializedObject.Update();
         change.Invoke();
-        editor.serializedObject.ApplyModifiedProperties();
-        if (editor.customBaseTarget != null)
+        session.serializedObject.ApplyModifiedProperties();
+        if (session.customBaseTarget != null)
         {
-            EditorUtility.SetDirty(editor.customBaseTarget);
+            EditorUtility.SetDirty(session.customBaseTarget);
         }
 
         if (refresh)
@@ -1634,20 +1653,19 @@ public partial class CreatorModeModule
         }
         else
         {
-            editor.Repaint();
+            session.Repaint();
         }
     }
 
     private void RefreshCreatorUi()
     {
         RefreshUIToolkit();
-        editor.Repaint();
+        session.Repaint();
     }
 
     private void RefreshEditorUi()
     {
-        editor.RefreshUiToolkitSections();
-        editor.Repaint();
+        session.RequestRefresh(McbViewParts.All);
     }
 
     private ObjectField CreateObjectField(string label, SerializedProperty property, Type objectType, bool allowSceneObjects)

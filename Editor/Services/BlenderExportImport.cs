@@ -95,7 +95,7 @@ internal static partial class BlenderExportImport
     /// The base's target FBX files: the selected asset's SOURCE files, then the creator's source files, then the FBX
     /// files detected on the avatar (after an import the renderers show the custom FBX, which is not a target).
     /// </summary>
-    public static List<string> TargetFbxPaths(MCBEditor editor)
+    public static List<string> TargetFbxPaths(McbSession editor)
     {
         if (editor == null) return new List<string>();
         var paths = new List<string>();
@@ -117,7 +117,7 @@ internal static partial class BlenderExportImport
     }
 
     /// <summary>The targets with their renderer mappings: found on the avatar, completed with the asset's records.</summary>
-    internal static List<ExportTarget> Targets(MCBEditor editor)
+    internal static List<ExportTarget> Targets(McbSession editor)
     {
         var paths = TargetFbxPaths(editor);
         if (paths.Count == 0 || editor.customBaseTarget == null) return new List<ExportTarget>();
@@ -135,14 +135,14 @@ internal static partial class BlenderExportImport
     /// The avatar's renderers that stand for the base's targets, each with its target FBX and the FBX mesh it shows: what
     /// the Blender card lists, and what Mixer's Export for MCB groups by (<see cref="TargetFbxOf"/>).
     /// </summary>
-    internal static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> TargetRenderers(MCBEditor editor) =>
+    internal static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> TargetRenderers(McbSession editor) =>
         TargetRenderers(editor != null ? editor.customBaseTarget : null, editor);
 
     /// <summary>
-    /// <see cref="TargetRenderers(MCBEditor)"/> of a base: <paramref name="editor"/> is the one showing it (its targets are
+    /// <see cref="TargetRenderers(McbSession)"/> of a base: <paramref name="editor"/> is the one showing it (its targets are
     /// the card's), or null (the base's own source files, as <see cref="TargetFbxOf"/> without an editor).
     /// </summary>
-    internal static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> TargetRenderers(MyCustomBase customBase, MCBEditor editor) =>
+    internal static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> TargetRenderers(MyCustomBase customBase, McbSession editor) =>
         customBase == null
             ? new List<(SkinnedMeshRenderer, string, string)>()
             : MapTargets(customBase, editor);
@@ -213,7 +213,7 @@ internal static partial class BlenderExportImport
         double now = EditorApplication.timeSinceStartup;
         if (!targetCache.TryGetValue(key, out var cached) || now - cached.at > 2.0)
         {
-            var editor = Resources.FindObjectsOfTypeAll<MCBEditor>().FirstOrDefault(e => e != null && e.customBaseTarget == customBase);
+            var editor = McbSession.Find(customBase);
             var byRenderer = new Dictionary<Transform, string>();
             foreach (var entry in MapTargets(customBase, editor)) byRenderer[entry.Renderer.transform] = entry.TargetUnityPath;
             cached = (now, byRenderer);
@@ -241,7 +241,7 @@ internal static partial class BlenderExportImport
     // FBX beside the real one. Only the creator's source files are targets while the base has some, so an export names
     // targets its import accepts. Only the base's own avatar is searched: another avatar under the same parent keeps its
     // renderers.
-    private static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> MapTargets(MyCustomBase customBase, MCBEditor editor)
+    private static List<(SkinnedMeshRenderer Renderer, string TargetUnityPath, string FbxMesh)> MapTargets(MyCustomBase customBase, McbSession editor)
     {
         var root = AvatarPaths.Root(customBase);
         var result = new List<(SkinnedMeshRenderer, string, string)>();
@@ -357,8 +357,8 @@ internal static partial class BlenderExportImport
         EditorPrefs.SetString(LatestExportPref, manifestPath);
         LastExportFolder = Path.GetDirectoryName(manifestPath);
         string message = "Blender exported the base: " + manifestPath + "\nImport the newest export from the Blender card to make it the creator's custom FBX.";
-        var bases = Resources.FindObjectsOfTypeAll<MCBEditor>()
-            .Where(editor => editor != null && editor.customBaseTarget != null && LatestExportFor(TargetFbxPaths(editor)) != null)
+        var bases = McbSession.Live
+            .Where(editor => editor.customBaseTarget != null && LatestExportFor(TargetFbxPaths(editor)) != null)
             .Select(editor => editor.customBaseTarget).Distinct().ToList();
         if (bases.Count == 0) SetStatus(null, message, MessageType.Info);
         foreach (var customBase in bases) SetStatus(customBase, message, MessageType.Info);
@@ -380,7 +380,7 @@ internal static partial class BlenderExportImport
     // ---- Import -----------------------------------------------------------------------------------------------------
 
     /// <summary>Asks for an export's manifest.json and imports it for the editor's custom base. False when the dialog was cancelled.</summary>
-    public static bool PickAndImport(MCBEditor editor)
+    public static bool PickAndImport(McbSession editor)
     {
         string path = EditorUtility.OpenFilePanel("Blender export (manifest.json)", LastExportFolder, "json");
         if (string.IsNullOrEmpty(path)) return false;
@@ -399,7 +399,7 @@ internal static partial class BlenderExportImport
     /// Imports an export for the editor's custom base. Failures land in the base's <see cref="StatusOf"/> and the Console,
     /// never thrown. Not while a version is built, downloaded or applied: both change the same renderers and entries.
     /// </summary>
-    public static void Import(MCBEditor editor, string manifestPath)
+    public static void Import(McbSession editor, string manifestPath)
     {
         var customBase = editor != null ? editor.customBaseTarget : null;
         if (VersionOperationGuard.VersionWorkRunning)
@@ -419,7 +419,7 @@ internal static partial class BlenderExportImport
         }
     }
 
-    private static void Apply(MCBEditor editor, string manifestPath)
+    private static void Apply(McbSession editor, string manifestPath)
     {
         if (editor == null || editor.customBaseTarget == null) throw new InvalidOperationException("Select the custom base in the scene first.");
         if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath)) throw new FileNotFoundException("Blender export manifest was not found.", manifestPath);

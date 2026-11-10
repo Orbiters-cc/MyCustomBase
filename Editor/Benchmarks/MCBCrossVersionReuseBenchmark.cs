@@ -130,7 +130,7 @@ public static class MCBCrossVersionReuseBenchmark
         component.preserveBlendshapeValuesOnVersionSwitchInitialized = true;
         editor = (MCBEditor)UnityEditor.Editor.CreateEditor(component);
         editor.isAuthenticated = false; editor.authToken = null;
-        var manager = new FileManagerService(); var actions = new VersionActions(editor, new NetworkService(), manager);
+        var manager = new FileManagerService(); var actions = new VersionActions(editor.Session, new NetworkService(), manager);
         Mesh[] previous = null;
         foreach (string name in new[] { "a", "b", "c" }) {
             Status = "download " + name;
