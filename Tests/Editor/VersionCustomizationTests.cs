@@ -195,7 +195,46 @@ public class VersionCustomizationTests
         Assert.That(locks, Is.GreaterThan(Order("BlendShapeLinkPostVrcfuryHook")));
         foreach (string link in new[] { "RefitLinkHook", "SurfaceFollowHook", "AttachmentFinishHook" })
             Assert.That(locks, Is.LessThan(Order(link)), link + " copies body curves: it must see the locked ones.");
-        Assert.That(apply, Is.GreaterThan(Order("AttachmentFinishHook")), "Pruning stays after every animation-adding step.");
+        // The apply shares the accessories' phase now: after them in it.
+        Assert.That(apply, Is.GreaterThanOrEqualTo(Order("AttachmentFinishHook")), "Pruning stays after every animation-adding step.");
+        var steps = Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Select(s => s.GetType().Name).ToList();
+        foreach (string before in new[] { "SurfaceFollowHook", "AttachmentFinishHook" })
+            Assert.That(steps.IndexOf("VersionCustomizationApplyHook"), Is.GreaterThan(steps.IndexOf(before)), "Pruning runs after " + before + ".");
+    }
+
+    // MCB's steps sit in Orbiters' build where their SDK callbacks ran: the Toolkit steps they are ordered against exist
+    // under the names MCB gives them, and the order holds.
+    [Test] public void McbBuildStepsKeepTheirPlaceAmongTheToolkitsSteps()
+    {
+        foreach (var type in new[] { McbBuildSteps.Attachments, McbBuildSteps.AttachmentsFinish, McbBuildSteps.SurfaceFollow, McbBuildSteps.BuiltAnimations })
+            Assert.That(type, Is.Not.Null, "a Toolkit step MCB orders against was renamed");
+        var steps = Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Select(s => s.GetType()).ToList();
+        int At(Type t) => steps.IndexOf(t);
+        Assert.That(At(typeof(VersionCustomizationCaptureHook)), Is.GreaterThanOrEqualTo(0).And.LessThan(At(McbBuildSteps.Attachments)));
+        Assert.That(At(typeof(VersionCustomizationSurveyHook)), Is.GreaterThan(At(McbBuildSteps.BuiltAnimations)));
+        int Order(Type t) => Orbiters.Toolkit.Editor.VRChat.Build.BuildPhases.Order(Orbiters.Toolkit.Editor.VRChat.Build.AvatarBuildPipeline.Steps.Single(s => s.GetType() == t).Phase);
+        // Against the other tools' callbacks, as at -10105, -9500 and -8800.
+        Assert.That(Order(typeof(VersionCustomizationCaptureHook)), Is.GreaterThan(-10105).And.LessThan(-10060));
+        Assert.That(Order(typeof(VersionCustomizationSurveyHook)), Is.GreaterThan(-10000).And.LessThan(-9010));
+        Assert.That(Order(typeof(VersionCustomizationApplyHook)), Is.GreaterThan(-8956).And.LessThan(-1100));
+    }
+
+    // Lock runs as an SDK callback between the phases: it finds the plan the capture step put in the build's context, and
+    // a second build of an object already built changes nothing more.
+    [Test] public void TheLockFindsTheBuildsPlanAndARebuildDoesNothing()
+    {
+        var (root, owner, renderer, _, _) = ModeAvatar("Mode rebuild test");
+        ModeService.Set(owner, "female", true); ModeService.Set(owner, "dogears", true);
+        VersionCustomizationBuild.Capture(root);
+        Assert.That(Orbiters.Toolkit.Editor.VRChat.Build.BuildContext.Of(root), Is.Not.Null, "the capture opened a build");
+        renderer.SetBlendShapeWeight(0, 0);
+        new VersionCustomizationLockHook().OnPreprocessAvatar(root);
+        Assert.That(renderer.GetBlendShapeWeight(0), Is.EqualTo(100), "the lock read the captured plan");
+        VersionCustomizationBuild.Apply(root);
+        renderer.SetBlendShapeWeight(0, 0);
+        VersionCustomizationBuild.Capture(root);
+        VersionCustomizationBuild.Lock(root);
+        Assert.That(renderer.GetBlendShapeWeight(0), Is.Zero, "an applied object is not captured again");
     }
 
     [Test] public void ClothingLinksCopyTheLockedModeValuesAndOtherStepsAreReported()
