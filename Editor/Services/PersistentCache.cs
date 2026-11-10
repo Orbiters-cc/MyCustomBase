@@ -243,12 +243,12 @@ public class PersistentCache
             return BitConverter.ToString(hmac.ComputeHash(Encoding.UTF8.GetBytes(authToken))).Replace("-", "").ToLowerInvariant();
     }
 
-    /// <summary>
-    /// Snapshots the cache on the calling thread (its entries are private copies, so nothing changes them meanwhile) and
-    /// writes the latest snapshot on a worker thread; snapshots taken while one is written are coalesced.
-    /// </summary>
     // Saves are debounced: a burst of hashes or version lists is serialised once, on the main thread, after SaveDelay.
+    // Only reconstructible data goes through this cache (advisory file hashes, server version lists): a save lost to a
+    // crash costs a re-hash or a re-fetch, never user data. Keep it that way.
     private static readonly double SaveDelay = 2d;
+    // A domain reload or quit waits this long at most for a write already running (a stuck disk must not hang the editor).
+    private const int FlushWaitMilliseconds = 30000;
     private bool saveRequested;
     private double saveDueAt;
 
@@ -257,34 +257,50 @@ public class PersistentCache
         lock (writeLock) saveRequested = true;
     }
 
+    // Before a domain reload or quit: a requested save is snapshotted now, and every snapshot still pending or being
+    // written by the worker is on disk before this returns, whatever saveRequested said.
     private void FlushPendingSave()
     {
         bool requested;
         lock (writeLock) { requested = saveRequested; saveRequested = false; }
-        if (!requested) return;
         saveDueAt = 0;
-        string json;
-        lock (cacheLock) json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
-        bool writeHere;
-        lock (writeLock)
+        if (requested)
         {
-            pendingJson = json;
-            writeHere = !writing;
-            writing = true;
+            string json;
+            lock (cacheLock) json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
+            lock (writeLock) pendingJson = json;
         }
-        // The domain is about to unload: write on this thread, or let the running writer take this snapshot and wait for it.
-        if (writeHere) WritePendingSnapshots();
-        else
+
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
         {
-            var waited = System.Diagnostics.Stopwatch.StartNew();
-            while (waited.ElapsedMilliseconds < 2000)
+            bool writeHere;
+            lock (writeLock)
             {
-                lock (writeLock) if (!writing) return;
-                System.Threading.Thread.Sleep(10);
+                if (!writing && pendingJson == null) return;
+                writeHere = !writing;
+                if (writeHere) writing = true;
             }
+            if (writeHere)
+            {
+                // Writes every pending snapshot, then clears the writing flag.
+                WritePendingSnapshots();
+                return;
+            }
+            // The worker is writing: it also takes any snapshot left pending before it stops.
+            if (waited.ElapsedMilliseconds > FlushWaitMilliseconds)
+            {
+                MCBLogger.LogWarning("[PersistentCache] The cache file is still being written; the editor goes on without waiting further.");
+                return;
+            }
+            System.Threading.Thread.Sleep(5);
         }
     }
 
+    /// <summary>
+    /// Snapshots the cache on the calling thread (its entries are private copies, so nothing changes them meanwhile) and
+    /// writes the latest snapshot on a worker thread; snapshots taken while one is written are coalesced.
+    /// </summary>
     private void SaveCache()
     {
         string json;
