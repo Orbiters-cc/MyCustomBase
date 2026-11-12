@@ -9,16 +9,57 @@ public class FbxHierarchyRestoreTests
     private readonly List<Object> owned = new List<Object>();
 
     [Test]
-    public void MissingTransformReportsModelAndPathWithoutChangingAnyPose()
+    public void MissingSubtreeIsSkippedWhileMatchingPoseIsRestored()
     {
         var fbx = Rig("Original"); var avatar = Rig("Avatar");
-        Child(fbx.transform, "ExtraArmature");
+        Child(Child(fbx.transform, "ExtraArmature"), "Left shoulder");
         var shoulder = avatar.transform.Find("Armature/Hips/Chest/Left shoulder");
         shoulder.localPosition = new Vector3(3, 4, 5);
         Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform,
-            out string failure, "Assets/Base.fbx"), Is.Zero);
-        Assert.That(failure, Is.EqualTo("Cannot restore transform 'ExtraArmature' from canonical FBX 'Assets/Base.fbx' because it has no unique counterpart on the avatar."));
-        Assert.That(shoulder.localPosition, Is.EqualTo(new Vector3(3, 4, 5)));
+            out string failure, "Assets/Base.fbx"), Is.EqualTo(6));
+        Assert.That(failure, Is.Null);
+        Assert.That(shoulder.localPosition, Is.EqualTo(new Vector3(.1f, .2f, 0)));
+    }
+
+    [Test]
+    public void DuplicateTargetSkipsItsSubtree()
+    {
+        var fbx = Rig("Original"); var avatar = Rig("Avatar");
+        Child(Child(fbx.transform, "Armature"), "Left shoulder").localPosition = Vector3.one;
+        Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform), Is.EqualTo(6));
+        Assert.That(avatar.transform.Find("Armature/Hips/Chest/Left shoulder").localPosition, Is.EqualTo(new Vector3(.1f, .2f, 0)));
+    }
+
+    [Test]
+    public void NoMatchingTransformsReportsModelAndTransform()
+    {
+        var fbx = Own(new GameObject("Original")); var avatar = Own(new GameObject("Avatar"));
+        Child(fbx.transform, "Missing");
+        Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform, out var failure, "Assets/Base.fbx"), Is.Zero);
+        Assert.That(failure, Does.Contain("'Missing'").And.Contain("'Assets/Base.fbx'"));
+    }
+
+    [Test]
+    public void CycleRefusesAllPoseChanges()
+    {
+        var fbx = Own(new GameObject("Original")); var avatar = Own(new GameObject("Avatar"));
+        Child(Child(Child(fbx.transform, "Armature"), "A"), "B");
+        var b = Child(Child(avatar.transform, "Armature"), "B"); var a = Child(b, "A"); a.localPosition = Vector3.one;
+        Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform, out var failure, "Assets/Base.fbx"), Is.Zero);
+        Assert.That(failure, Does.Contain("hierarchy cycle").And.Contain("'Armature/A/B'").And.Contain("Assets/Base.fbx"));
+        Assert.That(a.localPosition, Is.EqualTo(Vector3.one));
+    }
+
+    [Test]
+    public void MissingRendererBoneStillRefusesMeshReplacement()
+    {
+        var fbx = Rig("Original"); var avatar = Rig("Avatar");
+        var source = Renderer(fbx.transform, "Body", Own(new Mesh()));
+        source.bones = new[] { Child(fbx.transform, "RequiredBone") };
+        var oldMesh = Own(new Mesh()); var target = Renderer(avatar.transform, "Body", oldMesh);
+        Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform), Is.GreaterThan(0));
+        Assert.That(SmrPathService.RestoreTargetStateFromFbxRoot(avatar.transform, fbx.transform, null), Is.Zero);
+        Assert.That(target.sharedMesh, Is.SameAs(oldMesh));
     }
 
     [TearDown] public void Clean() { foreach (var item in owned) if (item != null) Object.DestroyImmediate(item); owned.Clear(); }

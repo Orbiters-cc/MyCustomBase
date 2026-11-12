@@ -357,13 +357,18 @@ public static class SmrPathService
         var resolved = new Dictionary<Transform, Transform> { [fbxRoot] = avatarRoot };
         var plans = new List<TransformRestorePlan>();
         var plannedTargetIds = new HashSet<int>();
+        var skipped = new List<string>();
         // Parents come before their children in this order, so every parent is resolved first.
         foreach (var sourceTransform in fbxRoot.GetComponentsInChildren<Transform>(true))
         {
             if (sourceTransform == null || sourceTransform == fbxRoot) continue;
 
             string path = GetRelativeTransformPath(fbxRoot, sourceTransform);
-            var parent = resolved[sourceTransform.parent];
+            if (!resolved.TryGetValue(sourceTransform.parent, out var parent))
+            {
+                skipped.Add(path);
+                continue;
+            }
             var target = UniqueChild(parent, sourceTransform.name) ?? FindTransformByRelativePath(avatarRoot, path);
             if (target == null)
             {
@@ -374,10 +379,14 @@ public static class SmrPathService
                 var matches = scope.GetComponentsInChildren<Transform>(true).Where(t => t.name == sourceTransform.name && t != scope).Take(2).ToArray();
                 target = matches.Length == 1 ? matches[0] : null;
             }
-            if (target == null || !plannedTargetIds.Add(target.GetInstanceID()) || (parent != target.parent && parent.IsChildOf(target)))
+            if (target == null || !plannedTargetIds.Add(target.GetInstanceID()))
             {
-                string reason = target == null ? "has no unique counterpart on the avatar" : "cannot be mapped without reusing a transform or creating a hierarchy cycle";
-                failure = $"Cannot restore transform '{path}' from canonical FBX '{modelPath ?? fbxRoot.name}' because it {reason}.";
+                skipped.Add(path);
+                continue;
+            }
+            if (parent == target || (parent != target.parent && parent.IsChildOf(target)))
+            {
+                failure = $"Cannot restore transform '{path}' from canonical FBX '{modelPath ?? fbxRoot.name}' because it would create a hierarchy cycle.";
                 MCBLogger.LogWarning(
                     "[SmrPathService] " + failure + " No transform pose was changed.");
                 return 0;
@@ -391,6 +400,11 @@ public static class SmrPathService
                 parent = parent
             });
         }
+
+        if (skipped.Count > 0)
+            MCBLogger.Log($"[SmrPathService] Skipped {skipped.Count} transforms absent or already mapped on the avatar from canonical FBX '{modelPath ?? fbxRoot.name}': {string.Join(", ", skipped)}.");
+        if (plans.Count == 0 && skipped.Count > 0)
+            failure = $"Cannot restore transform '{skipped[0]}' from canonical FBX '{modelPath ?? fbxRoot.name}' because no model transforms have a unique counterpart on the avatar.";
 
         foreach (var plan in plans)
         {

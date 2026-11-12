@@ -72,6 +72,21 @@ server needs a connected bot with Manage Roles.
 A member without the required role sees **Requires the … Discord role** instead of
 the download button.
 
+## Restoring custom-body armatures
+
+<alpha>
+Local unreleased package change: restoring a model's armature during installation,
+version switching or return to the original base skips model transforms the avatar
+does not have, together with their children. A transform that would reuse an already
+mapped avatar transform is skipped too. The remaining transforms are restored;
+skipped paths are reported together in one informational log entry. Restoration
+still stops if no transforms match or a mapping would create a hierarchy cycle.
+Renderer restoration separately refuses meshes whose required bones cannot be
+resolved. This permits custom-body models to contain extra lights or leaf bones
+without those unused objects blocking the armature restore; it does not identify
+or remove an old release's animation layers or objects.
+</alpha>
+
 ## Supported original bases
 
 With XOR protection, the card lists the originals registered for the asset. Select
