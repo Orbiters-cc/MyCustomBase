@@ -30,8 +30,12 @@ public static class LegacyMigrationService
         + avatar.GetInstanceID() + "|" + assetId + "|" + string.Join("|", FxLayerNames(avatar)) + "|" + string.Join("|", ModelPaths(avatar).Select(p => p + ":" + File.GetLastWriteTimeUtc(p).Ticks));
 
     /// <summary>Gallery and apply share both completed and in-flight identification; failed requests can be retried.</summary>
+    /// <summary>Tests: stands in for the server's identify answer (for example a failed request).</summary>
+    internal static Func<Task<List<Match>>> IdentifyForTests;
+
     public static Task<List<Match>> LookupAsync(Transform avatar, string token, int assetId = 0)
     {
+        if (IdentifyForTests != null) return IdentifyForTests();
         string key = LookupKey(avatar, token, assetId);
         if (!Lookups.TryGetValue(key, out var task) || task.IsFaulted || task.IsCanceled)
             Lookups[key] = task = FindAsync(avatar, token, assetId);
