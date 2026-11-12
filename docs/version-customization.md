@@ -331,8 +331,15 @@ Prefabulous Universal; the package includes its license and attribution.
 
 ### Installing on a personal custom body
 
-When an avatar uses a different body model at the original base renderer paths, installing a version first records that body and temporarily restores the original base meshes. No custom-model hash registration is needed. Import a supported original base model when prompted; missing models or unresolved bones stop preparation before the avatar changes.
+When an avatar uses a different body model at the original base renderer paths, installing a version first records that body and temporarily restores the original base meshes. No custom-model hash registration is needed. Sign in for the first install on a custom body so MCB can refresh its compatible versions. Unsaved custom meshes must first be saved as project assets. Import a supported original base model when prompted; missing models or unresolved bones stop preparation before the avatar changes.
 
 Returning to the original base restores the personal body, materials, bone pose, Animator Avatar and descriptor assets. If no release is recognised, preparation performs no release cleanup: existing animator layers, parameters and objects stay. A recognised release supplies its cleanup as before.
 
 Discovery's `sourceFiles` may contain only a matching original set. The editor uses all `sourceVersions` when checking supported originals, with `sourceFiles` used by `OriginalBaseLibrary.Versions` when no version groups are present. A version's selected source files alone cannot establish every supported original.
+
+
+### Recognising a release from its FX controller
+
+If no model hash matches, MCB can recognise a release from its trimmed FX layer names. At least 60 percent must be present, and at least eight names (every name for lists shorter than eight). The release with the most matching names wins; ties favour the shorter list. Empty lists and avatars without an FX controller do not match. Recognition chooses the cleanup and gallery notice; an unrecognised personal body still migrates without cleanup.
+
+The editor sends `assetId` to identify and reads definitions from optional `asset.legacyReleases`. Without that field there is no content recognition. This server response is required for content recognition and is not yet deployed. No avatar layer names are sent to the server.

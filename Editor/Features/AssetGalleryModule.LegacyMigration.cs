@@ -22,7 +22,7 @@ public partial class AssetGalleryModule
         var owner = editor.customBaseTarget;
         if (owner == null || owner.appliedCustomBaseAssetId > 0) return;
         var avatar = AvatarPaths.Root(owner);
-        string signature = LegacyMigrationService.LookupKey(avatar, editor.authToken);
+        string signature = LegacySignature(avatar);
         if (signature != legacySignature && !legacyLoading)
         {
             legacySignature = signature;
@@ -32,13 +32,21 @@ public partial class AssetGalleryModule
         foreach (var release in legacyMatches.GroupBy(m => (m.assetId, m.legacyRelease.label))) root.Add(CreateLegacyNotice(avatar, release.ToList()));
     }
 
+    private string LegacySignature(Transform avatar) => LegacyMigrationService.LookupKey(avatar, editor.authToken)
+        + "|" + string.Join(",", compatibleAssets.Select(a => a.id).OrderBy(id => id));
+
     private async void DetectLegacy(Transform avatar, string signature)
     {
         legacyLoading = true;
         try
         {
-            var matches = await LegacyMigrationService.LookupAsync(avatar, editor.authToken);
-            if (avatar != null && signature == LegacyMigrationService.LookupKey(avatar, editor.authToken))
+            var matches = (await LegacyMigrationService.LookupAsync(avatar, editor.authToken)).ToList();
+            foreach (int assetId in compatibleAssets.Select(a => a.id).Distinct().ToArray())
+            {
+                if (matches.Any(m => m.assetId == assetId)) continue;
+                matches.AddRange(await LegacyMigrationService.LookupAsync(avatar, editor.authToken, assetId));
+            }
+            if (avatar != null && signature == LegacySignature(avatar))
                 legacyMatches = matches.ToList();
         }
         catch (Exception ex) { MCBLogger.Log("[MCB] Could not check for a release made before MCB: " + ex.Message); }

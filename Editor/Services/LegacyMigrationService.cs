@@ -26,15 +26,15 @@ public static class LegacyMigrationService
     public const string MigratedFolder = "Assets/MCB/migrated";
     private static readonly Dictionary<string, Task<List<Match>>> Lookups = new Dictionary<string, Task<List<Match>>>();
 
-    internal static string LookupKey(Transform avatar, string token) => MCBUtils.getApiUrl() + "|" + token + "|"
-        + avatar.GetInstanceID() + "|" + string.Join("|", ModelPaths(avatar).Select(p => p + ":" + File.GetLastWriteTimeUtc(p).Ticks));
+    internal static string LookupKey(Transform avatar, string token, int assetId = 0) => MCBUtils.getApiUrl() + "|" + token + "|"
+        + avatar.GetInstanceID() + "|" + assetId + "|" + string.Join("|", FxLayerNames(avatar)) + "|" + string.Join("|", ModelPaths(avatar).Select(p => p + ":" + File.GetLastWriteTimeUtc(p).Ticks));
 
     /// <summary>Gallery and apply share both completed and in-flight identification; failed requests can be retried.</summary>
-    public static Task<List<Match>> LookupAsync(Transform avatar, string token)
+    public static Task<List<Match>> LookupAsync(Transform avatar, string token, int assetId = 0)
     {
-        string key = LookupKey(avatar, token);
+        string key = LookupKey(avatar, token, assetId);
         if (!Lookups.TryGetValue(key, out var task) || task.IsFaulted || task.IsCanceled)
-            Lookups[key] = task = FindAsync(avatar, token);
+            Lookups[key] = task = FindAsync(avatar, token, assetId);
         return task;
     }
 
@@ -46,10 +46,10 @@ public static class LegacyMigrationService
         var avatar = AvatarPaths.Root(owner);
         if (!avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true).Any(r => r.sharedMesh != null)) yield break;
         string token = session.authToken;
-        string key = LookupKey(avatar, token);
-        var lookup = session.HasServerAccess ? LookupAsync(avatar, token) : Task.FromResult(new List<Match>());
+        string key = LookupKey(avatar, token, assetId);
+        var lookup = session.HasServerAccess ? LookupAsync(avatar, token, assetId) : Task.FromResult(new List<Match>());
         while (!lookup.IsCompleted) yield return null;
-        if (owner == null || session.authToken != token || LookupKey(avatar, token) != key)
+        if (owner == null || session.authToken != token || LookupKey(avatar, token, assetId) != key)
             throw new InvalidOperationException("The avatar or signed-in account changed; apply again.");
         if (owner.appliedCustomBaseAssetId > 0 || owner.legacyOriginal?.migrated == true) yield break;
         var asset = session.SelectedAsset;
@@ -85,6 +85,7 @@ public static class LegacyMigrationService
         if (matches.Select(m => m.legacyRelease.label).Distinct().Count() > 1)
             throw new InvalidOperationException("This avatar matches more than one legacy release of this asset.");
         var custom = UnregisteredBaseRenderers(avatar, paths, release.cleanup ?? new Cleanup(), Array.Empty<string>(), originalPath, originals);
+        if (custom.Count == 0) return new List<Match>();
         foreach (var model in custom.Select(c => c.model).Distinct(StringComparer.OrdinalIgnoreCase))
             if (!matches.Any(m => string.Equals(m.legacyModelPath, model, StringComparison.OrdinalIgnoreCase)))
                 matches.Add(new Match { assetId = assetId, legacyModelPath = model, legacyRelease = release, originals = originals });
@@ -168,23 +169,58 @@ public static class LegacyMigrationService
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>Legacy releases the avatar's model files belong to (empty when none, offline or unknown).</summary>
-    public static async Task<List<Match>> FindAsync(Transform avatar, string token)
+    public static async Task<List<Match>> FindAsync(Transform avatar, string token, int assetId = 0)
     {
         var paths = ModelPaths(avatar);
-        if (paths.Count == 0) return new List<Match>();
+        if (paths.Count == 0 && assetId <= 0) return new List<Match>();
         var byHash = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (string path in paths.Take(32))
         {
             string hash = await ContentHash.GetAsync(Path.GetFullPath(path));
             if (!string.IsNullOrEmpty(hash) && !byHash.ContainsKey(hash)) byHash.Add(hash, path);
         }
-        if (byHash.Count == 0) return new List<Match>();
+        if (byHash.Count == 0 && assetId <= 0) return new List<Match>();
+        var request = new JObject { ["hashes"] = JArray.FromObject(byHash.Keys.ToArray()) };
+        if (assetId > 0) request["assetId"] = assetId;
         var response = await MCBJsonRequest.SendAsync<JObject>("POST", MCBUtils.getApiUrl() + "/custom-bases/identify", token,
-            new { hashes = byHash.Keys.ToArray() }, "Identify avatar models");
+            request, "Identify avatar models");
+        return ReadIdentification(avatar, response, byHash, assetId);
+    }
+
+    internal static List<Match> ReadIdentification(Transform avatar, JObject response, IDictionary<string, string> byHash, int assetId)
+    {
         var matches = (response["matches"] as JArray ?? new JArray()).OfType<JObject>().Where(m => m.Value<string>("kind") == "legacy")
-            .Select(m => m.ToObject<Match>()).Where(m => m?.legacyRelease != null && byHash.ContainsKey(m.hash)).ToList();
+            .Select(m => m.ToObject<Match>()).Where(m => m?.legacyRelease != null && (assetId <= 0 || m.assetId == assetId) && byHash.ContainsKey(m.hash)).ToList();
         foreach (var match in matches) match.legacyModelPath = byHash[match.hash];
+        var asset = response["asset"] as JObject;
+        if (assetId <= 0 || asset?.Value<int>("assetId") != assetId || matches.Any(m => m.assetId == assetId)) return matches;
+        var release = RecognizeRelease(FxLayerNames(avatar), asset["legacyReleases"]?.ToObject<List<Release>>());
+        if (release == null) return matches;
+        var originals = asset["originals"]?.ToObject<List<ModelFileData>>() ?? new List<ModelFileData>();
+        var originalHashes = new HashSet<string>(originals.Select(o => o.hash), StringComparer.OrdinalIgnoreCase);
+        foreach (var model in byHash.Where(m => !originalHashes.Contains(m.Key)))
+            matches.Add(new Match { assetId = assetId, assetName = asset.Value<string>("assetName"),
+                avatarBase = asset["avatarBase"]?.ToObject<AvatarAssetBaseInfo>(), kind = "legacy", legacyRelease = release,
+                originals = originals, legacyModelPath = model.Value });
         return matches;
+    }
+
+    internal static IEnumerable<string> FxLayerNames(Transform avatar)
+    {
+        var descriptor = avatar.GetComponent<VRCAvatarDescriptor>();
+        return (descriptor?.baseAnimationLayers ?? Array.Empty<VRCAvatarDescriptor.CustomAnimLayer>())
+            .Where(l => l.type == VRCAvatarDescriptor.AnimLayerType.FX).Select(l => l.animatorController).OfType<AnimatorController>()
+            .SelectMany(c => c.layers).Select(l => l.name).ToArray();
+    }
+
+    internal static Release RecognizeRelease(IEnumerable<string> fxLayers, IEnumerable<Release> releases)
+    {
+        var found = new HashSet<string>((fxLayers ?? Enumerable.Empty<string>()).Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()), StringComparer.Ordinal);
+        return (releases ?? Enumerable.Empty<Release>()).Where(r => r != null).Select(r => new {
+            release = r, names = (r.cleanup?.layers ?? new List<string>()).Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).Distinct(StringComparer.Ordinal).ToArray()
+        }).Select(r => new { r.release, total = r.names.Length, hits = r.names.Count(found.Contains) })
+            .Where(r => r.total > 0 && r.hits >= Math.Min(8, r.total) && r.hits * 5 >= r.total * 3)
+            .OrderByDescending(r => r.hits).ThenBy(r => r.total).Select(r => r.release).FirstOrDefault();
     }
 
     /// <summary>
