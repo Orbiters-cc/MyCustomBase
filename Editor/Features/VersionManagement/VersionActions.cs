@@ -102,7 +102,8 @@ public partial class VersionActions
             StartApplyProgress("Starting download...", 0f);
         }
 
-        EditorCoroutineUtility.StartCoroutineOwnerless(DownloadVersionCoroutine(ver, apply));
+        EditorCoroutineUtility.StartCoroutineOwnerless(MCBWork.Guard(DownloadWithMigrationCoroutine(ver, apply),
+            ex => HandleApplyOrResetException(ex, ver, false)));
     }
     public void StartVersionDelete(CustomBaseVersion ver) => EditorCoroutineUtility.StartCoroutineOwnerless(DeleteVersionCoroutine(ver));
     public void StartApplyVersion() => StartApplyOrResetWithIntro(session.selectedVersionForAction, false, "Starting version switch...");
@@ -147,45 +148,75 @@ public partial class VersionActions
 
     internal IEnumerator ApplyOrResetCoroutine(CustomBaseVersion version, bool isReset)
     {
-        // The base models are read through this inspector's serialized copy: a migration, MCP or another inspector may
-        // have changed the component since, and a stale copy restores the armature from a model the avatar no longer has.
+        yield return MCBWork.Guard(ApplyResolvedVersionCoroutine(version, isReset),
+            ex => HandleApplyOrResetException(ex, version, isReset));
+    }
+
+    private IEnumerator ApplyResolvedVersionCoroutine(CustomBaseVersion version, bool isReset)
+    {
+        BeginApplyProgress(isReset ? "Preparing reset..." : "Checking avatar...", 0f);
+        if (!isReset)
+        {
+            bool migrated = false;
+            yield return ResolveLegacyVersionCoroutine(version, resolved => { version = resolved; migrated = true; });
+            if (migrated && !MCBUtils.IsVersionDownloaded(version))
+            {
+                yield return DownloadVersionCoroutine(version, true);
+                yield break;
+            }
+        }
         session.serializedObject.Update();
-        IEnumerator routine = null;
-        try
-        {
-            routine = RunPreparedMutation(ThenShowApplying(PrepareVersionSwitchCoroutine(version, isReset), isReset), () => ApplyOrResetFollowingAnimations(version, isReset));
-        }
-        catch (Exception ex)
-        {
-            HandleApplyOrResetException(ex, version, isReset);
-            yield break;
-        }
+        yield return RunPreparedMutation(ThenShowApplying(PrepareVersionSwitchCoroutine(version, isReset), isReset),
+            () => ApplyOrResetFollowingAnimations(version, isReset));
+    }
 
-        while (routine != null)
-        {
-            object current = null;
-            bool moved = false;
-            try
-            {
-                moved = routine.MoveNext();
-                if (moved)
-                {
-                    current = routine.Current;
-                }
-            }
-            catch (Exception ex)
-            {
-                HandleApplyOrResetException(ex, version, isReset);
-                yield break;
-            }
+    private IEnumerator DownloadWithMigrationCoroutine(CustomBaseVersion version, bool apply)
+    {
+        if (apply) yield return ResolveLegacyVersionCoroutine(version, resolved => version = resolved);
+        yield return DownloadVersionCoroutine(version, apply);
+    }
 
-            if (!moved)
-            {
-                yield break;
-            }
+    // A legacy migration changes the original and therefore the offered files. Never carry the old version object
+    // across that boundary, even when its version number happens to be the same.
+    private IEnumerator ResolveLegacyVersionCoroutine(CustomBaseVersion requested, Action<CustomBaseVersion> resolved)
+    {
+        if (requested == null) throw new ArgumentNullException(nameof(requested));
+        string token = session.authToken;
+        var target = session.customBaseTarget;
+        // A manual migration, or a retry after discovery failed, also needs a fresh offer before its first apply.
+        bool migrated = target != null && target.appliedCustomBaseAssetId == 0
+            && target.legacyOriginal?.migrated == true && target.legacyOriginal.assetId == requested.assetId
+            && session.HasServerAccess;
+        yield return LegacyMigrationService.PrepareApply(session, requested.assetId, () => migrated = true);
+        if (!migrated) yield break;
+        AvatarAssetDiscoveryResponse offered = null;
+        string error = null;
+        yield return AvatarAssetDiscoveryService.DiscoverAssetsCoroutine(session.authToken, session.GetDetectedAvatarFbxPaths(), true,
+            (response, failure) => { offered = response; error = failure; }, session.customBaseTarget);
+        if (target == null || session.authToken != token)
+            throw new InvalidOperationException("The avatar or signed-in account changed while refreshing migrated versions; apply again.");
+        var asset = offered?.assets?.FirstOrDefault(a => a.id == requested.assetId)
+            ?? throw new InvalidOperationException(error ?? "This asset is not offered for the migrated avatar's original base.");
+        session.Select(asset, refreshVersions: false);
+        session.RedetectBaseFbx();
+        var fetch = AsyncVersionService.Instance.FetchVersionsAsync(session.GetCurrentFBXPath(), session.authToken,
+            asset.id, useCache: false, sourceVersionKey: OriginalBaseLibrary.ActiveKey(asset));
+        while (!fetch.IsCompleted) yield return null;
+        var (versions, recommended, fetchError) = fetch.GetAwaiter().GetResult();
+        if (target == null || session.authToken != token)
+            throw new InvalidOperationException("The avatar or signed-in account changed while refreshing migrated versions; apply again.");
+        var version = SelectMigratedVersion(requested, versions, fetchError);
+        session.serverVersions = versions;
+        session.recommendedVersion = recommended;
+        session.selectedVersionForAction = version;
+        session.RequestRefresh(McbViewParts.All);
+        resolved(version);
+    }
 
-            yield return current;
-        }
+    internal static CustomBaseVersion SelectMigratedVersion(CustomBaseVersion requested, IEnumerable<CustomBaseVersion> offered, string error)
+    {
+        return offered?.FirstOrDefault(v => v.assetId == requested.assetId && v.version == requested.version)
+            ?? throw new InvalidOperationException(error ?? $"Version {requested.version} is not offered for the migrated avatar's original base.");
     }
 
     private void HandleApplyOrResetException(Exception ex, CustomBaseVersion version, bool isReset)
@@ -205,6 +236,7 @@ public partial class VersionActions
 
     private IEnumerator PrepareVersionSwitchCoroutine(CustomBaseVersion version, bool isReset)
     {
+        int generation = applyProgressGeneration;
         var requestedTarget = session.customBaseTarget;
         string requestedToken = session.authToken;
         if (!isReset)
@@ -221,7 +253,7 @@ public partial class VersionActions
                 string originalPath = ResolvePayloadKeyPath(version, patch, targetPath, "native mesh preparation");
                 var prepare = NativeMeshPayloadService.MaterializeEncryptedPayloadAssetCoroutine(
                     version, patch, ResolveVersionPatchPath(version, patch), originalPath, fileManagerService,
-                    (progress, label) => ReportApplyProgress(Mathf.Lerp(0.05f, 0.30f, progress), label),
+                    (progress, label) => { if (generation == applyProgressGeneration) ReportApplyProgress(Mathf.Lerp(0.05f, 0.30f, progress), label); },
                     _ => { }, GetAdvancedMeshPreparationPreload(version, patch));
                 while (prepare.MoveNext()) yield return prepare.Current;
             }
@@ -1101,6 +1133,7 @@ public partial class VersionActions
             session.warningsModule?.AddWarning("The saved custom FBX no longer exists. The current version was kept.", MessageType.Error, "Custom version unavailable");
             yield break;
         }
+        int generation = applyProgressGeneration;
         var requestedTarget = session.customBaseTarget;
         while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
         if (requestedTarget == null || session.customBaseTarget != requestedTarget) yield break;

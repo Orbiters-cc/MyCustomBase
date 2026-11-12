@@ -327,13 +327,17 @@ public static class SmrPathService
     }
 
     public static int RestoreTargetTransformHierarchyFromFbx(Transform avatarRoot, string fbxPath)
+        => RestoreTargetTransformHierarchyFromFbx(avatarRoot, fbxPath, out _);
+
+    public static int RestoreTargetTransformHierarchyFromFbx(Transform avatarRoot, string fbxPath, out string failure)
     {
+        failure = $"The avatar or canonical FBX '{fbxPath}' could not be loaded.";
         if (avatarRoot == null || string.IsNullOrWhiteSpace(fbxPath)) return 0;
 
         var fbxRoot = GetFbxRoot(MCBUtils.ToUnityPath(fbxPath));
         return fbxRoot == null
             ? 0
-            : RestoreTargetTransformHierarchyFromFbxRoot(avatarRoot, fbxRoot.transform);
+            : RestoreTargetTransformHierarchyFromFbxRoot(avatarRoot, fbxRoot.transform, out failure, fbxPath);
     }
 
     /// <summary>
@@ -342,8 +346,13 @@ public static class SmrPathService
     /// and a bone a custom version moved under another parent (a shoulder under ChestUp) returns to its FBX parent.
     /// </summary>
     internal static int RestoreTargetTransformHierarchyFromFbxRoot(Transform avatarRoot, Transform fbxRoot)
+        => RestoreTargetTransformHierarchyFromFbxRoot(avatarRoot, fbxRoot, out _);
+
+    internal static int RestoreTargetTransformHierarchyFromFbxRoot(Transform avatarRoot, Transform fbxRoot, out string failure, string modelPath = null)
     {
+        failure = "The avatar or canonical FBX could not be loaded.";
         if (avatarRoot == null || fbxRoot == null) return 0;
+        failure = $"Canonical FBX '{modelPath ?? fbxRoot.name}' contains no transforms to restore.";
 
         var resolved = new Dictionary<Transform, Transform> { [fbxRoot] = avatarRoot };
         var plans = new List<TransformRestorePlan>();
@@ -367,8 +376,10 @@ public static class SmrPathService
             }
             if (target == null || !plannedTargetIds.Add(target.GetInstanceID()) || (parent != target.parent && parent.IsChildOf(target)))
             {
+                string reason = target == null ? "has no unique counterpart on the avatar" : "cannot be mapped without reusing a transform or creating a hierarchy cycle";
+                failure = $"Cannot restore transform '{path}' from canonical FBX '{modelPath ?? fbxRoot.name}' because it {reason}.";
                 MCBLogger.LogWarning(
-                    $"[SmrPathService] Could not safely restore canonical FBX transform '{path}'. No transform pose was changed.");
+                    "[SmrPathService] " + failure + " No transform pose was changed.");
                 return 0;
             }
 
@@ -397,6 +408,7 @@ public static class SmrPathService
             EditorUtility.SetDirty(plan.target);
         }
 
+        if (plans.Count > 0) failure = null;
         return plans.Count;
     }
 

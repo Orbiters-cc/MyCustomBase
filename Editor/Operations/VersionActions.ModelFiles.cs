@@ -878,11 +878,11 @@ public partial class VersionActions
             : affectedPaths.FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(canonicalFbxPath))
         {
-            int restoredTransforms = SmrPathService.RestoreTargetTransformHierarchyFromFbx(root, canonicalFbxPath);
+            int restoredTransforms = SmrPathService.RestoreTargetTransformHierarchyFromFbx(root, canonicalFbxPath, out string restoreFailure);
             if (restoredTransforms == 0)
             {
                 throw new InvalidOperationException(
-                    $"Advanced mesh transition could not safely restore the canonical FBX armature pose from '{canonicalFbxPath}'.");
+                    restoreFailure);
             }
         }
         // After the skeleton is final: the Animator caches the bones it binds.
@@ -970,13 +970,13 @@ public partial class VersionActions
         {
             canonicalFbxPath = targetPaths.First();
         }
-        int restoredTransforms = SmrPathService.RestoreTargetTransformHierarchyFromFbx(root, canonicalFbxPath);
+        int restoredTransforms = SmrPathService.RestoreTargetTransformHierarchyFromFbx(root, canonicalFbxPath, out string restoreFailure);
         if (restoredTransforms == 0)
         {
             if (activeTransitionRollback != null)
             {
                 throw new InvalidOperationException(
-                    $"No avatar transforms could be safely restored from the canonical FBX '{canonicalFbxPath}' during the advanced mesh transition.");
+                    restoreFailure);
             }
             MCBLogger.LogWarning($"[VersionActions] No avatar transforms were restored from the canonical FBX '{canonicalFbxPath}'.");
         }

@@ -12,7 +12,6 @@ using UnityEngine.UIElements;
 public partial class AssetGalleryModule
 {
     // Per avatar and model files: every inspector of the avatar shares one lookup.
-    private static readonly Dictionary<string, List<LegacyMigrationService.Match>> LegacyLookups = new Dictionary<string, List<LegacyMigrationService.Match>>();
     private string legacySignature;
     private bool legacyLoading, legacyMigrating;
     private List<LegacyMigrationService.Match> legacyMatches = new List<LegacyMigrationService.Match>();
@@ -23,13 +22,12 @@ public partial class AssetGalleryModule
         var owner = editor.customBaseTarget;
         if (owner == null || owner.appliedCustomBaseAssetId > 0) return;
         var avatar = AvatarPaths.Root(owner);
-        string signature = avatar.GetInstanceID() + "|" + string.Join("|", LegacyMigrationService.ModelPaths(avatar));
+        string signature = LegacyMigrationService.LookupKey(avatar, editor.authToken);
         if (signature != legacySignature && !legacyLoading)
         {
             legacySignature = signature;
             legacyError = null;
-            if (LegacyLookups.TryGetValue(signature, out var known)) legacyMatches = known;
-            else { legacyMatches = new List<LegacyMigrationService.Match>(); DetectLegacy(avatar, signature); }
+            legacyMatches = new List<LegacyMigrationService.Match>(); DetectLegacy(avatar, signature);
         }
         foreach (var release in legacyMatches.GroupBy(m => (m.assetId, m.legacyRelease.label))) root.Add(CreateLegacyNotice(avatar, release.ToList()));
     }
@@ -37,7 +35,12 @@ public partial class AssetGalleryModule
     private async void DetectLegacy(Transform avatar, string signature)
     {
         legacyLoading = true;
-        try { legacyMatches = await LegacyMigrationService.FindAsync(avatar, editor.authToken); LegacyLookups[signature] = legacyMatches; }
+        try
+        {
+            var matches = await LegacyMigrationService.LookupAsync(avatar, editor.authToken);
+            if (avatar != null && signature == LegacyMigrationService.LookupKey(avatar, editor.authToken))
+                legacyMatches = matches.ToList();
+        }
         catch (Exception ex) { MCBLogger.Log("[MCB] Could not check for a release made before MCB: " + ex.Message); }
         finally
         {
@@ -54,8 +57,8 @@ public partial class AssetGalleryModule
         var title = CreateLabel(match.legacyRelease.label + " detected", 12, FontStyle.Bold, new Color(0.88f, 0.88f, 0.88f));
         title.AddToClassList("mcb-legacy-notice__title");
         notice.Add(title);
-        var text = CreateLabel("This avatar was made with " + match.legacyRelease.label + ", released before MCB. Migrate it to receive the "
-            + match.assetName + " versions: the old setup that the versions replace is switched off (your FX controller, parameters and "
+        var text = CreateLabel("This avatar was made with " + match.legacyRelease.label + ", released before MCB. Installing a "
+            + match.assetName + " version migrates it automatically, or you can migrate now: the old setup is switched off (your FX controller, parameters and "
             + "menus are copied first). Going back to the original base brings " + match.legacyRelease.label + " back as it is now.",
             11, FontStyle.Normal, new Color(0.72f, 0.72f, 0.72f));
         text.AddToClassList("mcb-legacy-notice__text");
@@ -80,7 +83,6 @@ public partial class AssetGalleryModule
                     LegacyMigrationService.Migrate(avatar, release);
                     legacyError = null;
                     legacyMatches.RemoveAll(release.Contains);
-                    LegacyLookups.Clear();
                     legacySignature = null;
                     // The avatar's models changed: its base models are detected again, and a refresh records their new
                     // signature before discovering again.

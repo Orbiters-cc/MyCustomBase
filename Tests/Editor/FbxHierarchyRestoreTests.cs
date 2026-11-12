@@ -8,6 +8,19 @@ public class FbxHierarchyRestoreTests
 {
     private readonly List<Object> owned = new List<Object>();
 
+    [Test]
+    public void MissingTransformReportsModelAndPathWithoutChangingAnyPose()
+    {
+        var fbx = Rig("Original"); var avatar = Rig("Avatar");
+        Child(fbx.transform, "ExtraArmature");
+        var shoulder = avatar.transform.Find("Armature/Hips/Chest/Left shoulder");
+        shoulder.localPosition = new Vector3(3, 4, 5);
+        Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform,
+            out string failure, "Assets/Base.fbx"), Is.Zero);
+        Assert.That(failure, Is.EqualTo("Cannot restore transform 'ExtraArmature' from canonical FBX 'Assets/Base.fbx' because it has no unique counterpart on the avatar."));
+        Assert.That(shoulder.localPosition, Is.EqualTo(new Vector3(3, 4, 5)));
+    }
+
     [TearDown] public void Clean() { foreach (var item in owned) if (item != null) Object.DestroyImmediate(item); owned.Clear(); }
 
     // An Ultirex-applied Rexouium: the shoulder moved under ChestUp (its original parent was not recorded) and the

@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -23,6 +24,55 @@ using VRC.SDK3.Avatars.ScriptableObjects;
 public static class LegacyMigrationService
 {
     public const string MigratedFolder = "Assets/MCB/migrated";
+    private static readonly Dictionary<string, Task<List<Match>>> Lookups = new Dictionary<string, Task<List<Match>>>();
+
+    internal static string LookupKey(Transform avatar, string token) => MCBUtils.getApiUrl() + "|" + token + "|"
+        + avatar.GetInstanceID() + "|" + string.Join("|", ModelPaths(avatar).Select(p => p + ":" + File.GetLastWriteTimeUtc(p).Ticks));
+
+    /// <summary>Gallery and apply share both completed and in-flight identification; failed requests can be retried.</summary>
+    public static Task<List<Match>> LookupAsync(Transform avatar, string token)
+    {
+        string key = LookupKey(avatar, token);
+        if (!Lookups.TryGetValue(key, out var task) || task.IsFaulted || task.IsCanceled)
+            Lookups[key] = task = FindAsync(avatar, token);
+        return task;
+    }
+
+    internal static IEnumerator PrepareApply(McbSession session, int assetId, Action migrated)
+    {
+        var owner = session.customBaseTarget;
+        if (owner == null) throw new InvalidOperationException("The avatar is no longer available.");
+        if (owner.appliedCustomBaseAssetId > 0 || owner.legacyOriginal?.migrated == true) yield break;
+        // Offline local versions retain their existing apply path; identification requires a signed-in account.
+        if (!session.HasServerAccess) yield break;
+        var avatar = AvatarPaths.Root(owner);
+        string token = session.authToken;
+        string key = LookupKey(avatar, token);
+        var prepare = PrepareApply(assetId, LookupAsync(avatar, token), () =>
+        {
+            if (owner == null || session.authToken != token || LookupKey(avatar, token) != key)
+                throw new InvalidOperationException("The avatar or signed-in account changed while checking its legacy release; apply again.");
+        }, matches =>
+        {
+            // Another view may have migrated while identification was pending.
+            if (owner.legacyOriginal?.migrated == true) return;
+            Migrate(avatar, matches);
+            session.RedetectBaseFbx();
+            migrated();
+        });
+        while (prepare.MoveNext()) yield return prepare.Current;
+    }
+
+    internal static IEnumerator PrepareApply(int assetId, Task<List<Match>> lookup, Action validate, Action<IList<Match>> migrate)
+    {
+        while (!lookup.IsCompleted) yield return null;
+        var matches = lookup.GetAwaiter().GetResult().Where(m => m.assetId == assetId).ToList();
+        validate();
+        if (matches.Count == 0) yield break;
+        if (matches.Select(m => m.legacyRelease.label).Distinct().Count() != 1)
+            throw new InvalidOperationException("This avatar matches more than one legacy release of this asset; migrate one release first.");
+        migrate(matches);
+    }
 
     [JsonObject(MemberSerialization.OptIn)]
     public sealed class Cleanup
@@ -242,6 +292,7 @@ public static class LegacyMigrationService
         Undo.CollapseUndoOperations(group);
         UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(avatar.gameObject.scene);
         AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
+        Lookups.Clear();
         return new { release = match.legacyRelease.label, original = originalPath, renderers = plans.Select(p => AnimationUtility.CalculateTransformPath(p.renderer.transform, avatar)).ToArray(),
             unmatched, removedObjects, assets };
     }

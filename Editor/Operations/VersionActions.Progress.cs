@@ -29,12 +29,8 @@ public partial class VersionActions
 
     private void ReportApplyProgress(float progress, string stepText)
     {
-        if (!ApplyProgress.IsRunning)
-        {
-            applyProgressGeneration++;
-            session.isApplying = true;
-            ApplyProgress.Begin(stepText);
-        }
+        // Deferred mesh progress may arrive after a failed or completed operation. It must never restart it.
+        if (!ApplyProgress.IsRunning) return;
 
         ApplyProgress.Report(MapApplyProgress(progress), stepText);
         session.Repaint();
