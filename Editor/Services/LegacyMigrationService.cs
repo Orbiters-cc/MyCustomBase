@@ -256,6 +256,9 @@ public static class LegacyMigrationService
         string originalPath = AssetDatabase.GetAssetPath(original);
         var originalRenderers = original.GetComponentsInChildren<SkinnedMeshRenderer>(true)
             .ToDictionary(r => AnimationUtility.CalculateTransformPath(r.transform, original.transform), StringComparer.Ordinal);
+        // The original's bones and renderers on the avatar's own armature: an outfit made from the same model is never migrated.
+        var skeleton = OwnSkeleton.Resolve(avatar, original.transform);
+        if (skeleton.Failure != null) throw new InvalidOperationException(skeleton.Failure);
 
         // Plan every renderer first: nothing changes unless every bone resolves.
         var plans = new List<(SkinnedMeshRenderer renderer, SkinnedMeshRenderer source, Transform[] bones, Transform root, string name)>();
@@ -263,15 +266,19 @@ public static class LegacyMigrationService
         foreach (var renderer in avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
             if (renderer.sharedMesh == null || !legacyPaths.Contains(AssetDatabase.GetAssetPath(renderer.sharedMesh))) continue;
+            if (skeleton.Armature != null && !skeleton.IsOwnRenderer(renderer)) continue;
             string path = AnimationUtility.CalculateTransformPath(renderer.transform, avatar);
             string target = cleanup.rendererMap != null && cleanup.rendererMap.TryGetValue(path, out string mapped) ? mapped : path;
-            if (!originalRenderers.TryGetValue(target, out var source)) { unmatched.Add(path); continue; }
-            var bones = source.bones.Select(b => Resolve(avatar, original.transform, b)).ToArray();
+            if (!originalRenderers.TryGetValue(target, out var source))
+                source = skeleton.Renderers.Where(p => p.Value == renderer).Select(p => p.Key).FirstOrDefault();
+            if (source == null) { unmatched.Add(path); continue; }
+            target = AnimationUtility.CalculateTransformPath(source.transform, original.transform);
+            var bones = source.bones.Select(b => skeleton[b]).ToArray();
             int missing = Array.IndexOf(bones, null);
-            if (source.rootBone != null && Resolve(avatar, original.transform, source.rootBone) == null)
-                throw new InvalidOperationException("The avatar has no root bone for " + path + ".");
-            if (missing >= 0) throw new InvalidOperationException("The avatar has no bone '" + source.bones[missing].name + "' for " + path + ".");
-            plans.Add((renderer, source, bones, source.rootBone == null ? renderer.rootBone : Resolve(avatar, original.transform, source.rootBone),
+            if (source.rootBone != null && skeleton[source.rootBone] == null)
+                throw new InvalidOperationException($"Your avatar has no bone matching '{source.rootBone.name}', which the base's '{target}' needs. Nothing was changed.");
+            if (missing >= 0) throw new InvalidOperationException($"Your avatar has no bone matching '{source.bones[missing].name}', which the base's '{target}' needs. Nothing was changed.");
+            plans.Add((renderer, source, bones, source.rootBone == null ? renderer.rootBone : skeleton[source.rootBone],
                 target.Split('/').Last()));
         }
         if (plans.Count == 0) throw new InvalidOperationException("No renderer of this avatar uses the legacy model with a matching original renderer.");
@@ -510,13 +517,11 @@ public static class LegacyMigrationService
         var wanted = new HashSet<string>(originals.Where(o => o?.hash != null).Select(o => o.hash.ToLowerInvariant()), StringComparer.Ordinal);
         var known = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var result = new List<(string, string)>();
-        foreach (var renderer in avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        foreach (var renderer in BaseRenderers(avatar, originalPaths, cleanup))
         {
             string model = renderer.sharedMesh == null ? null : AssetDatabase.GetAssetPath(renderer.sharedMesh);
             if (renderer.sharedMesh == null) continue;
             string path = AnimationUtility.CalculateTransformPath(renderer.transform, avatar);
-            string target = cleanup.rendererMap != null && cleanup.rendererMap.TryGetValue(path, out string mapped) ? mapped : path;
-            if (!originalPaths.Contains(target)) continue;
             if (string.IsNullOrEmpty(model))
                 throw new InvalidOperationException("Save the custom body mesh on '" + path + "' as a project asset before installing this version.");
             if (legacyPaths.Contains(model) || string.Equals(model, originalPath, StringComparison.OrdinalIgnoreCase)) continue;
@@ -527,6 +532,33 @@ public static class LegacyMigrationService
                 known[model] = isOriginal = hash != null && wanted.Contains(hash);
             }
             if (!isOriginal) result.Add((path, model));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The avatar's own renderers standing for the original's renderers: at their paths (or the release's renderer map),
+    /// else renamed or moved (OwnSkeleton.ResolveRenderer). An outfit's "Body" is never one.
+    /// </summary>
+    internal static List<SkinnedMeshRenderer> BaseRenderers(Transform avatar, ICollection<string> originalPaths, Cleanup cleanup)
+    {
+        var skeleton = OwnSkeleton.ForAvatar(avatar);
+        var result = new List<SkinnedMeshRenderer>();
+        var covered = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var renderer in avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            string path = AnimationUtility.CalculateTransformPath(renderer.transform, avatar);
+            string target = cleanup?.rendererMap != null && cleanup.rendererMap.TryGetValue(path, out string mapped) ? mapped : path;
+            if (!originalPaths.Contains(target)) continue;
+            if (skeleton.Armature != null && renderer.bones.Any(b => b != null) && !skeleton.IsOwnRenderer(renderer)) continue;
+            result.Add(renderer);
+            covered.Add(target);
+        }
+        foreach (string path in originalPaths.Where(p => !covered.Contains(p)))
+        {
+            var renderer = skeleton.ResolveRenderer(path, out string ambiguous);
+            if (ambiguous != null) throw new InvalidOperationException(ambiguous);
+            if (renderer != null && !result.Contains(renderer)) result.Add(renderer);
         }
         return result;
     }
@@ -554,15 +586,6 @@ public static class LegacyMigrationService
         var names = new HashSet<string>(originals.Select(o => Path.GetFileName(o.path ?? "")), StringComparer.OrdinalIgnoreCase);
         return AssetDatabase.FindAssets("t:Model").Select(AssetDatabase.GUIDToAssetPath).Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(p => names.Contains(Path.GetFileName(p)) ? 0 : 1).FirstOrDefault(IsOriginal);
-    }
-
-    // The bone of the original model at the same path in the avatar, else the avatar's only transform with its name.
-    private static Transform Resolve(Transform avatar, Transform originalRoot, Transform bone)
-    {
-        var found = avatar.Find(AnimationUtility.CalculateTransformPath(bone, originalRoot));
-        if (found != null) return found;
-        var named = avatar.GetComponentsInChildren<Transform>(true).Where(t => t.name == bone.name).Take(2).ToArray();
-        return named.Length == 1 ? named[0] : null;
     }
 
     // Copies of the FX controller, parameters and menus without the release's layers and parameters, on the descriptor.

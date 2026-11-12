@@ -53,8 +53,28 @@ public sealed class OwnSkeleton
         return result;
     }
 
+    private static readonly Dictionary<Transform, OwnSkeleton> Scoped = new Dictionary<Transform, OwnSkeleton>();
+    private static int scopeDepth;
+
+    private sealed class ScopeEnd : IDisposable
+    {
+        private bool done;
+        public void Dispose() { if (done) return; done = true; if (--scopeDepth == 0) Scoped.Clear(); }
+    }
+
+    /// <summary>Within one synchronous phase (a payload applied), the avatar's own armature is found once.</summary>
+    public static IDisposable Scope() { scopeDepth++; return new ScopeEnd(); }
+
     /// <summary>Only the own armature (no model): for payload bones and generic lookups.</summary>
     public static OwnSkeleton ForAvatar(Transform avatarRoot)
+    {
+        if (avatarRoot != null && scopeDepth > 0 && Scoped.TryGetValue(avatarRoot, out var known)) return known;
+        var built = BuildForAvatar(avatarRoot);
+        if (avatarRoot != null && scopeDepth > 0) Scoped[avatarRoot] = built;
+        return built;
+    }
+
+    private static OwnSkeleton BuildForAvatar(Transform avatarRoot)
     {
         var result = new OwnSkeleton { Root = avatarRoot };
         if (avatarRoot == null) return result;
@@ -85,6 +105,8 @@ public sealed class OwnSkeleton
 
         var modelArmature = ModelArmature(modelRoot, modelRenderers);
         var needed = new HashSet<Transform>(modelRenderers.SelectMany(r => r.bones.Append(r.rootBone)).Where(b => b != null && b != modelRoot));
+        // Nothing tells the armature apart (no humanoid, no skinned body): the one child where the model has its armature.
+        if (Armature == null && modelArmature != null) Armature = Pick(Root, modelArmature.name, modelArmature.name, out _);
         // The renderers first: a moved or renamed body is found by what it is, not by its path alone.
         foreach (var source in modelRenderers)
         {
@@ -112,7 +134,9 @@ public sealed class OwnSkeleton
                 continue;
             }
             Transform target;
-            if (source == modelArmature && Armature != null) target = Armature;
+            // The model's armature is the avatar's own one whatever it is named ("Armature.004"), unless it is itself a bone
+            // the body is skinned to: then its name must match.
+            if (source == modelArmature && Armature != null && (!needed.Contains(source) || BaseName(Armature.name) == BaseName(source.name))) target = Armature;
             else
             {
                 target = Pick(parent, source.name, path, out string failure);
@@ -311,7 +335,10 @@ public sealed class OwnSkeleton
             if (hips.Count == 1 && hips[0] != modelRoot) return TopLevel(modelRoot, hips[0]);
         }
         return renderers.SelectMany(r => r.bones).Where(b => b != null && b != modelRoot && b.IsChildOf(modelRoot))
-            .GroupBy(b => TopLevel(modelRoot, b)).OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
+            .GroupBy(b => TopLevel(modelRoot, b)).OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault()
+            // A bare skeleton: its deepest top-level branch.
+            ?? Enumerable.Range(0, modelRoot.childCount).Select(modelRoot.GetChild).Where(c => c.childCount > 0)
+                .OrderByDescending(c => c.GetComponentsInChildren<Transform>(true).Length).FirstOrDefault();
     }
 
     public static Transform TopLevel(Transform root, Transform t)

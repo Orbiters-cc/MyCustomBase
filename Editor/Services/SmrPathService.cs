@@ -247,14 +247,16 @@ public static class SmrPathService
         var mappedEntries = (smrPaths ?? Enumerable.Empty<ModelFileSmrPathData>())
             .Where(value => value != null && value.avatarPath != null)
             .ToList();
+        var skeleton = OwnSkeleton.Resolve(avatarRoot, fbxRoot);
+        if (skeleton.Failure != null) throw new InvalidOperationException(skeleton.Failure);
         var plannedTargetIds = new HashSet<int>();
         var plans = new List<RendererRestorePlan>();
         if (mappedEntries.Count > 0)
         {
             foreach (var entry in mappedEntries)
             {
-                var targetTransform = FindTransformByRelativePath(avatarRoot, entry.avatarPath);
-                var targetRenderer = targetTransform != null ? targetTransform.GetComponent<SkinnedMeshRenderer>() : null;
+                var targetRenderer = skeleton.ResolveRenderer(entry.avatarPath, out string ambiguous);
+                if (ambiguous != null) throw new InvalidOperationException(ambiguous);
                 var sourceRenderer = ResolveFbxRenderer(fbxRoot, entry);
                 if (targetRenderer == null && sourceRenderer != null && skipMissingRenderers)
                 {
@@ -274,7 +276,7 @@ public static class SmrPathService
                     return 0;
                 }
 
-                if (!TryCreateRendererRestorePlan(avatarRoot, fbxRoot, targetRenderer, sourceRenderer, out var plan))
+                if (!TryCreateRendererRestorePlan(avatarRoot, fbxRoot, skeleton, targetRenderer, sourceRenderer, out var plan))
                 {
                     return 0;
                 }
@@ -291,12 +293,8 @@ public static class SmrPathService
                 if (sourceRenderer == null || sourceRenderer.sharedMesh == null) continue;
 
                 string rendererPath = GetRelativeTransformPath(fbxRoot, sourceRenderer.transform);
-                var targetTransform = FindTransformByRelativePath(avatarRoot, rendererPath);
-                var targetRenderer = targetTransform != null ? targetTransform.GetComponent<SkinnedMeshRenderer>() : null;
-                if (targetRenderer == null)
-                {
-                    targetRenderer = FindUniqueRendererByName(avatarRoot, sourceRenderer.transform.name);
-                }
+                var targetRenderer = skeleton.ResolveRenderer(rendererPath, out string ambiguous);
+                if (ambiguous != null) throw new InvalidOperationException(ambiguous);
 
                 if (targetRenderer == null)
                 {
@@ -311,7 +309,7 @@ public static class SmrPathService
                         $"[SmrPathService] Source renderer path '{rendererPath}' resolves to a duplicate avatar target. No renderer state was changed for this FBX.");
                     return 0;
                 }
-                if (!TryCreateRendererRestorePlan(avatarRoot, fbxRoot, targetRenderer, sourceRenderer, out var plan))
+                if (!TryCreateRendererRestorePlan(avatarRoot, fbxRoot, skeleton, targetRenderer, sourceRenderer, out var plan))
                 {
                     return 0;
                 }
@@ -354,45 +352,33 @@ public static class SmrPathService
         if (avatarRoot == null || fbxRoot == null) return 0;
         failure = $"Canonical FBX '{modelPath ?? fbxRoot.name}' contains no transforms to restore.";
 
-        var resolved = new Dictionary<Transform, Transform> { [fbxRoot] = avatarRoot };
+        // The avatar's own armature only: an outfit's copy of the base skeleton, a decoy "Armature (1)" or a clothing bone
+        // of the same name is never taken for a bone of the model.
+        var skeleton = OwnSkeleton.Resolve(avatarRoot, fbxRoot);
+        if (skeleton.Failure != null)
+        {
+            failure = skeleton.Failure;
+            MCBLogger.LogWarning("[SmrPathService] " + failure);
+            return 0;
+        }
         var plans = new List<TransformRestorePlan>();
-        var plannedTargetIds = new HashSet<int>();
-        var skipped = new List<string>();
-        // Parents come before their children in this order, so every parent is resolved first.
+        var skipped = new List<string>(skeleton.Skipped);
         foreach (var sourceTransform in fbxRoot.GetComponentsInChildren<Transform>(true))
         {
             if (sourceTransform == null || sourceTransform == fbxRoot) continue;
-
-            string path = GetRelativeTransformPath(fbxRoot, sourceTransform);
-            if (!resolved.TryGetValue(sourceTransform.parent, out var parent))
-            {
-                skipped.Add(path);
-                continue;
-            }
-            var target = UniqueChild(parent, sourceTransform.name) ?? FindTransformByRelativePath(avatarRoot, path);
-            if (target == null)
-            {
-                // Moved elsewhere: the one transform of that name inside the same top-level FBX branch (the armature).
-                var branch = sourceTransform;
-                while (branch.parent != fbxRoot) branch = branch.parent;
-                var scope = branch == sourceTransform ? avatarRoot : resolved[branch];
-                var matches = scope.GetComponentsInChildren<Transform>(true).Where(t => t.name == sourceTransform.name && t != scope).Take(2).ToArray();
-                target = matches.Length == 1 ? matches[0] : null;
-            }
-            if (target == null || !plannedTargetIds.Add(target.GetInstanceID()))
-            {
-                skipped.Add(path);
-                continue;
-            }
+            var target = skeleton[sourceTransform];
+            if (target == null) continue;
+            var parent = skeleton[sourceTransform.parent];
+            if (parent == null) continue;
             if (parent == target || (parent != target.parent && parent.IsChildOf(target)))
             {
-                failure = $"Cannot restore transform '{path}' from canonical FBX '{modelPath ?? fbxRoot.name}' because it would create a hierarchy cycle.";
-                MCBLogger.LogWarning(
-                    "[SmrPathService] " + failure + " No transform pose was changed.");
+                string path = GetRelativeTransformPath(fbxRoot, sourceTransform);
+                failure = $"Your avatar's '{GetRelativeTransformPath(avatarRoot, target)}' holds '{GetRelativeTransformPath(avatarRoot, parent)}', "
+                    + $"but in the base model '{modelPath ?? fbxRoot.name}' it is the other way round ('{path}'). Nothing was changed. "
+                    + "Move one of them back where the base has it and try again (this is a hierarchy cycle).";
+                MCBLogger.LogWarning("[SmrPathService] " + failure);
                 return 0;
             }
-
-            resolved[sourceTransform] = target;
             plans.Add(new TransformRestorePlan
             {
                 target = target,
@@ -404,7 +390,8 @@ public static class SmrPathService
         if (skipped.Count > 0)
             MCBLogger.Log($"[SmrPathService] Skipped {skipped.Count} transforms absent or already mapped on the avatar from canonical FBX '{modelPath ?? fbxRoot.name}': {string.Join(", ", skipped)}.");
         if (plans.Count == 0 && skipped.Count > 0)
-            failure = $"Cannot restore transform '{skipped[0]}' from canonical FBX '{modelPath ?? fbxRoot.name}' because no model transforms have a unique counterpart on the avatar.";
+            failure = $"None of the base model's bones ('{skipped[0]}' and the rest of '{modelPath ?? fbxRoot.name}') could be found on your avatar. "
+                + "Nothing was changed. Check that this avatar really uses that base (its armature and body are where the base has them).";
 
         foreach (var plan in plans)
         {
@@ -511,16 +498,7 @@ public static class SmrPathService
         if (root == null) return null;
         if (string.IsNullOrWhiteSpace(relativePath)) return root;
 
-        Transform current = root;
-        foreach (string rawSegment in relativePath.Split('/'))
-        {
-            string segment = rawSegment.Trim();
-            if (string.IsNullOrEmpty(segment)) continue;
-            current = current.Find(segment);
-            if (current == null) return null;
-        }
-
-        return current;
+        return OwnSkeleton.FindByPath(root, relativePath);
     }
 
     private static GameObject GetFbxRoot(string fbxPath)
@@ -753,21 +731,10 @@ public static class SmrPathService
         return null;
     }
 
-    private static SkinnedMeshRenderer FindUniqueRendererByName(Transform avatarRoot, string rendererName)
-    {
-        if (avatarRoot == null || string.IsNullOrWhiteSpace(rendererName)) return null;
-
-        var matches = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
-            .Where(value => value != null &&
-                            string.Equals(value.transform.name, rendererName, StringComparison.Ordinal))
-            .Take(2)
-            .ToList();
-        return matches.Count == 1 ? matches[0] : null;
-    }
-
     private static bool TryCreateRendererRestorePlan(
         Transform avatarRoot,
         Transform fbxRoot,
+        OwnSkeleton skeleton,
         SkinnedMeshRenderer target,
         SkinnedMeshRenderer source,
         out RendererRestorePlan plan)
@@ -789,13 +756,7 @@ public static class SmrPathService
             }
 
             string path = GetRelativeTransformPath(fbxRoot, sourceBone);
-            resolvedBones[i] = sourceBone == fbxRoot
-                ? avatarRoot
-                : FindTransformByRelativePath(avatarRoot, path);
-            if (resolvedBones[i] == null)
-            {
-                resolvedBones[i] = FindUniqueTransformByName(avatarRoot, sourceBone.name);
-            }
+            resolvedBones[i] = sourceBone == fbxRoot ? avatarRoot : skeleton[sourceBone];
             if (resolvedBones[i] == null)
             {
                 MCBLogger.LogWarning($"[SmrPathService] Could not safely restore renderer '{target.name}': source bone '{path}' was not found on the avatar.");
@@ -816,13 +777,7 @@ public static class SmrPathService
         if (source.rootBone != null)
         {
             string rootBonePath = GetRelativeTransformPath(fbxRoot, source.rootBone);
-            resolvedRootBone = source.rootBone == fbxRoot
-                ? avatarRoot
-                : FindTransformByRelativePath(avatarRoot, rootBonePath);
-            if (resolvedRootBone == null)
-            {
-                resolvedRootBone = FindUniqueTransformByName(avatarRoot, source.rootBone.name);
-            }
+            resolvedRootBone = source.rootBone == fbxRoot ? avatarRoot : skeleton[source.rootBone];
             if (resolvedRootBone == null)
             {
                 MCBLogger.LogWarning($"[SmrPathService] Could not safely restore renderer '{target.name}': source root bone '{rootBonePath}' was not found on the avatar.");

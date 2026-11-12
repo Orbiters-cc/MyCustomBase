@@ -11,10 +11,15 @@ public static partial class AvatarDefinitionGenerationService
 {
     /// <summary>Builds humanoid proportions from the same absolute skeleton as the native mesh, at the pose its meshes
     /// are bound in. No scene pose, clothing bones or additive authoring deltas enter the definition.</summary>
-    public static Avatar BuildNativeMeshAvatar(NativeMeshPayloadAsset payload, Avatar mapping)
+    /// <param name="armatureName">The avatar's own armature name when it differs from the payload's ("Armature.004"):
+    /// Unity binds a humanoid by names, so the Avatar must name the avatar's armature, never an outfit's "Armature".</param>
+    public static Avatar BuildNativeMeshAvatar(NativeMeshPayloadAsset payload, Avatar mapping, string armatureName = null)
     {
         if (payload == null || mapping == null || !mapping.isHuman) return null;
         var description = mapping.humanDescription;
+        string hipsName = description.human.Where(h => h.humanName == HumanTrait.BoneName[(int)HumanBodyBones.Hips]).Select(h => h.boneName).FirstOrDefault();
+        string payloadArmature = payload.bones.Select(b => b.path).Where(p => !string.IsNullOrEmpty(p) && Path.GetFileName(p) == hipsName && p.Contains("/"))
+            .Select(p => p.Substring(0, p.IndexOf('/'))).FirstOrDefault();
         var names = new HashSet<string>(payload.bones.Select(b => Path.GetFileName(b.path)));
         if (description.human.Any(b => !names.Contains(b.boneName))) return null; // A partial prop payload.
         var root = new GameObject("MCB Native Humanoid") { hideFlags = HideFlags.HideAndDontSave };
@@ -29,7 +34,9 @@ public static partial class AvatarDefinitionGenerationService
                 string parent = slash < 0 ? "" : path.Substring(0, slash);
                 if (!transforms.TryGetValue(parent, out var parentTransform))
                     throw new InvalidDataException("Native humanoid is missing parent: " + parent);
-                var transform = new GameObject(path.Substring(slash + 1)).transform;
+                string name = path.Substring(slash + 1);
+                if (slash < 0 && !string.IsNullOrEmpty(armatureName) && name == payloadArmature) name = armatureName;
+                var transform = new GameObject(name).transform;
                 transform.SetParent(parentTransform, false);
                 transform.localPosition = bone.localPosition;
                 transform.localRotation = bone.localRotation;
@@ -113,14 +120,17 @@ public static partial class AvatarDefinitionGenerationService
         // second application reuse the same definition instead of applying a delta again.
         var description = mapping.humanDescription;
         description.skeleton = Array.Empty<SkeletonBone>();
-        string key = MCBUtils.PathHash(Hash128.Compute("native-humanoid-2|" + JsonUtility.ToJson(description)).ToString());
+        // The avatar's own armature, when named otherwise than the payload's.
+        var own = OwnSkeleton.ForAvatar(root).Armature;
+        string armatureName = own != null && !payload.bones.Any(b => b.path == own.name) ? own.name : null;
+        string key = MCBUtils.PathHash(Hash128.Compute("native-humanoid-2|" + (armatureName == null ? "" : armatureName + "|") + JsonUtility.ToJson(description)).ToString());
         string payloadPath = AssetDatabase.GetAssetPath(payload);
         string path = string.IsNullOrEmpty(payloadPath) ? null :
             Path.ChangeExtension(payloadPath, null) + ".humanoid-" + key + ".asset";
         var avatar = path == null ? null : AssetDatabase.LoadAssetAtPath<Avatar>(path);
         if (avatar == null)
         {
-            avatar = BuildNativeMeshAvatar(payload, mapping);
+            avatar = BuildNativeMeshAvatar(payload, mapping, armatureName);
             if (avatar == null) return false;
             if (path != null) AssetDatabase.CreateAsset(avatar, path);
         }

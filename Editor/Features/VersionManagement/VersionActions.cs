@@ -307,6 +307,7 @@ public partial class VersionActions
             {
                 string restored = LegacyMigrationService.RestoreOriginal(root);
                 if (restored != null) MCBLogger.Log($"[MCB] The avatar is back on {restored}, as before its migration.");
+                FinishApplyProgress(true);
                 session.RequestRefresh(McbViewParts.All);
                 return;
             }

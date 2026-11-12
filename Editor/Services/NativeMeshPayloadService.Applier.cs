@@ -67,6 +67,7 @@ public static partial class NativeMeshPayloadService
         {
             return;
         }
+        using var skeletonScope = OwnSkeleton.Scope();
 
         // Reject incomplete associations before assigning any mesh. Positional bone
         // fallback can silently bind a skin weight to the wrong joint after rig edits.
@@ -156,6 +157,7 @@ public static partial class NativeMeshPayloadService
         {
             throw new InvalidDataException("Native mesh payload is missing required authoring pose data.");
         }
+        using var skeletonScope = OwnSkeleton.Scope();
 
         var payloadBonesByPath = (payload.bones ?? new List<NativeMeshPayloadBone>())
             .Where(bone => bone != null && !string.IsNullOrWhiteSpace(bone.path))
@@ -271,11 +273,11 @@ public static partial class NativeMeshPayloadService
             var reference = instance.GetComponent<Animator>();
             // The bones the meshes are skinned to: MCB's logic proxies carry the same names, and an Animator may bind those.
             var weighted = new HashSet<Transform>(avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true).SelectMany(r => r.bones).Where(b => b != null));
-            var byName = avatarRoot.GetComponentsInChildren<Transform>(true).GroupBy(t => t.name, StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.OrderByDescending(weighted.Contains).First(), StringComparer.Ordinal);
+            // The avatar's own armature only: an outfit's bone of the same name is never turned.
+            var skeleton = OwnSkeleton.ForAvatar(avatarRoot);
             var mapped = animator.avatar.humanDescription.human.GroupBy(h => h.humanName, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().boneName, StringComparer.Ordinal);
             Transform Bone(HumanBodyBones bone) =>
-                mapped.TryGetValue(HumanTrait.BoneName[(int)bone], out var name) && byName.TryGetValue(name, out var transform) ? transform : null;
+                mapped.TryGetValue(HumanTrait.BoneName[(int)bone], out var name) ? skeleton.ResolveBone(name, weighted.Contains) : null;
             // Directions are compared in each avatar's own root space, so where the avatar stands does not matter.
             var toAvatar = avatarRoot.rotation * Quaternion.Inverse(instance.transform.rotation);
             var recorded = new HashSet<Transform>();
@@ -356,10 +358,12 @@ public static partial class NativeMeshPayloadService
             return;
         }
 
+        var skeleton = OwnSkeleton.ForAvatar(avatarRoot);
         foreach (var renderer in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
             if (renderer != null)
             {
+                if (skeleton.Armature != null && renderer.bones.Any(b => b != null) && !skeleton.IsOwnRenderer(renderer)) continue;
                 if (preserveSharedMeshes && IsSharedMeshForVersion(MCBUtils.ToUnityPath(AssetDatabase.GetAssetPath(renderer.sharedMesh)), null))
                 {
                     SkinnedMeshBounds.Refresh(renderer);
@@ -501,13 +505,13 @@ public static partial class NativeMeshPayloadService
         // An empty recorded path is a renderer on the avatar root; a missing path must be remapped explicitly.
         var target = record.avatarPath.Length == 0 ? avatarRoot : FindTransformByRelativePath(avatarRoot, record.avatarPath);
         var renderer = target != null ? target.GetComponent<SkinnedMeshRenderer>() : null;
-        if (renderer != null || record.avatarPath.Length == 0) return renderer;
-        // The avatar may sit under a scene organizer object: accept the single renderer whose path ends with the recorded one.
-        string suffix = "/" + record.avatarPath.Trim('/');
-        var matches = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
-            .Where(r => r != null && ("/" + GetRelativePath(avatarRoot, r.transform)).EndsWith(suffix, StringComparison.Ordinal))
-            .Take(2).ToArray();
-        return matches.Length == 1 ? matches[0] : null;
+        if (record.avatarPath.Length == 0) return renderer;
+        // The avatar's own renderer at that path, else its one own renderer named like it (a "Meshes/Body", "Body.001"):
+        // an outfit's "Body" skinned to the outfit's armature never stands in for it.
+        var skeleton = OwnSkeleton.ForAvatar(avatarRoot);
+        var own = skeleton.ResolveRenderer(record.avatarPath.Trim('/'), out string ambiguous);
+        if (ambiguous != null) throw new InvalidOperationException(ambiguous);
+        return own;
     }
 
     private static string GetRelativePath(Transform root, Transform target)
@@ -587,37 +591,46 @@ public static partial class NativeMeshPayloadService
         }
     }
 
+    /// <summary>
+    /// The avatar's transform for a version skeleton path, inside its own armature only (never an outfit's copy, a logic
+    /// proxy or a clothing bone). A bone the version adds (absent from the avatar's original model) is only ever the bone
+    /// MCB created for it.
+    /// </summary>
     private static Transform ResolveAvatarTransform(Transform avatarRoot, string path)
     {
         if (avatarRoot == null)
         {
             return null;
         }
-
-        var byPath = FindTransformByRelativePath(avatarRoot, path);
-        if (byPath != null)
+        if (string.IsNullOrWhiteSpace(path)) return avatarRoot;
+        string trimmed = path.Trim('/');
+        var owner = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
+        if (owner != null)
         {
-            return byPath;
+            // A bone MCB created for the version: named so, under the bone its parent path resolves to (the avatar's
+            // armature may be named otherwise than the version's, "Armature.004").
+            string name = GetLastPathSegment(trimmed);
+            var generated = owner.nativeMeshGeneratedBones.Where(b => b != null && b.name == name && b.transform.IsChildOf(avatarRoot)).Select(b => b.transform).ToList();
+            if (generated.Count > 0)
+            {
+                int slash = trimmed.LastIndexOf('/');
+                var parent = slash < 0 ? avatarRoot : ResolveAvatarTransform(avatarRoot, trimmed.Substring(0, slash));
+                var match = generated.FirstOrDefault(b => b.parent == parent);
+                if (match != null) return match;
+            }
+            var names = OriginalModelNames(owner);
+            if (names != null && !names.Contains(name)) return null;
         }
+        return OwnSkeleton.ForAvatar(avatarRoot).ResolveBone(trimmed);
+    }
 
-        string name = GetLastPathSegment(path);
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return null;
-        }
-
-        // Logic proxies can have the same name. Prefer the uniquely weighted skeleton bone.
-        var weighted = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
-            .SelectMany(renderer => renderer.bones).Where(bone => bone != null && bone.name == name && bone.IsChildOf(avatarRoot))
-            .Distinct().Take(2).ToArray();
-        if (weighted.Length == 1) return weighted[0];
-
-        var matches = avatarRoot
-            .GetComponentsInChildren<Transform>(true)
-            .Where(transform => transform != null && string.Equals(transform.name, name, StringComparison.Ordinal))
-            .Take(2)
-            .ToList();
-        return matches.Count == 1 ? matches[0] : null;
+    // The transform names of the avatar's original model (the bones a version can find on the avatar); null without one.
+    private static HashSet<string> OriginalModelNames(MyCustomBase owner)
+    {
+        var model = (owner.versionOriginalModels != null && owner.versionOriginalModels.Count > 0 ? owner.versionOriginalModels : owner.baseFbxFiles)
+            ?.FirstOrDefault(m => m != null);
+        if (model == null) return null;
+        return new HashSet<string>(model.GetComponentsInChildren<Transform>(true).Select(t => t.name), StringComparer.Ordinal);
     }
 
     private static Transform FindTransformByRelativePath(Transform root, string relativePath)

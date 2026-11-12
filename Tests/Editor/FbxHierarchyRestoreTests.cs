@@ -57,8 +57,10 @@ public class FbxHierarchyRestoreTests
         var source = Renderer(fbx.transform, "Body", Own(new Mesh()));
         source.bones = new[] { Child(fbx.transform, "RequiredBone") };
         var oldMesh = Own(new Mesh()); var target = Renderer(avatar.transform, "Body", oldMesh);
-        Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform), Is.GreaterThan(0));
-        Assert.That(SmrPathService.RestoreTargetStateFromFbxRoot(avatar.transform, fbx.transform, null), Is.Zero);
+        // A bone the body is skinned to that the avatar lacks refuses the whole restoration, naming it.
+        Assert.That(SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, fbx.transform, out string failure, "Assets/Base.fbx"), Is.Zero);
+        Assert.That(failure, Does.Contain("'RequiredBone'"));
+        Assert.Throws<System.InvalidOperationException>(() => SmrPathService.RestoreTargetStateFromFbxRoot(avatar.transform, fbx.transform, null));
         Assert.That(target.sharedMesh, Is.SameAs(oldMesh));
     }
 

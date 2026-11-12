@@ -42,9 +42,8 @@ public static partial class NativeMeshPayloadService
                 }
                 continue;
             }
+            // A bone the version adds is always MCB's own, even when clothing has a bone of that name.
             string name = GetLastPathSegment(path);
-            if (root.GetComponentsInChildren<Transform>(true).Any(t => t.name == name))
-                throw new InvalidOperationException("Ambiguous custom bone: " + path);
             if (owner == null || !definitions.TryGetValue(path, out var definition))
                 throw new InvalidOperationException("Missing custom bone definition: " + path);
             var bone = new GameObject(name);
