@@ -78,34 +78,44 @@ the download button.
 Local unreleased package change.
 
 **Your pose is kept.** Before a version is installed, MCB records every object of the avatar: its parent, its place
-among its siblings, whether it is switched on and its position, rotation and scale, and the avatar's renderers. Where
-you posed a bone away from the base model's rest pose (a raised hip, a turned arm, a scaled chest, a bent tail), the
-installed version keeps that change on top of its own pose: a bone the version does not change stays exactly where you
-had it, and a bone the version reshapes takes the version's pose with your adjustment on top. Clothing and props stay
-where they were, apart from following a bone the version itself moves.
+among its siblings, whether it is switched on, its position, rotation and scale, where it sits relative to the avatar,
+the avatar's renderers and its Animator's Avatar. Your posing is measured against the model your skeleton comes from:
+your custom body's own model, the base model, or the prefab your avatar is an instance of (a creator's authored pose),
+whichever reproduces your skeleton (most of its bones unchanged). Each bone you posed away from it (a raised hip, a turned
+arm, a scaled chest, a bent tail, a toe turned by a hundredth of a degree) keeps that change, measured on the avatar as a
+whole, on top of the version's pose: a bone the version does not change stays exactly where you had it, and a bone the
+version reshapes takes the version's pose with your adjustment on top, whatever the version's bone orientation. If no
+model reproduces your skeleton, the version keeps its own pose and the log says so. The reference found at the first
+install stays with the avatar, also once its prefab is unpacked.
+
+**Clothing and props stay where they are.** Objects that are not the version's own (hair, props, contacts, clothing
+bones, outfits), switched on or not, keep their place on the avatar, also on a bone the version moves or turns. A mesh
+skinned to such a bone (a hoodie, a jacket) keeps its shape: MCB rebinds one copy of it per avatar in `Assets/MCB/rebound`,
+reused by later installs and kept after going back (an Undo step can still point at it).
 
 **Going back is exact.** Going back to the original base puts every object the install changed back to its parent,
-order, state and pose from before the install (also after a Unity restart). If you moved something while the version was
-installed, your change is kept on top. Installing again, or switching versions, first goes back this way and then
-installs from a fresh record, so nothing builds up over repeated installs. An install is one Undo step and so is going
-back. When an install or going back fails, the avatar is put back as it was and the message says that nothing was
-changed.
+order, state and pose from before the install (also after a Unity restart), the Animator's Avatar included (also none),
+and references to files missing from your project (a buyer's prefab without some of its files) as they were. If you
+moved something while the version was installed, it stays where you put it; a bone you adjusted keeps the adjustment.
+Installing again, or switching versions, first goes back this way and then installs from a fresh record, so nothing
+builds up over repeated installs; this works the same on a custom body MCB migrated. An install is one Undo step and so
+is going back. When an install or going back fails, the avatar is put back as it was and the message says that nothing
+was changed. Materials MCB put custom veins on get their values back through Unity once the last avatar using them goes
+back; a material never makes going back fail.
 
 **Objects that are not the avatar's own are left alone.** MCB finds the avatar's own armature through the Animator's
-humanoid Hips and the bones the body is skinned to, never by the name "Armature". A full copy of the base used as an
-outfit (with its own `Armature` and `Body`), clothing bones nested in the armature, a spare `Armature (1)` or an empty
-`Body (old)` are never taken for the avatar's own. A renamed armature (`Armature.004`), a renamed body (`Body.001`) or a
-body moved under another object (a `Meshes` folder) is used where it is; renderer objects are never moved. A bone a
-version adds is always created by MCB, even when clothing has a bone with that name. When two objects could both be the
+humanoid Hips and the bones the body is skinned to, never by the name "Armature", and as many levels above the Hips as
+the base model has it (an armature under a `Model` object is found where it is and never moved). A full copy of the base
+used as an outfit (with its own `Armature` and `Body`), clothing bones nested in the armature, a spare `Armature (1)` or
+an empty `Body (old)` are never taken for the avatar's own. A renamed armature (`Armature.004`), a renamed body
+(`Body.001`) or a body moved under another object (a `Meshes` folder) is used where it is; renderer objects are never
+moved. A bone a version adds is always created by MCB, even when clothing has a bone with that name: MCB's bone comes
+first among the same-named objects, so animations find it, and the log names yours. When two objects could both be the
 same bone or body, MCB changes nothing and names them, so you can rename the one that belongs to clothing.
 
 **Prefabs.** Unity cannot move a bone inside a prefab instance. When a version moves a bone of the avatar (Ultirex puts
 each ankle under a `TopFut` bone), MCB unpacks only the outermost prefab instance holding it, keeping nested prefabs
 (outfits) linked. The avatar's own prefab instance stays unpacked after going back.
-
-**Materials and copies.** The materials a version puts custom veins on get their file back exactly as it was once the
-last avatar using them goes back. Clothing meshes MCB rebinds to a moved bone get their own mesh back on going back, and
-the copies are removed.
 </alpha>
 
 ## Supported original bases
