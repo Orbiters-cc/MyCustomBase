@@ -93,7 +93,20 @@ public class MaterialService
         public List<float> values = new List<float>();
         public List<string> keywords = new List<string>();
         public string features, applied;
+        // As the editor serializes them: the keyword lists and each veins texture slot (a missing texture keeps its file
+        // id and GUID there, which the Material API cannot assign).
+        public string validKeywords, invalidKeywords;
+        public List<string> textureSlots = new List<string>();
     }
+
+    private static Newtonsoft.Json.Linq.JObject SerializedFields(Material material)
+    {
+        try { return Newtonsoft.Json.Linq.JObject.Parse(EditorJsonUtility.ToJson(material))["Material"] as Newtonsoft.Json.Linq.JObject; }
+        catch (Exception) { return null; }
+    }
+
+    private static Newtonsoft.Json.Linq.JArray TextureSlots(Newtonsoft.Json.Linq.JObject fields) =>
+        fields?["m_SavedProperties"]?["m_TexEnvs"] as Newtonsoft.Json.Linq.JArray;
 
     // Before the first edit veins make on a material: the values they change, kept on the material itself (it is
     // shared by every avatar that uses it) and on each installed avatar's MyCustomBase. Material files are only ever
@@ -117,6 +130,14 @@ public class MaterialService
         foreach (string property in DetailNormalStrengthProperties.Concat(DetailNormalToggleProperties).Distinct().Where(material.HasProperty))
         {
             before.floats.Add(property); before.values.Add(material.GetFloat(property));
+        }
+        var fields = SerializedFields(material);
+        if (fields != null)
+        {
+            before.validKeywords = fields["m_ValidKeywords"]?.ToString(Newtonsoft.Json.Formatting.None);
+            before.invalidKeywords = fields["m_InvalidKeywords"]?.ToString(Newtonsoft.Json.Formatting.None);
+            foreach (var slot in TextureSlots(fields) ?? new Newtonsoft.Json.Linq.JArray())
+                if (DetailNormalTextureProperties.Contains((string)slot["first"])) before.textureSlots.Add(slot.ToString(Newtonsoft.Json.Formatting.None));
         }
         material.SetOverrideTag(VeinsBeforeTag, JsonUtility.ToJson(before));
     }
@@ -157,6 +178,22 @@ public class MaterialService
         material.SetOverrideTag(EnabledDetailFeaturesTag, before.features ?? "");
         material.SetOverrideTag(AppliedVeinsTag, before.applied ?? "");
         material.SetOverrideTag(VeinsBeforeTag, "");
+        // The exact keyword lists and texture slots as recorded (a missing texture included), through Unity's serialization.
+        var fields = SerializedFields(material);
+        var slots = TextureSlots(fields);
+        if (fields != null && slots != null && (before.textureSlots.Count > 0 || before.validKeywords != null))
+        {
+            foreach (string recorded in before.textureSlots ?? new List<string>())
+            {
+                var slot = Newtonsoft.Json.Linq.JObject.Parse(recorded);
+                var current = slots.FirstOrDefault(s => (string)s["first"] == (string)slot["first"]);
+                if (current != null) current.Replace(slot);
+            }
+            var part = new Newtonsoft.Json.Linq.JObject { ["m_SavedProperties"] = fields["m_SavedProperties"] };
+            if (before.validKeywords != null) part["m_ValidKeywords"] = Newtonsoft.Json.Linq.JToken.Parse(before.validKeywords);
+            if (before.invalidKeywords != null) part["m_InvalidKeywords"] = Newtonsoft.Json.Linq.JToken.Parse(before.invalidKeywords);
+            EditorJsonUtility.FromJsonOverwrite(new Newtonsoft.Json.Linq.JObject { ["Material"] = part }.ToString(Newtonsoft.Json.Formatting.None), material);
+        }
         EditorUtility.SetDirty(material);
         if (EditorUtility.IsPersistent(material)) AssetDatabase.SaveAssetIfDirty(material);
         return true;
