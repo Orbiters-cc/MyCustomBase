@@ -175,6 +175,8 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public LegacyOriginal legacyOriginal = new LegacyOriginal();
     // The person's own pose, hierarchy and renderer state from before the installed version (restored on going back).
     [HideInInspector] public PoseLedger poseLedger = new PoseLedger();
+    // Materials an installed version put custom veins on (each records its values from before, see MaterialService).
+    [HideInInspector] public List<Material> veinMaterials = new List<Material>();
     // Physic of versions that support it (secondary-motion PhysBones). Off: the build strips those bones instead.
     [HideInInspector] public bool physicEnabled;
     // Squishy chains of versions that support them. Off: the build strips those bones instead.

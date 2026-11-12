@@ -80,6 +80,113 @@ public class MaterialService
     internal const string EnabledDetailFeaturesTag = "MCBDetailNormalFeatures";
     // Material tag with the content hash of the veins texture MCB set: a copy of that texture is still MCB's veins.
     internal const string AppliedVeinsTag = "MCBAppliedVeins";
+    // Material tag with what the veins changed, as it was before the first install that put veins on it (JSON).
+    internal const string VeinsBeforeTag = "MCBVeinsBefore";
+
+    [Serializable]
+    private sealed class VeinsBefore
+    {
+        public List<string> textures = new List<string>();
+        public List<string> textureGuids = new List<string>();
+        public List<long> textureIds = new List<long>();
+        public List<string> floats = new List<string>();
+        public List<float> values = new List<float>();
+        public List<string> keywords = new List<string>();
+        public string features, applied;
+    }
+
+    // Before the first edit veins make on a material: the values they change, kept on the material itself (it is
+    // shared by every avatar that uses it).
+    // A project material's file as it was before the first veins: Unity drops some of a file's keywords and missing
+    // texture references when it rewrites a material, so going back writes these bytes back instead of values.
+    private const string MaterialBackupFolder = "Library/MCB/MaterialsBeforeVeins";
+
+    private static string BackupPath(Material material)
+    {
+        string path = AssetDatabase.GetAssetPath(material);
+        if (string.IsNullOrEmpty(path) || !path.EndsWith(".mat", StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) return null;
+        return Path.Combine(MaterialBackupFolder, AssetDatabase.AssetPathToGUID(path) + ".mat");
+    }
+
+    private static void RecordVeinsBefore(Material material)
+    {
+        if (material == null || material.GetTag(VeinsBeforeTag, false, string.Empty).Length > 0) return;
+        string backup = BackupPath(material);
+        if (backup != null)
+        {
+            Directory.CreateDirectory(MaterialBackupFolder);
+            File.Copy(AssetDatabase.GetAssetPath(material), backup, true);
+        }
+        var before = new VeinsBefore
+        {
+            keywords = material.shaderKeywords.ToList(),
+            features = material.GetTag(EnabledDetailFeaturesTag, false, string.Empty),
+            applied = material.GetTag(AppliedVeinsTag, false, string.Empty)
+        };
+        foreach (string property in DetailNormalTextureProperties.Where(material.HasProperty))
+        {
+            var texture = material.GetTexture(property);
+            string guid = ""; long id = 0;
+            if (texture != null) AssetDatabase.TryGetGUIDAndLocalFileIdentifier(texture, out guid, out id);
+            before.textures.Add(property); before.textureGuids.Add(guid ?? ""); before.textureIds.Add(id);
+        }
+        foreach (string property in DetailNormalStrengthProperties.Concat(DetailNormalToggleProperties).Distinct().Where(material.HasProperty))
+        {
+            before.floats.Add(property); before.values.Add(material.GetFloat(property));
+        }
+        material.SetOverrideTag(VeinsBeforeTag, JsonUtility.ToJson(before));
+    }
+
+    /// <summary>Whether the material holds MCB's record of its values from before a version's veins.</summary>
+    public static bool HasVeinsRecord(Material material) => material != null && material.GetTag(VeinsBeforeTag, false, string.Empty).Length > 0;
+
+    /// <summary>
+    /// Puts back exactly what custom veins changed on the material (textures, strengths, toggles, keywords, MCB's tags),
+    /// as it was before the first install that put veins on it.
+    /// </summary>
+    public static bool RestoreVeinsBefore(Material material)
+    {
+        if (!HasVeinsRecord(material)) return false;
+        string backup = BackupPath(material);
+        if (backup != null && File.Exists(backup))
+        {
+            // The project's material file exactly as it was; Unity loads it again.
+            string path = AssetDatabase.GetAssetPath(material);
+            Undo.RecordObject(material, "MCB Restore Material");
+            // Unity maps the files it read: let go of them before writing.
+            AssetDatabase.ReleaseCachedFileHandles();
+            File.WriteAllBytes(path, File.ReadAllBytes(backup));
+            File.Delete(backup);
+            EditorUtility.ClearDirty(material);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            return true;
+        }
+        var before = JsonUtility.FromJson<VeinsBefore>(material.GetTag(VeinsBeforeTag, false, string.Empty));
+        Undo.RecordObject(material, "MCB Restore Material");
+        for (int i = 0; i < before.textures.Count; i++)
+        {
+            Texture texture = null;
+            if (!string.IsNullOrEmpty(before.textureGuids[i]))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(before.textureGuids[i]);
+                texture = AssetDatabase.LoadAllAssetsAtPath(path).OfType<Texture>().FirstOrDefault(t => AssetDatabase.TryGetGUIDAndLocalFileIdentifier(t, out _, out long id) && id == before.textureIds[i])
+                          ?? AssetDatabase.LoadAssetAtPath<Texture>(path);
+            }
+            if (material.HasProperty(before.textures[i])) material.SetTexture(before.textures[i], texture);
+        }
+        for (int i = 0; i < before.floats.Count; i++)
+            if (material.HasProperty(before.floats[i])) material.SetFloat(before.floats[i], before.values[i]);
+        material.shaderKeywords = before.keywords.ToArray();
+        material.SetOverrideTag(EnabledDetailFeaturesTag, before.features ?? "");
+        material.SetOverrideTag(AppliedVeinsTag, before.applied ?? "");
+        material.SetOverrideTag(VeinsBeforeTag, "");
+        EditorUtility.SetDirty(material);
+        if (EditorUtility.IsPersistent(material)) AssetDatabase.SaveAssetIfDirty(material);
+        return true;
+    }
+
+    /// <summary>The materials of this service's edits that carry a veins record.</summary>
+    public IEnumerable<Material> RecordedVeinMaterials() => touchedMaterials.Where(HasVeinsRecord);
 
     private static readonly string[] DetailNormalStrengthProperties =
     {
@@ -184,7 +291,7 @@ public class MaterialService
         foreach (var smr in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             foreach (var material in smr.sharedMaterials)
             {
-                if (material == null || !done.Add(material) || !HasVersionVeins(material)) continue;
+                if (material == null || !done.Add(material) || !HasVersionVeins(material) || HasVeinsRecord(material)) continue;
                 PrepareMaterialEdit(smr, material, "MCB Remove Custom Veins");
                 TrySetDetailNormalTexture(material, null);
                 ApplyDetailNormalOpacity(material, 0f);
@@ -378,6 +485,7 @@ public class MaterialService
 
         // Set the detail normal map property
         PrepareMaterialEdit(smr, material, "MCB Apply Detail Normal Map");
+        RecordVeinsBefore(material);
         if (!TrySetDetailNormalTexture(material, texture))
         {
             MCBLogger.LogWarning($"[MaterialService] Skipped detail normal map for '{GetRendererLabel(smr)}' because material '{material.name}' has no supported detail normal texture property.");
@@ -423,6 +531,7 @@ public class MaterialService
 
         // Set the detail normal map scale property
         PrepareMaterialEdit(smr, material, "MCB Update Detail Normal Opacity");
+        RecordVeinsBefore(material);
         EnableDetailNormalFeatures(material);
         ApplyDetailNormalOpacity(material, opacity);
         FinalizeMaterialEdit(smr, material);
@@ -451,7 +560,7 @@ public class MaterialService
         // Every apply and reset clears veins: a renderer without a material, or with a shader MCB never sets veins on (lilToon,
         // a missing shader), simply has none of MCB's to remove. A detail normal the user or another tool set is not MCB's either.
         var material = smr.sharedMaterial;
-        if (material == null || !IsShaderSupported(material.shader.name) || !HasVersionVeins(material))
+        if (material == null || !IsShaderSupported(material.shader.name) || !HasVersionVeins(material) || HasVeinsRecord(material))
         {
             return false;
         }

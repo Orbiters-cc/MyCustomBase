@@ -562,6 +562,8 @@ public partial class VersionActions
             {
                 var mesh = renderer.sharedMesh;
                 if (mesh == null || isBase(renderer)) continue;
+                // An earlier rebound copy is never the start: the person's own mesh is (recorded before the install).
+                if (AssetDatabase.GetAssetPath(mesh).StartsWith(ReboundFolder + "/", StringComparison.OrdinalIgnoreCase)) continue;
                 var bones = renderer.bones;
                 var poses = mesh.bindposes;
                 if (poses.Length != bones.Length) continue;
@@ -581,7 +583,8 @@ public partial class VersionActions
                 copy.bindposes = poses;
                 string folder = ReboundFolder + "/" + Safe(root.name);
                 EnsureFolder(folder);
-                string path = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + Safe(renderer.name) + ".asset");
+                string path = folder + "/" + Safe(renderer.name) + " " + renderer.GetInstanceID() + ".asset";
+                if (AssetDatabase.LoadMainAssetAtPath(path) != null) AssetDatabase.DeleteAsset(path);
                 AssetDatabase.CreateAsset(copy, path);
                 Undo.RecordObject(renderer, "Keep meshes on the body");
                 renderer.sharedMesh = copy;
@@ -989,6 +992,9 @@ public partial class VersionActions
 
                     if (veinsApplied)
                     {
+                        Undo.RecordObject(session.customBaseTarget, "Record custom veins");
+                        foreach (var material in materialService.RecordedVeinMaterials())
+                            if (!session.customBaseTarget.veinMaterials.Contains(material)) session.customBaseTarget.veinMaterials.Add(material);
                         // Sync the toggle state with the applied state
                         EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, true);
                         MCBLogger.Log($"[VersionActions] Custom veins applied from version {version.version}");
@@ -1001,7 +1007,9 @@ public partial class VersionActions
             }
             else
             {
-                // Remove custom veins when switching to a version without the feature or resetting
+                // Remove custom veins when switching to a version without the feature or resetting: a material with
+                // MCB's record goes back exactly as it was, once no other installed avatar of the open scenes uses it.
+                if (RestoreRecordedVeins(session.customBaseTarget, targetMaterialRenderers)) materialStateChanged = true;
                 foreach (var renderer in MaterialService.DistinctMaterialRenderers(targetMaterialRenderers))
                 {
                     if (materialService.RemoveDetailNormalMap(renderer, false))
@@ -1192,6 +1200,22 @@ public partial class VersionActions
         EditorCoroutineUtility.StartCoroutineOwnerless(
             RecalculateCurrentFbxHashCoroutine(hashGeneration, applyProgressGeneration));
         profile.Done();
+    }
+
+    private static bool RestoreRecordedVeins(MyCustomBase owner, IEnumerable<SkinnedMeshRenderer> renderers)
+    {
+        var materials = owner.veinMaterials.Where(m => m != null)
+            .Concat(renderers.Where(r => r != null).SelectMany(r => r.sharedMaterials).Where(MaterialService.HasVeinsRecord)).Distinct().ToList();
+        if (materials.Count == 0 && owner.veinMaterials.Count == 0) return false;
+        var others = UnityEngine.Object.FindObjectsOfType<MyCustomBase>(true).Where(o => o != owner && o.appliedCustomBaseAssetId != 0)
+            .SelectMany(o => AvatarPaths.Root(o).GetComponentsInChildren<Renderer>(true)).SelectMany(r => r.sharedMaterials).Where(m => m != null);
+        var stillUsed = new HashSet<Material>(others);
+        bool restored = false;
+        foreach (var material in materials)
+            if (!stillUsed.Contains(material)) restored |= MaterialService.RestoreVeinsBefore(material);
+        Undo.RecordObject(owner, "Restore materials");
+        owner.veinMaterials.Clear();
+        return restored;
     }
 
     // A refit saves and restores fits per version: switching while one runs would mix two custom bases.

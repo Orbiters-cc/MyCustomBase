@@ -33,14 +33,18 @@ internal sealed class AvatarTransaction
         return transaction;
     }
 
+    // The folders an install writes the avatar's own copies into: migrated descriptor assets and bodies, rebound meshes.
     private static HashSet<string> Files()
     {
-        string folder = Path.GetFullPath(LegacyMigrationService.MigratedFolder);
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!Directory.Exists(folder)) return result;
-        foreach (string entry in Directory.GetFileSystemEntries(folder, "*", SearchOption.AllDirectories))
-            if (!entry.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) result.Add(Path.GetFullPath(entry));
-        result.Add(folder);
+        foreach (string unity in new[] { LegacyMigrationService.MigratedFolder, VersionPoseLedgerService.ReboundFolder })
+        {
+            string folder = Path.GetFullPath(unity);
+            if (!Directory.Exists(folder)) continue;
+            foreach (string entry in Directory.GetFileSystemEntries(folder, "*", SearchOption.AllDirectories))
+                if (!entry.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) result.Add(Path.GetFullPath(entry));
+            result.Add(folder);
+        }
         return result;
     }
 

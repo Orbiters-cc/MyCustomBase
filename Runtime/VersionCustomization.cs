@@ -269,6 +269,8 @@ public sealed class RendererLayoutConfiguration
 {
     public SkinnedMeshRenderer renderer; public Mesh mesh; public Transform rootBone; public Transform[] bones;
     public Bounds bounds; public bool enabled; public bool updateWhenOffscreen;
+    // The mesh reference as serialized (also a missing asset's), for a renderer that had no loadable mesh.
+    public int meshId;
 }
 [Serializable] public sealed class PoseLedger
 {

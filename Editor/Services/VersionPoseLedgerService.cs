@@ -37,12 +37,20 @@ internal static class VersionPoseLedgerService
     internal sealed class RendererState
     {
         public Mesh mesh; public Transform rootBone; public Transform[] bones; public Bounds bounds; public bool enabled, updateWhenOffscreen;
+        public int meshId;
 
         public static RendererState Of(SkinnedMeshRenderer r) => new RendererState
         {
             mesh = r.sharedMesh, rootBone = r.rootBone, bones = r.bones, bounds = r.localBounds, enabled = r.enabled,
-            updateWhenOffscreen = r.updateWhenOffscreen
+            updateWhenOffscreen = r.updateWhenOffscreen, meshId = MeshId(r)
         };
+
+        // The serialized mesh reference: a missing asset (a buyer's prefab without its mesh files) keeps its own id.
+        public static int MeshId(SkinnedMeshRenderer r)
+        {
+            if (r.sharedMesh != null) return r.sharedMesh.GetInstanceID();
+            using (var serialized = new SerializedObject(r)) return serialized.FindProperty("m_Mesh").objectReferenceInstanceIDValue;
+        }
 
         public bool Same(SkinnedMeshRenderer r) => r.sharedMesh == mesh && r.rootBone == rootBone && r.bones.SequenceEqual(bones)
                                                     && r.localBounds == bounds && r.enabled == enabled && r.updateWhenOffscreen == updateWhenOffscreen;
@@ -190,7 +198,7 @@ internal static class VersionPoseLedgerService
             var r = pair.Key; var b = pair.Value;
             if (r == null || b.Same(r)) continue;
             ledger.renderers.Add(new PoseLedgerRenderer { renderer = r, mesh = b.mesh, rootBone = b.rootBone, bones = b.bones, bounds = b.bounds,
-                enabled = b.enabled, updateWhenOffscreen = b.updateWhenOffscreen });
+                enabled = b.enabled, updateWhenOffscreen = b.updateWhenOffscreen, meshId = b.meshId });
         }
         Undo.RecordObject(owner, "Record the avatar's pose");
         owner.poseLedger = ledger;
@@ -250,7 +258,7 @@ internal static class VersionPoseLedgerService
         var renderers = new Dictionary<SkinnedMeshRenderer, RendererState>();
         foreach (var pair in ledgerRenderers)
             renderers[pair.Key] = new RendererState { mesh = pair.Value.mesh, rootBone = pair.Value.rootBone, bones = pair.Value.bones, bounds = pair.Value.bounds,
-                enabled = pair.Value.enabled, updateWhenOffscreen = pair.Value.updateWhenOffscreen };
+                enabled = pair.Value.enabled, updateWhenOffscreen = pair.Value.updateWhenOffscreen, meshId = pair.Value.meshId };
         foreach (var pair in pending.before.renderers)
             if (pair.Key != null && !renderers.ContainsKey(pair.Key)) renderers[pair.Key] = pair.Value;
         Put(wanted, renderers, step);
@@ -312,8 +320,47 @@ internal static class VersionPoseLedgerService
             }
 
         // A renderer's fields come back when it carries the recorded mesh again (a restored custom body is not overwritten).
+        // A renderer that had no mesh (or a missing one) gets that reference back instead of the base's mesh, and a
+        // clothing mesh MCB rebound for the version gets its own mesh back.
+        var rebound = new HashSet<Mesh>();
         foreach (var pair in renderers)
-            if (pair.Key != null && pair.Key.sharedMesh == pair.Value.mesh) Apply(pair.Key, pair.Value, step);
+        {
+            var renderer = pair.Key; var state = pair.Value;
+            if (renderer == null) continue;
+            if (state.mesh == null && renderer.sharedMesh != null && state.meshId != renderer.sharedMesh.GetInstanceID())
+            {
+                using (var serialized = new SerializedObject(renderer))
+                {
+                    serialized.FindProperty("m_Mesh").objectReferenceInstanceIDValue = state.meshId;
+                    serialized.ApplyModifiedProperties();
+                }
+            }
+            else if (state.mesh != null && renderer.sharedMesh != null && renderer.sharedMesh != state.mesh && IsRebound(renderer.sharedMesh))
+            {
+                rebound.Add(renderer.sharedMesh);
+                Undo.RecordObject(renderer, step);
+                renderer.sharedMesh = state.mesh;
+            }
+            if (renderer.sharedMesh == state.mesh) Apply(renderer, state, step);
+        }
+        DeleteUnused(rebound);
+    }
+
+    public const string ReboundFolder = "Assets/MCB/rebound";
+
+    private static bool IsRebound(Mesh mesh)
+    {
+        string path = AssetDatabase.GetAssetPath(mesh);
+        return path.StartsWith(ReboundFolder + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // A rebound copy no renderer of an open scene uses any more is removed: one avatar never piles copies up.
+    private static void DeleteUnused(HashSet<Mesh> meshes)
+    {
+        if (meshes.Count == 0) return;
+        var used = new HashSet<Mesh>(UnityEngine.Object.FindObjectsOfType<SkinnedMeshRenderer>(true).Select(r => r.sharedMesh).Where(m => m != null));
+        foreach (var mesh in meshes)
+            if (mesh != null && !used.Contains(mesh)) AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(mesh));
     }
 
     private static void Apply(SkinnedMeshRenderer renderer, RendererState state, string step)
