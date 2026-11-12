@@ -397,7 +397,8 @@ public static class SmrPathService
         {
             // The objects holding the renderers stay where the person put them (a "Meshes" folder, a moved body).
             if (plan.source.GetComponent<Renderer>() != null && plan.target.GetComponent<Renderer>() != null) continue;
-            if (plan.target.parent != plan.parent)
+            // The model's top-level objects (its armature) stay where the avatar has them (root/Model/Armature).
+            if (plan.target.parent != plan.parent && plan.source.parent != fbxRoot)
             {
                 // A version moved this bone; the original model's hierarchy is the reset state.
                 VersionPoseLedgerService.UnpackFor(plan.target);

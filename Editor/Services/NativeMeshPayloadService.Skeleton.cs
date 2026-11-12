@@ -24,7 +24,8 @@ public static partial class NativeMeshPayloadService
             if (parent == null) throw new InvalidOperationException("Your avatar has no bone where the version adds '" + path + "' (its parent is missing or renamed). Nothing was changed. Undo the bone change and try again.");
             if (existing != null)
             {
-                if (existing.parent != parent)
+                // A top-level object of the version (the armature) stays where the avatar has it (root/Model/Armature).
+                if (existing.parent != parent && slash >= 0)
                 {
                     if (owner == null || parent.IsChildOf(existing)) throw new InvalidOperationException("The version would put '" + path + "' under one of its own children on your avatar. Nothing was changed. Move that bone back where the base has it and try again.");
                     // Unity silently refuses reparenting model-prefab children. Unpack only when
@@ -52,6 +53,16 @@ public static partial class NativeMeshPayloadService
             bone.transform.localPosition = definition.localPosition;
             bone.transform.localRotation = definition.localRotation;
             bone.transform.localScale = definition.localScale;
+            // An object of the person's with that name already there (clothing's own TopFut_L): MCB's bone comes first,
+            // so every path lookup (animations, Transform.Find) finds the version's bone. Removing it on going back puts
+            // the order back.
+            var sameNamed = Enumerable.Range(0, parent.childCount).Select(parent.GetChild).Where(t => t != bone.transform && t.name == name).ToList();
+            if (sameNamed.Count > 0)
+            {
+                bone.transform.SetSiblingIndex(sameNamed.Min(t => t.GetSiblingIndex()));
+                MCBLogger.Log($"[MCB] Your avatar has its own '{AnimationUtility.CalculateTransformPath(sameNamed[0], root)}' where the version adds that bone: "
+                    + "MCB adds its own bone first and leaves yours as it is.");
+            }
             Undo.RecordObject(owner, "Track custom mesh bone");
             owner.nativeMeshGeneratedBones.Add(bone);
             EditorUtility.SetDirty(owner);

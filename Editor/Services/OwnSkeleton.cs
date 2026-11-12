@@ -14,7 +14,10 @@ using UnityEngine;
 public sealed class OwnSkeleton
 {
     public Transform Root { get; private set; }
-    /// <summary>The avatar's own armature (a top-level child of the root), or null when none can be told apart.</summary>
+    /// <summary>
+    /// The avatar's own armature: the ancestor of its Hips as many levels up as the model's armature is above the model's
+    /// Hips, wherever it sits (a direct child of the root, or deeper: root/Model/Armature); null when none can be told apart.
+    /// </summary>
     public Transform Armature { get; private set; }
     /// <summary>Model transform -> avatar transform, for every model transform that maps.</summary>
     public readonly Dictionary<Transform, Transform> Map = new Dictionary<Transform, Transform>();
@@ -79,7 +82,7 @@ public sealed class OwnSkeleton
         var result = new OwnSkeleton { Root = avatarRoot };
         if (avatarRoot == null) return result;
         result.CollectHumanChain();
-        result.Armature = result.FindOwnArmature(null);
+        result.Armature = result.FindOwnArmature(null, OwnerModelLevels(avatarRoot));
         if (result.Armature != null)
             foreach (var renderer in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
                 if (result.IsOwnRenderer(renderer))
@@ -99,7 +102,26 @@ public sealed class OwnSkeleton
             var renderer = at != null ? at.GetComponent<SkinnedMeshRenderer>() : null;
             if (renderer != null) atPaths.Add(renderer);
         }
-        Armature = FindOwnArmature(atPaths);
+        // Renderers moved elsewhere (under a "Model" object): those named like the model's tell the branch.
+        if (atPaths.Count == 0)
+        {
+            var names = new HashSet<string>(modelRenderers.Select(r => BaseName(r.name)));
+            atPaths.AddRange(Root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => names.Contains(BaseName(r.name))));
+        }
+        int levels = ModelLevels(modelRoot, modelRenderers);
+        Armature = FindOwnArmature(atPaths, levels);
+        // Without a humanoid Hips the branch was chosen by the bones the body uses: the armature itself sits as many levels
+        // above the model's Hips as in the model, inside that branch (root/Model/Armature).
+        var modelHips = ModelHips(modelRoot) ?? ModelHipsByName(modelRoot, modelRenderers);
+        if (Armature != null && levels > 0 && modelHips != null)
+        {
+            var hips = Armature.GetComponentsInChildren<Transform>(true).Where(t => t.name == modelHips.name && !InOutfitCopy(t)).Take(2).ToList();
+            if (hips.Count == 1)
+            {
+                var above = Above(hips[0], levels);
+                if (above != null && (above == Armature || above.IsChildOf(Armature))) Armature = above;
+            }
+        }
         foreach (var renderer in Root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             if (IsOwnRenderer(renderer)) foreach (var bone in renderer.bones) if (bone != null) baseWeighted.Add(bone);
 
@@ -235,7 +257,7 @@ public sealed class OwnSkeleton
                 for (int i = 0; i < node.childCount; i++)
                 {
                     var child = node.GetChild(i);
-                    if (child != t && Armature != null && (child.name == Armature.name || BaseName(child.name) == BaseName(Armature.name))
+                    if (child != t && child != Armature && Armature != null && (child.name == Armature.name || BaseName(child.name) == BaseName(Armature.name))
                         && child.GetComponentsInChildren<Transform>(true).Length > 1) return true;
                 }
         }
@@ -296,9 +318,10 @@ public sealed class OwnSkeleton
         }
     }
 
-    // The top-level branch holding the Animator's humanoid Hips, unless the base renderers are skinned to another branch;
-    // otherwise the branch holding most of the base renderers' bones. Never chosen by its name.
-    private Transform FindOwnArmature(List<SkinnedMeshRenderer> baseRenderers)
+    // The branch holding the Animator's humanoid Hips (as many levels above them as the model has its armature), unless
+    // the base renderers are skinned to another branch; otherwise the branch holding most of the base renderers' bones.
+    // Never chosen by its name.
+    private Transform FindOwnArmature(List<SkinnedMeshRenderer> baseRenderers, int levels)
     {
         Transform hipsBranch = null;
         var animator = Root.GetComponent<Animator>();
@@ -306,7 +329,14 @@ public sealed class OwnSkeleton
         {
             Transform hips = null;
             try { hips = animator.GetBoneTransform(HumanBodyBones.Hips); } catch (Exception) { }
-            if (hips != null && hips != Root && hips.IsChildOf(Root)) hipsBranch = TopLevel(Root, hips);
+            if (hips != null && hips != Root && hips.IsChildOf(Root)) hipsBranch = Above(hips, levels);
+        }
+        if (hipsBranch != null && hipsBranch.parent != Root)
+        {
+            // Deeper than a child of the root: the base renderers' bones decide only whether it holds them.
+            var bones = (baseRenderers ?? Root.GetComponentsInChildren<SkinnedMeshRenderer>(true).ToList())
+                .SelectMany(r => r.bones).Where(b => b != null && b != Root && b.IsChildOf(Root)).Distinct().ToList();
+            if (bones.Count == 0 || bones.Count(b => b == hipsBranch || b.IsChildOf(hipsBranch)) * 2 > bones.Count) return hipsBranch;
         }
         var counts = new Dictionary<Transform, int>();
         foreach (var renderer in baseRenderers ?? Root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.transform.parent == Root).ToList())
@@ -320,6 +350,56 @@ public sealed class OwnSkeleton
         var best = counts.OrderByDescending(p => p.Value).ToList();
         if (best.Count > 1 && best[0].Value == best[1].Value) return hipsBranch;
         return best[0].Key;
+    }
+
+    // The ancestor of the avatar's Hips that stands for the model's armature: as many levels up as in the model (the top-level
+    // branch when that is unknown or would leave the avatar).
+    private Transform Above(Transform hips, int levels)
+    {
+        if (levels <= 0) return TopLevel(Root, hips);
+        var node = hips;
+        for (int i = 0; i < levels && node != null && node != Root; i++) node = node.parent;
+        return node == null || node == Root ? TopLevel(Root, hips) : node;
+    }
+
+    // How many levels the model's armature is above the model's humanoid Hips (0 when unknown).
+    private static int ModelLevels(Transform modelRoot, List<SkinnedMeshRenderer> renderers)
+    {
+        var hips = ModelHips(modelRoot) ?? ModelHipsByName(modelRoot, renderers);
+        var armature = ModelArmature(modelRoot, renderers);
+        if (hips == null || armature == null || !hips.IsChildOf(armature)) return 0;
+        int levels = 0;
+        for (var node = hips; node != null && node != armature; node = node.parent) levels++;
+        return levels;
+    }
+
+    // For an avatar alone: its MyCustomBase's original base model tells the levels.
+    private static int OwnerModelLevels(Transform avatarRoot)
+    {
+        var owner = avatarRoot.GetComponentInChildren<MyCustomBase>(true);
+        var model = owner == null ? null : (owner.versionOriginalModels != null && owner.versionOriginalModels.Count > 0 ? owner.versionOriginalModels : owner.baseFbxFiles)
+            ?.FirstOrDefault(m => m != null);
+        return model == null ? 0 : ModelLevels(model.transform, model.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh != null).ToList());
+    }
+
+    // A model without a humanoid Avatar: the first child of its armature that holds bones (its root bone).
+    private static Transform ModelHipsByName(Transform modelRoot, List<SkinnedMeshRenderer> renderers)
+    {
+        var armature = ModelArmature(modelRoot, renderers);
+        if (armature == null) return null;
+        var children = Enumerable.Range(0, armature.childCount).Select(armature.GetChild).Where(c => c.childCount > 0).ToList();
+        return children.Count == 1 ? children[0] : null;
+    }
+
+    private static Transform ModelHips(Transform modelRoot)
+    {
+        var animator = modelRoot.GetComponent<Animator>();
+        string hipsName = animator != null && animator.avatar != null && animator.avatar.isHuman
+            ? animator.avatar.humanDescription.human.Where(h => h.humanName == HumanTrait.BoneName[(int)HumanBodyBones.Hips]).Select(h => h.boneName).FirstOrDefault()
+            : null;
+        if (string.IsNullOrEmpty(hipsName)) return null;
+        var hips = modelRoot.GetComponentsInChildren<Transform>(true).Where(t => t.name == hipsName).Take(2).ToList();
+        return hips.Count == 1 ? hips[0] : null;
     }
 
     // The model's armature: the top-level branch holding its humanoid Hips (by its Avatar's mapping), else most bones.

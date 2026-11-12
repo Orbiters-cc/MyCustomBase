@@ -113,4 +113,22 @@ public class OwnSkeletonTests
         OwnSkeleton.ForAvatar(avatar.transform).ResolveRenderer("Body", out string failure);
         Assert.That(failure, Does.Contain("'Body.001'").And.Contain("'Body (1)'"));
     }
+
+    [Test] public void AnArmatureOneLevelDeeperIsTheOwnOneAndStaysWhereItIs()
+    {
+        var model = Model();
+        var avatar = Object.Instantiate(model); avatar.name = "Avatar"; owned.Add(avatar);
+        var holder = Child(avatar.transform, "Model");
+        var armature = avatar.transform.Find("Armature"); armature.SetParent(holder, false);
+        avatar.transform.Find("Body").SetParent(holder, false);
+        var skeleton = OwnSkeleton.Resolve(avatar.transform, model.transform);
+        Assert.That(skeleton.Failure, Is.Null);
+        Assert.That(skeleton.Armature, Is.SameAs(armature));
+        Assert.That(skeleton[model.transform.Find("Armature")], Is.SameAs(armature));
+        Assert.That(skeleton[model.transform.Find("Armature/Hips/Leg")], Is.SameAs(armature.Find("Hips/Leg")));
+        SmrPathService.RestoreTargetTransformHierarchyFromFbxRoot(avatar.transform, model.transform);
+        Assert.That(armature.parent, Is.SameAs(holder), "the armature is never moved");
+        Assert.That(holder.Find("Body").parent, Is.SameAs(holder), "nor the renderers");
+        Assert.That(armature.Find("Hips").parent, Is.SameAs(armature));
+    }
 }
