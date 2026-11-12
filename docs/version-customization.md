@@ -8,7 +8,7 @@ id: orbiters.mcb.version-customization
 domain: mcb
 type: how-to
 owner: orbiters-mcb
-lastVerified: 2026-10-06
+lastVerified: 2026-11-12
 relations: orbiters.mcb.original-base-versions, orbiters.tools.mcb-operating-contract
 ---
 
@@ -72,19 +72,40 @@ server needs a connected bot with Manage Roles.
 A member without the required role sees **Requires the … Discord role** instead of
 the download button.
 
-## Restoring custom-body armatures
+## Installing and going back keep your avatar as it was
 
 <alpha>
-Local unreleased package change: restoring a model's armature during installation,
-version switching or return to the original base skips model transforms the avatar
-does not have, together with their children. A transform that would reuse an already
-mapped avatar transform is skipped too. The remaining transforms are restored;
-skipped paths are reported together in one informational log entry. Restoration
-still stops if no transforms match or a mapping would create a hierarchy cycle.
-Renderer restoration separately refuses meshes whose required bones cannot be
-resolved. This permits custom-body models to contain extra lights or leaf bones
-without those unused objects blocking the armature restore; it does not identify
-or remove an old release's animation layers or objects.
+Local unreleased package change.
+
+**Your pose is kept.** Before a version is installed, MCB records every object of the avatar: its parent, its place
+among its siblings, whether it is switched on and its position, rotation and scale, and the avatar's renderers. Where
+you posed a bone away from the base model's rest pose (a raised hip, a turned arm, a scaled chest, a bent tail), the
+installed version keeps that change on top of its own pose: a bone the version does not change stays exactly where you
+had it, and a bone the version reshapes takes the version's pose with your adjustment on top. Clothing and props stay
+where they were, apart from following a bone the version itself moves.
+
+**Going back is exact.** Going back to the original base puts every object the install changed back to its parent,
+order, state and pose from before the install (also after a Unity restart). If you moved something while the version was
+installed, your change is kept on top. Installing again, or switching versions, first goes back this way and then
+installs from a fresh record, so nothing builds up over repeated installs. An install is one Undo step and so is going
+back. When an install or going back fails, the avatar is put back as it was and the message says that nothing was
+changed.
+
+**Objects that are not the avatar's own are left alone.** MCB finds the avatar's own armature through the Animator's
+humanoid Hips and the bones the body is skinned to, never by the name "Armature". A full copy of the base used as an
+outfit (with its own `Armature` and `Body`), clothing bones nested in the armature, a spare `Armature (1)` or an empty
+`Body (old)` are never taken for the avatar's own. A renamed armature (`Armature.004`), a renamed body (`Body.001`) or a
+body moved under another object (a `Meshes` folder) is used where it is; renderer objects are never moved. A bone a
+version adds is always created by MCB, even when clothing has a bone with that name. When two objects could both be the
+same bone or body, MCB changes nothing and names them, so you can rename the one that belongs to clothing.
+
+**Prefabs.** Unity cannot move a bone inside a prefab instance. When a version moves a bone of the avatar (Ultirex puts
+each ankle under a `TopFut` bone), MCB unpacks only the outermost prefab instance holding it, keeping nested prefabs
+(outfits) linked. The avatar's own prefab instance stays unpacked after going back.
+
+**Materials and copies.** The materials a version puts custom veins on get their file back exactly as it was once the
+last avatar using them goes back. Clothing meshes MCB rebinds to a moved bone get their own mesh back on going back, and
+the copies are removed.
 </alpha>
 
 ## Supported original bases
@@ -331,9 +352,20 @@ Prefabulous Universal; the package includes its license and attribution.
 
 ### Installing on a personal custom body
 
-When an avatar uses a different body model at the original base renderer paths, installing a version first records that body and temporarily restores the original base meshes. No custom-model hash registration is needed. Sign in for the first install on a custom body so MCB can refresh its compatible versions. Unsaved custom meshes must first be saved as project assets. Import a supported original base model when prompted; missing models or unresolved bones stop preparation before the avatar changes.
+When an avatar's own body comes from another model than the base's original files, installing a version first downloads
+it, then, in the same step as the install, records the body and puts the original base meshes on it (its own bones are
+kept). A stock avatar is recognised from its model files' names and never needs the server's answer or any hashing.
+For a custom body, sign in so MCB can check the versions offered for its original base, and import the base's original
+model package in the project: MCB looks for it among the avatar's models and the project models named like an original
+(never the whole project) and, when it is missing, says which file it needs. A body that only lives in the scene is saved
+in `Assets/MCB/migrated` and migrated. If anything fails after this preparation started, the body is put back before the
+error is shown.
 
-Returning to the original base restores the personal body, materials, bone pose, Animator Avatar and descriptor assets. If no release is recognised, preparation performs no release cleanup: existing animator layers, parameters and objects stay. A recognised release supplies its cleanup as before.
+Going back to the original base brings back the personal body: meshes (an empty one stays empty), materials (empty slots
+included), the Animator's Avatar and the descriptor's controllers, parameters and menus, but only slots that still hold
+what MCB put there; a controller or menu you chose since stays. A migrated avatar with no version installed shows **Put
+my body back** in the gallery. If no release is recognised, preparation performs no release cleanup: existing animator
+layers, parameters and objects stay. A recognised release supplies its cleanup as before.
 
 Discovery's `sourceFiles` may contain only a matching original set. The editor uses all `sourceVersions` when checking supported originals, with `sourceFiles` used by `OriginalBaseLibrary.Versions` when no version groups are present. A version's selected source files alone cannot establish every supported original.
 
