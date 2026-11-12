@@ -159,6 +159,8 @@ public class MaterialService
             File.Delete(backup);
             EditorUtility.ClearDirty(material);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            // The file is the truth now: a later "save all" must not write Unity's in-memory reading of it back.
+            EditorUtility.ClearDirty(material);
             return true;
         }
         var before = JsonUtility.FromJson<VeinsBefore>(material.GetTag(VeinsBeforeTag, false, string.Empty));

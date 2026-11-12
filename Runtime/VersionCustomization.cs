@@ -271,6 +271,9 @@ public sealed class RendererLayoutConfiguration
     public Bounds bounds; public bool enabled; public bool updateWhenOffscreen;
     // The mesh reference as serialized (also a missing asset's), for a renderer that had no loadable mesh.
     public int meshId;
+    // Material references as serialized (missing ones included) and blendshape weights.
+    public int[] materialIds;
+    public float[] weights;
 }
 [Serializable] public sealed class PoseLedger
 {
@@ -278,6 +281,10 @@ public sealed class RendererLayoutConfiguration
     public bool recorded;
     public List<PoseLedgerEntry> entries = new List<PoseLedgerEntry>();
     public List<PoseLedgerRenderer> renderers = new List<PoseLedgerRenderer>();
+    // References to missing assets the avatar had (a buyer's prefab without some of its files): kept as they were.
+    public List<UnityEngine.Object> missingOwners = new List<UnityEngine.Object>();
+    public List<string> missingPaths = new List<string>();
+    public List<int> missingIds = new List<int>();
 }
 
 [Serializable]

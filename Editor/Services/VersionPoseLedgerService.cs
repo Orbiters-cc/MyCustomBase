@@ -38,12 +38,24 @@ internal static class VersionPoseLedgerService
     {
         public Mesh mesh; public Transform rootBone; public Transform[] bones; public Bounds bounds; public bool enabled, updateWhenOffscreen;
         public int meshId;
+        public int[] materialIds;
+        public float[] weights;
 
         public static RendererState Of(SkinnedMeshRenderer r) => new RendererState
         {
             mesh = r.sharedMesh, rootBone = r.rootBone, bones = r.bones, bounds = r.localBounds, enabled = r.enabled,
-            updateWhenOffscreen = r.updateWhenOffscreen, meshId = MeshId(r)
+            updateWhenOffscreen = r.updateWhenOffscreen, meshId = MeshId(r), materialIds = MaterialIds(r),
+            weights = r.sharedMesh == null ? new float[0] : Enumerable.Range(0, r.sharedMesh.blendShapeCount).Select(r.GetBlendShapeWeight).ToArray()
         };
+
+        public static int[] MaterialIds(SkinnedMeshRenderer r)
+        {
+            using (var serialized = new SerializedObject(r))
+            {
+                var materials = serialized.FindProperty("m_Materials");
+                return Enumerable.Range(0, materials.arraySize).Select(i => materials.GetArrayElementAtIndex(i).objectReferenceInstanceIDValue).ToArray();
+            }
+        }
 
         // The serialized mesh reference: a missing asset (a buyer's prefab without its mesh files) keeps its own id.
         public static int MeshId(SkinnedMeshRenderer r)
@@ -53,7 +65,10 @@ internal static class VersionPoseLedgerService
         }
 
         public bool Same(SkinnedMeshRenderer r) => r.sharedMesh == mesh && r.rootBone == rootBone && r.bones.SequenceEqual(bones)
-                                                    && r.localBounds == bounds && r.enabled == enabled && r.updateWhenOffscreen == updateWhenOffscreen;
+                                                    && r.localBounds == bounds && r.enabled == enabled && r.updateWhenOffscreen == updateWhenOffscreen
+                                                    && (weights == null || r.sharedMesh == null || r.sharedMesh.blendShapeCount != weights.Length
+                                                        || Enumerable.Range(0, weights.Length).All(i => r.GetBlendShapeWeight(i).Equals(weights[i])))
+                                                    && (materialIds == null || MaterialIds(r).SequenceEqual(materialIds));
     }
 
     /// <summary>The avatar before an install, and the model rest its skeleton comes from.</summary>
@@ -64,6 +79,42 @@ internal static class VersionPoseLedgerService
         public readonly Dictionary<SkinnedMeshRenderer, RendererState> renderers = new Dictionary<SkinnedMeshRenderer, RendererState>();
         // Each base-model bone of the avatar and its local pose in the reference model.
         public readonly Dictionary<Transform, TransformState> reference = new Dictionary<Transform, TransformState>();
+        // References to missing assets: component, property path, serialized id.
+        public readonly List<(Component owner, string path, int id)> missing = new List<(Component, string, int)>();
+    }
+
+    private static void CaptureMissing(Snapshot snapshot)
+    {
+        foreach (var component in snapshot.root.GetComponentsInChildren<Component>(true))
+        {
+            if (component == null || component is Transform) continue;
+            using (var serialized = new SerializedObject(component))
+            {
+                var it = serialized.GetIterator();
+                while (it.Next(true))
+                    if (it.propertyType == SerializedPropertyType.ObjectReference && it.objectReferenceValue == null && it.objectReferenceInstanceIDValue != 0)
+                        snapshot.missing.Add((component, it.propertyPath, it.objectReferenceInstanceIDValue));
+            }
+        }
+    }
+
+    // A reference to a missing asset an operation emptied gets its id back (Unity cannot assign a missing object itself).
+    private static void PutMissing(IEnumerable<(Component owner, string path, int id)> missing)
+    {
+        foreach (var group in missing.Where(m => m.owner != null).GroupBy(m => m.owner))
+            using (var serialized = new SerializedObject(group.Key))
+            {
+                bool changed = false;
+                foreach (var entry in group)
+                {
+                    var property = serialized.FindProperty(entry.path);
+                    if (property == null || property.propertyType != SerializedPropertyType.ObjectReference) continue;
+                    if (property.objectReferenceValue != null || property.objectReferenceInstanceIDValue == entry.id) continue;
+                    property.objectReferenceInstanceIDValue = entry.id;
+                    changed = true;
+                }
+                if (changed) serialized.ApplyModifiedProperties();
+            }
     }
 
     /// <summary>What going back needs from before the reset machinery ran.</summary>
@@ -82,6 +133,7 @@ internal static class VersionPoseLedgerService
         foreach (var t in snapshot.root.GetComponentsInChildren<Transform>(true))
             if (t != snapshot.root) snapshot.transforms[t] = TransformState.Of(t);
         foreach (var r in snapshot.root.GetComponentsInChildren<SkinnedMeshRenderer>(true)) snapshot.renderers[r] = RendererState.Of(r);
+        CaptureMissing(snapshot);
     }
 
     /// <summary>
@@ -198,7 +250,11 @@ internal static class VersionPoseLedgerService
             var r = pair.Key; var b = pair.Value;
             if (r == null || b.Same(r)) continue;
             ledger.renderers.Add(new PoseLedgerRenderer { renderer = r, mesh = b.mesh, rootBone = b.rootBone, bones = b.bones, bounds = b.bounds,
-                enabled = b.enabled, updateWhenOffscreen = b.updateWhenOffscreen, meshId = b.meshId });
+                enabled = b.enabled, updateWhenOffscreen = b.updateWhenOffscreen, meshId = b.meshId, materialIds = b.materialIds, weights = b.weights });
+        }
+        foreach (var entry in snapshot.missing.Where(m => m.owner != null))
+        {
+            ledger.missingOwners.Add(entry.owner); ledger.missingPaths.Add(entry.path); ledger.missingIds.Add(entry.id);
         }
         Undo.RecordObject(owner, "Record the avatar's pose");
         owner.poseLedger = ledger;
@@ -212,6 +268,9 @@ internal static class VersionPoseLedgerService
         if (owner == null || root == null || owner.poseLedger == null || !owner.poseLedger.recorded) return null;
         var before = new Snapshot { root = root };
         CaptureAvatar(before);
+        var ledgerMissing = owner.poseLedger;
+        for (int i = 0; ledgerMissing.missingOwners != null && i < ledgerMissing.missingOwners.Count && i < ledgerMissing.missingPaths.Count && i < ledgerMissing.missingIds.Count; i++)
+            if (ledgerMissing.missingOwners[i] is Component component) before.missing.Add((component, ledgerMissing.missingPaths[i], ledgerMissing.missingIds[i]));
         return new PendingRestore
         {
             before = before,
@@ -258,10 +317,12 @@ internal static class VersionPoseLedgerService
         var renderers = new Dictionary<SkinnedMeshRenderer, RendererState>();
         foreach (var pair in ledgerRenderers)
             renderers[pair.Key] = new RendererState { mesh = pair.Value.mesh, rootBone = pair.Value.rootBone, bones = pair.Value.bones, bounds = pair.Value.bounds,
-                enabled = pair.Value.enabled, updateWhenOffscreen = pair.Value.updateWhenOffscreen, meshId = pair.Value.meshId };
+                enabled = pair.Value.enabled, updateWhenOffscreen = pair.Value.updateWhenOffscreen, meshId = pair.Value.meshId,
+                materialIds = pair.Value.materialIds, weights = pair.Value.weights };
         foreach (var pair in pending.before.renderers)
             if (pair.Key != null && !renderers.ContainsKey(pair.Key)) renderers[pair.Key] = pair.Value;
         Put(wanted, renderers, step);
+        PutMissing(pending.before.missing);
 
         Undo.RecordObject(owner, step);
         owner.poseLedger = new PoseLedger();
@@ -277,6 +338,7 @@ internal static class VersionPoseLedgerService
         if (snapshot == null) return;
         Put(snapshot.transforms.Where(p => p.Key != null).ToDictionary(p => p.Key, p => p.Value),
             snapshot.renderers.Where(p => p.Key != null).ToDictionary(p => p.Key, p => p.Value), "Put the avatar back as it was");
+        PutMissing(snapshot.missing);
     }
 
     /// <summary>The avatar's state before a switch, for <see cref="RestoreSnapshot"/>.</summary>
@@ -373,7 +435,25 @@ internal static class VersionPoseLedgerService
         renderer.localBounds = state.bounds;
         renderer.updateWhenOffscreen = state.updateWhenOffscreen;
         renderer.enabled = state.enabled;
+        // Blendshape weights as they were, and material slots that held a missing material get that reference back
+        // (going back writes an empty slot there).
+        if (state.weights != null && renderer.sharedMesh != null && renderer.sharedMesh.blendShapeCount == state.weights.Length)
+            for (int i = 0; i < state.weights.Length; i++)
+                if (!renderer.GetBlendShapeWeight(i).Equals(state.weights[i])) renderer.SetBlendShapeWeight(i, state.weights[i]);
         EditorUtility.SetDirty(renderer);
+        if (state.materialIds == null) return;
+        using (var serialized = new SerializedObject(renderer))
+        {
+            var materials = serialized.FindProperty("m_Materials");
+            if (materials.arraySize != state.materialIds.Length) return;
+            for (int i = 0; i < state.materialIds.Length; i++)
+            {
+                var slot = materials.GetArrayElementAtIndex(i);
+                if (state.materialIds[i] != 0 && EditorUtility.InstanceIDToObject(state.materialIds[i]) == null && slot.objectReferenceValue == null)
+                    slot.objectReferenceInstanceIDValue = state.materialIds[i];
+            }
+            serialized.ApplyModifiedProperties();
+        }
     }
 
     /// <summary>

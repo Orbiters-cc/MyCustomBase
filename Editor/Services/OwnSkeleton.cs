@@ -256,7 +256,7 @@ public sealed class OwnSkeleton
         if (renderer != null && (Armature == null || IsOwnRenderer(renderer) || renderer.bones.All(b => b == null))) return renderer;
         string name = BaseName(path.Substring(path.LastIndexOf('/') + 1));
         var candidates = Root.GetComponentsInChildren<SkinnedMeshRenderer>(true)
-            .Where(r => r != renderer && IsOwnRenderer(r)
+            .Where(r => r != renderer && (IsOwnRenderer(r) || r.bones.All(b => b == null) && !InsideOutfitBranch(r.transform))
                         && (BaseName(r.name) == name || r.sharedMesh != null && BaseName(r.sharedMesh.name) == name)).ToList();
         if (candidates.Count == 1) return candidates[0];
         if (candidates.Count > 1)
