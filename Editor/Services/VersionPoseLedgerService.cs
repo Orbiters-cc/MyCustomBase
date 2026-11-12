@@ -812,12 +812,15 @@ internal static class VersionPoseLedgerService
         public List<PoseLedgerEntry> objectEntries = new List<PoseLedgerEntry>();
         public List<(UnityEngine.Object owner, string path, string token)> missing = new List<(UnityEngine.Object, string, string)>();
         public string session;
+        // The Animator's Avatar before the first install (none included).
+        public bool animatorRecorded; public Avatar animatorAvatar;
     }
 
     internal static MigrationBaseline TakeMigrationBaseline(MyCustomBase owner, Transform root, IEnumerable<string> baseModelPaths)
     {
         if (owner == null || owner.poseLedger == null || !owner.poseLedger.recorded) return null;
-        var baseline = new MigrationBaseline { session = owner.poseLedger.session };
+        var baseline = new MigrationBaseline { session = owner.poseLedger.session,
+            animatorRecorded = owner.poseLedger.animatorRecorded, animatorAvatar = owner.poseLedger.animatorAvatar };
         if (owner.legacyOriginal != null && owner.legacyOriginal.migrated)
         {
             foreach (var state in owner.legacyOriginal.renderers ?? new List<LegacyRendererState>()) if (state?.renderer != null) baseline.renderers.Add(state.renderer);
@@ -876,6 +879,8 @@ internal static class VersionPoseLedgerService
         // A reinstall on a migrated custom body: the first install's baseline stays the truth for what the migration owns.
         if (inherited != null)
         {
+            // The Animator's Avatar from before the first install, not the one the transition put back meanwhile.
+            ledger.animatorRecorded = inherited.animatorRecorded; ledger.animatorAvatar = inherited.animatorAvatar;
             ledger.renderers.RemoveAll(r => r.renderer != null && inherited.renderers.Contains(r.renderer));
             ledger.renderers.AddRange(inherited.rendererEntries);
             foreach (var entry in inherited.objectEntries)
