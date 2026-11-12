@@ -173,6 +173,8 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public List<ModeChoice> modeChoices = new List<ModeChoice>();
     [HideInInspector] public List<BlendshapeMemory> blendshapeMemory = new List<BlendshapeMemory>();
     [HideInInspector] public LegacyOriginal legacyOriginal = new LegacyOriginal();
+    // The person's own pose, hierarchy and renderer state from before the installed version (restored on going back).
+    [HideInInspector] public PoseLedger poseLedger = new PoseLedger();
     // Physic of versions that support it (secondary-motion PhysBones). Off: the build strips those bones instead.
     [HideInInspector] public bool physicEnabled;
     // Squishy chains of versions that support them. Off: the build strips those bones instead.

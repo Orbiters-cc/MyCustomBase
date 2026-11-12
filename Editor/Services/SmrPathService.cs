@@ -408,11 +408,12 @@ public static class SmrPathService
 
         foreach (var plan in plans)
         {
+            // The objects holding the renderers stay where the person put them (a "Meshes" folder, a moved body).
+            if (plan.source.GetComponent<Renderer>() != null && plan.target.GetComponent<Renderer>() != null) continue;
             if (plan.target.parent != plan.parent)
             {
                 // A version moved this bone; the original model's hierarchy is the reset state.
-                var instance = PrefabUtility.GetOutermostPrefabInstanceRoot(plan.target.gameObject);
-                if (instance != null) PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.UserAction);
+                VersionPoseLedgerService.UnpackFor(plan.target);
                 Undo.SetTransformParent(plan.target, plan.parent, "Restore FBX Transform Hierarchy");
             }
             Undo.RecordObject(plan.target, "Restore FBX Transform State");
@@ -843,12 +844,7 @@ public static class SmrPathService
     {
         if (plan?.target == null || plan.source == null) return;
 
-        Undo.RecordObject(plan.target.transform, "Restore FBX Renderer Transform");
-        plan.target.transform.localPosition = plan.source.transform.localPosition;
-        plan.target.transform.localRotation = plan.source.transform.localRotation;
-        plan.target.transform.localScale = plan.source.transform.localScale;
-        EditorUtility.SetDirty(plan.target.transform);
-
+        // The renderer's own object keeps its parent and pose: only its mesh state is the model's.
         Undo.RecordObject(plan.target, "Restore FBX Renderer State");
         EyelidBlendshapes.Assign(plan.target, plan.source.sharedMesh);
         plan.target.bones = plan.resolvedBones;

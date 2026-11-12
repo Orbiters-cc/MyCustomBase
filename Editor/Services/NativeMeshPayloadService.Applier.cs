@@ -101,12 +101,7 @@ public static partial class NativeMeshPayloadService
 
             ApplyPayloadBoneTransformsForRenderer(avatarRoot, targetRenderer, payload, record);
 
-            Undo.RecordObject(targetRenderer.transform, "Apply Native Mesh Renderer Transform");
-            targetRenderer.transform.localPosition = record.localPosition;
-            targetRenderer.transform.localRotation = record.localRotation;
-            targetRenderer.transform.localScale = record.localScale;
-            EditorUtility.SetDirty(targetRenderer.transform);
-
+            // The renderer's own object keeps the person's parent and pose (a body under a "Meshes" folder).
             Undo.RecordObject(targetRenderer, "Apply Native Mesh Payload");
 
             var bonePaths = record.bonePaths ?? new List<string>();

@@ -32,7 +32,7 @@ public class DynamicNormalsService
     {
         if (editor.customBaseTarget == null) return;
         var root = AvatarPaths.Root(editor.customBaseTarget);
-        var resolved = selections.Select(s => (selection: s, renderer: AvatarPaths.Resolve(root, s.mesh).GetComponent<SkinnedMeshRenderer>())).ToArray();
+        var resolved = selections.Select(s => (selection: s, renderer: AvatarPaths.Renderer(root, s.mesh))).ToArray();
         foreach (var item in resolved)
         {
             if (item.renderer?.sharedMesh == null) throw new System.InvalidOperationException("Missing normal renderer: " + item.selection.mesh);

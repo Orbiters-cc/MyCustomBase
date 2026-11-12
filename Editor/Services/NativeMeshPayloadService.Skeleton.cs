@@ -30,12 +30,9 @@ public static partial class NativeMeshPayloadService
                     // Unity silently refuses reparenting model-prefab children. Unpack only when
                     // this payload actually changes hierarchy, within the version Undo transaction.
                     var instance = PrefabUtility.GetOutermostPrefabInstanceRoot(existing.gameObject);
-                    if (instance != null)
-                    {
-                        if (instance.transform != root && !instance.transform.IsChildOf(root))
-                            throw new InvalidOperationException("Unpack the containing prefab before changing this avatar's skeleton.");
-                        PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.UserAction);
-                    }
+                    if (instance != null && instance.transform != root && !instance.transform.IsChildOf(root))
+                        throw new InvalidOperationException("Unpack the containing prefab before changing this avatar's skeleton.");
+                    VersionPoseLedgerService.UnpackFor(existing);
                     Undo.RecordObject(owner, "Track custom skeleton parent");
                     if (!owner.nativeMeshOriginalParents.Any(p => p.target == existing))
                         owner.nativeMeshOriginalParents.Add(new NativeMeshOriginalParent { target = existing, parent = existing.parent });

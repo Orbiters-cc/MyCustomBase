@@ -225,7 +225,6 @@ public sealed class RendererLayoutConfiguration
     public Bounds bounds; public Material[] materials; public List<string> shapes = new List<string>(); public List<float> weights = new List<float>();
 }
 [Serializable] public sealed class LegacyObjectState { public GameObject target; public bool active; public string tag; }
-[Serializable] public sealed class LegacyBonePose { public Transform bone; public Vector3 position; public Quaternion rotation; public Vector3 scale; }
 // An asset of the avatar descriptor and the migration's cleaned copy of it (kept after a restore: the next migration reuses it).
 [Serializable] public sealed class LegacyAssetSwap { public UnityEngine.Object original; public UnityEngine.Object copy; }
 [Serializable] public sealed class LegacyOriginal
@@ -238,8 +237,6 @@ public sealed class RendererLayoutConfiguration
     public VRC.SDK3.Avatars.ScriptableObjects.VRCExpressionsMenu expressionsMenu;
     public List<LegacyRendererState> renderers = new List<LegacyRendererState>();
     public List<LegacyObjectState> objects = new List<LegacyObjectState>();
-    // The legacy renderers' bones and their parents, as posed before the migration: a reset poses them as the original model.
-    public List<LegacyBonePose> bones = new List<LegacyBonePose>();
     public List<LegacyAssetSwap> assets = new List<LegacyAssetSwap>();
     public List<GameObject> baseModels = new List<GameObject>();
 }
@@ -250,6 +247,30 @@ public sealed class RendererLayoutConfiguration
 // A value a mode animation changed: restored on reset by sampling a constant clip.
 [Serializable] public sealed class ModeOriginalProperty { public string path; public string type; public string property; public float value; }
 [Serializable] public sealed class NativeMeshOriginalParent { public Transform target; public Transform parent; }
+
+// What a version install changed on the avatar's own objects, so going back puts exactly that back (VersionPoseLedger).
+// One entry per transform the install moved: where the person had it (baseline) and what the install wrote.
+[Serializable] public sealed class PoseLedgerEntry
+{
+    public Transform transform;
+    public Transform parent; public int sibling; public bool active;
+    public Vector3 position; public Quaternion rotation; public Vector3 scale;
+    public Transform writtenParent; public bool writtenActive;
+    public Vector3 writtenPosition; public Quaternion writtenRotation; public Vector3 writtenScale;
+}
+// A renderer the install changed: its baseline fields (restored when it carries its baseline mesh again).
+[Serializable] public sealed class PoseLedgerRenderer
+{
+    public SkinnedMeshRenderer renderer; public Mesh mesh; public Transform rootBone; public Transform[] bones;
+    public Bounds bounds; public bool enabled; public bool updateWhenOffscreen;
+}
+[Serializable] public sealed class PoseLedger
+{
+    // True while a version installed with this record is on the avatar.
+    public bool recorded;
+    public List<PoseLedgerEntry> entries = new List<PoseLedgerEntry>();
+    public List<PoseLedgerRenderer> renderers = new List<PoseLedgerRenderer>();
+}
 
 [Serializable]
 public sealed class TwistBoneConfiguration

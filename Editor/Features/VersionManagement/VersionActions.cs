@@ -289,16 +289,88 @@ public partial class VersionActions
     {
         var target = session.customBaseTarget;
         var root = target != null ? AvatarPaths.Root(target) : null;
+        // The whole switch is one Undo step: the install or reset, the objects kept on the body, the release from before
+        // MCB, the animation paths and the pose ledger.
+        Undo.IncrementCurrentGroup();
+        int undoGroup = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName(isReset ? "Go back to the original base" : "Install MCB version");
+        // Undo puts back the whole avatar as it was, including what changes without being recorded (renderer bounds the
+        // skinning recomputes, objects a constraint moves while the version's logic comes and goes).
+        if (root != null)
+            Undo.RegisterCompleteObjectUndo(root.GetComponentsInChildren<Transform>(true).SelectMany(t => new UnityEngine.Object[] { t, t.gameObject })
+                .Concat(root.GetComponentsInChildren<SkinnedMeshRenderer>(true)).ToArray(), isReset ? "Go back to the original base" : "Install MCB version");
+        try
+        {
+            // Nothing installed: going back has no version to remove (a migrated body still comes back).
+            if (isReset && target != null && target.appliedCustomBaseAssetId == 0 && string.IsNullOrEmpty(target.appliedCustomBaseVersionString)
+                && NativeMeshPayloadService.ResolveAppliedGeneratedMeshRenderers(root).Count == 0)
+            {
+                string restored = LegacyMigrationService.RestoreOriginal(root);
+                if (restored != null) MCBLogger.Log($"[MCB] The avatar is back on {restored}, as before its migration.");
+                session.RequestRefresh(McbViewParts.All);
+                return;
+            }
+            // A version installed with a pose ledger: going back (or the first half of a reinstall or switch) puts back
+            // exactly what the person had. A fresh install records the avatar first.
+            var start = VersionPoseLedgerService.CaptureState(root);
+            poseRestore = target != null && target.appliedCustomBaseAssetId != 0 ? VersionPoseLedgerService.BeginRestore(target, root) : null;
+            poseSnapshot = !isReset && poseRestore == null && target != null
+                ? VersionPoseLedgerService.Capture(root, VersionPoseLedgerService.ReferenceModels(target, root)) : null;
+            if (!ApplyOrResetWithLedger(version, isReset, target, root))
+                // Failed and rolled back: what Undo does not cover comes back from the record of the start.
+                VersionPoseLedgerService.RestoreSnapshot(start);
+        }
+        finally
+        {
+            poseSnapshot = null;
+            poseRestore = null;
+            placements = null;
+            Undo.CollapseUndoOperations(undoGroup);
+            Undo.IncrementCurrentGroup();
+        }
+    }
+
+    // The pose ledger of the switch running now (see VersionPoseLedgerService); null outside it.
+    private VersionPoseLedgerService.Snapshot poseSnapshot;
+    private VersionPoseLedgerService.PendingRestore poseRestore;
+
+    /// <summary>
+    /// Inside an install over an installed version, once the previous version is removed: the avatar goes back to what
+    /// the person had, and the new install starts from a fresh record of it (nothing accumulates over reinstalls).
+    /// </summary>
+    private void RestorePoseLedgerBeforeInstall(Transform root)
+    {
+        var target = session.customBaseTarget;
+        if (poseRestore == null || target == null) return;
+        VersionPoseLedgerService.FinishRestore(target, poseRestore);
+        poseRestore = null;
+        poseSnapshot = VersionPoseLedgerService.Capture(root, VersionPoseLedgerService.ReferenceModels(target, root));
+        // Objects on the armature keep their place relative to the person's body, as on a first install.
+        if (placements != null) placements = AccessoryPlacements.Capture(root);
+    }
+
+    private AccessoryPlacements placements;
+
+    /// <returns>False when the switch did not happen (it was rolled back).</returns>
+    private bool ApplyOrResetWithLedger(CustomBaseVersion version, bool isReset, MyCustomBase target, Transform root)
+    {
         Orbiters.Toolkit.Editor.Animations.PathSnapshot before = null;
         try { if (root != null) before = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Snapshot(root.gameObject); }
         catch (Exception ex) { MCBLogger.LogWarning("[MCB] Could not record the avatar's animation paths before the switch: " + ex.Message); }
-        var placements = root != null ? AccessoryPlacements.Capture(root) : null;
+        // Going back with a ledger puts every object exactly back: objects on the armature need no separate keeping.
+        bool ledgerReset = isReset && poseRestore != null;
+        placements = root != null && !ledgerReset ? AccessoryPlacements.Capture(root) : null;
         ApplyOrResetCore(version, isReset);
-        if (target == null) return;
+        if (target == null) return true;
         bool switched = isReset
             ? target.appliedCustomBaseAssetId == 0
             : version != null && target.appliedCustomBaseAssetId == version.assetId && target.appliedCustomBaseVersionString == version.version;
-        if (!switched) return;
+        if (!switched) return false;
+        if (!isReset && poseSnapshot != null)
+        {
+            int carried = VersionPoseLedgerService.CarryPose(poseSnapshot);
+            if (carried > 0) MCBLogger.Log($"[MCB] {carried} bone(s) kept the avatar's own pose on the version.");
+        }
         try
         {
             int kept = placements?.Restore(root, BaseBoneNames(target, root)) ?? 0;
@@ -328,20 +400,31 @@ public partial class VersionActions
                 session.warningsModule?.AddWarning("The avatar is on its original base model, but what it had before its migration could not be restored: "
                     + ex.Message, MessageType.Warning, "Reset");
             }
-        if (before == null) return;
-        try
+        // After the renderers and assets: poses, parents and order as the person had them.
+        if (ledgerReset)
         {
-            var plan = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Plan(root.gameObject, before, null, broken: false);
-            if (plan.Fixable == 0) return;
-            var applied = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Apply(plan, everywhere: false,
-                undoName: isReset ? "Animations follow the original bones" : "Animations follow the version's bones");
-            MCBLogger.Log($"[MCB] {applied.Paths} animation path(s) in {applied.Assets} asset(s) now follow the bones the "
-                + (isReset ? "reset" : "version") + $" moved ({applied.Copies} shared asset(s) copied for this avatar).");
-            if (applied.Skipped.Count > 0)
-                session.warningsModule.AddWarning("Some animations still use the former bone paths and were left as they are: "
-                    + string.Join("; ", applied.Skipped), MessageType.Warning, "Animation paths");
+            VersionPoseLedgerService.FinishRestore(target, poseRestore);
+            poseRestore = null;
         }
-        catch (Exception ex) { MCBLogger.LogWarning("[MCB] Animations could not follow the moved bones: " + ex.Message); }
+        if (before != null)
+            try
+            {
+                var plan = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Plan(root.gameObject, before, null, broken: false);
+                if (plan.Fixable > 0)
+                {
+                    var applied = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Apply(plan, everywhere: false,
+                        undoName: isReset ? "Animations follow the original bones" : "Animations follow the version's bones");
+                    MCBLogger.Log($"[MCB] {applied.Paths} animation path(s) in {applied.Assets} asset(s) now follow the bones the "
+                        + (isReset ? "reset" : "version") + $" moved ({applied.Copies} shared asset(s) copied for this avatar).");
+                    if (applied.Skipped.Count > 0)
+                        session.warningsModule.AddWarning("Some animations still use the former bone paths and were left as they are: "
+                            + string.Join("; ", applied.Skipped), MessageType.Warning, "Animation paths");
+                }
+            }
+            catch (Exception ex) { MCBLogger.LogWarning("[MCB] Animations could not follow the moved bones: " + ex.Message); }
+        if (!isReset && poseSnapshot != null) VersionPoseLedgerService.Record(target, poseSnapshot);
+        else if (!isReset) MCBLogger.LogWarning("[MCB] The avatar's pose could not be recorded for this install: going back uses the model's rest pose.");
+        return true;
     }
 
     /// <summary>The armature's own bones after a switch: the base models' transforms and the base renderers' bones, by name.</summary>
@@ -674,12 +757,14 @@ public partial class VersionActions
                     RestoreOriginalFbxStateForTransition(root, transitionVersions, fbxPath,
                         previousVersion != null && !previousUsesAdvancedMesh, keepShared ? version : null);
                     NativeMeshPayloadService.RemoveGeneratedBones(session.customBaseTarget);
+                    RestorePoseLedgerBeforeInstall(root);
                     profile.Mark("Restored original FBX renderer and armature state for advanced mesh transition");
                 }
                 else if (previousVersion != null)
                 {
                     ReportApplyProgress(0.10f, "Restoring models of the previous version...");
                     restoredPreviousModels = RestoreModelsLeftByPreviousVersion(root, previousVersion, version, fbxPath);
+                    RestorePoseLedgerBeforeInstall(root);
                     profile.Mark($"Restored {restoredPreviousModels.Count} models the previous version changed");
                 }
                 // The models this version gives its own Avatar: their import settings are kept for the reset.

@@ -76,7 +76,7 @@ public static class VersionCustomizationBuild
             var modes = ModeService.BuildPlan(config.modes, ModeService.EnabledIds(owner));
             foreach (var shape in modes.LockedShapes)
             {
-                var target = AvatarPaths.Find(avatar.transform, shape.mesh);
+                var target = AvatarPaths.Renderer(avatar.transform, shape.mesh)?.transform;
                 if (target == null) continue;
                 plan.Properties.Add(new Property { Target = target, Type = typeof(SkinnedMeshRenderer), Name = "blendShape." + shape.name,
                     Value = ModeService.ShapeValue(owner, modes, shape, target.GetComponent<SkinnedMeshRenderer>()) });

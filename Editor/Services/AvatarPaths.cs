@@ -26,6 +26,20 @@ public static class AvatarPaths
         return current;
     }
 
+    /// <summary>
+    /// The avatar's renderer for a version's mesh path ("Body"): the one at that path, else the avatar's own renderer
+    /// named like it wherever the person moved it (never an outfit's "Body").
+    /// </summary>
+    public static SkinnedMeshRenderer Renderer(Transform root, string path)
+    {
+        var found = Find(root, path);
+        var renderer = found != null ? found.GetComponent<SkinnedMeshRenderer>() : null;
+        if (renderer != null) return renderer;
+        var own = OwnSkeleton.ForAvatar(root).ResolveRenderer(path, out string ambiguous);
+        if (ambiguous != null) throw new InvalidOperationException(ambiguous);
+        return own;
+    }
+
     /// <summary>Like <see cref="Resolve"/>, but a missing object is null instead of an error.</summary>
     public static Transform Find(Transform root, string path)
     {

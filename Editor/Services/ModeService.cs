@@ -88,7 +88,7 @@ public static class ModeService
         {
             foreach (var shape in option.blendshapes)
             {
-                var smr = AvatarPaths.Resolve(root, shape.mesh).GetComponent<SkinnedMeshRenderer>();
+                var smr = AvatarPaths.Renderer(root, shape.mesh) ?? throw new InvalidOperationException($"'{shape.mesh}' must resolve to exactly one object; it has 0 matches.");
                 if (smr?.sharedMesh == null || smr.sharedMesh.GetBlendShapeIndex(shape.name) < 0)
                     throw new InvalidOperationException($"Mode '{option.label}': missing blendshape '{shape.mesh}/{shape.name}'.");
             }
@@ -152,7 +152,7 @@ public static class ModeService
         Undo.RecordObject(owner, "Apply MCB modes");
         foreach (var shape in plan.Shapes)
         {
-            var smr = AvatarPaths.Find(root, shape.Key.mesh)?.GetComponent<SkinnedMeshRenderer>();
+            var smr = AvatarPaths.Renderer(root, shape.Key.mesh);
             int index = smr != null && smr.sharedMesh != null ? smr.sharedMesh.GetBlendShapeIndex(shape.Key.name) : -1;
             if (index < 0) { MCBLogger.LogWarning($"[MCB] A mode sets '{shape.Key.mesh}/{shape.Key.name}', which this avatar does not have."); continue; }
             var original = owner.modeOriginalShapes.FirstOrDefault(s => s.target == smr && s.name == shape.Key.name);

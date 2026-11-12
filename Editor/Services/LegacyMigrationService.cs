@@ -310,10 +310,6 @@ public static class LegacyMigrationService
             for (int i = 0; i < state.mesh.blendShapeCount; i++) { state.shapes.Add(state.mesh.GetBlendShapeName(i)); state.weights.Add(plan.renderer.GetBlendShapeWeight(i)); }
             record.renderers.Add(state);
         }
-        var posed = new HashSet<Transform>();
-        foreach (var bone in record.renderers.SelectMany(r => r.bones.Append(r.rootBone)))
-            for (var t = bone; t != null && t != avatar && t.IsChildOf(avatar) && posed.Add(t); t = t.parent)
-                record.bones.Add(new LegacyBonePose { bone = t, position = t.localPosition, rotation = t.localRotation, scale = t.localScale });
         foreach (var plan in plans)
         {
             var weights = new Dictionary<string, float>(StringComparer.Ordinal);
@@ -369,7 +365,7 @@ public static class LegacyMigrationService
             owner.legacyOriginal = new LegacyOriginal { migrated = true, assetId = record.assetId, label = record.label, renderers = record.renderers.ToList(),
                 animatorAvatar = record.animatorAvatar, animatorController = record.animatorController,
                 animationLayers = record.animationLayers, expressionParameters = record.expressionParameters, expressionsMenu = record.expressionsMenu,
-                objects = record.objects.ToList(), bones = record.bones.ToList(), assets = record.assets.ToList(), baseModels = (owner.baseFbxFiles ?? new List<GameObject>()).Where(m => m != null).ToList() };
+                objects = record.objects.ToList(), assets = record.assets.ToList(), baseModels = (owner.baseFbxFiles ?? new List<GameObject>()).Where(m => m != null).ToList() };
             EditorUtility.SetDirty(owner);
         }
         PointBaseModelsAtOriginal(avatar, legacyPaths, original);
@@ -452,14 +448,6 @@ public static class LegacyMigrationService
             animator.avatar = record.animatorAvatar;
             animator.runtimeAnimatorController = record.animatorController;
             EditorUtility.SetDirty(animator);
-        }
-        foreach (var pose in record.bones)
-        {
-            if (pose.bone == null) continue;
-            Undo.RecordObject(pose.bone, step);
-            pose.bone.localPosition = pose.position;
-            pose.bone.localRotation = pose.rotation;
-            pose.bone.localScale = pose.scale;
         }
         foreach (var owner in owners)
         {

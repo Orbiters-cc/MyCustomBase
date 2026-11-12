@@ -51,7 +51,8 @@ public class CustomBodyMigrationTests
         avatar.GetComponentInChildren<SkinnedMeshRenderer>().sharedMesh = source;
         Assert.That(LegacyMigrationService.UnregisteredBaseRenderers(avatar.transform, paths, new LegacyMigrationService.Cleanup(), Array.Empty<string>(), AssetDatabase.GetAssetPath(source), files), Is.Empty);
     }
-    [Test] public void EmptyCleanupMigrationAndReturnPreservePersonalBodyPoseAndDescriptor()
+    // The pose comes back from the version's pose ledger: restoring the original body leaves bones where they are.
+    [Test] public void EmptyCleanupMigrationAndReturnRestorePersonalBodyAndLeaveThePose()
     {
         Create();
         var bone = avatar.transform.Find("Bone"); bone.localPosition = Vector3.up;
@@ -62,7 +63,7 @@ public class CustomBodyMigrationTests
         bone.localPosition = Vector3.down;
         LegacyMigrationService.RestoreOriginal(avatar.transform);
         Assert.That(r.sharedMesh, Is.SameAs(mesh));
-        Assert.That(bone.localPosition, Is.EqualTo(Vector3.up));
+        Assert.That(bone.localPosition, Is.EqualTo(Vector3.down));
         Assert.That(avatar.GetComponent<MyCustomBase>().legacyOriginal.migrated, Is.False);
     }
     [Test] public void MissingBoneStopsBeforeChangingAnyRenderer()
