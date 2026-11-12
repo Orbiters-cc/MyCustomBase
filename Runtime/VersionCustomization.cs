@@ -231,6 +231,11 @@ public sealed class RendererLayoutConfiguration
 [Serializable] public sealed class LegacyOriginal
 {
     public bool migrated; public int assetId; public string label;
+    public Avatar animatorAvatar;
+    public RuntimeAnimatorController animatorController;
+    public VRC.SDK3.Avatars.Components.VRCAvatarDescriptor.CustomAnimLayer[] animationLayers;
+    public VRC.SDK3.Avatars.ScriptableObjects.VRCExpressionParameters expressionParameters;
+    public VRC.SDK3.Avatars.ScriptableObjects.VRCExpressionsMenu expressionsMenu;
     public List<LegacyRendererState> renderers = new List<LegacyRendererState>();
     public List<LegacyObjectState> objects = new List<LegacyObjectState>();
     // The legacy renderers' bones and their parents, as posed before the migration: a reset poses them as the original model.

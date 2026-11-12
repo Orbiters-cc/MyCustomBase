@@ -187,7 +187,7 @@ public partial class VersionActions
         bool migrated = target != null && target.appliedCustomBaseAssetId == 0
             && target.legacyOriginal?.migrated == true && target.legacyOriginal.assetId == requested.assetId
             && session.HasServerAccess;
-        yield return LegacyMigrationService.PrepareApply(session, requested.assetId, () => migrated = true);
+        yield return LegacyMigrationService.PrepareApply(session, requested.assetId, () => migrated = true, requested);
         if (!migrated) yield break;
         AvatarAssetDiscoveryResponse offered = null;
         string error = null;
