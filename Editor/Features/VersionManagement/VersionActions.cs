@@ -266,7 +266,7 @@ public partial class VersionActions
         }
         while (EditorApplication.isCompiling || EditorApplication.isUpdating) yield return null;
         if (requestedTarget == null || session.customBaseTarget != requestedTarget || session.authToken != requestedToken)
-            throw new InvalidOperationException("The avatar or signed-in account changed while preparing the version switch.");
+            throw new InvalidOperationException("The avatar or the signed-in account changed while MCB was preparing the version. Nothing was changed; install again.");
 
     }
 
@@ -708,7 +708,7 @@ public partial class VersionActions
         }
 
         if (activeTransitionRollback != null)
-            throw new InvalidOperationException("Another version transition is still active.");
+            throw new InvalidOperationException("MCB is still installing or removing a version on this avatar. Nothing was changed; wait for it to finish, then try again.");
         activeTransitionRollback = VersionTransitionRollbackSnapshot.Capture(
             GetTransitionAffectedFbxPaths(transitionVersions, fbxPath), session.customBaseTarget, session);
 
@@ -753,7 +753,7 @@ public partial class VersionActions
                     int restoredTransforms = NativeMeshPayloadService.RestoreOriginalAuthoringPoseFromFbx(root, new[] { fbxPath });
                     if (restoredTransforms == 0)
                     {
-                        throw new InvalidOperationException("Advanced mesh reset could not safely restore the canonical FBX armature pose.");
+                        throw new InvalidOperationException("MCB could not find your avatar's bones in its original base model, so it cannot remove the version safely. Nothing was changed.");
                     }
                     var missingRenderers = new List<string>();
                     int restoredRenderers = NativeMeshPayloadService.RestoreOriginalMeshesFromFbx(
@@ -764,7 +764,7 @@ public partial class VersionActions
                         missingRenderers: missingRenderers);
                     if (restoredRenderers == 0 && missingRenderers.Count == 0)
                     {
-                        throw new InvalidOperationException("Advanced mesh reset could not safely restore any renderer from the original FBX.");
+                        throw new InvalidOperationException("MCB could not find any of your avatar's body parts in its original base model, so it cannot remove the version safely. Nothing was changed.");
                     }
                     WarnSkippedRenderers(missingRenderers);
                     NativeMeshPayloadService.RemoveGeneratedBones(session.customBaseTarget);
@@ -1288,7 +1288,7 @@ public partial class VersionActions
         VersionTransitionRollbackSnapshot snapshot = null;
         try
         {
-            if (activeTransitionRollback != null) throw new InvalidOperationException("Another version transition is still active.");
+            if (activeTransitionRollback != null) throw new InvalidOperationException("MCB is still installing or removing a version on this avatar. Nothing was changed; wait for it to finish, then try again.");
             snapshot = VersionTransitionRollbackSnapshot.Capture(
                 GetTransitionAffectedFbxPaths(GetDistinctTransitionVersions(previous), fbxPath), requestedTarget, session);
             StartApplyProgress("Applying saved custom version...", 0f);

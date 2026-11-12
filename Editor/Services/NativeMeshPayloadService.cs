@@ -890,7 +890,7 @@ public static partial class NativeMeshPayloadService
             if (restored == 0 && missing.Count == 0)
             {
                 throw new InvalidOperationException(
-                    $"No renderer could be safely restored from '{sourcePath}'. The existing mesh and bone bindings were left together unchanged.");
+                    $"None of your avatar's body parts could be matched with its original base model '{sourcePath}'. Nothing was changed.");
             }
         }
 

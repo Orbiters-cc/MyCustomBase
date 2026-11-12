@@ -901,7 +901,7 @@ public partial class VersionActions
 
         if (restoredRenderers == 0 && missingRenderers.Count == 0)
         {
-            throw new InvalidOperationException("Advanced mesh transition could not safely restore any renderer from the original FBX state.");
+            throw new InvalidOperationException("MCB could not find any of your avatar's body parts in its original base model, so it cannot switch versions safely. Nothing was changed.");
         }
         WarnSkippedRenderers(missingRenderers);
     }

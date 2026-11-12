@@ -80,14 +80,14 @@ public static partial class NativeMeshPayloadService
             if (record?.mesh == null) throw new InvalidDataException("Advanced mesh payload contains a missing mesh.");
             var renderer = ResolveAvatarRenderer(avatarRoot, record);
             if (renderer == null)
-                throw new InvalidOperationException($"Cannot find the avatar renderer '{record.avatarPath}': it was moved or renamed. Put it back at '{record.avatarPath}' and try again.");
+                throw new InvalidOperationException($"MCB cannot find your avatar's '{record.avatarPath}' (it was deleted, or renamed so it no longer looks like the base's). Nothing was changed. Put it back or give it its name again, then try again.");
             int duplicate = Array.IndexOf(targets, renderer);
             if (duplicate >= 0)
-                throw new InvalidOperationException($"Advanced mesh targets '{records[duplicate].avatarPath}' and '{record.avatarPath}' both resolve to the renderer '{renderer.name}'.");
+                throw new InvalidOperationException($"The version's parts '{records[duplicate].avatarPath}' and '{record.avatarPath}' would both go on your avatar's '{renderer.name}'. Nothing was changed. Rename the extra '{renderer.name}' (clothing or a copy) and try again.");
             var bones = ResolveBoneArray(avatarRoot, record.bonePaths, renderer);
             if (bones.Length != (record.bonePaths?.Count ?? 0)
                 || (record.mesh.bindposes.Length > 0 && bones.Length != record.mesh.bindposes.Length))
-                throw new InvalidOperationException($"Cannot safely associate all skin bones for '{record.avatarPath}'.");
+                throw new InvalidOperationException($"Your avatar is missing bones the version's '{record.avatarPath}' needs (renamed or deleted). Nothing was changed. Undo the bone changes and try again.");
             targets[i] = renderer;
         }
 

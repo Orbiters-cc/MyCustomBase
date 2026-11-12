@@ -21,23 +21,23 @@ public static partial class NativeMeshPayloadService
             var existing = ResolveAvatarTransform(root, path);
             int slash = path.LastIndexOf('/');
             var parent = slash < 0 ? root : ResolveAvatarTransform(root, path.Substring(0, slash));
-            if (parent == null) throw new InvalidOperationException("Missing custom bone parent: " + path);
+            if (parent == null) throw new InvalidOperationException("Your avatar has no bone where the version adds '" + path + "' (its parent is missing or renamed). Nothing was changed. Undo the bone change and try again.");
             if (existing != null)
             {
                 if (existing.parent != parent)
                 {
-                    if (owner == null || parent.IsChildOf(existing)) throw new InvalidOperationException("Invalid custom skeleton parent: " + path);
+                    if (owner == null || parent.IsChildOf(existing)) throw new InvalidOperationException("The version would put '" + path + "' under one of its own children on your avatar. Nothing was changed. Move that bone back where the base has it and try again.");
                     // Unity silently refuses reparenting model-prefab children. Unpack only when
                     // this payload actually changes hierarchy, within the version Undo transaction.
                     var instance = PrefabUtility.GetOutermostPrefabInstanceRoot(existing.gameObject);
                     if (instance != null && instance.transform != root && !instance.transform.IsChildOf(root))
-                        throw new InvalidOperationException("Unpack the containing prefab before changing this avatar's skeleton.");
+                        throw new InvalidOperationException("Your avatar is inside another prefab, so MCB cannot move its bones. Nothing was changed. Unpack that prefab (right-click > Prefab > Unpack) and try again.");
                     VersionPoseLedgerService.UnpackFor(existing);
                     Undo.RecordObject(owner, "Track custom skeleton parent");
                     if (!owner.nativeMeshOriginalParents.Any(p => p.target == existing))
                         owner.nativeMeshOriginalParents.Add(new NativeMeshOriginalParent { target = existing, parent = existing.parent });
                     Undo.SetTransformParent(existing, parent, "Apply custom skeleton hierarchy");
-                    if (existing.parent != parent) throw new InvalidOperationException("Could not change custom skeleton parent: " + path);
+                    if (existing.parent != parent) throw new InvalidOperationException("Unity refused to move '" + path + "' for the version. Nothing was changed. Unpack the avatar's prefab and try again.");
                     EditorUtility.SetDirty(owner);
                 }
                 continue;
@@ -45,7 +45,7 @@ public static partial class NativeMeshPayloadService
             // A bone the version adds is always MCB's own, even when clothing has a bone of that name.
             string name = GetLastPathSegment(path);
             if (owner == null || !definitions.TryGetValue(path, out var definition))
-                throw new InvalidOperationException("Missing custom bone definition: " + path);
+                throw new InvalidOperationException("This version's download is incomplete (no definition for the bone '" + path + "'). Nothing was changed. Delete the version from the list and download it again.");
             var bone = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(bone, "Create custom mesh bone");
             bone.transform.SetParent(parent, false);
