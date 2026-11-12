@@ -91,7 +91,7 @@ public class LegacyApplyTests
         try
         {
             var session = McbSession.Detached(root.AddComponent<MyCustomBase>());
-            Assert.That(LegacyMigrationService.PrepareApply(session, 7, () => Assert.Fail("No offline migration")).MoveNext(), Is.False);
+            Assert.That(LegacyMigrationService.PlanApply(session, 7, _ => Assert.Fail("No offline migration")).MoveNext(), Is.False);
         }
         finally { UnityEngine.Object.DestroyImmediate(root); }
     }

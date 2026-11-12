@@ -155,11 +155,12 @@ public partial class VersionActions
     private IEnumerator ApplyResolvedVersionCoroutine(CustomBaseVersion version, bool isReset)
     {
         BeginApplyProgress(isReset ? "Preparing reset..." : "Checking avatar...", 0f);
+        LegacyMigrationService.MigrationPlan migration = null;
         if (!isReset)
         {
-            bool migrated = false;
-            yield return ResolveLegacyVersionCoroutine(version, resolved => { version = resolved; migrated = true; });
-            if (migrated && !MCBUtils.IsVersionDownloaded(version))
+            yield return ResolveLegacyVersionCoroutine(version, (resolved, plan) => { version = resolved; migration = plan; });
+            // A custom body is migrated inside the install itself, once the version is downloaded.
+            if (migration != null && !MCBUtils.IsVersionDownloaded(version))
             {
                 yield return DownloadVersionCoroutine(version, true);
                 yield break;
@@ -167,18 +168,19 @@ public partial class VersionActions
         }
         session.serializedObject.Update();
         yield return RunPreparedMutation(ThenShowApplying(PrepareVersionSwitchCoroutine(version, isReset), isReset),
-            () => ApplyOrResetFollowingAnimations(version, isReset));
+            () => { pendingMigration = migration; ApplyOrResetFollowingAnimations(version, isReset); });
     }
 
     private IEnumerator DownloadWithMigrationCoroutine(CustomBaseVersion version, bool apply)
     {
-        if (apply) yield return ResolveLegacyVersionCoroutine(version, resolved => version = resolved);
+        if (apply) yield return ResolveLegacyVersionCoroutine(version, (resolved, plan) => version = resolved);
         yield return DownloadVersionCoroutine(version, apply);
     }
 
-    // A legacy migration changes the original and therefore the offered files. Never carry the old version object
-    // across that boundary, even when its version number happens to be the same.
-    private IEnumerator ResolveLegacyVersionCoroutine(CustomBaseVersion requested, Action<CustomBaseVersion> resolved)
+    // A custom body's migration changes the original and therefore the offered files: the version is chosen for the
+    // planned original before anything changes, and the migration itself runs inside the install. Never carry the old
+    // version object across that boundary, even when its version number happens to be the same.
+    private IEnumerator ResolveLegacyVersionCoroutine(CustomBaseVersion requested, Action<CustomBaseVersion, LegacyMigrationService.MigrationPlan> resolved)
     {
         if (requested == null) throw new ArgumentNullException(nameof(requested));
         string token = session.authToken;
@@ -187,43 +189,47 @@ public partial class VersionActions
         bool migrated = target != null && target.appliedCustomBaseAssetId == 0
             && target.legacyOriginal?.migrated == true && target.legacyOriginal.assetId == requested.assetId
             && session.HasServerAccess;
-        yield return LegacyMigrationService.PrepareApply(session, requested.assetId, () => migrated = true, requested);
-        if (!migrated) yield break;
+        LegacyMigrationService.MigrationPlan plan = null;
+        yield return LegacyMigrationService.PlanApply(session, requested.assetId, planned => plan = planned, requested);
+        if (!migrated && plan == null) yield break;
         AvatarAssetDiscoveryResponse offered = null;
         string error = null;
-        yield return AvatarAssetDiscoveryService.DiscoverAssetsCoroutine(session.authToken, session.GetDetectedAvatarFbxPaths(), true,
+        var paths = plan != null ? new List<string> { plan.OriginalPath } : session.GetDetectedAvatarFbxPaths();
+        yield return AvatarAssetDiscoveryService.DiscoverAssetsCoroutine(session.authToken, paths, true,
             (response, failure) => { offered = response; error = failure; }, session.customBaseTarget);
         if (target == null || session.authToken != token)
-            throw new InvalidOperationException("The avatar or signed-in account changed while refreshing migrated versions; apply again.");
+            throw new InvalidOperationException("The avatar or the signed-in account changed while MCB was checking the versions offered for it. Nothing was changed; install again.");
         var asset = offered?.assets?.FirstOrDefault(a => a.id == requested.assetId)
-            ?? throw new InvalidOperationException(error ?? "This asset is not offered for the migrated avatar's original base.");
+            ?? throw new InvalidOperationException((error != null ? error + " " : "")
+                + "This asset is not offered for your avatar's original base, so it cannot be installed on this custom body. Nothing was changed.");
         session.Select(asset, refreshVersions: false);
-        session.RedetectBaseFbx();
-        var fetch = AsyncVersionService.Instance.FetchVersionsAsync(session.GetCurrentFBXPath(), session.authToken,
+        if (plan == null) session.RedetectBaseFbx();
+        var fetch = AsyncVersionService.Instance.FetchVersionsAsync(plan != null ? plan.OriginalPath : session.GetCurrentFBXPath(), session.authToken,
             asset.id, useCache: false, sourceVersionKey: OriginalBaseLibrary.ActiveKey(asset));
         while (!fetch.IsCompleted) yield return null;
         var (versions, recommended, fetchError) = fetch.GetAwaiter().GetResult();
         if (target == null || session.authToken != token)
-            throw new InvalidOperationException("The avatar or signed-in account changed while refreshing migrated versions; apply again.");
+            throw new InvalidOperationException("The avatar or the signed-in account changed while MCB was checking the versions offered for it. Nothing was changed; install again.");
         var version = SelectMigratedVersion(requested, versions, fetchError);
         session.serverVersions = versions;
         session.recommendedVersion = recommended;
         session.selectedVersionForAction = version;
         session.RequestRefresh(McbViewParts.All);
-        resolved(version);
+        resolved(version, plan);
     }
 
     internal static CustomBaseVersion SelectMigratedVersion(CustomBaseVersion requested, IEnumerable<CustomBaseVersion> offered, string error)
     {
         return offered?.FirstOrDefault(v => v.assetId == requested.assetId && v.version == requested.version)
-            ?? throw new InvalidOperationException(error ?? $"Version {requested.version} is not offered for the migrated avatar's original base.");
+            ?? throw new InvalidOperationException((error != null ? error + " " : "") + $"Version {requested.version} is not offered for your avatar's original base, "
+                + "so it cannot be installed on this custom body yet. Nothing was changed. Choose another version, or ask the creator to support this base.");
     }
 
     private void HandleApplyOrResetException(Exception ex, CustomBaseVersion version, bool isReset)
     {
         string operation = isReset ? "Reset" : "Apply";
         string versionLabel = version != null ? version.version : "null";
-        string message = $"{operation} failed: {ex.GetBaseException().Message}";
+        string message = LeftUnchanged($"{operation} failed: {ex.GetBaseException().Message}");
         MCBLogger.LogError($"[VersionActions] {operation} failed unexpectedly. version={versionLabel} reset={isReset}: {ex}");
         RollbackActiveTransition();
         session.warningsModule?.AddWarning(message, MessageType.Error, $"{operation} failed");
@@ -289,16 +295,13 @@ public partial class VersionActions
     {
         var target = session.customBaseTarget;
         var root = target != null ? AvatarPaths.Root(target) : null;
-        // The whole switch is one Undo step: the install or reset, the objects kept on the body, the release from before
-        // MCB, the animation paths and the pose ledger.
-        Undo.IncrementCurrentGroup();
-        int undoGroup = Undo.GetCurrentGroup();
-        Undo.SetCurrentGroupName(isReset ? "Go back to the original base" : "Install MCB version");
-        // Undo puts back the whole avatar as it was, including what changes without being recorded (renderer bounds the
-        // skinning recomputes, objects a constraint moves while the version's logic comes and goes).
-        if (root != null)
-            Undo.RegisterCompleteObjectUndo(root.GetComponentsInChildren<Transform>(true).SelectMany(t => new UnityEngine.Object[] { t, t.gameObject })
-                .Concat(root.GetComponentsInChildren<SkinnedMeshRenderer>(true)).ToArray(), isReset ? "Go back to the original base" : "Install MCB version");
+        var migration = pendingMigration;
+        pendingMigration = null;
+        // The whole switch is one Undo step and one transaction: the migration of a custom body, the install or reset, the
+        // objects kept on the body, the release from before MCB, the animation paths and the pose ledger. A failure
+        // anywhere puts the avatar back exactly as it was.
+        var transaction = AvatarTransaction.Begin(root, isReset ? "Go back to the original base" : "Install MCB version");
+        bool done = false;
         try
         {
             // Nothing installed: going back has no version to remove (a migrated body still comes back).
@@ -309,26 +312,54 @@ public partial class VersionActions
                 if (restored != null) MCBLogger.Log($"[MCB] The avatar is back on {restored}, as before its migration.");
                 FinishApplyProgress(true);
                 session.RequestRefresh(McbViewParts.All);
+                done = true;
                 return;
             }
             // A version installed with a pose ledger: going back (or the first half of a reinstall or switch) puts back
-            // exactly what the person had. A fresh install records the avatar first.
-            var start = VersionPoseLedgerService.CaptureState(root);
+            // exactly what the person had. A fresh install records the avatar first, before a custom body's migration.
             poseRestore = target != null && target.appliedCustomBaseAssetId != 0 ? VersionPoseLedgerService.BeginRestore(target, root) : null;
-            poseSnapshot = !isReset && poseRestore == null && target != null
-                ? VersionPoseLedgerService.Capture(root, VersionPoseLedgerService.ReferenceModels(target, root)) : null;
-            if (!ApplyOrResetWithLedger(version, isReset, target, root))
-                // Failed and rolled back: what Undo does not cover comes back from the record of the start.
-                VersionPoseLedgerService.RestoreSnapshot(start);
+            if (!isReset && poseRestore == null && target != null)
+            {
+                var references = VersionPoseLedgerService.ReferenceModels(target, root);
+                if (migration?.Original != null) references.Add(migration.Original);
+                poseSnapshot = VersionPoseLedgerService.Capture(root, references);
+            }
+            if (!isReset && migration != null)
+            {
+                LegacyMigrationService.Migrate(root, migration.Matches, migration.Original);
+                session.RedetectBaseFbx();
+                session.serializedObject.Update();
+                MCBLogger.Log($"[MCB] The custom body moved onto {migration.OriginalPath} for this install; going back brings it back.");
+                AfterMigrationForTests?.Invoke();
+            }
+            done = ApplyOrResetWithLedger(version, isReset, target, root);
         }
         finally
         {
             poseSnapshot = null;
             poseRestore = null;
             placements = null;
-            Undo.CollapseUndoOperations(undoGroup);
-            Undo.IncrementCurrentGroup();
+            if (!done)
+            {
+                transaction.Fail();
+                session.serializedObject.Update();
+                if (migration != null) session.RedetectBaseFbx();
+            }
+            transaction.End();
         }
+    }
+
+    // The custom body migration the running install performs (planned before the download).
+    private LegacyMigrationService.MigrationPlan pendingMigration;
+    /// <summary>Tests: runs right after a custom body's migration inside an install (throw to inject a failure).</summary>
+    internal static Action AfterMigrationForTests;
+
+    /// <summary>The text of a failed install or reset: what happened, and that the avatar was left as it was.</summary>
+    internal static string LeftUnchanged(string message)
+    {
+        message = (message ?? "").Trim();
+        return message.IndexOf("Nothing was changed", StringComparison.OrdinalIgnoreCase) >= 0 ? message
+            : message + (message.EndsWith(".") ? "" : ".") + " Nothing was changed on your avatar.";
     }
 
     // The pose ledger of the switch running now (see VersionPoseLedgerService); null outside it.
@@ -801,7 +832,7 @@ public partial class VersionActions
         {
             profile.Mark("Model patch/reset failed");
             MCBLogger.LogError($"[MCB] Operation failed: {operationException.Message}");
-            session.warningsModule?.AddWarning(operationException.Message, MessageType.Error, isReset ? "Reset failed" : "Apply failed");
+            session.warningsModule?.AddWarning(LeftUnchanged(operationException.Message), MessageType.Error, isReset ? "Reset failed" : "Apply failed");
             if (activeTransitionRollback != null)
             {
                 RollbackActiveTransition();

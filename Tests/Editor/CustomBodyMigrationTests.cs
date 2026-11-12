@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -86,7 +87,7 @@ public class CustomBodyMigrationTests
     [Test] public void AppliedVersionSkipsPreparation()
     {
         Create(); var owner = avatar.GetComponent<MyCustomBase>(); owner.appliedCustomBaseAssetId = 7;
-        Assert.That(LegacyMigrationService.PrepareApply(McbSession.Detached(owner), 7, () => Assert.Fail()).MoveNext(), Is.False);
+        Assert.That(LegacyMigrationService.PlanApply(McbSession.Detached(owner), 7, _ => Assert.Fail()).MoveNext(), Is.False);
     }
 
     [Test] public void UnsavedCustomMeshCannotReachDirectInstall()
@@ -94,9 +95,9 @@ public class CustomBodyMigrationTests
         Create(); var unsaved = new Mesh();
         try {
             avatar.GetComponentInChildren<SkinnedMeshRenderer>().sharedMesh = unsaved;
-            var error = Assert.Throws<InvalidOperationException>(() => LegacyMigrationService.UnregisteredBaseRenderers(avatar.transform,
-                new[] { "Body" }, new LegacyMigrationService.Cleanup(), Array.Empty<string>(), "original.fbx", Array.Empty<ModelFileData>()));
-            Assert.That(error.Message, Does.Contain("Save the custom body mesh"));
+            var custom = LegacyMigrationService.UnregisteredBaseRenderers(avatar.transform,
+                new[] { "Body" }, new LegacyMigrationService.Cleanup(), Array.Empty<string>(), "original.fbx", Array.Empty<ModelFileData>());
+            Assert.That(custom.Select(c => c.model), Is.EqualTo(new[] { "" }), "a scene-only body is a custom body to migrate");
             Assert.That(avatar.GetComponentInChildren<SkinnedMeshRenderer>().sharedMesh, Is.SameAs(unsaved));
         } finally { UnityEngine.Object.DestroyImmediate(unsaved); }
     }

@@ -22,6 +22,12 @@ public partial class AssetGalleryModule
         var owner = editor.customBaseTarget;
         if (owner == null || owner.appliedCustomBaseAssetId > 0) return;
         var avatar = AvatarPaths.Root(owner);
+        // Migrated with no version installed (Migrate avatar, or an install that was not finished): the way back.
+        if (owner.legacyOriginal != null && owner.legacyOriginal.migrated)
+        {
+            root.Add(CreateRestoreBodyNotice(avatar, owner.legacyOriginal.label));
+            return;
+        }
         string signature = LegacySignature(avatar);
         if (signature != legacySignature && !legacyLoading)
         {
@@ -55,6 +61,54 @@ public partial class AssetGalleryModule
             legacyLoading = false;
             if (legacyMatches.Count > 0) editor.RequestRefresh(McbViewParts.All);
         }
+    }
+
+    private VisualElement CreateRestoreBodyNotice(Transform avatar, string label)
+    {
+        var notice = new VisualElement();
+        notice.AddToClassList("mcb-legacy-notice");
+        var title = CreateLabel((string.IsNullOrEmpty(label) ? "Your body" : label) + " is set aside", 12, FontStyle.Bold, new Color(0.88f, 0.88f, 0.88f));
+        title.AddToClassList("mcb-legacy-notice__title");
+        notice.Add(title);
+        var text = CreateLabel("This avatar was migrated: it shows the original base's body so MCB versions can be installed. Install a version, "
+            + "or put your own body, materials and avatar setup back as they were.", 11, FontStyle.Normal, new Color(0.72f, 0.72f, 0.72f));
+        text.AddToClassList("mcb-legacy-notice__text");
+        notice.Add(text);
+        var row = CreateRow();
+        row.AddToClassList("mcb-legacy-notice__actions");
+        var status = CreateLabel(legacyError ?? "", 11, FontStyle.Normal, new Color(1f, 0.55f, 0.35f));
+        status.AddToClassList("mcb-legacy-notice__status");
+        Button button = null;
+        button = CreateToolbarButton("Put my body back", () =>
+        {
+            button.text = "Putting it back…";
+            button.SetEnabled(false);
+            UnityEditor.EditorApplication.delayCall += () =>
+            {
+                try
+                {
+                    UnityEditor.Undo.IncrementCurrentGroup();
+                    int group = UnityEditor.Undo.GetCurrentGroup();
+                    UnityEditor.Undo.SetCurrentGroupName("Put my body back");
+                    LegacyMigrationService.RestoreOriginal(avatar);
+                    UnityEditor.Undo.CollapseUndoOperations(group);
+                    legacyError = null;
+                    legacySignature = null;
+                    editor.RedetectBaseFbx();
+                    RefreshIfNeeded(force: true);
+                }
+                catch (Exception ex)
+                {
+                    legacyError = ex.Message;
+                    MCBLogger.LogWarning("[MCB] The body could not be put back: " + ex.Message);
+                }
+                finally { editor.RequestRefresh(McbViewParts.All); }
+            };
+        });
+        row.Add(button);
+        row.Add(status);
+        notice.Add(row);
+        return notice;
     }
 
     private VisualElement CreateLegacyNotice(Transform avatar, List<LegacyMigrationService.Match> release)

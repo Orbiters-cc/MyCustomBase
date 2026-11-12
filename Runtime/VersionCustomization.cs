@@ -222,6 +222,8 @@ public sealed class RendererLayoutConfiguration
 [Serializable] public sealed class LegacyRendererState
 {
     public SkinnedMeshRenderer renderer; public string name; public Mesh mesh; public Transform[] bones; public Transform rootBone;
+    // A body mesh that only lived in the scene: MCB's saved copy of it (used if the scene mesh is gone).
+    public Mesh savedMesh;
     public Bounds bounds; public Material[] materials; public List<string> shapes = new List<string>(); public List<float> weights = new List<float>();
 }
 [Serializable] public sealed class LegacyObjectState { public GameObject target; public bool active; public string tag; }
@@ -230,6 +232,10 @@ public sealed class RendererLayoutConfiguration
 [Serializable] public sealed class LegacyOriginal
 {
     public bool migrated; public int assetId; public string label;
+    // The record holds the descriptor's and Animator's state (written by this MCB): without it they are left alone.
+    public bool hasAvatarState;
+    // The original base model's Avatar: what going back puts on the Animator, replaced by animatorAvatar.
+    public Avatar originalAvatar;
     public Avatar animatorAvatar;
     public RuntimeAnimatorController animatorController;
     public VRC.SDK3.Avatars.Components.VRCAvatarDescriptor.CustomAnimLayer[] animationLayers;

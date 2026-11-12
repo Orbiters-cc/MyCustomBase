@@ -38,52 +38,116 @@ public static class LegacyMigrationService
         return task;
     }
 
-    internal static IEnumerator PrepareApply(McbSession session, int assetId, Action migrated, CustomBaseVersion requested = null)
+    /// <summary>A custom body's migration, planned without changing anything: what migrates and onto which original.</summary>
+    public sealed class MigrationPlan
+    {
+        public List<Match> Matches;
+        public GameObject Original;
+        public string OriginalPath;
+    }
+
+    /// <summary>
+    /// Plans the migration a first install on a personal custom body needs, without changing the avatar: the install
+    /// downloads the version first and migrates inside its own Undo step. A stock avatar (its base renderers use the
+    /// original's model files) needs neither the server's answer nor any hashing.
+    /// </summary>
+    internal static IEnumerator PlanApply(McbSession session, int assetId, Action<MigrationPlan> planned, CustomBaseVersion requested = null)
     {
         var owner = session.customBaseTarget;
         if (owner == null) throw new InvalidOperationException("The avatar is no longer available.");
         if (owner.appliedCustomBaseAssetId > 0 || owner.legacyOriginal?.migrated == true) yield break;
         var avatar = AvatarPaths.Root(owner);
         if (!avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true).Any(r => r.sharedMesh != null)) yield break;
-        string token = session.authToken;
-        string key = LookupKey(avatar, token, assetId);
-        var lookup = session.HasServerAccess ? LookupAsync(avatar, token, assetId) : Task.FromResult(new List<Match>());
-        while (!lookup.IsCompleted) yield return null;
-        if (owner == null || session.authToken != token || LookupKey(avatar, token, assetId) != key)
-            throw new InvalidOperationException("The avatar or signed-in account changed; apply again.");
-        if (owner.appliedCustomBaseAssetId > 0 || owner.legacyOriginal?.migrated == true) yield break;
         var asset = session.SelectedAsset;
         var originals = asset != null && asset.id == assetId
             ? OriginalBaseLibrary.Versions(asset).SelectMany(v => v.sourceFiles ?? Array.Empty<ModelFileData>()).ToList()
             : new List<ModelFileData>();
         originals.AddRange(requested?.sourceFiles ?? Array.Empty<ModelFileData>());
-        var matches = PlanCustomBody(avatar, assetId, originals, lookup.GetAwaiter().GetResult());
+        if (!HasCustomBaseRenderers(owner, avatar, originals)) yield break;
+        string token = session.authToken;
+        string key = LookupKey(avatar, token, assetId);
+        var lookup = session.HasServerAccess ? LookupAsync(avatar, token, assetId) : Task.FromResult(new List<Match>());
+        while (!lookup.IsCompleted) yield return null;
+        if (owner == null || session.authToken != token || LookupKey(avatar, token, assetId) != key)
+            throw new InvalidOperationException("The avatar or the signed-in account changed while MCB was checking it. Nothing was changed; install again.");
+        if (lookup.IsFaulted || lookup.IsCanceled)
+            throw new InvalidOperationException("MCB could not check your avatar's custom body with the server ("
+                + (lookup.Exception?.GetBaseException().Message ?? "cancelled") + "). Nothing was changed. Check your connection and that you are signed in, then try again.");
+        var matches = PlanCustomBody(avatar, assetId, originals, lookup.Result, out string originalPath);
         if (matches.Count == 0) yield break;
         if (!session.HasServerAccess)
-            throw new InvalidOperationException("Sign in before installing a version on your custom body so its compatible versions can be refreshed.");
-        Migrate(avatar, matches);
-        session.RedetectBaseFbx();
-        migrated();
+            throw new InvalidOperationException("Sign in to MCB to install a version on your custom body: MCB needs the versions offered for its original base. Nothing was changed.");
+        planned(new MigrationPlan { Matches = matches, OriginalPath = originalPath, Original = AssetDatabase.LoadAssetAtPath<GameObject>(originalPath) });
     }
+
+    /// <summary>
+    /// Whether a base renderer of the avatar (at the base model's renderer paths, or renamed/moved) uses a mesh that is
+    /// not from an original base file: a file named like an original counts as one without reading it; any other model
+    /// file is hashed (cached), a scene-only mesh is custom.
+    /// </summary>
+    internal static bool HasCustomBaseRenderers(MyCustomBase owner, Transform avatar, IReadOnlyCollection<ModelFileData> originals)
+    {
+        var model = owner.baseFbxFiles?.FirstOrDefault(m => m != null);
+        if (model == null || originals.Count == 0) return false;
+        var paths = model.GetComponentsInChildren<SkinnedMeshRenderer>(true).Select(r => AnimationUtility.CalculateTransformPath(r.transform, model.transform)).ToArray();
+        var names = new HashSet<string>(originals.Select(o => Path.GetFileName(o?.path ?? "")).Where(n => n.Length > 0), StringComparer.OrdinalIgnoreCase);
+        var hashes = new HashSet<string>(originals.Where(o => !string.IsNullOrEmpty(o?.hash)).Select(o => o.hash.ToLowerInvariant()), StringComparer.Ordinal);
+        foreach (var renderer in BaseRenderers(avatar, paths, null))
+        {
+            if (renderer.sharedMesh == null) continue;
+            string file = AssetDatabase.GetAssetPath(renderer.sharedMesh);
+            if (string.IsNullOrEmpty(file)) return true;
+            if (names.Contains(Path.GetFileName(file))) continue;
+            string hash = CachedHash(file);
+            if (hash == null || !hashes.Contains(hash)) return true;
+        }
+        return false;
+    }
+
+    private const long MaxModelBytes = 256L << 20;
+    private static readonly Dictionary<string, (long size, long time, string hash)> HashCache = new Dictionary<string, (long, long, string)>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A model file's hash, read once per path, size and write time; null when missing or far larger than a base.</summary>
+    internal static string CachedHash(string path)
+    {
+        var info = new FileInfo(Path.GetFullPath(path));
+        if (!info.Exists || info.Length > MaxModelBytes) return null;
+        long time = info.LastWriteTimeUtc.Ticks;
+        if (HashCache.TryGetValue(info.FullName, out var known) && known.size == info.Length && known.time == time) return known.hash;
+        string hash = ContentHash.Proof(path)?.ToLowerInvariant();
+        HashCache[info.FullName] = (info.Length, time, hash);
+        return hash;
+    }
+
+    /// <summary>Tests: model paths the original lookup must not see (as if the file were not imported).</summary>
+    internal static Func<string, bool> HiddenFromOriginalLookup;
+
+    internal static string MissingOriginalMessage(IEnumerable<ModelFileData> originals) =>
+        "To install this version on your custom body, MCB needs the base's original model in this project ("
+        + string.Join(" or ", originals.Select(o => Path.GetFileName(o?.path ?? "")).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+        + "). It comes with the base's original package from its creator: import that package into this project, then install again. Nothing was changed on your avatar.";
 
     // Discovery's sourceFiles can be filtered to the matching set. sourceVersions holds every supported original.
     internal static List<Match> PlanCustomBody(Transform avatar, int assetId, IEnumerable<ModelFileData> sources, IEnumerable<Match> identified)
+        => PlanCustomBody(avatar, assetId, sources, identified, out _);
+
+    internal static List<Match> PlanCustomBody(Transform avatar, int assetId, IEnumerable<ModelFileData> sources, IEnumerable<Match> identified, out string originalPath)
     {
+        originalPath = null;
         var matches = identified.Where(m => m.assetId == assetId).ToList();
         var originals = sources.Concat(matches.SelectMany(m => m.originals)).Where(o => !string.IsNullOrEmpty(o?.hash))
             .GroupBy(o => o.hash, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
         if (originals.Count == 0)
-            throw new InvalidOperationException("The original base model information is missing. Refresh the asset gallery and try again.");
-        var originalPath = PickOriginal(avatar, originals, Array.Empty<string>());
-        if (originalPath == null)
-            throw new InvalidOperationException("Import the original base model in this project first (" +
-                string.Join(", ", originals.Select(o => Path.GetFileName(o.path)).Distinct()) + ").");
+            throw new InvalidOperationException("MCB is missing the information about this base's original model. Nothing was changed. Open the asset gallery again (it refreshes this) and install again.");
+        originalPath = PickOriginal(avatar, originals, Array.Empty<string>());
+        if (originalPath == null) throw new InvalidOperationException(MissingOriginalMessage(originals));
         var original = AssetDatabase.LoadAssetAtPath<GameObject>(originalPath);
         var paths = original.GetComponentsInChildren<SkinnedMeshRenderer>(true)
             .Select(r => AnimationUtility.CalculateTransformPath(r.transform, original.transform)).ToArray();
         var release = matches.FirstOrDefault()?.legacyRelease ?? new Release { label = "Your custom body" };
         if (matches.Select(m => m.legacyRelease.label).Distinct().Count() > 1)
-            throw new InvalidOperationException("This avatar matches more than one legacy release of this asset.");
+            throw new InvalidOperationException("Your avatar matches several older releases of this asset (" + string.Join(", ", matches.Select(m => m.legacyRelease.label).Distinct())
+                + "), so MCB cannot tell which one to convert. Nothing was changed. Ask the creator which release your avatar uses.");
         var custom = UnregisteredBaseRenderers(avatar, paths, release.cleanup ?? new Cleanup(), Array.Empty<string>(), originalPath, originals);
         if (custom.Count == 0) return new List<Match>();
         foreach (var model in custom.Select(c => c.model).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -99,7 +163,8 @@ public static class LegacyMigrationService
         validate();
         if (matches.Count == 0) yield break;
         if (matches.Select(m => m.legacyRelease.label).Distinct().Count() != 1)
-            throw new InvalidOperationException("This avatar matches more than one legacy release of this asset; migrate one release first.");
+            throw new InvalidOperationException("Your avatar matches several older releases of this asset (" + string.Join(", ", matches.Select(m => m.legacyRelease.label).Distinct())
+                + "), so MCB cannot tell which one to convert. Nothing was changed. Ask the creator which release your avatar uses.");
         migrate(matches);
     }
 
@@ -198,11 +263,25 @@ public static class LegacyMigrationService
         if (release == null) return matches;
         var originals = asset["originals"]?.ToObject<List<ModelFileData>>() ?? new List<ModelFileData>();
         var originalHashes = new HashSet<string>(originals.Select(o => o.hash), StringComparer.OrdinalIgnoreCase);
-        foreach (var model in byHash.Where(m => !originalHashes.Contains(m.Key)))
+        var bodyModels = BodyModels(avatar, originals, release);
+        foreach (var model in byHash.Where(m => !originalHashes.Contains(m.Key) && bodyModels.Contains(m.Value)))
             matches.Add(new Match { assetId = assetId, assetName = asset.Value<string>("assetName"),
                 avatarBase = asset["avatarBase"]?.ToObject<AvatarAssetBaseInfo>(), kind = "legacy", legacyRelease = release,
                 originals = originals, legacyModelPath = model.Value });
         return matches;
+    }
+
+    // The model files of the avatar's base renderers (the originals' renderer paths, the release's renderer map, else
+    // the avatar's own renderers directly under its root): clothing and hair models are never a release's legacy models.
+    private static HashSet<string> BodyModels(Transform avatar, IEnumerable<ModelFileData> originals, Release release)
+    {
+        var paths = new HashSet<string>(originals.SelectMany(o => o?.smrPaths ?? new List<ModelFileSmrPathData>()).Select(e => e?.avatarPath)
+            .Where(p => !string.IsNullOrEmpty(p)), StringComparer.Ordinal);
+        foreach (var target in release.cleanup?.rendererMap?.Values ?? Enumerable.Empty<string>()) paths.Add(target);
+        var skeleton = OwnSkeleton.ForAvatar(avatar);
+        var renderers = paths.Count > 0 ? BaseRenderers(avatar, paths, release.cleanup)
+            : avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.transform.parent == avatar && (skeleton.Armature == null || skeleton.IsOwnRenderer(r))).ToList();
+        return new HashSet<string>(renderers.Where(r => r.sharedMesh != null).Select(r => AssetDatabase.GetAssetPath(r.sharedMesh)), StringComparer.OrdinalIgnoreCase);
     }
 
     internal static IEnumerable<string> FxLayerNames(Transform avatar)
@@ -231,7 +310,7 @@ public static class LegacyMigrationService
     /// </summary>
     public static object Migrate(Transform avatar, IList<Match> matches)
     {
-        if (avatar == null || matches == null || matches.Count == 0 || matches.Any(m => m?.legacyRelease == null || string.IsNullOrEmpty(m.legacyModelPath)))
+        if (avatar == null || matches == null || matches.Count == 0 || matches.Any(m => m?.legacyRelease == null || m.legacyModelPath == null))
             throw new ArgumentException("Find the avatar's legacy release first.");
         var match = matches[0];
         if (matches.Any(m => m.assetId != match.assetId || m.legacyRelease.label != match.legacyRelease.label))
@@ -240,10 +319,9 @@ public static class LegacyMigrationService
         var legacyPaths = new HashSet<string>(matches.Select(m => m.legacyModelPath), StringComparer.OrdinalIgnoreCase);
         var originals = matches.SelectMany(m => m.originals).Where(o => o?.hash != null).GroupBy(o => o.hash.ToLowerInvariant()).Select(g => g.First()).ToList();
         var cleanup = match.legacyRelease.cleanup ?? new Cleanup();
-        string originalPath = PickOriginal(avatar, originals, legacyPaths)
-            ?? throw new InvalidOperationException("Import the original base model in this project first (" +
-                string.Join(", ", originals.Select(o => Path.GetFileName(o.path)).Distinct()) + ").");
-        var original = AssetDatabase.LoadAssetAtPath<GameObject>(originalPath) ?? throw new InvalidOperationException("The original base model does not load: " + originalPath);
+        string originalPath = PickOriginal(avatar, originals, legacyPaths) ?? throw new InvalidOperationException(MissingOriginalMessage(originals));
+        var original = AssetDatabase.LoadAssetAtPath<GameObject>(originalPath)
+            ?? throw new InvalidOperationException("The base's original model at '" + originalPath + "' does not load in Unity. Nothing was changed. Reimport it and try again.");
         return Migrate(avatar, matches, original);
     }
 
@@ -305,7 +383,8 @@ public static class LegacyMigrationService
         RememberLegacyShapes(avatar, match.assetId, legacyWeights);
         var descriptorBefore = avatar.GetComponent<VRCAvatarDescriptor>();
         var animatorBefore = avatar.GetComponent<Animator>();
-        var record = new LegacyOriginal { migrated = true, assetId = match.assetId, label = match.legacyRelease.label,
+        var record = new LegacyOriginal { migrated = true, assetId = match.assetId, label = match.legacyRelease.label, hasAvatarState = true,
+            originalAvatar = AssetDatabase.LoadAllAssetsAtPath(originalPath).OfType<Avatar>().FirstOrDefault(),
             animatorAvatar = animatorBefore != null ? animatorBefore.avatar : null,
             animatorController = animatorBefore != null ? animatorBefore.runtimeAnimatorController : null,
             animationLayers = descriptorBefore?.baseAnimationLayers?.ToArray(),
@@ -315,6 +394,8 @@ public static class LegacyMigrationService
             var state = new LegacyRendererState { renderer = plan.renderer, name = plan.renderer.name, mesh = plan.renderer.sharedMesh, bones = plan.renderer.bones,
                 rootBone = plan.renderer.rootBone, bounds = plan.renderer.localBounds, materials = plan.renderer.sharedMaterials };
             for (int i = 0; i < state.mesh.blendShapeCount; i++) { state.shapes.Add(state.mesh.GetBlendShapeName(i)); state.weights.Add(plan.renderer.GetBlendShapeWeight(i)); }
+            // A body that only lived in the scene is kept as a project asset too.
+            if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(state.mesh))) state.savedMesh = SaveSceneMesh(avatar, plan.renderer);
             record.renderers.Add(state);
         }
         foreach (var plan in plans)
@@ -370,6 +451,7 @@ public static class LegacyMigrationService
         {
             Undo.RecordObject(owner, "Remember " + match.legacyRelease.label);
             owner.legacyOriginal = new LegacyOriginal { migrated = true, assetId = record.assetId, label = record.label, renderers = record.renderers.ToList(),
+                hasAvatarState = record.hasAvatarState, originalAvatar = record.originalAvatar,
                 animatorAvatar = record.animatorAvatar, animatorController = record.animatorController,
                 animationLayers = record.animationLayers, expressionParameters = record.expressionParameters, expressionsMenu = record.expressionsMenu,
                 objects = record.objects.ToList(), assets = record.assets.ToList(), baseModels = (owner.baseFbxFiles ?? new List<GameObject>()).Where(m => m != null).ToList() };
@@ -404,22 +486,21 @@ public static class LegacyMigrationService
         foreach (var state in record.renderers)
         {
             var renderer = state.renderer;
-            if (renderer == null || state.mesh == null) continue;
+            if (renderer == null) continue;
+            var mesh = state.mesh != null ? state.mesh : state.savedMesh;
             var current = new Dictionary<string, float>(StringComparer.Ordinal);
             if (renderer.sharedMesh != null)
                 for (int i = 0; i < renderer.sharedMesh.blendShapeCount; i++) current[renderer.sharedMesh.GetBlendShapeName(i)] = renderer.GetBlendShapeWeight(i);
-            var materials = renderer.sharedMaterials;
             Undo.RecordObject(renderer, step);
-            renderer.sharedMesh = state.mesh;
+            renderer.sharedMesh = mesh;
             if (state.bones != null && state.bones.Length > 0) renderer.bones = state.bones;
             if (state.rootBone != null) renderer.rootBone = state.rootBone;
             renderer.localBounds = state.bounds;
-            var before = state.materials ?? new Material[0];
-            renderer.sharedMaterials = Enumerable.Range(0, state.mesh.subMeshCount)
-                .Select(i => i < before.Length && before[i] != null ? before[i] : materials.ElementAtOrDefault(i)).ToArray();
-            for (int i = 0; i < state.mesh.blendShapeCount; i++)
+            // The materials it had, empty slots included.
+            renderer.sharedMaterials = (state.materials ?? new Material[0]).ToArray();
+            for (int i = 0; mesh != null && i < mesh.blendShapeCount; i++)
             {
-                string shape = state.mesh.GetBlendShapeName(i);
+                string shape = mesh.GetBlendShapeName(i);
                 int saved = state.shapes.IndexOf(shape);
                 renderer.SetBlendShapeWeight(i, current.TryGetValue(shape, out float now) ? now
                     : remembered.TryGetValue(shape, out float kept) ? kept
@@ -439,22 +520,37 @@ public static class LegacyMigrationService
             state.target.SetActive(state.active);
             state.target.tag = string.IsNullOrEmpty(state.tag) ? "Untagged" : state.tag;
         }
-        var descriptor = avatar.GetComponent<VRCAvatarDescriptor>();
-        if (descriptor != null)
+        // Only what the record holds, and only slots that still hold what MCB put there (its cleaned copies, the original
+        // base's Avatar): a controller, menu or Avatar the person chose since stays.
+        if (record.hasAvatarState)
         {
-            Undo.RecordObject(descriptor, step);
-            descriptor.baseAnimationLayers = record.animationLayers;
-            descriptor.expressionParameters = record.expressionParameters;
-            descriptor.expressionsMenu = record.expressionsMenu;
-            EditorUtility.SetDirty(descriptor);
-        }
-        var animator = avatar.GetComponent<Animator>();
-        if (animator != null)
-        {
-            Undo.RecordObject(animator, step);
-            animator.avatar = record.animatorAvatar;
-            animator.runtimeAnimatorController = record.animatorController;
-            EditorUtility.SetDirty(animator);
+            var originals = (record.assets ?? new List<LegacyAssetSwap>()).Where(a => a != null && a.copy != null && a.original != null)
+                .GroupBy(a => a.copy).ToDictionary(g => g.Key, g => g.First().original);
+            T Back<T>(T current) where T : UnityEngine.Object => current != null && originals.TryGetValue(current, out var original) && original is T typed ? typed : current;
+            var descriptor = avatar.GetComponent<VRCAvatarDescriptor>();
+            if (descriptor != null)
+            {
+                Undo.RecordObject(descriptor, step);
+                var layers = descriptor.baseAnimationLayers ?? new VRCAvatarDescriptor.CustomAnimLayer[0];
+                for (int i = 0; i < layers.Length; i++) layers[i].animatorController = Back(layers[i].animatorController);
+                descriptor.baseAnimationLayers = layers;
+                descriptor.expressionParameters = Back(descriptor.expressionParameters);
+                descriptor.expressionsMenu = Back(descriptor.expressionsMenu);
+                EditorUtility.SetDirty(descriptor);
+            }
+            var animator = avatar.GetComponent<Animator>();
+            if (animator != null)
+            {
+                Undo.RecordObject(animator, step);
+                animator.runtimeAnimatorController = Back(animator.runtimeAnimatorController);
+                var now = animator.avatar;
+                string nowPath = now != null ? AssetDatabase.GetAssetPath(now) : null;
+                if (now != record.animatorAvatar && (now == null || now == record.originalAvatar
+                    || record.originalAvatar != null && nowPath == AssetDatabase.GetAssetPath(record.originalAvatar)
+                    || nowPath != null && nowPath.StartsWith("Assets/MCB/", StringComparison.OrdinalIgnoreCase)))
+                    animator.avatar = record.animatorAvatar;
+                EditorUtility.SetDirty(animator);
+            }
         }
         foreach (var owner in owners)
         {
@@ -475,6 +571,16 @@ public static class LegacyMigrationService
     /// its Animator's avatar), then files named like an original, then any other model. Each file is hashed once, and
     /// files far larger than an avatar base are skipped.
     /// </summary>
+    private static Mesh SaveSceneMesh(Transform avatar, SkinnedMeshRenderer renderer)
+    {
+        string folder = MCBUtils.ToUnityPath(Path.Combine(MigratedFolder, Safe(avatar.name) + " " + DateTime.Now.ToString("yyyyMMdd-HHmmss")));
+        EnsureFolder(folder);
+        var copy = UnityEngine.Object.Instantiate(renderer.sharedMesh);
+        copy.name = renderer.sharedMesh.name;
+        AssetDatabase.CreateAsset(copy, AssetDatabase.GenerateUniqueAssetPath(folder + "/" + Safe(renderer.name) + " body.asset"));
+        return copy;
+    }
+
     // Each MCB component of the avatar remembers the legacy shape values for the asset (in the migration's Undo step):
     // VersionActions applies remembered values over the version's defaults when the avatar comes from its original base.
     private static void RememberLegacyShapes(Transform avatar, int assetId, Dictionary<string, float> weights)
@@ -513,7 +619,6 @@ public static class LegacyMigrationService
     internal static List<(string renderer, string model)> UnregisteredBaseRenderers(Transform avatar, ICollection<string> originalPaths, Cleanup cleanup,
         ICollection<string> legacyPaths, string originalPath, IEnumerable<ModelFileData> originals)
     {
-        const long MaxBytes = 256L << 20;
         var wanted = new HashSet<string>(originals.Where(o => o?.hash != null).Select(o => o.hash.ToLowerInvariant()), StringComparer.Ordinal);
         var known = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var result = new List<(string, string)>();
@@ -522,13 +627,12 @@ public static class LegacyMigrationService
             string model = renderer.sharedMesh == null ? null : AssetDatabase.GetAssetPath(renderer.sharedMesh);
             if (renderer.sharedMesh == null) continue;
             string path = AnimationUtility.CalculateTransformPath(renderer.transform, avatar);
-            if (string.IsNullOrEmpty(model))
-                throw new InvalidOperationException("Save the custom body mesh on '" + path + "' as a project asset before installing this version.");
+            // A body that only lives in the scene is custom: the migration saves a copy of it.
+            if (string.IsNullOrEmpty(model)) { if (!legacyPaths.Contains("")) result.Add((path, "")); continue; }
             if (legacyPaths.Contains(model) || string.Equals(model, originalPath, StringComparison.OrdinalIgnoreCase)) continue;
             if (!known.TryGetValue(model, out bool isOriginal))
             {
-                var info = new FileInfo(Path.GetFullPath(model));
-                string hash = info.Exists && info.Length <= MaxBytes ? ContentHash.Proof(model)?.ToLowerInvariant() : null;
+                string hash = CachedHash(model);
                 known[model] = isOriginal = hash != null && wanted.Contains(hash);
             }
             if (!isOriginal) result.Add((path, model));
@@ -563,19 +667,25 @@ public static class LegacyMigrationService
         return result;
     }
 
+    /// <summary>
+    /// The project's copy of one of the original base models: one the avatar already uses (its renderers, its Animator's
+    /// Avatar), else a project model named like an original (and of its size when known). Never the whole project; each
+    /// file is hashed once per size and write time.
+    /// </summary>
     private static string PickOriginal(Transform avatar, IReadOnlyCollection<ModelFileData> originals, ICollection<string> legacyPaths)
     {
-        const long MaxBytes = 256L << 20;
         var wanted = new HashSet<string>(originals.Select(o => o.hash.ToLowerInvariant()), StringComparer.Ordinal);
-        var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var sizes = new HashSet<long>(originals.Select(o => o.metadata != null && o.metadata.TryGetValue("size", out object v) && long.TryParse(v?.ToString(), out long n) ? n : -1).Where(n => n > 0));
         bool IsOriginal(string path)
         {
             if (string.IsNullOrEmpty(path) || legacyPaths.Contains(path) || !path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)) return false;
-            if (!hashes.TryGetValue(path, out string hash))
+            if (HiddenFromOriginalLookup != null && HiddenFromOriginalLookup(path)) return false;
+            if (sizes.Count > 0)
             {
                 var info = new FileInfo(Path.GetFullPath(path));
-                hashes[path] = hash = info.Exists && info.Length <= MaxBytes ? ContentHash.Proof(path)?.ToLowerInvariant() : null;
+                if (!info.Exists || !sizes.Contains(info.Length)) return false;
             }
+            string hash = CachedHash(path);
             return hash != null && wanted.Contains(hash);
         }
         var used = avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh != null).Select(r => AssetDatabase.GetAssetPath(r.sharedMesh)).ToList();
@@ -585,7 +695,7 @@ public static class LegacyMigrationService
         if (found != null) return found;
         var names = new HashSet<string>(originals.Select(o => Path.GetFileName(o.path ?? "")), StringComparer.OrdinalIgnoreCase);
         return AssetDatabase.FindAssets("t:Model").Select(AssetDatabase.GUIDToAssetPath).Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(p => names.Contains(Path.GetFileName(p)) ? 0 : 1).FirstOrDefault(IsOriginal);
+            .Where(p => names.Contains(Path.GetFileName(p))).FirstOrDefault(IsOriginal);
     }
 
     // Copies of the FX controller, parameters and menus without the release's layers and parameters, on the descriptor.
