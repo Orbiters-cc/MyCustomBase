@@ -322,7 +322,7 @@ public partial class VersionActions
             {
                 var references = VersionPoseLedgerService.ReferenceModels(target, root);
                 if (migration?.Original != null) references.Add(migration.Original);
-                poseSnapshot = VersionPoseLedgerService.Capture(root, references);
+                poseSnapshot = CapturePose(target, root, references);
             }
             if (!isReset && migration != null)
             {
@@ -334,19 +334,51 @@ public partial class VersionActions
             }
             done = ApplyOrResetWithLedger(version, isReset, target, root);
         }
+        catch
+        {
+            // HandleApplyOrResetException shows it, once everything below has been put back.
+            failureShown = true;
+            throw;
+        }
         finally
         {
             poseSnapshot = null;
             poseRestore = null;
             placements = null;
+            migrationBaseline = null;
             if (!done)
             {
                 transaction.Fail();
                 session.serializedObject.Update();
                 if (migration != null) session.RedetectBaseFbx();
+                // Every failure tells the person, whichever path it took.
+                if (!failureShown)
+                    session.warningsModule?.AddWarning(LeftUnchanged((isReset ? "Going back to the original base" : "The install") + " did not finish"),
+                        MessageType.Error, isReset ? "Reset failed" : "Apply failed");
             }
+            failureShown = false;
             transaction.End();
         }
+    }
+
+    // A failure of the switch running now was already shown to the person.
+    private bool failureShown;
+
+    /// <summary>Records the avatar for an install and remembers which model its skeleton comes from.</summary>
+    private static VersionPoseLedgerService.Snapshot CapturePose(MyCustomBase target, Transform root, List<GameObject> references)
+    {
+        var snapshot = VersionPoseLedgerService.Capture(root, references, target);
+        // The rest the person's posing was measured against stays with the avatar: later installs use the same one, also
+        // once its prefab is unpacked.
+        if (snapshot.reference.Count > 0 && (target.poseReferenceRest == null || target.poseReferenceRest.Count == 0))
+        {
+            Undo.RecordObject(target, "Record the avatar's reference model");
+            target.poseReference = snapshot.referenceModel;
+            target.poseReferenceRest = VersionPoseLedgerService.ReferenceRest(snapshot);
+            EditorUtility.SetDirty(target);
+        }
+        if (snapshot.referenceLabel != null) MCBLogger.Log("[MCB] The avatar's posing is measured against " + snapshot.referenceLabel + ".");
+        return snapshot;
     }
 
     // The custom body migration the running install performs (planned before the download).
@@ -368,20 +400,21 @@ public partial class VersionActions
 
     /// <summary>
     /// Inside an install over an installed version, once the previous version is removed: the avatar goes back to what
-    /// the person had, and the new install starts from a fresh record of it (nothing accumulates over reinstalls).
+    /// the person had, and the new install starts from a fresh record of it (nothing accumulates over reinstalls). A
+    /// migrated custom body stays migrated meanwhile: what the migration owns keeps the first install's baseline.
     /// </summary>
     private void RestorePoseLedgerBeforeInstall(Transform root)
     {
         var target = session.customBaseTarget;
         if (poseRestore == null || target == null) return;
-        VersionPoseLedgerService.FinishRestore(target, poseRestore);
+        migrationBaseline = VersionPoseLedgerService.TakeMigrationBaseline(target, root, GetCurrentFBXPaths());
+        VersionPoseLedgerService.FinishRestore(target, poseRestore, migrationBaseline);
         poseRestore = null;
-        poseSnapshot = VersionPoseLedgerService.Capture(root, VersionPoseLedgerService.ReferenceModels(target, root));
-        // Objects on the armature keep their place relative to the person's body, as on a first install.
-        if (placements != null) placements = AccessoryPlacements.Capture(root);
+        poseSnapshot = CapturePose(target, root, VersionPoseLedgerService.ReferenceModels(target, root));
     }
 
     private AccessoryPlacements placements;
+    private VersionPoseLedgerService.MigrationBaseline migrationBaseline;
 
     /// <returns>False when the switch did not happen (it was rolled back).</returns>
     private bool ApplyOrResetWithLedger(CustomBaseVersion version, bool isReset, MyCustomBase target, Transform root)
@@ -389,29 +422,31 @@ public partial class VersionActions
         Orbiters.Toolkit.Editor.Animations.PathSnapshot before = null;
         try { if (root != null) before = Orbiters.Toolkit.Editor.Animations.AnimationPaths.Snapshot(root.gameObject); }
         catch (Exception ex) { MCBLogger.LogWarning("[MCB] Could not record the avatar's animation paths before the switch: " + ex.Message); }
-        // Going back with a ledger puts every object exactly back: objects on the armature need no separate keeping.
+        // Going back with a ledger puts every object exactly back, and an install keeps every object's place itself:
+        // only going back from an install made without a ledger keeps objects on the armature the former way.
         bool ledgerReset = isReset && poseRestore != null;
-        placements = root != null && !ledgerReset ? AccessoryPlacements.Capture(root) : null;
-        ApplyOrResetCore(version, isReset);
+        placements = root != null && isReset && !ledgerReset ? AccessoryPlacements.Capture(root) : null;
+        // What the operation returns is the truth: a failed reinstall of the same version leaves the version marker as it was.
+        if (!ApplyOrResetCore(version, isReset)) return false;
         if (target == null) return true;
-        bool switched = isReset
-            ? target.appliedCustomBaseAssetId == 0
-            : version != null && target.appliedCustomBaseAssetId == version.assetId && target.appliedCustomBaseVersionString == version.version;
-        if (!switched) return false;
         if (!isReset && poseSnapshot != null)
         {
             int carried = VersionPoseLedgerService.CarryPose(poseSnapshot);
             if (carried > 0) MCBLogger.Log($"[MCB] {carried} bone(s) kept the avatar's own pose on the version.");
+            int kept = VersionPoseLedgerService.KeepPlaces(poseSnapshot);
+            if (kept > 0) MCBLogger.Log($"[MCB] {kept} object(s) on the armature (hair, props, clothing bones) kept their place on the body.");
+            int rebound = VersionPoseLedgerService.RebindClothing(poseSnapshot);
+            if (rebound > 0) MCBLogger.Log($"[MCB] {rebound} mesh(es) skinned to bones the version moved (clothing, hoodies) kept their shape: copies in {VersionPoseLedgerService.ReboundFolder}.");
         }
-        try
-        {
-            int kept = placements?.Restore(root, BaseBoneNames(target, root)) ?? 0;
-            if (kept > 0) MCBLogger.Log($"[MCB] {kept} object(s) on the armature (hair, props, contacts) kept their place on the body the "
-                + (isReset ? "reset" : "version") + " moved the bones of.");
-            int rebound = placements?.Rebind(root, renderer => IsBaseRenderer(target, renderer)) ?? 0;
-            if (rebound > 0) MCBLogger.Log($"[MCB] {rebound} mesh(es) skinned to those bones (clothing, hoodies) kept their place: copies in {AccessoryPlacements.ReboundFolder}.");
-        }
-        catch (Exception ex) { MCBLogger.LogWarning("[MCB] Objects on the armature could not keep their place: " + ex.Message); }
+        if (placements != null)
+            try
+            {
+                int kept = placements.Restore(root, BaseBoneNames(target, root));
+                if (kept > 0) MCBLogger.Log($"[MCB] {kept} object(s) on the armature (hair, props, contacts) kept their place on the body the reset moved the bones of.");
+                int rebound = placements.Rebind(root, renderer => IsBaseRenderer(target, renderer));
+                if (rebound > 0) MCBLogger.Log($"[MCB] {rebound} mesh(es) skinned to those bones (clothing, hoodies) kept their place: copies in {AccessoryPlacements.ReboundFolder}.");
+            }
+            catch (Exception ex) { MCBLogger.LogWarning("[MCB] Objects on the armature could not keep their place: " + ex.Message); }
         // An avatar migrated from a release made before MCB: that release is the person's original base, not the model the
         // migration put under it.
         if (isReset)
@@ -454,8 +489,10 @@ public partial class VersionActions
                 }
             }
             catch (Exception ex) { MCBLogger.LogWarning("[MCB] Animations could not follow the moved bones: " + ex.Message); }
-        if (!isReset && poseSnapshot != null) VersionPoseLedgerService.Record(target, poseSnapshot);
+        if (!isReset && poseSnapshot != null) VersionPoseLedgerService.Record(target, poseSnapshot, migrationBaseline);
         else if (!isReset) MCBLogger.LogWarning("[MCB] The avatar's pose could not be recorded for this install: going back uses the model's rest pose.");
+        // Last: the Animator binds on the final pose.
+        VersionPoseLedgerService.BindAnimatorLast(root);
         return true;
     }
 
@@ -584,8 +621,17 @@ public partial class VersionActions
                 string folder = ReboundFolder + "/" + Safe(root.name);
                 EnsureFolder(folder);
                 string path = folder + "/" + Safe(renderer.name) + " " + renderer.GetInstanceID() + ".asset";
-                if (AssetDatabase.LoadMainAssetAtPath(path) != null) AssetDatabase.DeleteAsset(path);
-                AssetDatabase.CreateAsset(copy, path);
+                // An earlier copy at this path is updated in place: an Undo step can still point at it.
+                var existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+                if (existing != null)
+                {
+                    Undo.RecordObject(existing, "Keep meshes on the body");
+                    EditorUtility.CopySerialized(copy, existing);
+                    UnityEngine.Object.DestroyImmediate(copy);
+                    copy = existing;
+                    EditorUtility.SetDirty(copy);
+                }
+                else AssetDatabase.CreateAsset(copy, path);
                 Undo.RecordObject(renderer, "Keep meshes on the body");
                 renderer.sharedMesh = copy;
                 EditorUtility.SetDirty(renderer);
@@ -625,7 +671,8 @@ public partial class VersionActions
         fileOperation = fresh;
     }
 
-    private void ApplyOrResetCore(CustomBaseVersion version, bool isReset, bool finalize = true)
+    /// <returns>Whether the install or reset finished (false: it failed and was rolled back).</returns>
+    private bool ApplyOrResetCore(CustomBaseVersion version, bool isReset, bool finalize = true)
     {
         // One synchronous stretch (a reset nested in a custom version's install joins that one).
         var outer = fileOperation;
@@ -635,7 +682,7 @@ public partial class VersionActions
             fileOperation = operation;
             try
             {
-                ApplyOrResetCoreInOperation(version, isReset, finalize);
+                return ApplyOrResetCoreInOperation(version, isReset, finalize);
             }
             finally
             {
@@ -649,13 +696,14 @@ public partial class VersionActions
         }
     }
 
-    private void ApplyOrResetCoreInOperation(CustomBaseVersion version, bool isReset, bool finalize)
+    private bool ApplyOrResetCoreInOperation(CustomBaseVersion version, bool isReset, bool finalize)
     {
         // The intro spans frames: a refit may have started meanwhile.
         if (RefitBlocksSwitch())
         {
+            failureShown = true;
             FinishApplyProgress(false);
-            return;
+            return false;
         }
         MCBPerformance.PauseForeground();
         session.serializedObject.Update();
@@ -704,7 +752,7 @@ public partial class VersionActions
         {
             profile.Done("ABORT missing FBX path");
             FinishApplyProgress(false);
-            return;
+            return false;
         }
 
         if (activeTransitionRollback != null)
@@ -836,6 +884,7 @@ public partial class VersionActions
             profile.Mark("Model patch/reset failed");
             MCBLogger.LogError($"[MCB] Operation failed: {operationException.Message}");
             session.warningsModule?.AddWarning(LeftUnchanged(operationException.Message), MessageType.Error, isReset ? "Reset failed" : "Apply failed");
+            failureShown = true;
             if (activeTransitionRollback != null)
             {
                 RollbackActiveTransition();
@@ -994,7 +1043,11 @@ public partial class VersionActions
                     {
                         Undo.RecordObject(session.customBaseTarget, "Record custom veins");
                         foreach (var material in materialService.RecordedVeinMaterials())
+                        {
                             if (!session.customBaseTarget.veinMaterials.Contains(material)) session.customBaseTarget.veinMaterials.Add(material);
+                            if (!session.customBaseTarget.veinRecords.Any(r => r != null && r.material == material))
+                                session.customBaseTarget.veinRecords.Add(new VeinMaterialRecord { material = material, before = MaterialService.VeinsRecord(material) });
+                        }
                         // Sync the toggle state with the applied state
                         EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, true);
                         MCBLogger.Log($"[VersionActions] Custom veins applied from version {version.version}");
@@ -1009,22 +1062,28 @@ public partial class VersionActions
             {
                 // Remove custom veins when switching to a version without the feature or resetting: a material with
                 // MCB's record goes back exactly as it was, once no other installed avatar of the open scenes uses it.
-                if (RestoreRecordedVeins(session.customBaseTarget, targetMaterialRenderers)) materialStateChanged = true;
-                foreach (var renderer in MaterialService.DistinctMaterialRenderers(targetMaterialRenderers))
+                // A material never makes going back fail: what cannot be restored is said in the log.
+                try
                 {
-                    if (materialService.RemoveDetailNormalMap(renderer, false))
+                    if (RestoreRecordedVeins(session.customBaseTarget, targetMaterialRenderers)) materialStateChanged = true;
+                    foreach (var renderer in MaterialService.DistinctMaterialRenderers(targetMaterialRenderers))
                     {
-                        materialStateChanged = true;
+                        if (materialService.RemoveDetailNormalMap(renderer, false))
+                        {
+                            materialStateChanged = true;
+                        }
                     }
+                    if (materialService.RemoveVersionVeins()) materialStateChanged = true;
                 }
-                if (materialService.RemoveVersionVeins()) materialStateChanged = true;
+                catch (Exception ex) { MCBLogger.LogWarning("[MCB] Custom veins could not be removed from every material: " + ex.Message); }
                 // Sync the toggle state - set to false when removing veins
                 EditorPrefs.SetBool(CustomVeinsDrawer.CUSTOM_VEINS_PREF_KEY, false);
                 MCBLogger.Log("[VersionActions] Custom veins removed");
             }
             if (materialStateChanged)
             {
-                materialService.SaveTouchedMaterials();
+                try { materialService.SaveTouchedMaterials(); }
+                catch (Exception ex) { MCBLogger.LogWarning("[MCB] Some materials could not be saved; Unity saves them with the project: " + ex.Message); }
             }
             ReportApplyProgress(0.93f, hasCustomVeins ? "Applied custom veins..." : "Updated material state...");
             profile.Mark(hasCustomVeins ? "Applied custom veins materials" : "Removed custom veins materials");
@@ -1151,6 +1210,8 @@ public partial class VersionActions
                 {
                     success = false;
                     MCBLogger.LogError("[VersionActions] Mode setup failed; restoring the previous version. " + ex.Message);
+                    session.warningsModule?.AddWarning(LeftUnchanged("The version's modes could not be set up: " + ex.Message), MessageType.Error, "Apply failed");
+                    failureShown = true;
                 }
             }
             ReportApplyProgress(0.98f, "Saving applied version state...");
@@ -1163,7 +1224,7 @@ public partial class VersionActions
             session.Repaint();
             FinishApplyProgress(false);
             profile.Done("FAILED");
-            return;
+            return false;
         }
         
         CommitActiveTransition();
@@ -1173,7 +1234,7 @@ public partial class VersionActions
             // and logs what it moved to the Recycle Bin).
             _ = NativeMeshPayloadService.QueueUnusedPayloadCleanup(previousVersion);
         }
-        if (!finalize) return; // A saved-custom transition will commit or restore its encompassing snapshot.
+        if (!finalize) return true; // A saved-custom transition will commit or restore its encompassing snapshot.
         MCBLogger.Log("[VersionActions] ApplyOrResetCoroutine completed. Updating hash and applied state.");
         // Force a recalculation of current/default FBX hashes after every switch. Advanced
         // transitions can restore .originalbase bytes even though the visible mesh is a native
@@ -1200,21 +1261,28 @@ public partial class VersionActions
         EditorCoroutineUtility.StartCoroutineOwnerless(
             RecalculateCurrentFbxHashCoroutine(hashGeneration, applyProgressGeneration));
         profile.Done();
+        return true;
     }
 
     private static bool RestoreRecordedVeins(MyCustomBase owner, IEnumerable<SkinnedMeshRenderer> renderers)
     {
-        var materials = owner.veinMaterials.Where(m => m != null)
+        var materials = owner.veinMaterials.Where(m => m != null).Concat(owner.veinRecords.Where(r => r != null && r.material != null).Select(r => r.material))
             .Concat(renderers.Where(r => r != null).SelectMany(r => r.sharedMaterials).Where(MaterialService.HasVeinsRecord)).Distinct().ToList();
-        if (materials.Count == 0 && owner.veinMaterials.Count == 0) return false;
+        if (materials.Count == 0 && owner.veinMaterials.Count == 0 && owner.veinRecords.Count == 0) return false;
         var others = UnityEngine.Object.FindObjectsOfType<MyCustomBase>(true).Where(o => o != owner && o.appliedCustomBaseAssetId != 0)
             .SelectMany(o => AvatarPaths.Root(o).GetComponentsInChildren<Renderer>(true)).SelectMany(r => r.sharedMaterials).Where(m => m != null);
         var stillUsed = new HashSet<Material>(others);
         bool restored = false;
         foreach (var material in materials)
-            if (!stillUsed.Contains(material)) restored |= MaterialService.RestoreVeinsBefore(material);
+        {
+            if (stillUsed.Contains(material)) continue;
+            string record = owner.veinRecords.FirstOrDefault(r => r != null && r.material == material)?.before;
+            try { restored |= MaterialService.RestoreVeinsBefore(material, record); }
+            catch (Exception ex) { MCBLogger.LogWarning($"[MCB] The material '{material.name}' could not get its values from before the veins back: {ex.Message}"); }
+        }
         Undo.RecordObject(owner, "Restore materials");
         owner.veinMaterials.Clear();
+        owner.veinRecords.Clear();
         return restored;
     }
 

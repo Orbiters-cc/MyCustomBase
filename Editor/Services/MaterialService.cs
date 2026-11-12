@@ -96,27 +96,11 @@ public class MaterialService
     }
 
     // Before the first edit veins make on a material: the values they change, kept on the material itself (it is
-    // shared by every avatar that uses it).
-    // A project material's file as it was before the first veins: Unity drops some of a file's keywords and missing
-    // texture references when it rewrites a material, so going back writes these bytes back instead of values.
-    private const string MaterialBackupFolder = "Library/MCB/MaterialsBeforeVeins";
-
-    private static string BackupPath(Material material)
-    {
-        string path = AssetDatabase.GetAssetPath(material);
-        if (string.IsNullOrEmpty(path) || !path.EndsWith(".mat", StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) return null;
-        return Path.Combine(MaterialBackupFolder, AssetDatabase.AssetPathToGUID(path) + ".mat");
-    }
-
+    // shared by every avatar that uses it) and on each installed avatar's MyCustomBase. Material files are only ever
+    // written by Unity, through the Material API.
     private static void RecordVeinsBefore(Material material)
     {
         if (material == null || material.GetTag(VeinsBeforeTag, false, string.Empty).Length > 0) return;
-        string backup = BackupPath(material);
-        if (backup != null)
-        {
-            Directory.CreateDirectory(MaterialBackupFolder);
-            File.Copy(AssetDatabase.GetAssetPath(material), backup, true);
-        }
         var before = new VeinsBefore
         {
             keywords = material.shaderKeywords.ToList(),
@@ -144,26 +128,17 @@ public class MaterialService
     /// Puts back exactly what custom veins changed on the material (textures, strengths, toggles, keywords, MCB's tags),
     /// as it was before the first install that put veins on it.
     /// </summary>
-    public static bool RestoreVeinsBefore(Material material)
+    public static bool RestoreVeinsBefore(Material material) => RestoreVeinsBefore(material, null);
+
+    /// <summary>The record kept on the material (<paramref name="record"/> when the material lost it but still has veins).</summary>
+    public static string VeinsRecord(Material material) => material == null ? "" : material.GetTag(VeinsBeforeTag, false, string.Empty);
+
+    public static bool RestoreVeinsBefore(Material material, string record)
     {
-        if (!HasVeinsRecord(material)) return false;
-        string backup = BackupPath(material);
-        if (backup != null && File.Exists(backup))
-        {
-            // The project's material file exactly as it was; Unity loads it again.
-            string path = AssetDatabase.GetAssetPath(material);
-            Undo.RecordObject(material, "MCB Restore Material");
-            // Unity maps the files it read: let go of them before writing.
-            AssetDatabase.ReleaseCachedFileHandles();
-            File.WriteAllBytes(path, File.ReadAllBytes(backup));
-            File.Delete(backup);
-            EditorUtility.ClearDirty(material);
-            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
-            // The file is the truth now: a later "save all" must not write Unity's in-memory reading of it back.
-            EditorUtility.ClearDirty(material);
-            return true;
-        }
-        var before = JsonUtility.FromJson<VeinsBefore>(material.GetTag(VeinsBeforeTag, false, string.Empty));
+        if (material == null) return false;
+        string json = HasVeinsRecord(material) ? VeinsRecord(material) : HasVersionVeins(material) ? record : null;
+        if (string.IsNullOrEmpty(json)) return false;
+        var before = JsonUtility.FromJson<VeinsBefore>(json);
         Undo.RecordObject(material, "MCB Restore Material");
         for (int i = 0; i < before.textures.Count; i++)
         {

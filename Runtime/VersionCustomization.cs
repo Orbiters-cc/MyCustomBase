@@ -256,6 +256,16 @@ public sealed class RendererLayoutConfiguration
 
 // What a version install changed on the avatar's own objects, so going back puts exactly that back (VersionPoseLedger).
 // One entry per transform the install moved: where the person had it (baseline) and what the install wrote.
+// A base bone's rest in the model (or prefab) the avatar's skeleton comes from, as its first install found it.
+[Serializable] public sealed class PoseReferenceBone
+{
+    public Transform bone; public Transform parent;
+    public Vector3 position; public Quaternion rotation; public Vector3 scale;
+    // Relative to the model's root.
+    public Matrix4x4 rootSpace;
+}
+// A material a version put custom veins on and its values from before them (JSON, see MaterialService).
+[Serializable] public sealed class VeinMaterialRecord { public Material material; public string before; }
 [Serializable] public sealed class PoseLedgerEntry
 {
     public Transform transform;
@@ -263,28 +273,34 @@ public sealed class RendererLayoutConfiguration
     public Vector3 position; public Quaternion rotation; public Vector3 scale;
     public Transform writtenParent; public bool writtenActive;
     public Vector3 writtenPosition; public Quaternion writtenRotation; public Vector3 writtenScale;
+    // A bone of the avatar's own body (its adjustments compose on its baseline); other objects keep their place.
+    public bool bone;
+    // Pose relative to the avatar root before the install and as the install left it.
+    public Matrix4x4 baselineSpace, writtenSpace;
 }
 // A renderer the install changed: its baseline fields (restored when it carries its baseline mesh again).
 [Serializable] public sealed class PoseLedgerRenderer
 {
     public SkinnedMeshRenderer renderer; public Mesh mesh; public Transform rootBone; public Transform[] bones;
     public Bounds bounds; public bool enabled; public bool updateWhenOffscreen;
-    // The mesh reference as serialized (also a missing asset's), for a renderer that had no loadable mesh.
-    public int meshId;
-    // Material references as serialized (missing ones included) and blendshape weights.
-    public int[] materialIds;
+    // Blendshape weights.
     public float[] weights;
 }
 [Serializable] public sealed class PoseLedger
 {
     // True while a version installed with this record is on the avatar.
     public bool recorded;
+    // The editor session that recorded it: an instance id in a reference below means nothing in another one.
+    public string session;
+    // The Animator's Avatar before the install (none included).
+    public bool animatorRecorded; public Avatar animatorAvatar;
     public List<PoseLedgerEntry> entries = new List<PoseLedgerEntry>();
     public List<PoseLedgerRenderer> renderers = new List<PoseLedgerRenderer>();
     // References to missing assets the avatar had (a buyer's prefab without some of its files): kept as they were.
     public List<UnityEngine.Object> missingOwners = new List<UnityEngine.Object>();
     public List<string> missingPaths = new List<string>();
-    public List<int> missingIds = new List<int>();
+    // Each as the editor serializes it (the missing asset's file id and GUID).
+    public List<string> missingTokens = new List<string>();
 }
 
 [Serializable]

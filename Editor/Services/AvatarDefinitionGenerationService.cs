@@ -315,7 +315,8 @@ public static partial class AvatarDefinitionGenerationService
             for (int i = 0; i < transforms.Length; i++)
             {
                 var t = transforms[i];
-                if (t == null || (t.localPosition == pose[i].localPosition && t.localRotation == pose[i].localRotation && t.localScale == pose[i].localScale)) continue;
+                // Exact comparison: Unity's == treats values 1e-5 apart as equal, and a rebind moves bones by about that much.
+                if (t == null || (t.localPosition.Equals(pose[i].localPosition) && t.localRotation.Equals(pose[i].localRotation) && t.localScale.Equals(pose[i].localScale))) continue;
                 t.localPosition = pose[i].localPosition;
                 t.localRotation = pose[i].localRotation;
                 t.localScale = pose[i].localScale;
