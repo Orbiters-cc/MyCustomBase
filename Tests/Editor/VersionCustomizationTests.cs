@@ -64,7 +64,9 @@ public class VersionCustomizationTests
     {
         string path = "Assets/MCBSkeletonTest-" + Guid.NewGuid().ToString("N") + ".prefab";
         var source = Own(new GameObject("Skeleton")); source.AddComponent<MyCustomBase>();
-        var chest = Child(source.transform, "Chest"); Child(chest, "ChestUp"); Child(chest, "Shoulder");
+        var chest = Child(source.transform, "Chest"); var chestUp = Child(chest, "ChestUp"); var shoulder = Child(chest, "Shoulder");
+        // The body skinned to the armature: what tells MCB which branch is the avatar's own skeleton (bones are never found by name alone).
+        Child(source.transform, "Body").gameObject.AddComponent<SkinnedMeshRenderer>().bones = new[] { chest, chestUp, shoulder };
         var prefab = PrefabUtility.SaveAsPrefabAsset(source, path);
         var instance = Own((GameObject)PrefabUtility.InstantiatePrefab(prefab));
         var owner = instance.GetComponent<MyCustomBase>();
