@@ -1,5 +1,18 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.14.1 — 2026-11-14
+
+- **Toggles switch off again on an avatar with a version that has modes** (Ultirex V5 on any Rexouium, stock or
+  migrated). The build's "MCB Modes" layer always played a state with Write Defaults off; on an avatar that uses Write
+  Defaults on, that kept Unity from putting toggled things back, so every VRCFury toggle turned on and never off. The
+  state now follows the avatar's own Write Defaults. Nothing to reinstall: the layer is rebuilt at every upload and
+  Play mode test.
+- **MCB's warnings and errors are sent to Orbiters unless you turn that off** (they were sent only after an opt-in
+  under Advanced Settings, which nobody found). The inspector says so once, with **Got it** and **Turn off**; nothing
+  is sent before that card has been shown, and a choice made earlier with **Share MCB diagnostics** is kept. What is
+  removed before sending is unchanged (tokens, e-mail addresses, VRChat ids, account and computer names, folder paths).
+  Needs Orbiters Toolkit 0.5.1.
+
 ## 1.12.24 — 2026-11-10
 
 - **Going back to the original base gives you back the avatar you had.** An avatar migrated from a release made before

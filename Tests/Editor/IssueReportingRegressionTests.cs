@@ -4,8 +4,8 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// MCB's use of Orbiters Toolkit's shared issue reporter (masking, queueing, sending and the off-by-default setting are
-/// the Toolkit's, tested there), and the account token never reaching MCB's own request logs.
+/// MCB's use of Orbiters Toolkit's shared issue reporter (masking, queueing, sending and the setting are the
+/// Toolkit's, tested there), and the account token never reaching MCB's own request logs.
 /// </summary>
 public sealed class IssueReportingRegressionTests
 {
@@ -24,6 +24,38 @@ public sealed class IssueReportingRegressionTests
         StringAssert.Contains("MCB", EditorIssueReporter.ConsentText);
         StringAssert.Contains("stack traces", EditorIssueReporter.ConsentText);
         StringAssert.Contains("every Unity project on this computer", EditorIssueReporter.ConsentText);
+        StringAssert.Contains("On until you turn it off", EditorIssueReporter.ConsentText);
+    }
+
+    // Sent until the person turns it off, and nothing before the inspector's notice was shown or they chose.
+    [Test] public void DiagnosticsAreSentByDefaultButNotBeforeThePersonWasTold()
+    {
+        var options = EditorIssueReporter.Options();
+        Assert.True(options.SharedByDefault);
+        const string share = "MCB_ShareIssueLogs", shown = "MCB_DiagnosticsNoticeShown";
+        bool hadShare = UnityEditor.EditorPrefs.HasKey(share), wasShare = UnityEditor.EditorPrefs.GetBool(share, false);
+        bool hadShown = UnityEditor.EditorPrefs.HasKey(shown), wasShown = UnityEditor.EditorPrefs.GetBool(shown, false);
+        try
+        {
+            UnityEditor.EditorPrefs.DeleteKey(share); UnityEditor.EditorPrefs.DeleteKey(shown);
+            Assert.True(EditorIssueReporter.ShareIssueLogs, "On until turned off.");
+            Assert.False(EditorIssueReporter.HasChoice);
+            Assert.False(options.CanSend(), "Nothing leaves before the notice was shown.");
+            Assert.True(DiagnosticsNotice.Needed);
+            EditorIssueReporter.NoticeShown = true;
+            if (!MCBConnectivityMonitor.HasCompleted || MCBConnectivityMonitor.CanReachServer) Assert.True(options.CanSend());
+            Assert.True(DiagnosticsNotice.Needed, "The notice stays until it is answered.");
+            EditorIssueReporter.ShareIssueLogs = false;
+            Assert.True(EditorIssueReporter.HasChoice);
+            Assert.False(EditorIssueReporter.ShareIssueLogs, "The person's choice is kept.");
+            Assert.False(DiagnosticsNotice.Needed);
+        }
+        finally
+        {
+            if (hadShare) UnityEditor.EditorPrefs.SetBool(share, wasShare); else UnityEditor.EditorPrefs.DeleteKey(share);
+            if (hadShown) UnityEditor.EditorPrefs.SetBool(shown, wasShown); else UnityEditor.EditorPrefs.DeleteKey(shown);
+            EditorIssueReporter.RefreshListener();
+        }
     }
 
     // Below the level sent nothing is handed over (no stack trace is taken), and nothing while a health check runs: its

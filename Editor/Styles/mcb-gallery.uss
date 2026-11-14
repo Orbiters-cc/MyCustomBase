@@ -397,3 +397,13 @@
     white-space: normal;
     flex-shrink: 1;
 }
+
+
+/* The one-time card saying MCB's diagnostics are sent (DiagnosticsNotice), under the account row. */
+.mcb-diagnostics-host {
+    margin: 14px 24px 0 24px;
+}
+
+.mcb-diagnostics-notice {
+    margin-bottom: 0;
+}

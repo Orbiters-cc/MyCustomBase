@@ -268,7 +268,7 @@ public class AdvancedModeModule
                     MCBLogger.SetEnabled(newLogging);
                 }
 
-                // Optional MCB-only diagnostics (off by default).
+                // MCB-only diagnostics: sent until turned off here or from the inspector's notice.
                 bool currentShare = EditorIssueReporter.ShareIssueLogs;
                 bool newShare = EditorGUILayout.Toggle(new GUIContent("Share MCB diagnostics", EditorIssueReporter.ConsentText), currentShare);
                 if (newShare != currentShare)

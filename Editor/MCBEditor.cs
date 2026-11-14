@@ -86,6 +86,7 @@ public class MCBEditor : UnityEditor.Editor
     private VisualElement bannerHost;
     private VisualElement dependencyHost;
     private VisualElement connectivityHost;
+    private VisualElement diagnosticsHost;
     private VisualElement statusHost;
     private VisualElement galleryHost;
     private VisualElement versionHost;
@@ -182,6 +183,7 @@ public class MCBEditor : UnityEditor.Editor
         bannerHost = null;
         dependencyHost = null;
         connectivityHost = null;
+        diagnosticsHost = null;
         statusHost = null;
         galleryHost = null;
         versionHost = null;
@@ -216,6 +218,11 @@ public class MCBEditor : UnityEditor.Editor
 
         connectivityHost = new VisualElement();
         uiToolkitRoot.Add(connectivityHost);
+
+        // Says once that MCB's diagnostics are sent (DiagnosticsNotice); empty once answered.
+        diagnosticsHost = new VisualElement();
+        diagnosticsHost.AddToClassList("mcb-diagnostics-host");
+        uiToolkitRoot.Add(diagnosticsHost);
 
         galleryHost = new VisualElement();
         uiToolkitRoot.Add(galleryHost);
@@ -306,6 +313,7 @@ public class MCBEditor : UnityEditor.Editor
         if (Has(McbViewParts.Banner)) Section(DrawVectorBannerUIToolkit);
         if (Has(McbViewParts.Dependencies)) Section(() => dependencyInstallerModule?.RefreshUIToolkit());
         if (Has(McbViewParts.Connectivity)) Section(RefreshConnectivityDiagnosticsUIToolkit);
+        if (Has(McbViewParts.Connectivity)) Section(() => DiagnosticsNotice.Fill(diagnosticsHost));
         if (Has(McbViewParts.Gallery)) Section(() => assetGalleryModule?.RefreshUIToolkit());
         if (Has(McbViewParts.Versions)) Section(() =>
         {
@@ -336,6 +344,7 @@ public class MCBEditor : UnityEditor.Editor
         headerHost?.BringToFront();
         dependencyHost?.BringToFront();
         connectivityHost?.BringToFront();
+        diagnosticsHost?.BringToFront();
         galleryHost?.BringToFront();
         statusHost?.BringToFront();
         versionHost?.BringToFront();
@@ -354,6 +363,7 @@ public class MCBEditor : UnityEditor.Editor
         {
             connectivityHost.style.display = blocked || connectivityHost.childCount == 0 ? DisplayStyle.None : DisplayStyle.Flex;
         }
+        if (diagnosticsHost != null && blocked) diagnosticsHost.style.display = DisplayStyle.None;
         if (galleryHost != null) galleryHost.style.display = contentDisplay;
         if (statusHost != null && blocked) statusHost.style.display = DisplayStyle.None;
         if (versionHost != null && blocked) versionHost.style.display = DisplayStyle.None;

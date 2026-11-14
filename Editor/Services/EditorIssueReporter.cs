@@ -3,9 +3,12 @@ using Orbiters.Toolkit.Editor;
 using UnityEditor;
 
 /// <summary>
-/// MCB's opt-in diagnostics (off by default): what MCB's own logger reports (<see cref="MCBLogger.IssueLogged"/>, whether
-/// or not it also logs to the Console), sent by Orbiters Toolkit's shared reporter, which masks and bounds it. MCB's code
-/// has no namespace of its own, so its logger feeds the reporter instead of the Console being read.
+/// MCB's diagnostics: what MCB's own logger reports (<see cref="MCBLogger.IssueLogged"/>, whether or not it also logs to
+/// the Console), sent by Orbiters Toolkit's shared reporter, which masks and bounds it. MCB's code has no namespace of
+/// its own, so its logger feeds the reporter instead of the Console being read.
+/// Sent until the person turns it off (Enzo, 2026-11-14: opt-in since 1.7.5 brought no report at all, and a buyer's
+/// failed install could only be found through Discord). Nothing leaves before MCB's inspector has shown its notice
+/// once on this computer (<see cref="NoticeShown"/>, DiagnosticsNotice), unless the person already chose.
 /// </summary>
 [InitializeOnLoad]
 public static class EditorIssueReporter
@@ -22,8 +25,9 @@ public static class EditorIssueReporter
             if (on) MCBLogger.IssueLogged += reporter.Submit;
         },
         Endpoint = () => MCBUtils.getApiUrl(scope: "bugs"),
-        // Not while MCB knows the server is unreachable.
-        CanSend = () => !MCBConnectivityMonitor.HasCompleted || MCBConnectivityMonitor.CanReachServer
+        SharedByDefault = true,
+        // Not while MCB knows the server is unreachable, and not before the person was told (what waits is sent then).
+        CanSend = () => (!MCBConnectivityMonitor.HasCompleted || MCBConnectivityMonitor.CanReachServer) && (NoticeShown || HasChoice)
     };
 
     internal static readonly OrbitersIssueReporter Reporter = OrbitersIssueReporter.Register(Options());
@@ -51,6 +55,18 @@ public static class EditorIssueReporter
 
     /// <summary>What sharing sends, for the settings' tooltip.</summary>
     public static string ConsentText => Reporter.ConsentText;
+
+    /// <summary>Whether the person turned sharing on or off themselves on this computer.</summary>
+    public static bool HasChoice => Reporter.HasChoice;
+
+    private const string NoticeShownKey = "MCB_DiagnosticsNoticeShown";
+
+    /// <summary>Whether MCB's inspector showed the notice that says diagnostics are sent, once on this computer.</summary>
+    public static bool NoticeShown
+    {
+        get => EditorPrefs.GetBool(NoticeShownKey, false);
+        set { if (value != NoticeShown) EditorPrefs.SetBool(NoticeShownKey, value); }
+    }
 
     /// <summary>Reads the settings again (another editor may have changed them).</summary>
     public static void RefreshListener()
