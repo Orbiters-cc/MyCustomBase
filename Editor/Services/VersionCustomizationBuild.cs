@@ -221,10 +221,35 @@ public static class VersionCustomizationBuild
                 AnimationUtility.SetEditorCurve(clip, EditorCurveBinding.FloatCurve(property.Key.Item1, property.Key.Item2, property.Key.Item3), AnimationCurve.Constant(0, 1, property.Value));
             var machine = new AnimatorStateMachine { name = "MCB Modes", hideFlags = HideFlags.HideInHierarchy };
             if (AssetDatabase.Contains(controller)) { AssetDatabase.AddObjectToAsset(clip, controller); AssetDatabase.AddObjectToAsset(machine, controller); }
-            var state = machine.AddState("Locked modes"); state.motion = clip; state.writeDefaultValues = false; machine.defaultState = state;
+            var state = machine.AddState("Locked modes"); state.motion = clip; state.writeDefaultValues = UsesWriteDefaults(controller); machine.defaultState = state;
             controller.AddLayer(new AnimatorControllerLayer { name = "MCB Modes", stateMachine = machine, defaultWeight = 1, blendingMode = AnimatorLayerBlendingMode.Override });
         }
         plan.Locked = true;
+    }
+
+    // The lock's state follows the controller's Write Defaults, as VRCFury set them for the avatar before this layer was
+    // added. A Write Defaults off state that always plays keeps Unity from putting the controller's Write Defaults on
+    // animations back to their rest values: on such an avatar every VRCFury toggle turned on and never off again (Ultirex V5
+    // on a stock Rexouium and on a migrated Ultirex V4, 2026-11-14). Its clip writes every value it locks, so the setting
+    // changes nothing for those. Direct blend trees and additive layers always use Write Defaults on: they don't count.
+    private static bool UsesWriteDefaults(AnimatorController controller)
+    {
+        int on = 0, off = 0;
+        var machines = new Stack<AnimatorStateMachine>(controller.layers
+            .Where(l => l.syncedLayerIndex < 0 && l.blendingMode != AnimatorLayerBlendingMode.Additive && l.stateMachine != null).Select(l => l.stateMachine));
+        var seen = new HashSet<AnimatorStateMachine>();
+        while (machines.Count > 0)
+        {
+            var machine = machines.Pop();
+            if (!seen.Add(machine)) continue;
+            foreach (var child in machine.states)
+            {
+                if (child.state == null || child.state.motion is BlendTree tree && tree.blendType == BlendTreeType.Direct) continue;
+                if (child.state.writeDefaultValues) on++; else off++;
+            }
+            foreach (var sub in machine.stateMachines) if (sub.stateMachine != null) machines.Push(sub.stateMachine);
+        }
+        return on >= off;
     }
 
     public static void Apply(GameObject avatar)

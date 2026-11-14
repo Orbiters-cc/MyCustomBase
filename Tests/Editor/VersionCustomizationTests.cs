@@ -243,6 +243,40 @@ public class VersionCustomizationTests
         Assert.That(renderer.GetBlendShapeWeight(0), Is.Zero, "an applied object is not captured again");
     }
 
+    // A buyer's VRCFury toggles (Write Defaults on: the off state is empty) turned on and never off once a version with
+    // modes was installed: the lock's always playing state had Write Defaults off. It takes the controller's setting.
+    [Test] public void ModeLockKeepsWriteDefaultsOnTogglesSwitchingOff()
+    {
+        var (root, owner, _, _, _) = ModeAvatar("Mode toggle test");
+        var glasses = Child(root.transform, "Glasses").gameObject; glasses.SetActive(false);
+        var controller = Own(new AnimatorController()); controller.AddParameter("Glasses", AnimatorControllerParameterType.Bool); controller.AddLayer("Toggle");
+        var on = Own(new AnimationClip { name = "Glasses on" });
+        AnimationUtility.SetEditorCurve(on, EditorCurveBinding.FloatCurve("Glasses", typeof(GameObject), "m_IsActive"), AnimationCurve.Constant(0, 1, 1));
+        var machine = controller.layers[0].stateMachine;
+        var offState = machine.AddState("Off"); var onState = machine.AddState("On"); onState.motion = on; machine.defaultState = offState;
+        offState.AddTransition(onState).AddCondition(AnimatorConditionMode.If, 0, "Glasses");
+        onState.AddTransition(offState).AddCondition(AnimatorConditionMode.IfNot, 0, "Glasses");
+        var animator = root.AddComponent<Animator>(); animator.runtimeAnimatorController = controller;
+        VersionCustomizationBuild.Capture(root); VersionCustomizationBuild.Lock(root);
+
+        var built = (AnimatorController)animator.runtimeAnimatorController;
+        Assert.That(built.layers.Single(l => l.name == "MCB Modes").stateMachine.defaultState.writeDefaultValues, Is.True, "the avatar's states use Write Defaults on");
+        animator.Rebind();
+        void Run() { for (int i = 0; i < 6; i++) animator.Update(.1f); }
+        Run(); Assert.That(glasses.activeSelf, Is.False);
+        animator.SetBool("Glasses", true); Run(); Assert.That(glasses.activeSelf, Is.True, "the toggle turns on");
+        animator.SetBool("Glasses", false); Run(); Assert.That(glasses.activeSelf, Is.False, "the toggle turns off again");
+
+        // An avatar whose states use Write Defaults off keeps a Write Defaults off lock.
+        var (other, _, _, _, _) = ModeAvatar("Mode toggle WD off test");
+        var offController = Own(new AnimatorController()); offController.AddLayer("Toggle");
+        foreach (string name in new[] { "Off", "On" }) offController.layers[0].stateMachine.AddState(name).writeDefaultValues = false;
+        other.AddComponent<Animator>().runtimeAnimatorController = offController;
+        VersionCustomizationBuild.Capture(other); VersionCustomizationBuild.Lock(other);
+        var offBuilt = (AnimatorController)other.GetComponent<Animator>().runtimeAnimatorController;
+        Assert.That(offBuilt.layers.Single(l => l.name == "MCB Modes").stateMachine.defaultState.writeDefaultValues, Is.False);
+    }
+
     [Test] public void ClothingLinksCopyTheLockedModeValuesAndOtherStepsAreReported()
     {
         var (root, owner, renderer, _, _) = ModeAvatar("Mode clothing test");
