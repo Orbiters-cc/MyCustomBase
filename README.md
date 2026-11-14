@@ -12,6 +12,9 @@
   is sent before that card has been shown, and a choice made earlier with **Share MCB diagnostics** is kept. What is
   removed before sending is unchanged (tokens, e-mail addresses, VRChat ids, account and computer names, folder paths).
   Needs Orbiters Toolkit 0.5.1.
+- Going back to the base and installing again no longer adds copies of copies of the stock clips
+  ("Toe_Idle_Joints L (Avatar) (Avatar).anim"): Orbiters Toolkit 0.5.1 keeps one copy per avatar and clip. Copies
+  already in a project stay.
 
 ## 1.12.24 — 2026-11-10
 
