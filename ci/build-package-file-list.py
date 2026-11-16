@@ -5,6 +5,9 @@ from pathlib import Path
 
 PACKAGE_ROOTS = ("Editor", "Runtime", "Tests", "creator assets", "debug")
 ROOT_FILES = ("LICENSE.md", "README.md", "package.json")
+# Scripts a version's files (a base's logic prefab) point to by GUID. Their .meta ships, so the GUID is the same in
+# every project; every other file gets a GUID of the project's own. Keep in step with validate-package-archive.py.
+PUBLISHED_METAS = ("Runtime/NativeRendererMaterialLibrary.cs.meta",)
 
 
 def to_posix(path):
@@ -25,6 +28,11 @@ def collect_package_files(root):
             for path in package_root_path.rglob("*"):
                 if path.is_file() and not path.is_symlink() and path.suffix.lower() not in (".meta", ".py"):
                     files.add(to_posix(path.relative_to(root)))
+
+    for published in PUBLISHED_METAS:
+        if not (root / published).is_file():
+            raise SystemExit(f"Published .meta is missing: {published}")
+        files.add(published)
 
     return sorted(files, key=str.lower)
 

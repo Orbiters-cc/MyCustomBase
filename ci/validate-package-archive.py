@@ -10,6 +10,11 @@ PACKAGE_ROOTS = ("Editor", "Runtime", "Tests", "creator assets", "debug")
 REQUIRED_PACKAGE_ROOTS = ("Editor", "Runtime", "Tests")
 ROOT_FILES = ("LICENSE.md", "README.md", "package.json")
 FORBIDDEN_ROOTS = (".git", ".github", ".idea", ".agents", ".codex")
+# Scripts a version's files (a base's logic prefab) point to by GUID: the only .meta files in the archive, each with the
+# GUID those files hold. A different GUID would turn the script into a missing one on every installed version.
+PUBLISHED_METAS = {
+    "Runtime/NativeRendererMaterialLibrary.cs.meta": "111b3d7e23b69b549b07aa6e9541ff3f",
+}
 
 REQUIRED_ASMDEF_FILES = (
     "Runtime/mcb.asmdef",
@@ -70,6 +75,9 @@ def validate_zip_name(name):
 
 
 def is_allowed_package_file(name):
+    if name in PUBLISHED_METAS:
+        return True
+
     if name.endswith((".meta", ".py")):
         return False
 
@@ -256,12 +264,18 @@ def main():
                 failures.append(f"{name}: forbidden repository/internal path")
                 continue
 
-            if name.endswith(".meta"):
+            if name.endswith(".meta") and name not in PUBLISHED_METAS:
                 failures.append(f"{name}: .meta files must not be included in the package archive")
                 continue
 
             if not is_allowed_package_file(name):
                 failures.append(f"{name}: not in package allowlist")
+
+        for name, guid in PUBLISHED_METAS.items():
+            if name not in name_set:
+                failures.append(f"{name}: published .meta is missing")
+            elif f"guid: {guid}" not in archive.read(name).decode("utf-8", "replace"):
+                failures.append(f"{name}: published .meta must keep guid {guid}")
 
         validate_required_files(archive, name_set, failures)
         validate_package_json(archive, failures)

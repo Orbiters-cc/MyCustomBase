@@ -1,5 +1,15 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.14.2 — 2026-11-16
+
+- **An avatar with Ultirex V5 installed uploads again.** The upload stopped with "You are trying to save a Prefab with
+  a missing script ... 'mcb logic'" then "AssetBundle was not built": V5's logic holds a small MCB script that every
+  project knew under a different ID, so Unity could not load it and refuses to save an avatar in that state. MCB now
+  ships that script with its ID. Nothing to reinstall: after the update the script on **mcb logic** loads by itself.
+- A version's logic that holds a script your project does not have (a tool only its creator has) no longer blocks the
+  upload either: such scripts are left out of the uploaded copy, with a warning that names the objects. Your scene is
+  not changed.
+
 ## 1.14.1 — 2026-11-14
 
 - **Toggles switch off again on an avatar with a version that has modes** (Ultirex V5 on any Rexouium, stock or
