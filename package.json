@@ -58,7 +58,7 @@
         "reason": "Opens the custom base's scene in Blender through the Mixer link, with Blender's edits shown on the avatar live, brings Mixer's sculpt, weight paint and armature tools, and records MCB release checkpoints and generated ReFit files through Mixer Git."
       },
       "com.poiyomi.toon": {
-        "version": ">=9.0.0 <10.0.0",
+        "version": ">=10.0.0 <11.0.0",
         "displayName": "Poiyomi Toon",
         "reason": "Recommended for custom veins and locked Poiyomi material workflows."
       }

@@ -9,6 +9,8 @@
   ThryExternal assemblies), nothing compiled and uploads failed. The offer now shows only when the project has no
   Poiyomi shader and no Poiyomi editor at all. If you pressed the button before: update Poiyomi Toon again in the
   Creator Companion, which removes the old copy.
+- **Install Poiyomi Toon installs Poiyomi Toon 10** (it was 9), with the editor package Poiyomi 10 needs. The list of
+  what will be installed shows both before anything changes.
 
 ## 1.14.3 — 2026-11-20
 
