@@ -1,5 +1,30 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.14.3 — 2026-11-20
+
+- **A version that brings its own skeleton installs on another base than the one it was made on** (Ultirex V5 on a
+  Rexouium 1.7 avatar, HD or Digitigrade). MCB asked for the base's original model ("MCB needs the base's original
+  model in this project (RexouiumRig1.6...)"), then stopped on "no bone matching 'Armature/Hips/Belly'": it took the
+  newer base for a personal edit of the old one and tried to move it onto that model first. When none of the version's
+  original models is in the project, or the avatar lacks bones of that original, the version now installs on the body
+  as it is: the bones it needs are added, clothing and accessories stay where they are, and going back puts everything
+  back, a sculpted or scene-only mesh included. Personal edits of an original and releases from before MCB (Ultirex
+  V4) are migrated as before.
+- On a Digitigrade rig the body no longer comes out with its legs apart, and the avatar keeps its own humanoid: MCB
+  reused the first humanoid definition it had generated for a mesh on every later avatar, whatever their bones. Each
+  avatar now gets one made from its own bone mapping (a new file the next time a version is installed or uploaded).
+- An avatar whose model was exported in another unit than the version (armature at scale 100) is refused with a
+  message that says so, where everything on its bones used to change size. A body MCB migrated installs as it did.
+- An object that is not a mesh where a version puts one (a folder named `TailMesh` holding two tails) is named in the
+  message, with what to rename.
+- The mouth and blink of an uploaded avatar stay with a recent VRCFury: MCB now needs Orbiters Toolkit 0.5.3, which
+  keeps the visemes and eyelid shapes VRCFury 1.1475 moves into face tracking sets (an accessory linked to the body's
+  visemes made the uploaded body lose all of them).
+- An answer from the server that misses the asset's releases is treated as no answer ("MCB could not check your
+  avatar's custom body with the server") instead of "nothing recognised".
+- For creators: generating a logic prefab works with VRCFury 1.1475 ("VRCFury is required for logic prefabs" while it
+  was installed).
+
 ## 1.14.2 — 2026-11-16
 
 - **An avatar with Ultirex V5 installed uploads again.** The upload stopped with "You are trying to save a Prefab with

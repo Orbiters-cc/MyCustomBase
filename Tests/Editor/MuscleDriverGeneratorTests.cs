@@ -176,8 +176,11 @@ public class MuscleDriverGeneratorTests
         manager.GetMethod("Sdk_ManuallyRefreshGroups", any).Invoke(null, new object[] { array });
         manager.GetMethod("UpdateConstraints", any).Invoke(null, null);
         var handle = (Unity.Jobs.JobHandle)manager.GetMethod("ScheduleReadJob", any).Invoke(null, new object[] { default(Unity.Jobs.JobHandle) });
+        // SDK 3.10.6 added a "resolve at once" flag between the stage and the job to wait for.
+        var schedule = manager.GetMethod("ScheduleExecutionJobs", any);
         foreach (var value in Enum.GetValues(stage))
-            handle = (Unity.Jobs.JobHandle)manager.GetMethod("ScheduleExecutionJobs", any).Invoke(null, new[] { value, handle });
+            handle = (Unity.Jobs.JobHandle)schedule.Invoke(null, schedule.GetParameters().Select(p => p.ParameterType == stage ? value
+                : p.ParameterType == typeof(bool) ? true : (object)handle).ToArray());
         handle.Complete();
         manager.GetMethod("PostUpdateConstraints", any).Invoke(null, null);
     }

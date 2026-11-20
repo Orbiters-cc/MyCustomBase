@@ -406,7 +406,7 @@ public partial class VersionActions
                 ResolveVersionPatchPath(version, patchFile),
                 ResolvePayloadKeyPath(version, patchFile, targetFbxPath, "advanced mesh authoring pose"),
                 fileManagerService);
-            NativeMeshPayloadService.ApplyPayloadAuthoringPose(root, payload, targetFbxPath);
+            NativeMeshPayloadService.ApplyPayloadAuthoringPose(root, payload, targetFbxPath, NativeMeshPayloadService.VersionHumanoid(version));
         }
     }
 

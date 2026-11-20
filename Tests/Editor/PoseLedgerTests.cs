@@ -70,6 +70,71 @@ public class PoseLedgerTests
         Assert.That(owner.poseLedger.recorded, Is.False);
     }
 
+    // A body on another base installs without the migration that used to record its meshes: going back puts the base
+    // model's meshes on the version's renderers, and the person's own meshes (a sculpted mesh asset, a mesh that only
+    // lives in the scene) must come back from the ledger.
+    [Test] public void PersonalMeshesComeBackAfterGoingBack()
+    {
+        var baseMesh = AssetDatabase.LoadAllAssetsAtPath("Assets/Avatars/Rexouium/FBX_Rigs/Rig1.6 (HeadJntMovedUp)/RexouiumRig1.6_V265_Fthrs_ReparentChestUp.fbx").OfType<Mesh>().FirstOrDefault();
+        Assume.That(baseMesh, Is.Not.Null, "Rexouium 1.6 is not in this project");
+        var (model, avatar, owner) = Rig();
+        string folder = "Assets/__PoseLedgerTest_" + System.Guid.NewGuid().ToString("N").Substring(0, 8);
+        AssetDatabase.CreateFolder("Assets", folder.Substring("Assets/".Length));
+        try
+        {
+            var hips = avatar.transform.Find("Armature/Hips");
+            var sculpted = new Mesh { name = "Sculpted body", vertices = new[] { Vector3.zero } };
+            AssetDatabase.CreateAsset(sculpted, folder + "/sculpted.asset");
+            var sceneOnly = new Mesh { name = "Scene-only piece", vertices = new[] { Vector3.one } }; owned.Add(sceneOnly);
+            SkinnedMeshRenderer Piece(string name, Mesh mesh)
+            {
+                var r = Child(avatar.transform, name, Vector3.zero).gameObject.AddComponent<SkinnedMeshRenderer>();
+                r.sharedMesh = mesh; r.bones = new[] { hips }; r.rootBone = hips; return r;
+            }
+            var body = Piece("Body", sculpted); var piece = Piece("Piece", sceneOnly);
+            var snapshot = VersionPoseLedgerService.Capture(avatar.transform, new[] { model });
+            // The install: the version's meshes on both.
+            var version = new Mesh { name = "Version body" }; owned.Add(version);
+            body.sharedMesh = version; piece.sharedMesh = version;
+            VersionPoseLedgerService.Record(owner, snapshot);
+            var pending = VersionPoseLedgerService.BeginRestore(owner, avatar.transform);
+            // The reset machinery: the base model's mesh on the renderers the version replaced.
+            body.sharedMesh = baseMesh; piece.sharedMesh = baseMesh;
+            VersionPoseLedgerService.FinishRestore(owner, pending);
+            Assert.That(body.sharedMesh, Is.SameAs(sculpted));
+            Assert.That(piece.sharedMesh, Is.SameAs(sceneOnly));
+            Assert.That(body.bones, Is.EqualTo(new[] { hips }));
+        }
+        finally { AssetDatabase.DeleteAsset(folder); }
+    }
+
+    // "Migrate avatar" on its own, then an install: the ledger recorded the model the body was migrated onto. Going back
+    // gives the release from before MCB again first, and that mesh (a model file's too) must stay.
+    [Test] public void ABodyGivenItsOldReleaseAgainKeepsThatMesh()
+    {
+        var meshes = AssetDatabase.LoadAllAssetsAtPath("Assets/Avatars/Rexouium/FBX_Rigs/Rig1.6 (HeadJntMovedUp)/RexouiumRig1.6_V265_Fthrs_ReparentChestUp.fbx").OfType<Mesh>().Take(2).ToArray();
+        Assume.That(meshes.Length, Is.EqualTo(2), "Rexouium 1.6 is not in this project");
+        Mesh migratedOnto = meshes[0], oldRelease = meshes[1];
+        var (model, avatar, owner) = Rig();
+        var hips = avatar.transform.Find("Armature/Hips");
+        SkinnedMeshRenderer Piece(string name)
+        {
+            var r = Child(avatar.transform, name, Vector3.zero).gameObject.AddComponent<SkinnedMeshRenderer>();
+            r.sharedMesh = migratedOnto; r.bones = new[] { hips }; r.rootBone = hips; return r;
+        }
+        var body = Piece("Body"); var other = Piece("Piece");
+        var snapshot = VersionPoseLedgerService.Capture(avatar.transform, new[] { model });
+        var version = new Mesh { name = "Version body" }; owned.Add(version);
+        body.sharedMesh = version; other.sharedMesh = version;
+        VersionPoseLedgerService.Record(owner, snapshot);
+        var pending = VersionPoseLedgerService.BeginRestore(owner, avatar.transform);
+        // Going back: the old release's mesh on the body it was restored on; the other piece left on another model mesh.
+        body.sharedMesh = oldRelease; other.sharedMesh = oldRelease;
+        VersionPoseLedgerService.FinishRestore(owner, pending, null, new[] { body });
+        Assert.That(body.sharedMesh, Is.SameAs(oldRelease), "The release from before MCB stays on the renderer that got it back.");
+        Assert.That(other.sharedMesh, Is.SameAs(migratedOnto), "A renderer nothing restored gets its recorded mesh.");
+    }
+
     [Test] public void SnapshotRestoresWhatAFailedSwitchLeft()
     {
         var (model, avatar, owner) = Rig();

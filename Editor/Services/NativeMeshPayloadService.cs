@@ -598,7 +598,7 @@ public static partial class NativeMeshPayloadService
         LogApplyProfile("Loaded/materialized native mesh payload asset", step, total, $"renderers={payload.renderers.Count} bones={payload.bones.Count}");
         ApplyPayloadToAvatar(avatarRoot, payload);
         LogApplyProfile("Applied native mesh payload to avatar", step, total);
-        ApplyPayloadAuthoringPose(avatarRoot, payload, basePoseFbxPath);
+        ApplyPayloadAuthoringPose(avatarRoot, payload, basePoseFbxPath, VersionHumanoid(version));
         LogApplyProfile("Applied native mesh authoring pose to avatar", step, total, $"bones={payload.authoringPoseBones.Count}");
         MCBLogger.Log($"[NativeMeshPayloadProfile] DONE apply payload total={total.Elapsed.TotalMilliseconds:F1} ms");
         return payload;

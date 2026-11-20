@@ -927,9 +927,12 @@ internal static class VersionPoseLedgerService
     /// the version was on keeps the place relative to the avatar root it had just before going back; a bone they adjusted
     /// keeps that adjustment on top of its baseline. Every other transform stays as it was before going back; renderers
     /// likewise; then the ledger is cleared. <paramref name="migration"/>: a reinstall's going-back half, which leaves what
-    /// a custom body's migration owns as the migration has it.
+    /// a custom body's migration owns as the migration has it. <paramref name="restoredBody"/>: the renderers going back
+    /// just gave the release from before MCB again (<see cref="LegacyMigrationService.RestoreOriginal"/>): the mesh they
+    /// carry now is the person's, whatever the ledger recorded when the version was installed on the migrated body.
     /// </summary>
-    public static void FinishRestore(MyCustomBase owner, PendingRestore pending, MigrationBaseline migration = null)
+    public static void FinishRestore(MyCustomBase owner, PendingRestore pending, MigrationBaseline migration = null,
+        ICollection<SkinnedMeshRenderer> restoredBody = null)
     {
         if (owner == null || pending == null) return;
         const string step = "Put the avatar back as it was";
@@ -973,7 +976,7 @@ internal static class VersionPoseLedgerService
                 enabled = pair.Value.enabled, updateWhenOffscreen = pair.Value.updateWhenOffscreen, weights = pair.Value.weights };
         foreach (var pair in pending.before.renderers)
             if (pair.Key != null && !renderers.ContainsKey(pair.Key) && (migration == null || !migration.renderers.Contains(pair.Key))) renderers[pair.Key] = pair.Value;
-        Put(wanted, renderers, step);
+        Put(wanted, renderers, step, restoredBody);
         // Objects the person moved while the version was on: where they put them, relative to the avatar root.
         foreach (var e in moved.OrderBy(e => Depth(e.transform)))
         {
@@ -1038,7 +1041,8 @@ internal static class VersionPoseLedgerService
         return snapshot;
     }
 
-    private static void Put(Dictionary<Transform, TransformState> wanted, Dictionary<SkinnedMeshRenderer, RendererState> renderers, string step)
+    private static void Put(Dictionary<Transform, TransformState> wanted, Dictionary<SkinnedMeshRenderer, RendererState> renderers, string step,
+        ICollection<SkinnedMeshRenderer> restoredBody = null)
     {
         foreach (var pair in wanted)
         {
@@ -1071,7 +1075,11 @@ internal static class VersionPoseLedgerService
 
         // A renderer's fields come back when it carries the recorded mesh again (a restored custom body is not overwritten).
         // A renderer that had no mesh (or a missing one) is emptied again instead of keeping the base's mesh, and a
-        // clothing mesh MCB rebound for the version gets its own mesh back. The rebound copy itself stays: an Undo step
+        // clothing mesh MCB rebound for the version gets its own mesh back. So does a body piece going back left on a
+        // model file's mesh while it had another one (a sculpted mesh asset, a mesh that only lives in the scene): going
+        // back puts the base model's meshes on the renderers the version replaced, never the person's. Not a renderer that
+        // just got the release from before MCB again: its mesh is the person's, and what was recorded is the model their
+        // body was migrated onto (a migration done on its own, before the install). The rebound copy itself stays: an Undo step
         // can still point at it, and the next install updates it in place.
         foreach (var pair in renderers)
         {
@@ -1083,7 +1091,8 @@ internal static class VersionPoseLedgerService
                 Undo.RecordObject(renderer, step);
                 renderer.sharedMesh = null;
             }
-            else if (state.mesh != null && renderer.sharedMesh != null && renderer.sharedMesh != state.mesh && IsRebound(renderer.sharedMesh))
+            else if (state.mesh != null && renderer.sharedMesh != null && renderer.sharedMesh != state.mesh && (IsRebound(renderer.sharedMesh)
+                    || FromModelFile(renderer.sharedMesh) && (restoredBody == null || !restoredBody.Contains(renderer))))
             {
                 Undo.RecordObject(renderer, step);
                 renderer.sharedMesh = state.mesh;
@@ -1091,6 +1100,8 @@ internal static class VersionPoseLedgerService
             if (renderer.sharedMesh == state.mesh) Apply(renderer, state, step);
         }
     }
+
+    private static bool FromModelFile(Mesh mesh) => AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(mesh)) is ModelImporter;
 
     internal static bool IsRebound(Mesh mesh)
     {

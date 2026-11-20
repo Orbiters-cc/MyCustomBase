@@ -96,7 +96,7 @@ public class NativeMeshRendererResolutionTests
 
         Assert.IsNull(Resolve(avatar, MovedBodyRecord()));
         var failure = Assert.Throws<InvalidOperationException>(() => Apply(MovedBodyRecord()));
-        StringAssert.Contains("Put it back at 'Body'", failure.Message);
+        StringAssert.Contains("MCB cannot find your avatar's 'Body'", failure.Message);
         Assert.AreSame(clothingMesh, clothing.sharedMesh);
         Assert.AreSame(bodyMesh, body.sharedMesh);
     }
@@ -127,7 +127,7 @@ public class NativeMeshRendererResolutionTests
         var bodyMesh = body.sharedMesh;
 
         var failure = Assert.Throws<InvalidOperationException>(() => Apply(MovedBodyRecord("Model/Body"), MovedBodyRecord("Model/Body")));
-        StringAssert.Contains("both resolve", failure.Message);
+        StringAssert.Contains("would both go on your avatar's 'Body'", failure.Message);
         Assert.AreSame(bodyMesh, body.sharedMesh);
     }
 }

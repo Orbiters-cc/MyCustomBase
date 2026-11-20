@@ -179,9 +179,14 @@ public sealed class OwnSkeleton
         }
     }
 
+    private const string UnmappedStart = "Your avatar has no bone matching '";
+
     private static string Unmapped(string path) =>
-        $"Your avatar has no bone matching '{path}' of the base model, and the body is skinned to it. Nothing was changed. "
+        $"{UnmappedStart}{path}' of the base model, and the body is skinned to it. Nothing was changed. "
         + "Put the bone back (or undo the rename) and try again.";
+
+    /// <summary>Whether <paramref name="failure"/> says the avatar lacks a bone the model's body is skinned to (not an ambiguity).</summary>
+    public static bool IsMissingBone(string failure) => failure != null && failure.StartsWith(UnmappedStart, StringComparison.Ordinal);
 
     // The child of that name; same-named siblings are told apart by the humanoid chain and the base renderers' bones.
     private Transform Pick(Transform parent, string name, string path, out string failure)

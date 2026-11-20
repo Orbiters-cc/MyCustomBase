@@ -68,6 +68,14 @@ public static class LegacyMigrationService
             : new List<ModelFileData>();
         originals.AddRange(requested?.sourceFiles ?? Array.Empty<ModelFileData>());
         if (!HasCustomBaseRenderers(owner, avatar, originals)) yield break;
+        // A version that brings its own skeleton (plain advanced meshes: nothing keyed to or patched onto the original
+        // file) needs no original under the body: on a body no older release of the asset is recognised in (a newer
+        // release of the base such as Rexouium 1.7, a personal edit) it installs as on a stock avatar, creating the bones
+        // it needs and moving the ones it places elsewhere, and going back puts the body back from the pose ledger. Only
+        // the server can tell such a body from an older release whose own setup must be cleaned up first.
+        bool ownSkeleton = NativeMeshPayloadService.InstallsOnAnyModel(requested);
+        if (ownSkeleton && !session.HasServerAccess)
+            throw new InvalidOperationException("Sign in to MCB to install this version on your avatar: MCB checks with the server whether your avatar's body comes from an older release of this asset. Nothing was changed.");
         string token = session.authToken;
         string key = LookupKey(avatar, token, assetId);
         var lookup = session.HasServerAccess ? LookupAsync(avatar, token, assetId) : Task.FromResult(new List<Match>());
@@ -77,11 +85,40 @@ public static class LegacyMigrationService
         if (lookup.IsFaulted || lookup.IsCanceled)
             throw new InvalidOperationException("MCB could not check your avatar's custom body with the server ("
                 + (lookup.Exception?.GetBaseException().Message ?? "cancelled") + "). Nothing was changed. Check your connection and that you are signed in, then try again.");
+        // A personal edit of one of the originals (the original is in the project and the avatar has every bone its body
+        // is skinned to) is migrated as always. Another base than the one the version was made on (Rexouium 1.7 under a
+        // version made on 1.6: no original here, or the original's bones are not all there) cannot be migrated: a version
+        // with its own skeleton then installs on the body as it is.
+        if (ownSkeleton && !(lookup.Result ?? new List<Match>()).Any(m => m != null && m.assetId == assetId)
+            && !CanMigrateOnto(avatar, originals, out string why))
+        {
+            MCBLogger.Log($"[MCB] Your avatar's body is on another base than the original this version was made on ({why}): "
+                + $"version {requested.version} brings its own skeleton, so it installs on the body as it is (bones it needs are added; going back puts the body back exactly).");
+            yield break;
+        }
         var matches = PlanCustomBody(avatar, assetId, originals, lookup.Result, out string originalPath);
         if (matches.Count == 0) yield break;
         if (!session.HasServerAccess)
             throw new InvalidOperationException("Sign in to MCB to install a version on your custom body: MCB needs the versions offered for its original base. Nothing was changed.");
         planned(new MigrationPlan { Matches = matches, OriginalPath = originalPath, Original = AssetDatabase.LoadAssetAtPath<GameObject>(originalPath) });
+    }
+
+    /// <summary>
+    /// Whether the custom body migration can run: one of <paramref name="originals"/> is in the project and the avatar has
+    /// every bone that original's body is skinned to (its own armature, outfits never counted). <paramref name="why"/> says
+    /// what is missing otherwise.
+    /// </summary>
+    internal static bool CanMigrateOnto(Transform avatar, IEnumerable<ModelFileData> originals, out string why)
+    {
+        var withHash = originals.Where(o => !string.IsNullOrEmpty(o?.hash)).GroupBy(o => o.hash, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+        string path = withHash.Count == 0 ? null : PickOriginal(avatar, withHash, Array.Empty<string>());
+        var original = path == null ? null : AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        if (original == null) { why = "none of its original models is in this project"; return false; }
+        var skeleton = OwnSkeleton.Resolve(avatar, original.transform);
+        // Two objects that could be the same bone stay a refusal whichever way the version would install.
+        if (skeleton.Failure != null && !OwnSkeleton.IsMissingBone(skeleton.Failure)) throw new InvalidOperationException(skeleton.Failure);
+        why = skeleton.Failure == null ? null : "it lacks bones the body of " + Path.GetFileName(path) + " is skinned to";
+        return skeleton.Failure == null;
     }
 
     /// <summary>
@@ -258,6 +295,12 @@ public static class LegacyMigrationService
 
     internal static List<Match> ReadIdentification(Transform avatar, JObject response, IDictionary<string, string> byHash, int assetId)
     {
+        // An answer without its parts is no proof that nothing was recognised: it fails like a failed request (an
+        // unrecognised body may install without its migration, so "nothing recognised" must come from a whole answer).
+        if (!(response?["matches"] is JArray answered)
+            || assetId > 0 && !answered.OfType<JObject>().Any(m => m.Value<string>("kind") == "legacy" && m.Value<int>("assetId") == assetId)
+                && !(response["asset"] is JObject asked && asked.Value<int>("assetId") == assetId))
+            throw new InvalidDataException("the server's answer was incomplete");
         var matches = (response["matches"] as JArray ?? new JArray()).OfType<JObject>().Where(m => m.Value<string>("kind") == "legacy")
             .Select(m => m.ToObject<Match>()).Where(m => m?.legacyRelease != null && (assetId <= 0 || m.assetId == assetId) && byHash.ContainsKey(m.hash)).ToList();
         foreach (var match in matches) match.legacyModelPath = byHash[match.hash];
@@ -477,7 +520,10 @@ public static class LegacyMigrationService
     /// name, then the value remembered for the asset (the release's own shapes), then the value from before the migration.
     /// Returns the release's label, or null when the avatar has nothing to restore.
     /// </summary>
-    public static string RestoreOriginal(Transform avatar)
+    public static string RestoreOriginal(Transform avatar) => RestoreOriginal(avatar, null);
+
+    /// <summary>The same; <paramref name="restored"/> receives the renderers that got their own mesh back.</summary>
+    public static string RestoreOriginal(Transform avatar, ICollection<SkinnedMeshRenderer> restored)
     {
         if (avatar == null) return null;
         var owners = avatar.GetComponentsInChildren<MyCustomBase>(true).Where(o => o.legacyOriginal != null && o.legacyOriginal.migrated).ToList();
@@ -497,6 +543,7 @@ public static class LegacyMigrationService
                 for (int i = 0; i < renderer.sharedMesh.blendShapeCount; i++) current[renderer.sharedMesh.GetBlendShapeName(i)] = renderer.GetBlendShapeWeight(i);
             Undo.RecordObject(renderer, step);
             renderer.sharedMesh = mesh;
+            restored?.Add(renderer);
             if (state.bones != null && state.bones.Length > 0) renderer.bones = state.bones;
             if (state.rootBone != null) renderer.rootBone = state.rootBone;
             renderer.localBounds = state.bounds;

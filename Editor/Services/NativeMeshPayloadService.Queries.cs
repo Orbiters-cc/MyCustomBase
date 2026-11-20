@@ -266,5 +266,24 @@ public static partial class NativeMeshPayloadService
     {
         return string.Equals(transform, PlainTransformName, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>The version's own humanoid (the default avatar shipped with it), or null.</summary>
+    public static Avatar VersionHumanoid(CustomBaseVersion version)
+    {
+        string path = version != null ? MCBUtils.GetDefaultAvatarPath(version) : null;
+        return string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<Avatar>(path);
+    }
+
+    /// <summary>
+    /// Whether every model change of <paramref name="version"/> is a plain advanced mesh: it brings its own meshes, weights,
+    /// bind poses and skeleton, targets whatever model the avatar is on, and needs no original model file (no key, nothing
+    /// patched). False for a version without model changes.
+    /// </summary>
+    public static bool InstallsOnAnyModel(CustomBaseVersion version)
+    {
+        var patches = (version?.versionFiles ?? Array.Empty<ModelFileData>())
+            .Where(file => file != null && string.Equals(file.role, "PATCH", StringComparison.OrdinalIgnoreCase)).ToList();
+        return patches.Count > 0 && patches.All(file => IsPlainPayloadTransform(file.transform));
+    }
 }
 #endif

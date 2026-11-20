@@ -449,10 +449,11 @@ public partial class VersionActions
             catch (Exception ex) { MCBLogger.LogWarning("[MCB] Objects on the armature could not keep their place: " + ex.Message); }
         // An avatar migrated from a release made before MCB: that release is the person's original base, not the model the
         // migration put under it.
+        var restoredBody = new HashSet<SkinnedMeshRenderer>();
         if (isReset)
             try
             {
-                string restored = LegacyMigrationService.RestoreOriginal(root);
+                string restored = LegacyMigrationService.RestoreOriginal(root, restoredBody);
                 if (restored != null)
                 {
                     session.serializedObject.Update();
@@ -470,7 +471,7 @@ public partial class VersionActions
         // After the renderers and assets: poses, parents and order as the person had them.
         if (ledgerReset)
         {
-            VersionPoseLedgerService.FinishRestore(target, poseRestore);
+            VersionPoseLedgerService.FinishRestore(target, poseRestore, null, restoredBody);
             poseRestore = null;
         }
         if (before != null)

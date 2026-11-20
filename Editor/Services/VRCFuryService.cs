@@ -339,7 +339,9 @@ public class VRCFuryService
     public Component AddArmatureLink(GameObject host, string targetPath)
     {
         var featureType = FindType("VF.Model.Feature.ArmatureLink");
-        var linkType = FindType("VF.Model.Feature.ArmatureLink+LinkTo");
+        // The type of a link changed name between VRCFury releases (ArmatureLink.LinkTo, then ObjectReference): the
+        // list says which one this VRCFury uses.
+        var linkType = featureType?.GetField("linkTo")?.FieldType.GetGenericArguments().FirstOrDefault();
         if (featureType == null || linkType == null) return null;
         var feature = System.Activator.CreateInstance(featureType, true);
         featureType.GetField("propBone").SetValue(feature, host);

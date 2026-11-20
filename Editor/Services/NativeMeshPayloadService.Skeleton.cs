@@ -79,6 +79,33 @@ public static partial class NativeMeshPayloadService
         EditorUtility.SetDirty(owner);
     }
 
+    /// <summary>
+    /// Refuses, before this payload writes a bone, an avatar whose armature is at another scale than the version's skeleton
+    /// (a model exported in centimetres: armature at scale 100, bones at a hundredth of their positions). The version
+    /// writes its skeleton at its own scale, which would change the size of every collider, PhysBone, contact and bone of
+    /// the avatar's own that hangs from it. A body MCB migrated from a release made before MCB is left to install as it
+    /// always did.
+    /// </summary>
+    internal static void RefuseOtherArmatureScale(Transform avatarRoot, NativeMeshPayloadAsset payload)
+    {
+        if (avatarRoot.GetComponentsInChildren<MyCustomBase>(true).Any(o => o.legacyOriginal != null && o.legacyOriginal.migrated)) return;
+        var top = (payload?.bones ?? new List<NativeMeshPayloadBone>()).FirstOrDefault(b => b != null && !string.IsNullOrWhiteSpace(b.path) && b.path.IndexOf('/') < 0
+            && payload.bones.Any(c => c != null && c.path != null && c.path.StartsWith(b.path + "/", StringComparison.Ordinal)));
+        var armature = top == null ? null : ResolveAvatarTransform(avatarRoot, top.path);
+        if (armature == null || armature == avatarRoot) return;
+        var own = avatarRoot.lossyScale; var have = armature.lossyScale;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            float relative = Mathf.Abs(own[axis]) < 1e-9f ? 0f : have[axis] / own[axis];
+            float wanted = top.localScale[axis];
+            if (Mathf.Abs(wanted) > 1e-9f && Mathf.Abs(relative / wanted - 1f) <= 0.01f) continue;
+            throw new InvalidOperationException($"Your avatar's armature '{AnimationUtility.CalculateTransformPath(armature, avatarRoot)}' has a scale of "
+                + $"{relative:0.###} and this version's skeleton a scale of {wanted:0.###}: your avatar's model was exported in another unit (centimetres, usually). "
+                + "Installing would change the size of everything on its bones, so nothing was changed. Use a model of your base exported at the "
+                + "version's scale, or ask the version's creator which file to use.");
+        }
+    }
+
     public static void RemoveGeneratedBones(MyCustomBase owner)
     {
         Undo.RecordObject(owner, "Restore original mesh skeleton");

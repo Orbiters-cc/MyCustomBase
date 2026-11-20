@@ -46,13 +46,18 @@ public static class NativeRendererLayoutService
             var renderer = FindRenderer(root, entry.path);
             Transform parent = null;
             if (renderer != null && !originalSlots.ContainsKey(renderer))
-                throw new InvalidOperationException("A renderer that is not part of the original model occupies the custom renderer path: " + entry.path);
+                throw new InvalidOperationException($"Your avatar has its own mesh '{AnimationUtility.CalculateTransformPath(renderer.transform, root)}' where the version puts its '{entry.path}' "
+                    + "(clothing or a mesh that is not your base's). Nothing was changed. Rename that object, then install again.");
             if (renderer == null)
             {
                 parent = ResolveParent(root, entry.path, originals);
                 string name = entry.path.Substring(entry.path.LastIndexOf('/') + 1);
-                if (Enumerable.Range(0, parent.childCount).Select(parent.GetChild).Any(t => t.name == name))
-                    throw new InvalidOperationException("An object that is not a renderer occupies the custom renderer path: " + entry.path);
+                var occupant = Enumerable.Range(0, parent.childCount).Select(parent.GetChild).FirstOrDefault(t => t.name == name);
+                // E.g. a "TailMesh" folder holding two tail options (Rexouium 1.7's alternate Digitigrade setup).
+                if (occupant != null)
+                    throw new InvalidOperationException($"Your avatar has an object '{AnimationUtility.CalculateTransformPath(occupant, root)}' that is not a mesh"
+                        + (occupant.childCount > 0 ? " (it holds " + string.Join(", ", Enumerable.Range(0, Math.Min(occupant.childCount, 4)).Select(i => "'" + occupant.GetChild(i).name + "'")) + ")" : "")
+                        + $" where the version puts its '{name}'. Nothing was changed. Rename that object (and switch off the meshes in it you no longer want), then install again.");
             }
             targets.Add((entry, renderer, parent));
         }

@@ -123,7 +123,7 @@ public static partial class AvatarDefinitionGenerationService
         // The avatar's own armature, when named otherwise than the payload's.
         var own = OwnSkeleton.ForAvatar(root).Armature;
         string armatureName = own != null && !payload.bones.Any(b => b.path == own.name) ? own.name : null;
-        string key = MCBUtils.PathHash(Hash128.Compute("native-humanoid-2|" + (armatureName == null ? "" : armatureName + "|") + JsonUtility.ToJson(description)).ToString());
+        string key = MCBUtils.PathHash(Hash128.Compute("native-humanoid-3|" + (armatureName == null ? "" : armatureName + "|") + MappingKey(description)).ToString());
         string payloadPath = AssetDatabase.GetAssetPath(payload);
         string path = string.IsNullOrEmpty(payloadPath) ? null :
             Path.ChangeExtension(payloadPath, null) + ".humanoid-" + key + ".asset";
@@ -139,6 +139,21 @@ public static partial class AvatarDefinitionGenerationService
         // Also when unchanged: the payload may just have reparented bones the Animator had cached.
         AssignAvatarKeepingPose(animator, avatar);
         return changed;
+    }
+
+    /// <summary>
+    /// What a native humanoid is made of besides the payload: which bone plays each humanoid role, its limits and the muscle
+    /// settings. JsonUtility writes nothing of a HumanDescription ("{}"), so a key from it named one humanoid for every
+    /// mapping: a Digitigrade Rexouium (legs on its Planti_* chain) was given the plantigrade humanoid another avatar built.
+    /// </summary>
+    internal static string MappingKey(HumanDescription description)
+    {
+        string F(float value) => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        string V(Vector3 value) => F(value.x) + "," + F(value.y) + "," + F(value.z);
+        var bones = (description.human ?? Array.Empty<HumanBone>()).OrderBy(h => h.humanName, StringComparer.Ordinal)
+            .Select(h => h.humanName + "=" + h.boneName + (h.limit.useDefaultValues ? "" : ":" + V(h.limit.min) + ";" + V(h.limit.max) + ";" + V(h.limit.center) + ";" + F(h.limit.axisLength)));
+        return string.Join("|", bones) + "|" + string.Join(",", new[] { description.upperArmTwist, description.lowerArmTwist, description.upperLegTwist, description.lowerLegTwist,
+            description.armStretch, description.legStretch, description.feetSpacing }.Select(F)) + "|" + description.hasTranslationDoF;
     }
 }
 #endif

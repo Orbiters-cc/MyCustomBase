@@ -72,6 +72,7 @@ public static partial class NativeMeshPayloadService
         // Reject incomplete associations before assigning any mesh. Positional bone
         // fallback can silently bind a skin weight to the wrong joint after rig edits.
         var records = payload.renderers ?? new List<NativeMeshPayloadRenderer>();
+        RefuseOtherArmatureScale(avatarRoot, payload);
         EnsurePayloadBones(avatarRoot, payload);
         var targets = new SkinnedMeshRenderer[records.Count];
         for (int i = 0; i < records.Count; i++)
@@ -146,7 +147,9 @@ public static partial class NativeMeshPayloadService
 
     /// <param name="basePoseFbxPath">The original base model the avatar is on. A plain payload's skeleton is the version
     /// model's own rest pose (Ultirex's is a star pose); with this model the avatar keeps the base's pose instead.</param>
-    public static void ApplyPayloadAuthoringPose(Transform avatarRoot, NativeMeshPayloadAsset payload, string basePoseFbxPath = null)
+    /// <param name="versionHumanoid">The version's own humanoid (its default avatar): which of its bones each limb is, for
+    /// avatars whose humanoid limbs are other bones than the ones the body hangs on (a Digitigrade rig's Planti_* legs).</param>
+    public static void ApplyPayloadAuthoringPose(Transform avatarRoot, NativeMeshPayloadAsset payload, string basePoseFbxPath = null, Avatar versionHumanoid = null)
     {
         if (avatarRoot == null || payload == null)
         {
@@ -226,7 +229,7 @@ public static partial class NativeMeshPayloadService
         }
 
         AvatarDefinitionGenerationService.ApplyNativeMeshAvatar(avatarRoot, payload);
-        if (string.IsNullOrEmpty(payload.sourceFbxPath) && !string.IsNullOrEmpty(basePoseFbxPath)) KeepBasePose(avatarRoot, basePoseFbxPath);
+        if (string.IsNullOrEmpty(payload.sourceFbxPath) && !string.IsNullOrEmpty(basePoseFbxPath)) KeepBasePose(avatarRoot, basePoseFbxPath, versionHumanoid);
         RefreshAvatarSkinnedRenderers(avatarRoot, payload.payloadHash != null && payload.payloadHash.StartsWith("raw:", StringComparison.Ordinal));
         MCBLogger.Log($"[NativeMeshPayload] Applied authoring pose deltas to {applied}/{payload.authoringPoseBones.Count} transforms.");
     }
@@ -252,10 +255,12 @@ public static partial class NativeMeshPayloadService
 
     /// <summary>
     /// Poses the avatar's limbs like its original base model's rest pose (e.g. a T-pose): each limb bone is turned, parents
-    /// first, to point where the same humanoid bone points in that model. Bone lengths, the hips and the spine stay the
-    /// version's own; non-humanoid bones follow their parents.
+    /// first, to point where the same bone points in that model. Bone lengths, the hips and the spine stay the version's
+    /// own; non-humanoid bones follow their parents. A limb is the avatar's humanoid bone, unless the version's meshes are not
+    /// skinned to it: a Digitigrade Rexouium's humanoid legs are a Planti_* chain beside the legs the body hangs on, and then
+    /// the limb is the bone <paramref name="versionHumanoid"/> names, aimed like the base model's bone of that name.
     /// </summary>
-    internal static bool KeepBasePose(Transform avatarRoot, string basePoseFbxPath)
+    internal static bool KeepBasePose(Transform avatarRoot, string basePoseFbxPath, Avatar versionHumanoid = null)
     {
         var model = AssetDatabase.LoadAssetAtPath<GameObject>(MCBUtils.ToUnityPath(basePoseFbxPath));
         var baseAnimator = model != null ? model.GetComponent<Animator>() : null;
@@ -276,8 +281,35 @@ public static partial class NativeMeshPayloadService
             // The avatar's own armature only: an outfit's bone of the same name is never turned.
             var skeleton = OwnSkeleton.ForAvatar(avatarRoot);
             var mapped = animator.avatar.humanDescription.human.GroupBy(h => h.humanName, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().boneName, StringComparer.Ordinal);
-            Transform Bone(HumanBodyBones bone) =>
-                mapped.TryGetValue(HumanTrait.BoneName[(int)bone], out var name) ? skeleton.ResolveBone(name, weighted.Contains) : null;
+            // The bones the version's own meshes carry weight on (none without payload meshes: the humanoid decides).
+            var versionSkinned = new HashSet<Transform>();
+            foreach (var renderer in avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (renderer.sharedMesh == null || AssetDatabase.LoadAssetAtPath<NativeMeshPayloadAsset>(AssetDatabase.GetAssetPath(renderer.sharedMesh)) == null) continue;
+                var slots = renderer.bones;
+                foreach (var weight in renderer.sharedMesh.GetAllBoneWeights())
+                    if (weight.weight > 0f && weight.boneIndex < slots.Length && slots[weight.boneIndex] != null) versionSkinned.Add(slots[weight.boneIndex]);
+            }
+            var versionNames = versionHumanoid != null && versionHumanoid.isHuman
+                ? versionHumanoid.humanDescription.human.GroupBy(h => h.humanName, StringComparer.Ordinal).ToDictionary(g => g.First().humanName, g => g.First().boneName, StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+            Transform Bone(HumanBodyBones bone)
+            {
+                string role = HumanTrait.BoneName[(int)bone];
+                var humanoid = mapped.TryGetValue(role, out var name) ? skeleton.ResolveBone(name, weighted.Contains) : null;
+                if (versionSkinned.Count == 0 || humanoid != null && versionSkinned.Contains(humanoid) || !versionNames.TryGetValue(role, out var own)) return humanoid;
+                var limb = skeleton.ResolveBone(own, versionSkinned.Contains);
+                return limb != null && versionSkinned.Contains(limb) ? limb : humanoid;
+            }
+            // The base model's bone for a limb: the one of the same name when the limb is not the humanoid's.
+            var baseByName = instance.GetComponentsInChildren<Transform>(true).GroupBy(t => t.name, StringComparer.Ordinal)
+                .Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            Transform BaseBone(HumanBodyBones bone, Transform limb)
+            {
+                var humanoid = reference.GetBoneTransform(bone);
+                if (limb == null || humanoid != null && humanoid.name == limb.name) return humanoid;
+                return baseByName.TryGetValue(limb.name, out var named) ? named : humanoid;
+            }
             // Directions are compared in each avatar's own root space, so where the avatar stands does not matter.
             var toAvatar = avatarRoot.rotation * Quaternion.Inverse(instance.transform.rotation);
             var recorded = new HashSet<Transform>();
@@ -285,8 +317,10 @@ public static partial class NativeMeshPayloadService
             foreach (var (bone, toward) in PoseLimbs)
             {
                 Transform from = Bone(bone), to = Bone(toward);
-                Transform baseFrom = reference.GetBoneTransform(bone), baseTo = reference.GetBoneTransform(toward);
+                Transform baseFrom = BaseBone(bone, from), baseTo = BaseBone(toward, to);
                 if (from == null || to == null || baseFrom == null || baseTo == null) continue;
+                // Both ends on one chain: a Digitigrade ankle is never aimed at a toe of the Planti_* chain beside it.
+                if (to == from || !to.IsChildOf(from) || baseTo == baseFrom || !baseTo.IsChildOf(baseFrom)) continue;
                 Vector3 current = to.position - from.position, wanted = toAvatar * (baseTo.position - baseFrom.position);
                 if (current.sqrMagnitude < 1e-10f || wanted.sqrMagnitude < 1e-10f) continue;
                 if (recorded.Add(from)) Undo.RecordObject(from, "Keep Original Base Pose");

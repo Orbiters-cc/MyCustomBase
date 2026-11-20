@@ -44,11 +44,20 @@ public class LegacyContentRecognitionTests
         finally { UnityEngine.Object.DestroyImmediate(avatar); }
     }
 
-    [Test] public void IdentifyWithoutAssetDefinitionsHasNoContentMatch()
+    // An answer without the asset's definitions cannot say nothing was recognised: it fails like a failed request, since a
+    // body nothing recognises may install without its migration.
+    [Test] public void IdentifyWithoutAssetDefinitionsIsNoAnswer()
     {
         var avatar = new GameObject("No definitions");
-        try { Assert.That(LegacyMigrationService.ReadIdentification(avatar.transform,
-            Newtonsoft.Json.Linq.JObject.Parse("{\"matches\":[]}"), new System.Collections.Generic.Dictionary<string,string> { ["hash"] = "custom.fbx" }, 7), Is.Empty); }
+        var byHash = new System.Collections.Generic.Dictionary<string,string> { ["hash"] = "custom.fbx" };
+        try
+        {
+            foreach (string answer in new[] { "{\"matches\":[]}", "{}", "{\"asset\":{\"assetId\":7}}", "{\"matches\":[],\"asset\":{\"assetId\":9}}" })
+                Assert.Throws<System.IO.InvalidDataException>(() => LegacyMigrationService.ReadIdentification(avatar.transform,
+                    Newtonsoft.Json.Linq.JObject.Parse(answer), byHash, 7), answer);
+            Assert.That(LegacyMigrationService.ReadIdentification(avatar.transform,
+                Newtonsoft.Json.Linq.JObject.Parse("{\"matches\":[],\"asset\":{\"assetId\":7,\"legacyReleases\":[]}}"), byHash, 7), Is.Empty);
+        }
         finally { UnityEngine.Object.DestroyImmediate(avatar); }
     }
     [Test] public void AssetScopedHashMatchesExcludeOtherAssets()
