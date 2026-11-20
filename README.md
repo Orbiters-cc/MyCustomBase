@@ -1,5 +1,15 @@
 # My Custom Base (MCB) by Enzo
 
+## 1.14.4 — 2026-11-20
+
+- **Custom veins no longer offers to install Poiyomi Toon in a project that already has Poiyomi.** The card only knew
+  Poiyomi Toon 9: with Poiyomi Toon 10, Poiyomi Pro or Poiyomi's files under Assets it said "Poiyomi Toon is not
+  installed in the project", and **Install Poiyomi Toon** put version 9 beside the one in place. Poiyomi 10 keeps its
+  editor in a package of its own, so the project had two copies of it (duplicate ThryAssemblyDefinition and
+  ThryExternal assemblies), nothing compiled and uploads failed. The offer now shows only when the project has no
+  Poiyomi shader and no Poiyomi editor at all. If you pressed the button before: update Poiyomi Toon again in the
+  Creator Companion, which removes the old copy.
+
 ## 1.14.3 — 2026-11-20
 
 - **A version that brings its own skeleton installs on another base than the one it was made on** (Ultirex V5 on a

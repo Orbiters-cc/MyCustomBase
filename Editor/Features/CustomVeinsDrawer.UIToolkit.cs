@@ -472,7 +472,9 @@ public partial class CustomVeinsDrawer
 
     private void BuildPoiyomiInstallSuggestionUIToolkit(VisualElement root, IReadOnlyList<Material> targetMaterials)
     {
-        if (!HasLockedPoiyomiMaterial(targetMaterials))
+        // Offered only to a project without Poiyomi: a newer Poiyomi Toon, Poiyomi Pro or its files under Assets are
+        // outside the version this package asks for, and installing that version beside them breaks the project.
+        if (!HasLockedPoiyomiMaterial(targetMaterials) || McbDependencies.HasPoiyomi())
         {
             return;
         }
