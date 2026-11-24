@@ -1486,7 +1486,7 @@ public class FileManagerService
     // The first humanoid Avatar among the entries' original models. sourceFbxPath is the *.fbx.originalbase key once a
     // backup exists, which Unity cannot load: the model is the FBX itself while it holds the original, else a temporary
     // import of the backup.
-    private static void SaveDefaultAvatar(IEnumerable<ModelFilePackageEntry> entries, string outputPath)
+    internal static void SaveDefaultAvatar(IEnumerable<ModelFilePackageEntry> entries, string outputPath)
     {
         foreach (var entry in entries)
         {
@@ -1496,7 +1496,10 @@ public class FileManagerService
             try
             {
                 var model = LoadOriginalModel(fbxPath, out temporaryFolder);
-                var avatar = model != null ? model.GetComponent<Animator>()?.avatar : null;
+                // A model without an Animator (a rig copied from an Avatar that is gone) has no definition to keep: GetComponent
+                // returns Unity's fake null there, which ?. does not catch.
+                var animator = model != null ? model.GetComponent<Animator>() : null;
+                var avatar = animator != null ? animator.avatar : null;
                 if (avatar == null || !avatar.isHuman) continue;
                 AvatarDefinitionGenerationService.SaveAvatarCopy(avatar, outputPath);
                 return;

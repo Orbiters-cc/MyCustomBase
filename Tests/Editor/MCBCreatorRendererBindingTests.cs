@@ -117,5 +117,28 @@ public class MCBCreatorRendererBindingTests
             AssetDatabase.DeleteAsset(folder); SmrPathService.InvalidateCache();
         }
     }
+
+    // An original whose rig copies an Avatar that no longer exists imports without an Animator: the build keeps no default
+    // avatar for it instead of failing on Unity's fake-null Animator.
+    [Test]
+    public void DefaultAvatarIsSkippedForAnOriginalWithoutAnAnimator()
+    {
+        string folder = "Assets/MCBDefaultAvatarTest-" + Guid.NewGuid().ToString("N");
+        var model = new GameObject("model without animator");
+        try
+        {
+            AssetDatabase.CreateFolder("Assets", folder.Substring("Assets/".Length));
+            string prefab = folder + "/model.prefab";
+            PrefabUtility.SaveAsPrefabAsset(model, prefab);
+            string output = folder + "/" + MCBUtils.DEFAULT_AVATAR_NAME;
+            Assert.DoesNotThrow(() => FileManagerService.SaveDefaultAvatar(new[] { new FileManagerService.ModelFilePackageEntry { localTargetPath = prefab } }, output));
+            Assert.IsFalse(System.IO.File.Exists(output));
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(model);
+            AssetDatabase.DeleteAsset(folder);
+        }
+    }
 }
 #endif
