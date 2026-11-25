@@ -409,11 +409,15 @@ internal static class VersionPoseLedgerService
     /// earlier install of this avatar found (kept on <paramref name="owner"/>), else the first of
     /// <paramref name="referenceModels"/> whose rest reproduces the skeleton (at most half of its bones adjusted relative to
     /// their parent). A prefab the avatar is an instance of is matched object by object. With none, nothing is carried.
+    /// <paramref name="installedVersionUndone"/>: a version installed before the pose ledger existed is still on the avatar;
+    /// its bones hold that version's pose, which is not the person's, and are recorded with the local pose they had before it.
     /// </summary>
-    public static Snapshot Capture(Transform root, IEnumerable<GameObject> referenceModels, MyCustomBase owner = null)
+    public static Snapshot Capture(Transform root, IEnumerable<GameObject> referenceModels, MyCustomBase owner = null,
+        IReadOnlyDictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)> installedVersionUndone = null)
     {
         var snapshot = new Snapshot { root = root };
         CaptureAvatar(snapshot);
+        if (installedVersionUndone != null && installedVersionUndone.Count > 0) WithoutInstalledVersion(snapshot, installedVersionUndone);
         var candidates = (referenceModels ?? Enumerable.Empty<GameObject>()).Where(m => m != null).Distinct().ToList();
         // The base model files' transform names: what a base bone is called (clothing bones of a prefab are not).
         var baseNames = new HashSet<string>(StringComparer.Ordinal);
@@ -489,6 +493,27 @@ internal static class VersionPoseLedgerService
         foreach (Transform child in root)
             if (baseNames.Contains(child.name) && child.GetComponent<Renderer>() != null) snapshot.baseObjects.Add(child);
         return snapshot;
+    }
+
+    // The version's bones as they were before it: their local poses, and their root-space poses through those (objects
+    // that are not the version's keep the place they really have, which an install keeps).
+    private static void WithoutInstalledVersion(Snapshot snapshot,
+        IReadOnlyDictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)> undone)
+    {
+        var root = snapshot.root;
+        var corrected = new Dictionary<Transform, Affine>();
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t == root || !snapshot.transforms.TryGetValue(t, out var state)) continue;
+            bool own = undone.TryGetValue(t, out var before);
+            bool below = t.parent != null && corrected.ContainsKey(t.parent);
+            if (!own && !below) continue;
+            if (own) { state.position = before.position; state.rotation = before.rotation; state.scale = before.scale; }
+            var parent = t.parent == null || t.parent == root ? Affine.Identity()
+                : corrected.TryGetValue(t.parent, out var p) ? p : snapshot.rootSpace[t.parent];
+            corrected[t] = parent * Affine.TRS(state.position, state.rotation, state.scale);
+            if (own) snapshot.rootSpace[t] = corrected[t];
+        }
     }
 
     // A candidate reproduces the skeleton when at most half of its bones are adjusted relative to their parent.

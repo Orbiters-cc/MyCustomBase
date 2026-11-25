@@ -322,7 +322,9 @@ public partial class VersionActions
             {
                 var references = VersionPoseLedgerService.ReferenceModels(target, root);
                 if (migration?.Original != null) references.Add(migration.Original);
-                poseSnapshot = CapturePose(target, root, references);
+                // A version installed before the pose ledger: its bones still hold its pose, which is not the person's.
+                var installedVersion = target.appliedCustomBaseAssetId != 0 ? NativeMeshPayloadService.InstalledAuthoringPoseUndone(root) : null;
+                poseSnapshot = CapturePose(target, root, references, installedVersion);
             }
             if (!isReset && migration != null)
             {
@@ -365,9 +367,12 @@ public partial class VersionActions
     private bool failureShown;
 
     /// <summary>Records the avatar for an install and remembers which model its skeleton comes from.</summary>
-    private static VersionPoseLedgerService.Snapshot CapturePose(MyCustomBase target, Transform root, List<GameObject> references)
+    private static VersionPoseLedgerService.Snapshot CapturePose(MyCustomBase target, Transform root, List<GameObject> references,
+        IReadOnlyDictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)> installedVersionUndone = null)
     {
-        var snapshot = VersionPoseLedgerService.Capture(root, references, target);
+        var snapshot = VersionPoseLedgerService.Capture(root, references, target, installedVersionUndone);
+        if (installedVersionUndone != null && installedVersionUndone.Count > 0)
+            MCBLogger.Log($"[MCB] The installed version's pose on {installedVersionUndone.Count} bone(s) is not the avatar's own: it is not carried over.");
         // The rest the person's posing was measured against stays with the avatar: later installs use the same one, also
         // once its prefab is unpacked.
         if (snapshot.reference.Count > 0 && (target.poseReferenceRest == null || target.poseReferenceRest.Count == 0))

@@ -234,6 +234,47 @@ public static partial class NativeMeshPayloadService
         MCBLogger.Log($"[NativeMeshPayload] Applied authoring pose deltas to {applied}/{payload.authoringPoseBones.Count} transforms.");
     }
 
+    /// <summary>
+    /// What <see cref="ApplyPayloadAuthoringPose"/> wrote on this avatar, taken off: for each transform the authoring pose
+    /// of a payload whose meshes are on the avatar posed, the local pose it had before that payload (what was changed on
+    /// top of the payload's pose since is kept). Only payloads whose original model is in the project (the pose they wrote
+    /// is that model's rest plus their deltas).
+    /// </summary>
+    internal static Dictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)> InstalledAuthoringPoseUndone(Transform avatarRoot)
+    {
+        var result = new Dictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)>();
+        if (avatarRoot == null) return result;
+        var payloads = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .Select(r => r.sharedMesh != null ? AssetDatabase.LoadAssetAtPath<NativeMeshPayloadAsset>(AssetDatabase.GetAssetPath(r.sharedMesh)) : null)
+            .Where(p => p != null && p.authoringPoseBones != null).Distinct();
+        foreach (var payload in payloads)
+        {
+            var sourceRoot = ResolveSourcePoseRoot(payload.sourceFbxPath);
+            if (sourceRoot == null) continue;
+            foreach (var poseBone in payload.authoringPoseBones)
+            {
+                if (poseBone == null || string.IsNullOrWhiteSpace(poseBone.path)) continue;
+                var target = ResolveAvatarTransform(avatarRoot, poseBone.path);
+                var source = FindTransformByRelativePath(sourceRoot, poseBone.path);
+                if (target == null || source == null || result.ContainsKey(target)) continue;
+                result[target] = AuthoringPoseUndone(source.localPosition, source.localRotation, source.localScale, poseBone,
+                    target.localPosition, target.localRotation, target.localScale);
+            }
+        }
+        return result;
+    }
+
+    // The inverse of one bone's authoring pose: the payload wrote source + delta; whatever differs from that now stays on top.
+    internal static (Vector3 position, Quaternion rotation, Vector3 scale) AuthoringPoseUndone(Vector3 sourcePosition, Quaternion sourceRotation,
+        Vector3 sourceScale, NativeMeshPayloadAuthoringPoseBone poseBone, Vector3 position, Quaternion rotation, Vector3 scale)
+    {
+        var writtenRotation = sourceRotation * poseBone.localRotationDelta;
+        var writtenScale = Vector3.Scale(sourceScale, poseBone.localScaleMultiplier);
+        return (position - poseBone.localPositionOffset,
+            (sourceRotation * (Quaternion.Inverse(writtenRotation) * rotation)).normalized,
+            Vector3.Scale(sourceScale, DivideScale(scale, writtenScale)));
+    }
+
     // Limb bones and the humanoid bone each one points at. The spine, neck and head keep the version's own shape.
     private static readonly (HumanBodyBones bone, HumanBodyBones toward)[] PoseLimbs =
     {

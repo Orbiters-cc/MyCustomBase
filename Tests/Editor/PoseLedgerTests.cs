@@ -146,6 +146,51 @@ public class PoseLedgerTests
         Assert.That(hips.localPosition, Is.EqualTo(p));
     }
 
+    // A version installed before the pose ledger (UltiPaw 1.0.7 under MCB 1.13) raised the hips and turned the leg; the
+    // person turned the tail. Installing the next version with the same pose must not count the old version's pose as the
+    // person's (it was added a second time: hips 8 cm too high, ears, jaw and tail doubled), and going back is the original.
+    [Test] public void AVersionInstalledBeforeTheLedgerIsNotThePersonsPose()
+    {
+        var (model, avatar, owner) = Rig();
+        var hips = avatar.transform.Find("Armature/Hips"); var leg = hips.Find("Leg"); var tail = hips.Find("Tail");
+        var poseBones = new Dictionary<Transform, NativeMeshPayloadAuthoringPoseBone>
+        {
+            [hips] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips", localPositionOffset = new Vector3(0, .08f, 0) },
+            [leg] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips/Leg", localRotationDelta = Quaternion.Euler(0, 0, 20) },
+            [tail] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips/Tail" }
+        };
+        var modelHips = model.transform.Find("Armature/Hips");
+        Transform Source(Transform t) => t == hips ? modelHips : modelHips.Find(t.name);
+        void InstallVersion()
+        {
+            foreach (var pair in poseBones)
+            {
+                var s = Source(pair.Key);
+                pair.Key.localPosition = s.localPosition + pair.Value.localPositionOffset;
+                pair.Key.localRotation = s.localRotation * pair.Value.localRotationDelta;
+            }
+        }
+        // The old install, then the person's own turn of the tail.
+        InstallVersion();
+        tail.localRotation = Quaternion.Euler(10, 0, 0);
+        var undone = poseBones.ToDictionary(p => p.Key, p => NativeMeshPayloadService.AuthoringPoseUndone(Source(p.Key).localPosition,
+            Source(p.Key).localRotation, Source(p.Key).localScale, p.Value, p.Key.localPosition, p.Key.localRotation, p.Key.localScale));
+        var snapshot = VersionPoseLedgerService.Capture(avatar.transform, new[] { model }, owner, undone);
+        Assert.That(snapshot.reference, Is.Not.Empty, string.Join("; ", snapshot.referenceNotes));
+        InstallVersion();
+        VersionPoseLedgerService.CarryPose(snapshot);
+        Assert.That(Vector3.Distance(hips.localPosition, Vector3.up * 1.08f), Is.LessThan(1e-5f), "the hips at the version's height, once");
+        Assert.That(Quaternion.Angle(leg.localRotation, Quaternion.Euler(0, 0, 20)), Is.LessThan(0.01f), "the leg turned by the version, once");
+        Assert.That(Quaternion.Angle(tail.localRotation, Quaternion.Euler(10, 0, 0)), Is.LessThan(0.01f), "the person's tail");
+        VersionPoseLedgerService.Record(owner, snapshot);
+        var pending = VersionPoseLedgerService.BeginRestore(owner, avatar.transform);
+        foreach (var pair in poseBones) { var s = Source(pair.Key); pair.Key.localPosition = s.localPosition; pair.Key.localRotation = s.localRotation; }
+        VersionPoseLedgerService.FinishRestore(owner, pending);
+        Assert.That(Vector3.Distance(hips.localPosition, Vector3.up), Is.LessThan(1e-5f), "going back: the original hips");
+        Assert.That(Quaternion.Angle(leg.localRotation, Quaternion.identity), Is.LessThan(0.01f), "going back: the original leg");
+        Assert.That(Quaternion.Angle(tail.localRotation, Quaternion.Euler(10, 0, 0)), Is.LessThan(0.01f), "going back: the person's tail");
+    }
+
     // Root-space pose of a transform relative to the avatar root.
     private static Matrix4x4 Space(Transform root, Transform t) => root.worldToLocalMatrix * t.localToWorldMatrix;
 
