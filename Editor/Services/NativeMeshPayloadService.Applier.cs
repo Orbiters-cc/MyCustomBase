@@ -251,15 +251,45 @@ public static partial class NativeMeshPayloadService
         {
             var sourceRoot = ResolveSourcePoseRoot(payload.sourceFbxPath);
             if (sourceRoot == null) continue;
+            var bones = new List<(Transform target, Transform source, NativeMeshPayloadAuthoringPoseBone pose)>();
             foreach (var poseBone in payload.authoringPoseBones)
             {
                 if (poseBone == null || string.IsNullOrWhiteSpace(poseBone.path)) continue;
                 var target = ResolveAvatarTransform(avatarRoot, poseBone.path);
                 var source = FindTransformByRelativePath(sourceRoot, poseBone.path);
-                if (target == null || source == null || result.ContainsKey(target)) continue;
-                result[target] = AuthoringPoseUndone(source.localPosition, source.localRotation, source.localScale, poseBone,
-                    target.localPosition, target.localRotation, target.localScale);
+                if (target != null && source != null) bones.Add((target, source, poseBone));
             }
+            foreach (var pair in AuthoringPoseUndone(bones))
+                if (!result.ContainsKey(pair.Key)) result[pair.Key] = pair.Value;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The bones' local poses without one payload's authoring pose; none when the avatar does not hold that pose: most of
+    /// the bones it moves are at their source rest instead (MCB 1.14.6 going back from an install over such a version left
+    /// its meshes on the original pose). Taking a pose off bones that never had it cancels the next version's pose.
+    /// </summary>
+    internal static Dictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)> AuthoringPoseUndone(
+        IEnumerable<(Transform target, Transform source, NativeMeshPayloadAuthoringPoseBone pose)> bones)
+    {
+        var result = new Dictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)>();
+        int atWritten = 0, atRest = 0;
+        bool Near(Transform t, Vector3 position, Quaternion rotation) =>
+            Vector3.Distance(t.localPosition, position) < 1e-4f && Quaternion.Angle(t.localRotation, rotation) < 0.05f;
+        foreach (var (target, source, pose) in bones)
+        {
+            if (result.ContainsKey(target)) continue;
+            result[target] = AuthoringPoseUndone(source.localPosition, source.localRotation, source.localScale, pose,
+                target.localPosition, target.localRotation, target.localScale);
+            if (pose.localPositionOffset.magnitude < 1e-4f && Quaternion.Angle(pose.localRotationDelta, Quaternion.identity) < 0.05f) continue;
+            if (Near(target, source.localPosition + pose.localPositionOffset, source.localRotation * pose.localRotationDelta)) atWritten++;
+            else if (Near(target, source.localPosition, source.localRotation)) atRest++;
+        }
+        if (atRest > atWritten)
+        {
+            MCBLogger.Log($"[NativeMeshPayload] The installed version's pose is not on the avatar ({atRest} of its posed bones at the original rest, {atWritten} at its pose): nothing to take off.");
+            result.Clear();
         }
         return result;
     }

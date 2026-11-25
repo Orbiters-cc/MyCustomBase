@@ -260,6 +260,11 @@ internal static class VersionPoseLedgerService
         public readonly Dictionary<SkinnedMeshRenderer, RendererState> renderers = new Dictionary<SkinnedMeshRenderer, RendererState>();
         // Every transform relative to the avatar root.
         public Dictionary<Transform, Affine> rootSpace = new Dictionary<Transform, Affine>();
+        // Bones a version installed before the pose ledger still poses: the pose they really have (transforms and rootSpace
+        // hold the pose from before that version, which is what is carried). Going back and clothing use this one: the
+        // version's meshes and the clothing on it go with this pose.
+        public readonly Dictionary<Transform, TransformState> held = new Dictionary<Transform, TransformState>();
+        public readonly Dictionary<Transform, Affine> heldSpace = new Dictionary<Transform, Affine>();
         // Each base bone of the avatar and its rest in the reference model (empty when no model reproduces the skeleton).
         public Dictionary<Transform, ReferenceBone> reference = new Dictionary<Transform, ReferenceBone>();
         public GameObject referenceModel; public string referenceLabel;
@@ -410,7 +415,8 @@ internal static class VersionPoseLedgerService
     /// <paramref name="referenceModels"/> whose rest reproduces the skeleton (at most half of its bones adjusted relative to
     /// their parent). A prefab the avatar is an instance of is matched object by object. With none, nothing is carried.
     /// <paramref name="installedVersionUndone"/>: a version installed before the pose ledger existed is still on the avatar;
-    /// its bones hold that version's pose, which is not the person's, and are recorded with the local pose they had before it.
+    /// its bones hold that version's pose, which is not the person's: the person's pose is measured with the local pose they
+    /// had before it, while the ledger keeps the pose they really have (see <see cref="Snapshot.held"/>).
     /// </summary>
     public static Snapshot Capture(Transform root, IEnumerable<GameObject> referenceModels, MyCustomBase owner = null,
         IReadOnlyDictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)> installedVersionUndone = null)
@@ -508,7 +514,13 @@ internal static class VersionPoseLedgerService
             bool own = undone.TryGetValue(t, out var before);
             bool below = t.parent != null && corrected.ContainsKey(t.parent);
             if (!own && !below) continue;
-            if (own) { state.position = before.position; state.rotation = before.rotation; state.scale = before.scale; }
+            if (own)
+            {
+                snapshot.held[t] = state;
+                snapshot.heldSpace[t] = snapshot.rootSpace[t];
+                state = snapshot.transforms[t] = new TransformState { parent = state.parent, sibling = state.sibling, active = state.active,
+                    position = before.position, rotation = before.rotation, scale = before.scale };
+            }
             var parent = t.parent == null || t.parent == root ? Affine.Identity()
                 : corrected.TryGetValue(t.parent, out var p) ? p : snapshot.rootSpace[t.parent];
             corrected[t] = parent * Affine.TRS(state.position, state.rotation, state.scale);
@@ -764,7 +776,8 @@ internal static class VersionPoseLedgerService
             for (int i = 0; i < bones.Length; i++)
             {
                 var bone = bones[i];
-                if (bone == null || !snapshot.rootSpace.TryGetValue(bone, out var before) || !now.TryGetValue(bone, out var after) || SamePose(before, after)) continue;
+                if (bone == null || !(snapshot.heldSpace.TryGetValue(bone, out var before) || snapshot.rootSpace.TryGetValue(bone, out before))
+                    || !now.TryGetValue(bone, out var after) || SamePose(before, after)) continue;
                 poses[i] = (after.Inverse() * before * Affine.FromMatrix(poses[i])).ToMatrix();
                 changed = true;
             }
@@ -876,8 +889,10 @@ internal static class VersionPoseLedgerService
         var now = RootSpace(root);
         foreach (var pair in snapshot.transforms)
         {
-            var t = pair.Key; var b = pair.Value;
+            var t = pair.Key;
             if (t == null) continue;
+            // Going back puts back what the avatar really had: an old version's pose goes with its meshes.
+            var b = snapshot.held.TryGetValue(t, out var held) ? held : pair.Value;
             if (t.parent == b.parent && t.GetSiblingIndex() == b.sibling && t.gameObject.activeSelf == b.active && b.SamePoseExactly(t)) continue;
             ledger.entries.Add(new PoseLedgerEntry
             {
@@ -886,7 +901,7 @@ internal static class VersionPoseLedgerService
                 writtenParent = t.parent, writtenActive = t.gameObject.activeSelf,
                 writtenPosition = t.localPosition, writtenRotation = t.localRotation, writtenScale = t.localScale,
                 bone = snapshot.baseObjects.Contains(t) || snapshot.reference.ContainsKey(t),
-                baselineSpace = snapshot.rootSpace.TryGetValue(t, out var was) ? was.ToMatrix() : Matrix4x4.identity,
+                baselineSpace = snapshot.heldSpace.TryGetValue(t, out var was) || snapshot.rootSpace.TryGetValue(t, out was) ? was.ToMatrix() : Matrix4x4.identity,
                 writtenSpace = now.TryGetValue(t, out var written) ? written.ToMatrix() : Matrix4x4.identity
             });
         }

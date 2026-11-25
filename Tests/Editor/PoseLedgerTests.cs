@@ -148,48 +148,112 @@ public class PoseLedgerTests
 
     // A version installed before the pose ledger (UltiPaw 1.0.7 under MCB 1.13) raised the hips and turned the leg; the
     // person turned the tail. Installing the next version with the same pose must not count the old version's pose as the
-    // person's (it was added a second time: hips 8 cm too high, ears, jaw and tail doubled), and going back is the original.
+    // person's (it was added a second time: hips 8 cm too high, ears, jaw and tail doubled). Going back puts back the old
+    // version as it was, its pose with its meshes (MCB 1.14.6 put the original pose under the old meshes: a squashed body),
+    // and installing again from there gives the version's pose once more.
     [Test] public void AVersionInstalledBeforeTheLedgerIsNotThePersonsPose()
     {
         var (model, avatar, owner) = Rig();
         var hips = avatar.transform.Find("Armature/Hips"); var leg = hips.Find("Leg"); var tail = hips.Find("Tail");
-        var poseBones = new Dictionary<Transform, NativeMeshPayloadAuthoringPoseBone>
-        {
-            [hips] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips", localPositionOffset = new Vector3(0, .08f, 0) },
-            [leg] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips/Leg", localRotationDelta = Quaternion.Euler(0, 0, 20) },
-            [tail] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips/Tail" }
-        };
+        var poseBones = OldVersionPose(hips);
         var modelHips = model.transform.Find("Armature/Hips");
-        Transform Source(Transform t) => t == hips ? modelHips : modelHips.Find(t.name);
-        void InstallVersion()
-        {
-            foreach (var pair in poseBones)
-            {
-                var s = Source(pair.Key);
-                pair.Key.localPosition = s.localPosition + pair.Value.localPositionOffset;
-                pair.Key.localRotation = s.localRotation * pair.Value.localRotationDelta;
-            }
-        }
         // The old install, then the person's own turn of the tail.
-        InstallVersion();
+        InstallVersion(poseBones, modelHips);
         tail.localRotation = Quaternion.Euler(10, 0, 0);
-        var undone = poseBones.ToDictionary(p => p.Key, p => NativeMeshPayloadService.AuthoringPoseUndone(Source(p.Key).localPosition,
-            Source(p.Key).localRotation, Source(p.Key).localScale, p.Value, p.Key.localPosition, p.Key.localRotation, p.Key.localScale));
-        var snapshot = VersionPoseLedgerService.Capture(avatar.transform, new[] { model }, owner, undone);
-        Assert.That(snapshot.reference, Is.Not.Empty, string.Join("; ", snapshot.referenceNotes));
-        InstallVersion();
-        VersionPoseLedgerService.CarryPose(snapshot);
-        Assert.That(Vector3.Distance(hips.localPosition, Vector3.up * 1.08f), Is.LessThan(1e-5f), "the hips at the version's height, once");
-        Assert.That(Quaternion.Angle(leg.localRotation, Quaternion.Euler(0, 0, 20)), Is.LessThan(0.01f), "the leg turned by the version, once");
-        Assert.That(Quaternion.Angle(tail.localRotation, Quaternion.Euler(10, 0, 0)), Is.LessThan(0.01f), "the person's tail");
-        VersionPoseLedgerService.Record(owner, snapshot);
-        var pending = VersionPoseLedgerService.BeginRestore(owner, avatar.transform);
-        foreach (var pair in poseBones) { var s = Source(pair.Key); pair.Key.localPosition = s.localPosition; pair.Key.localRotation = s.localRotation; }
-        VersionPoseLedgerService.FinishRestore(owner, pending);
-        Assert.That(Vector3.Distance(hips.localPosition, Vector3.up), Is.LessThan(1e-5f), "going back: the original hips");
-        Assert.That(Quaternion.Angle(leg.localRotation, Quaternion.identity), Is.LessThan(0.01f), "going back: the original leg");
-        Assert.That(Quaternion.Angle(tail.localRotation, Quaternion.Euler(10, 0, 0)), Is.LessThan(0.01f), "going back: the person's tail");
+        for (int round = 0; round < 2; round++)
+        {
+            var snapshot = VersionPoseLedgerService.Capture(avatar.transform, new[] { model }, owner, Undone(poseBones, modelHips));
+            Assert.That(snapshot.reference, Is.Not.Empty, string.Join("; ", snapshot.referenceNotes));
+            InstallVersion(poseBones, modelHips);
+            VersionPoseLedgerService.CarryPose(snapshot);
+            Assert.That(Vector3.Distance(hips.localPosition, Vector3.up * 1.08f), Is.LessThan(1e-5f), "the hips at the version's height, once");
+            Assert.That(Quaternion.Angle(leg.localRotation, Quaternion.Euler(0, 0, 20)), Is.LessThan(0.01f), "the leg turned by the version, once");
+            Assert.That(Quaternion.Angle(tail.localRotation, Quaternion.Euler(10, 0, 0)), Is.LessThan(0.01f), "the person's tail");
+            VersionPoseLedgerService.Record(owner, snapshot);
+            var pending = VersionPoseLedgerService.BeginRestore(owner, avatar.transform);
+            // The reset machinery: the base's bones at the model rest.
+            foreach (var pair in poseBones) { var s = Source(pair.Key, modelHips); pair.Key.localPosition = s.localPosition; pair.Key.localRotation = s.localRotation; }
+            VersionPoseLedgerService.FinishRestore(owner, pending);
+            Assert.That(Vector3.Distance(hips.localPosition, Vector3.up * 1.08f), Is.LessThan(1e-5f), "going back: the old version's hips, with its meshes");
+            Assert.That(Quaternion.Angle(leg.localRotation, Quaternion.Euler(0, 0, 20)), Is.LessThan(0.01f), "going back: the old version's leg");
+            Assert.That(Quaternion.Angle(tail.localRotation, Quaternion.Euler(10, 0, 0)), Is.LessThan(0.01f), "going back: the person's tail");
+        }
     }
+
+    // MCB 1.14.6 going back from such an install left the old version's meshes and marker on the original pose. The next
+    // install took the old version's pose off bones that never had it, which cancelled the new version's pose (hips 8 cm
+    // low, shoulders turned 10 degrees: a squashed body). A pose that is not on the avatar is not taken off.
+    [Test] public void AnOldVersionsPoseThatIsNotOnTheAvatarIsNotTakenOff()
+    {
+        var (model, avatar, owner) = Rig();
+        var hips = avatar.transform.Find("Armature/Hips"); var leg = hips.Find("Leg"); var tail = hips.Find("Tail");
+        var poseBones = OldVersionPose(hips);
+        var modelHips = model.transform.Find("Armature/Hips");
+        hips.localPosition = Vector3.up;
+        var undone = Undone(poseBones, modelHips);
+        Assert.That(undone, Is.Empty, "the old version's pose is not on the avatar");
+        var snapshot = VersionPoseLedgerService.Capture(avatar.transform, new[] { model }, owner, undone);
+        InstallVersion(poseBones, modelHips);
+        VersionPoseLedgerService.CarryPose(snapshot);
+        Assert.That(Vector3.Distance(hips.localPosition, Vector3.up * 1.08f), Is.LessThan(1e-5f), "the hips at the version's height");
+        Assert.That(Quaternion.Angle(leg.localRotation, Quaternion.Euler(0, 0, 20)), Is.LessThan(0.01f), "the leg turned by the version");
+        Assert.That(Quaternion.Angle(tail.localRotation, Quaternion.Euler(10, 0, 0)), Is.LessThan(0.01f), "the person's tail");
+    }
+
+    // Clothing skinned to a bone an old version (installed before the ledger) posed keeps the shape it has on the avatar
+    // when the next version, with the same pose, is installed: it was fitted on the old version's pose, not the original.
+    [Test] public void ClothingOnAnOldVersionsPoseKeepsItsShape()
+    {
+        var (model, avatar, owner) = Rig();
+        avatar.name = "PoseLedgerTestAvatar";
+        var hips = avatar.transform.Find("Armature/Hips"); var leg = hips.Find("Leg");
+        var poseBones = OldVersionPose(hips);
+        var modelHips = model.transform.Find("Armature/Hips");
+        InstallVersion(poseBones, modelHips);
+        var cloth = new GameObject("Cloth"); cloth.transform.SetParent(avatar.transform, false);
+        var renderer = cloth.AddComponent<SkinnedMeshRenderer>();
+        var mesh = new Mesh { name = "ClothMesh", vertices = new[] { Vector3.zero, Vector3.right * .1f, Vector3.up * .1f }, triangles = new[] { 0, 1, 2 } };
+        owned.Add(mesh);
+        mesh.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, 3).ToArray();
+        renderer.bones = new[] { leg };
+        mesh.bindposes = new[] { leg.worldToLocalMatrix * cloth.transform.localToWorldMatrix };
+        renderer.sharedMesh = mesh;
+        var baked = new Mesh(); owned.Add(baked); renderer.BakeMesh(baked);
+        var before = baked.vertices.Select(cloth.transform.TransformPoint).ToArray();
+        var snapshot = VersionPoseLedgerService.Capture(avatar.transform, new[] { model }, owner, Undone(poseBones, modelHips));
+        InstallVersion(poseBones, modelHips);
+        VersionPoseLedgerService.CarryPose(snapshot);
+        VersionPoseLedgerService.KeepPlaces(snapshot);
+        VersionPoseLedgerService.RebindClothing(snapshot);
+        renderer.BakeMesh(baked);
+        var after = baked.vertices.Select(cloth.transform.TransformPoint).ToArray();
+        for (int i = 0; i < before.Length; i++) Assert.That(Vector3.Distance(before[i], after[i]), Is.LessThan(1e-5f), "vertex " + i);
+    }
+
+    // The old version's authoring pose: hips 8 cm up, the leg turned; the tail is listed without a change.
+    private static Dictionary<Transform, NativeMeshPayloadAuthoringPoseBone> OldVersionPose(Transform hips) => new Dictionary<Transform, NativeMeshPayloadAuthoringPoseBone>
+    {
+        [hips] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips", localPositionOffset = new Vector3(0, .08f, 0) },
+        [hips.Find("Leg")] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips/Leg", localRotationDelta = Quaternion.Euler(0, 0, 20) },
+        [hips.Find("Tail")] = new NativeMeshPayloadAuthoringPoseBone { path = "Armature/Hips/Tail" }
+    };
+
+    private static Transform Source(Transform t, Transform modelHips) => t.name == "Hips" ? modelHips : modelHips.Find(t.name);
+
+    // What the payload writes: source rest plus its deltas.
+    private static void InstallVersion(Dictionary<Transform, NativeMeshPayloadAuthoringPoseBone> poseBones, Transform modelHips)
+    {
+        foreach (var pair in poseBones)
+        {
+            var s = Source(pair.Key, modelHips);
+            pair.Key.localPosition = s.localPosition + pair.Value.localPositionOffset;
+            pair.Key.localRotation = s.localRotation * pair.Value.localRotationDelta;
+        }
+    }
+
+    private static Dictionary<Transform, (Vector3 position, Quaternion rotation, Vector3 scale)> Undone(
+        Dictionary<Transform, NativeMeshPayloadAuthoringPoseBone> poseBones, Transform modelHips) =>
+        NativeMeshPayloadService.AuthoringPoseUndone(poseBones.Select(p => (p.Key, Source(p.Key, modelHips), p.Value)).ToList());
 
     // Root-space pose of a transform relative to the avatar root.
     private static Matrix4x4 Space(Transform root, Transform t) => root.worldToLocalMatrix * t.localToWorldMatrix;
