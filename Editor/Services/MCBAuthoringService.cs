@@ -275,7 +275,7 @@ public static class MCBAuthoringService
             throw new InvalidOperationException("Reset did not finish. Inspect MCB warnings and the Console.");
     }
 
-    public static IEnumerator Publish(MyCustomBase owner, CustomBaseVersion version, Action complete)
+    public static IEnumerator Publish(MyCustomBase owner, CustomBaseVersion version, bool replace, Action complete)
     {
         RequireEnvironmentFolder(version.assetId);
         using var session = new Session(owner);
@@ -283,7 +283,7 @@ public static class MCBAuthoringService
         // The release checkpoint names the published asset: the draft's when it is this version's asset.
         var draft = string.IsNullOrWhiteSpace(owner.creatorAuthoringDraftJson) ? null : JsonConvert.DeserializeObject<Draft>(owner.creatorAuthoringDraftJson);
         string assetName = draft?.asset != null && draft.asset.id == version.assetId ? draft.asset.name : null;
-        yield return session.Editor.Publish(version, () => published = true, interactive: false, assetName: assetName);
+        yield return session.Editor.Publish(version, () => published = true, interactive: false, assetName: assetName, replace: replace);
         if (!published) throw new InvalidOperationException(string.IsNullOrWhiteSpace(session.Editor.submitError)
             ? "Publication did not finish. Inspect MCB warnings and the Console." : session.Editor.submitError);
         complete();

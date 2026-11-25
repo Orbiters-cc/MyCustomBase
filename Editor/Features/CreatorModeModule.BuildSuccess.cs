@@ -50,7 +50,7 @@ public partial class CreatorModeModule
         creatorRoot.Add(description);
         if (built != null)
         {
-            var upload = CreateSavedBuildUploadButton(built, $"Upload version {built.version}");
+            var upload = CreateSavedBuildUploadButton(built, ReplacedBy(built) != null ? $"Replace version {built.version}" : $"Upload version {built.version}");
             upload.AddToClassList("mcb-build-success__upload");
             creatorRoot.Add(upload);
         }
@@ -77,19 +77,24 @@ public partial class CreatorModeModule
             var label = new Label(version.version + "  " + version.title);
             label.AddToClassList("mcb-build-success__version");
             row.Add(label);
-            row.Add(CreateSavedBuildUploadButton(version, "Upload"));
+            row.Add(CreateSavedBuildUploadButton(version, ReplacedBy(version) != null ? "Replace " + version.version : "Upload"));
             creatorRoot.Add(row);
         }
         if (!string.IsNullOrEmpty(session.submitError))
             creatorRoot.Add(CreateHelpBox(session.submitError, HelpBoxMessageType.Error));
     }
 
+    // A build with the number of the asset's latest published version replaces it, once the creator confirms.
     private Button CreateSavedBuildUploadButton(CustomBaseVersion version, string label)
     {
-        var button = CreateTextButton(session.isSubmitting ? "Uploading…" : label, "Upload this saved build without rebuilding it.", () =>
+        bool replace = ReplacedBy(version) != null;
+        var button = CreateTextButton(session.isSubmitting ? "Uploading…" : label, replace
+            ? "Publish this saved build in place of the published version " + version.version + "."
+            : "Upload this saved build without rebuilding it.", () =>
         {
             if (session.isSubmitting) return;
-            EditorCoroutineUtility.StartCoroutineOwnerless(UploadUnsubmittedVersionCoroutine(version));
+            if (replace && !VersionPublisher.ConfirmReplacement(version)) return;
+            EditorCoroutineUtility.StartCoroutineOwnerless(UploadUnsubmittedVersionCoroutine(version, replace));
             RefreshUIToolkit();
         });
         button.AddToClassList("mcb-button--primary");

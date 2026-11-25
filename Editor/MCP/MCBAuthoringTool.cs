@@ -11,7 +11,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
-[McpForUnityTool("mcb_authoring", Description = "Create and configure MCB custom bases, import FBX, build and apply local versions. inspect lists scene target IDs and data. configure accepts MCBAuthoringService.Draft; create_base accepts Registration. build_logic (MCBLogicPrefabService.LogicSpec) converts a reference avatar's contacts and an FX controller into a logic prefab (Target Bones proxies with VRCFury Armature Links, Full Controller, optional clip pruning); prepare_custom_model (CustomModelSpec) keeps the custom FBX renderers the original has, without materials and with shapes at 0. update_listing {assetId, name?, description?, avatarBaseId? | avatarBaseName?, avatarBasePaths?} turns an owned listing into a custom base; a base name no avatar base has yet is created only with avatarBasePaths (project paths of its FBX files, e.g. Assets/Base/Body.fbx) or the custom base's uploaded source files, and with target_id the target avatar's original models are sent when avatarBasePaths is omitted. set_media {assetId, thumbnailPath?, bannerPath?} uploads its gallery thumbnail/banner (PNG or JPEG files). set_legacy_releases {assetId, legacyReleases:[{label, customModelHashes, cleanup:{objects, layers, parameters, rendererMap}}]} registers releases distributed before MCB (the server refuses hashes of original base files and of other assets' models); find_legacy / migrate_legacy (target_id, optional data.hash) recognise and migrate an avatar built from one (renderers back to the original base, cleanup on copies, one Undo step). server_asset {assetId} reads that asset on the current environment's server: the signed-in creator's listing (name, type, avatar base, protection, Discord role, media, legacy releases), its registered original base versions and its published versions; use it before create_base or a build to compare environments. discord_access {assetId} lists the asset's Discord role rules (ownership role -> access scope and destination role); discord_roles {guildId?} lists the creator's Discord servers, or that server's roles (Orbiters role ids with their Discord snowflakes); add_discord_rule {assetId, roleId, targetRoleId?, scope?: public|beta|alpha, direction?: import|export} adds one, which a version with discordRole protection requires before it publishes. set_environment {environment: development|production} switches the Orbiters server (inspect shows it; each keeps its own login; an Assets/MCB/assets/<id> folder only holds one environment's versions). validate (target_id) builds a hidden clone of the applied avatar with VRCFury and reports unlinked proxies, contact parameters missing from the built controllers, unresolved animation paths and performance. install {assetId, version} (target_id) is the member's path: the asset the server offers for the avatar, its published version, Download and Apply. Build/apply/install/reset/import return pending jobs. build takes meshes Mixer committed on the base's renderers into the version (each model gets a new custom FBX holding them, listed in takenFromAvatar, and the draft names it from then on) and fails while a base mesh is in a Mixer session (commit or revert it first). Protection belongs to the asset: a trusted creator sets it with create_base (registration.protection) or set_asset_protection {assetId, protection:{xor, discordRole}}; with xor false, builds are one unencrypted package for every original. set_mode switches a version mode (genre, dog ears) on the applied avatar. Publication requires preview_publish followed by explicit human approval of its immutable artifact and confirm_publish with the returned code. Never infer approval from build/apply. Tokens are read from MCB's existing login and never returned.", RequiresPolling = true, PollAction = "status", MaxPollSeconds = 120)]
+[McpForUnityTool("mcb_authoring", Description = "Create and configure MCB custom bases, import FBX, build and apply local versions. inspect lists scene target IDs and data. configure accepts MCBAuthoringService.Draft; create_base accepts Registration. build_logic (MCBLogicPrefabService.LogicSpec) converts a reference avatar's contacts and an FX controller into a logic prefab (Target Bones proxies with VRCFury Armature Links, Full Controller, optional clip pruning); prepare_custom_model (CustomModelSpec) keeps the custom FBX renderers the original has, without materials and with shapes at 0. update_listing {assetId, name?, description?, avatarBaseId? | avatarBaseName?, avatarBasePaths?} turns an owned listing into a custom base; a base name no avatar base has yet is created only with avatarBasePaths (project paths of its FBX files, e.g. Assets/Base/Body.fbx) or the custom base's uploaded source files, and with target_id the target avatar's original models are sent when avatarBasePaths is omitted. set_media {assetId, thumbnailPath?, bannerPath?} uploads its gallery thumbnail/banner (PNG or JPEG files). set_legacy_releases {assetId, legacyReleases:[{label, customModelHashes, cleanup:{objects, layers, parameters, rendererMap}}]} registers releases distributed before MCB (the server refuses hashes of original base files and of other assets' models); find_legacy / migrate_legacy (target_id, optional data.hash) recognise and migrate an avatar built from one (renderers back to the original base, cleanup on copies, one Undo step). server_asset {assetId} reads that asset on the current environment's server: the signed-in creator's listing (name, type, avatar base, protection, Discord role, media, legacy releases), its registered original base versions and its published versions; use it before create_base or a build to compare environments. discord_access {assetId} lists the asset's Discord role rules (ownership role -> access scope and destination role); discord_roles {guildId?} lists the creator's Discord servers, or that server's roles (Orbiters role ids with their Discord snowflakes); add_discord_rule {assetId, roleId, targetRoleId?, scope?: public|beta|alpha, direction?: import|export} adds one, which a version with discordRole protection requires before it publishes. set_environment {environment: development|production} switches the Orbiters server (inspect shows it; each keeps its own login; an Assets/MCB/assets/<id> folder only holds one environment's versions). validate (target_id) builds a hidden clone of the applied avatar with VRCFury and reports unlinked proxies, contact parameters missing from the built controllers, unresolved animation paths and performance. install {assetId, version} (target_id) is the member's path: the asset the server offers for the avatar, its published version, Download and Apply. Build/apply/install/reset/import return pending jobs. build takes meshes Mixer committed on the base's renderers into the version (each model gets a new custom FBX holding them, listed in takenFromAvatar, and the draft names it from then on) and fails while a base mesh is in a Mixer session (commit or revert it first). Protection belongs to the asset: a trusted creator sets it with create_base (registration.protection) or set_asset_protection {assetId, protection:{xor, discordRole}}; with xor false, builds are one unencrypted package for every original. set_mode switches a version mode (genre, dog ears) on the applied avatar. Publication requires preview_publish followed by explicit human approval of its immutable artifact and confirm_publish with the returned code. preview_publish with replace: true in data publishes a build carrying the number of the asset's latest published version in its place (a corrected build: same number, the build's files and settings, revision + 1, members who installed it are offered it as an update); the preview names the version it replaces, and any other version is refused. Never infer approval from build/apply. Tokens are read from MCB's existing login and never returned.", RequiresPolling = true, PollAction = "status", MaxPollSeconds = 120)]
 public static class MCBAuthoringTool
 {
     public sealed class Parameters
@@ -38,6 +38,7 @@ public static class MCBAuthoringTool
         public string Fingerprint;
         public CustomBaseVersion Version;
         public int Target;
+        public bool Replace;
         public double Expires;
     }
     private static readonly Dictionary<string, Job> Jobs = new Dictionary<string, Job>();
@@ -138,12 +139,11 @@ public static class MCBAuthoringTool
                 {
                     var version = Version(data); var artifact = VersionRepository.GetArtifact(version); var validation = VersionRepository.Validate(artifact);
                     if (!validation.IsPublishable) throw new InvalidOperationException(validation.Describe());
-                    string code = Guid.NewGuid().ToString("N");
-                    Approvals.Clear(); Approvals.Add(code, new Approval { Fingerprint = Fingerprint(artifact), Version = version, Target = p.target_id, Expires = EditorApplication.timeSinceStartup + 900 });
-                    return new SuccessResponse("Awaiting explicit user approval to publish this built artifact.", new { confirmation_code = code, version.assetId, version.version, version.scope, folder = artifact.FolderUnityPath,
-                        files = artifact.Manifest.outputs.Select(o => new { o.path, o.hash }).ToArray(), validation = validation.Describe(), expires_in_seconds = 900,
-                        // Shown with the approval request: the version ships as built, whatever the avatar shows since.
-                        avatarBeyondVersion = MCBAuthoringService.AvatarBeyondEntries(target) });
+                    int targetId = p.target_id;
+                    if (data?.Value<bool?>("replace") != true)
+                        return new SuccessResponse("Awaiting explicit user approval to publish this built artifact.", Preview(target, targetId, version, artifact, validation, null));
+                    // The version it replaces is read from the server first: the preview names it.
+                    return Start(p.action, done => PreviewReplacement(target, targetId, version, artifact, validation, done));
                 }
                 case "confirm_publish":
                 {
@@ -152,7 +152,8 @@ public static class MCBAuthoringTool
                     var artifact = VersionRepository.GetArtifact(approval.Version);
                     if (!VersionRepository.Validate(artifact).IsPublishable || Fingerprint(artifact) != approval.Fingerprint) throw new InvalidOperationException("The artifact changed; request a new preview and approval.");
                     Approvals.Remove(p.confirmation_code);
-                    return Start(p.action, done => MCBAuthoringService.Publish(target, approval.Version, () => done(new { published = true })));
+                    return Start(p.action, done => MCBAuthoringService.Publish(target, approval.Version, approval.Replace,
+                        () => done(new { published = true, replaced = approval.Replace, revision = approval.Replace ? approval.Version.Revision : (int?)null })));
                 }
                 default: throw new ArgumentException("Unknown authoring action.");
             }
@@ -211,6 +212,35 @@ public static class MCBAuthoringTool
             versionsError = published.success ? null : published.error
         });
     }
+    // The approval request: what ships, and with replaces set, the published version it takes the place of.
+    private static object Preview(MyCustomBase target, int targetId, CustomBaseVersion version, VersionArtifact artifact, ArtifactValidationResult validation, object replaces)
+    {
+        string code = Guid.NewGuid().ToString("N");
+        Approvals.Clear(); Approvals.Add(code, new Approval { Fingerprint = Fingerprint(artifact), Version = version, Target = targetId, Replace = replaces != null,
+            Expires = EditorApplication.timeSinceStartup + 900 });
+        return new { confirmation_code = code, version.assetId, version.version, version.scope, folder = artifact.FolderUnityPath, replaces,
+            files = artifact.Manifest.outputs.Select(o => new { o.path, o.hash }).ToArray(), validation = validation.Describe(), expires_in_seconds = 900,
+            // Shown with the approval request: the version ships as built, whatever the avatar shows since.
+            avatarBeyondVersion = MCBAuthoringService.AvatarBeyondEntries(target) };
+    }
+
+    private static IEnumerator PreviewReplacement(MyCustomBase target, int targetId, CustomBaseVersion version, VersionArtifact artifact, ArtifactValidationResult validation, Action<object> done)
+    {
+        var versions = new NetworkService().FetchVersionsAsync(OriginalBaseSupportService.Url(version.assetId, "/versions") + "?allSourceVersions=1", Token());
+        while (!versions.IsCompleted) yield return null;
+        var published = versions.GetAwaiter().GetResult();
+        if (!published.success) throw new System.IO.IOException("Could not read the published versions: " + published.error);
+        var existing = published.response.versions.FirstOrDefault(v => v.version == version.version)
+            ?? throw new InvalidOperationException("Version " + version.version + " is not published on " + MCBAuthoringService.EnvironmentName + ": there is nothing to replace.");
+        VersionPublisher.ValidateReplacement(version.version, published.response.versions.Select(v => v.version), (a, b) => McbSession.VersionNumber(a).CompareTo(McbSession.VersionNumber(b)));
+        done(Preview(target, targetId, version, artifact, validation, new
+        {
+            environment = MCBAuthoringService.EnvironmentName, existing.id, existing.version, existing.title, existing.scope, existing.date,
+            revision = existing.Revision, newRevision = existing.Revision + 1,
+            note = "The version keeps its number and id and gets this build's files, title, changelog and scope; its current files are deleted. Members who installed it are offered this build as a corrected build."
+        }));
+    }
+
     // One frame later, so the pending answer reaches the client before the VRCFury build holds the editor.
     private static IEnumerator Validate(MyCustomBase target, Action<object> done)
     { yield return null; done(MCBVersionValidation.Run(target)); }

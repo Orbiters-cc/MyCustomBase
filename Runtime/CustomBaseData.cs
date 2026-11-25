@@ -122,6 +122,10 @@ public class CustomBaseVersion
     [JsonProperty] public int meshDelivery;
     [JsonProperty] public OriginalBaseVersionData[] originalBaseVersions;
     [JsonProperty] public string sourceVersionKey;
+    // The server's count of the builds published under this number: it goes up each time the creator replaces the
+    // version's files (a corrected build). Local builds and versions published before revisions leave it out (revision 1).
+    [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public int revision;
+    public int Revision => revision > 0 ? revision : 1;
     // Unprotected versions ship one plain package for every original; Discord-role verification gates its download.
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public VersionProtection protection;
     // Bone names an unprotected version binds to on the user's avatar (skeleton compatibility).

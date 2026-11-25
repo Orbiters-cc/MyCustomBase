@@ -369,6 +369,8 @@ public partial class VersionActions
         target.appliedCustomBaseDefaultAviVersion = defaultAviVersion;
         target.appliedCustomBaseSourceVersionKey = sourceVersionKey;
         target.appliedCustomBaseDeliveryMode = deliveryMode;
+        // Only an install records the revision: a state refresh matches the version by its number, whatever its files.
+        if (!onlyWhenChanged) target.appliedCustomBaseRevision = version.Revision;
         SetCache(ref target.appliedVersionBlendshapeLinksCache, links);
         SetCache(ref target.appliedVersionAnimationPositionOffsetsCache, offsets);
         target.appliedCustomization = customization;
@@ -391,6 +393,7 @@ public partial class VersionActions
         session.customBaseTarget.appliedCustomBaseDefaultAviVersion = "";
         session.customBaseTarget.appliedCustomBaseSourceVersionKey = "";
         session.customBaseTarget.appliedCustomBaseDeliveryMode = "";
+        session.customBaseTarget.appliedCustomBaseRevision = 0;
         session.isCustomBase = false;
         session.currentIsCustom = false;
         SyncAppliedVersionBlendshapeLinkCache(null);
@@ -627,7 +630,8 @@ public partial class VersionActions
         }
 
         var applied = AppliedVersionForView();
-        return applied != null && version.Equals(applied);
+        // A corrected build of the installed version is not what the avatar has.
+        return applied != null && version.Equals(applied) && !VersionRevisions.IsCorrectedBuildOf(version, session.customBaseTarget);
     }
 
     public bool HasAppliedCustomBaseEvidence()
@@ -753,7 +757,8 @@ public partial class VersionActions
         else if (session.recommendedVersion != null)
         {
             bool isNewer = session.customBaseTarget.appliedCustomBaseVersion == null ||
-                           session.CompareVersions(session.recommendedVersion.version, session.customBaseTarget.appliedCustomBaseVersion.version) > 0;
+                           session.CompareVersions(session.recommendedVersion.version, session.customBaseTarget.appliedCustomBaseVersion.version) > 0 ||
+                           VersionRevisions.IsCorrectedBuildOf(session.recommendedVersion, session.customBaseTarget);
             bool isDownloaded = MCBUtils.IsVersionDownloaded(session.recommendedVersion);
 
             if (isNewer && isDownloaded)

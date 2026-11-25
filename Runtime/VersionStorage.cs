@@ -33,6 +33,8 @@ public static class VersionStorage
                     source.versionFiles.Select(f => f.path + ":" + f.hash).OrderBy(p => p)
                         .SequenceEqual(expected.versionFiles.Select(f => f.path + ":" + f.hash).OrderBy(p => p));
             }
+            // The creator replaced the version's files since this folder was written: its files are not the version's.
+            if (matches && metadata.Revision != expected.Revision) matches = false;
             if (!matches || manifest == null ||
                 manifest.schema != VersionManifest.CurrentSchema || manifest.assetId != expected.assetId ||
                 manifest.version != expected.version || manifest.defaultAviVersion != expected.defaultAviVersion ||

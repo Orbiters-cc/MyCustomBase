@@ -20,7 +20,12 @@ using UnityEngine;
 /// runs the post-publish steps (version refetch + Mixer Git release checkpoint).
 ///
 /// This is the single upload path: both the creator-form Publish button and the
-/// version-list Upload button go through here. Publishing never rebuilds or
+/// version-list Upload button go through here.
+///
+/// With replace, a build carrying the number of the asset's latest published version is published in its place (a
+/// corrected build): the server keeps the version and its number, swaps its files and settings and raises its revision,
+/// which MCB compares with the revision an avatar installed (VersionRevisions). Only the latest version can be replaced,
+/// and only by the creator's explicit choice. Publishing never rebuilds or
 /// repackages from live project state — if the artifact is not intact, the user is
 /// told to rebuild explicitly.
 /// </summary>
@@ -36,7 +41,7 @@ public static class VersionPublisher
 
     public static IEnumerator PublishCoroutine(McbSession editor, NetworkService networkService,
         FileManagerService fileManagerService, CustomBaseVersion version, Action onPublished = null, bool interactive = true,
-        string assetName = null)
+        string assetName = null, bool replace = false)
     {
         if (editor.isSubmitting)
         {
@@ -62,17 +67,18 @@ public static class VersionPublisher
         editor.RequestRefresh(McbViewParts.All);
         var cancellation = new CancellationTokenSource();
         var progress = new Progress();
-        Task task = null;
+        Task<int> task = null;
         bool success = false;
+        int replacedRevision = 0;
         try
         {
-            task = PublishBuiltAsync(editor, networkService, fileManagerService, version, interactive, progress, cancellation.Token);
+            task = PublishBuiltAsync(editor, networkService, fileManagerService, version, interactive, replace, progress, cancellation.Token);
             while (!task.IsCompleted)
             {
                 if (EditorUtility.DisplayCancelableProgressBar("Publishing " + version.version, progress.message, progress.value)) cancellation.Cancel();
                 yield return null;
             }
-            try { task.GetAwaiter().GetResult(); success = true; }
+            try { replacedRevision = task.GetAwaiter().GetResult(); success = true; }
             catch (OperationCanceledException)
             {
                 editor.submitError = "Publishing was cancelled. Confirmed source uploads are retained; Upload resumes the remaining sources.";
@@ -103,12 +109,65 @@ public static class VersionPublisher
         string publishedAssetName = ResolvePublishedAssetName(version, assetName,
             new[] { editor.GetSelectedAsset() }.Concat(McbSession.Live.Select(other => other.GetSelectedAsset())));
         bool checkpoint = UnitGitReleasePublisher.TryPublishReleaseCheckpoint(version, publishedAssetName, out string checkpointMessage);
-        if (interactive) EditorUtility.DisplayDialog("Publish successful", "Version " + version.version + " and all its source variants have been uploaded." +
+        if (interactive) EditorUtility.DisplayDialog("Publish successful", (replacedRevision > 0
+                ? "Version " + version.version + " now holds this build. Members who installed it are offered it as a corrected build."
+                : "Version " + version.version + " and all its source variants have been uploaded.") +
             (checkpoint ? "\n\nA local release checkpoint was created." : ""), "OK");
     }
 
-    private static async Task PublishBuiltAsync(McbSession editor, NetworkService network,
-        FileManagerService files, CustomBaseVersion shown, bool interactive, Progress progress, CancellationToken cancellation)
+    /// <summary>
+    /// The published version a build would replace: the asset's latest published version, when the build carries its
+    /// number. Null when the build is a new version (or the versions are not known yet).
+    /// </summary>
+    public static CustomBaseVersion ReplaceableBy(CustomBaseVersion build, IEnumerable<CustomBaseVersion> published)
+    {
+        if (build == null || !build.isUnsubmitted) return null;
+        CustomBaseVersion latest = null;
+        foreach (var version in published ?? Enumerable.Empty<CustomBaseVersion>())
+            if (version != null && !version.isUnsubmitted && !version.isImported && version.assetId == build.assetId &&
+                (latest == null || McbSession.VersionNumber(version.version) > McbSession.VersionNumber(latest.version)))
+                latest = version;
+        return latest != null && McbSession.VersionNumber(latest.version) == McbSession.VersionNumber(build.version) ? latest : null;
+    }
+
+    /// <summary>The creator's explicit choice to publish a build in place of the published version with its number.</summary>
+    public static bool ConfirmReplacement(CustomBaseVersion build) => EditorUtility.DisplayDialog("Replace version " + build.version,
+        "This build takes the place of version " + build.version + " on Orbiters. The version keeps its number and gets this build's files, " +
+        "title, changelog and scope; the files published until now are deleted." +
+        "\n\nMembers who installed " + build.version + " are offered this build as an update (a corrected build of the same version).",
+        "Replace " + build.version, "Cancel");
+
+    /// <summary>The server's rule for a replacement: the build carries the number of the asset's latest published version.</summary>
+    public static void ValidateReplacement(string version, IEnumerable<string> publishedVersions, Func<string, string, int> compare)
+    {
+        string latest = null;
+        foreach (string published in publishedVersions ?? Enumerable.Empty<string>())
+            if (!string.IsNullOrWhiteSpace(published) && (latest == null || compare(published, latest) > 0)) latest = published;
+        if (latest != null && compare(version, latest) != 0)
+            throw new InvalidOperationException("Only the latest published version can be replaced: " + latest + " is newer than " + version + ".");
+    }
+
+    // After a replacement: the creator's build folder holds the version's new revision, and so do the avatars that have
+    // this build applied (it applies when built), so neither is offered its own build as a corrected one.
+    private static void RecordReplacement(VersionArtifact artifact, CustomBaseVersion shown, int revision)
+    {
+        artifact.Metadata.revision = revision;
+        shown.revision = revision;
+        VersionRepository.SaveVersionJson(artifact.FolderUnityPath, artifact.Metadata);
+        foreach (var session in McbSession.Live)
+        {
+            var target = session.customBaseTarget;
+            if (target == null || target.appliedCustomBaseAssetId != shown.assetId || target.appliedCustomBaseVersionString != shown.version ||
+                target.appliedCustomBaseDefaultAviVersion != shown.defaultAviVersion) continue;
+            Undo.RecordObject(target, "Record corrected build");
+            target.appliedCustomBaseRevision = revision;
+            EditorUtility.SetDirty(target);
+        }
+    }
+
+    // Returns the version's new revision after a replacement, 0 for a new version.
+    private static async Task<int> PublishBuiltAsync(McbSession editor, NetworkService network,
+        FileManagerService files, CustomBaseVersion shown, bool interactive, bool replace, Progress progress, CancellationToken cancellation)
     {
         var artifact = VersionRepository.GetArtifact(shown);
         var parts = VersionPublishPlan.Create(artifact);
@@ -127,6 +186,16 @@ public static class VersionPublisher
             if (!remote.success) throw new IOException(remote.error);
             var existing = remote.response.versions.FirstOrDefault(v => v.version == shown.version);
             var completed = new System.Collections.Generic.HashSet<string>();
+            // A replacement sends the first package as the version's new build and the other originals after it. A retry
+            // replaces the version again: the server's files cannot be told apart from this build's by their mesh hashes.
+            bool replacing = replace;
+            if (replace)
+            {
+                if (existing == null) throw new InvalidOperationException("Version " + shown.version + " is not published: there is nothing to replace. Publish it as a new version.");
+                ValidateReplacement(shown.version, remote.response.versions.Select(v => v.version), editor.CompareVersions);
+                existing = null;
+            }
+            int revision = 0;
             if (existing != null)
             {
                 if (parts.Length == 1 && artifact.Metadata.originalBaseVersions == null)
@@ -134,11 +203,12 @@ public static class VersionPublisher
                 ValidateResume(artifact.Metadata, existing);
                 foreach (var source in existing.originalBaseVersions ?? Array.Empty<OriginalBaseVersionData>()) completed.Add(source.key);
             }
-            else
+            else if (!replacing)
             {
                 ValidateNewVersionNumber(shown.version, artifact.Metadata.parentVersion,
                     remote.response.versions.Select(v => v.version), editor.CompareVersions);
             }
+
             bool created = existing != null;
             for (int i = 0; i < parts.Length; i++)
             {
@@ -159,23 +229,34 @@ public static class VersionPublisher
                     string url = created
                         ? OriginalBaseSupportService.Url(shown.assetId, "/versions/" + Uri.EscapeDataString(shown.version) + "/source-support")
                         : MCBUtils.getApiUrl() + MCBUtils.NEW_VERSION_ENDPOINT;
-                    object metadata = created ? (object)new { originalBaseVersions = part.Metadata.originalBaseVersions } : part.Metadata;
+                    var metadata = created ? JObject.FromObject(new { originalBaseVersions = part.Metadata.originalBaseVersions }, ServerJson) : JObject.FromObject(part.Metadata, ServerJson);
+                    if (!created && replacing) metadata["replace"] = true;
                     progress.message = "Uploading " + prefix + " (" + DiskUtils.FormatBytes(bytes) + ")";
                     var response = await network.SubmitNewVersionStreamingAsync(url, editor.authToken, zip,
-                        JsonConvert.SerializeObject(metadata, new StringEnumConverter()),
+                        metadata.ToString(Formatting.None),
                         (p, sent) => progress.value = (i + .35f + .65f * p) / parts.Length, cancellation);
                     if (response.cancelled) throw new OperationCanceledException();
                     if (!response.success) throw new IOException(response.error + " Confirmed source uploads are retained; retry to resume.");
+                    if (!created && replacing) revision = ReadRevision(response.serverResponse);
                     created = true;
                 }
                 finally { if (zip != null && File.Exists(zip)) File.Delete(zip); }
             }
             VersionRepository.MarkPublished(artifact);
+            if (revision > 0) RecordReplacement(artifact, shown, revision);
             shown.isUnsubmitted = false;
             editor.LoadUnsubmittedVersions(true);
             editor.LoadImportedVersions(true);
             AvatarAssetDiscoveryService.InvalidateDiscoveryCache();
+            return revision;
         }
+    }
+
+    // The revision the server gave a replaced version (its answer to the upload).
+    private static int ReadRevision(string serverResponse)
+    {
+        try { return Math.Max(1, JObject.Parse(serverResponse ?? "{}")["version"]?.Value<int?>("revision") ?? 0); }
+        catch (JsonException) { return 1; }
     }
 
     private static readonly JsonSerializer ServerJson = JsonSerializer.Create(new JsonSerializerSettings { Converters = { new StringEnumConverter() } });

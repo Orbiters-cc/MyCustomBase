@@ -1952,8 +1952,11 @@ public partial class CreatorModeModule
         // uploads exactly the built outputs. If files were deleted or modified since
         // the build, it blocks with an explicit "rebuild first" message — publishing
         // never silently repackages from live project state.
-        yield return UploadUnsubmittedVersionCoroutine(builtPendingVersion);
+        yield return UploadUnsubmittedVersionCoroutine(builtPendingVersion, ReplacedBy(builtPendingVersion) != null);
     }
+
+    /// <summary>The published version this build would replace (the asset's latest, with the build's number), or null.</summary>
+    internal CustomBaseVersion ReplacedBy(CustomBaseVersion build) => VersionPublisher.ReplaceableBy(build, session.ServerVersionsOf(Asset));
 
     /// <summary>
     /// Single upload path for both the creator-form Publish button and the
@@ -1961,10 +1964,11 @@ public partial class CreatorModeModule
     /// uploaded exactly as built (see VersionPublisher) — the old behavior of
     /// re-packaging the version from live project files at upload time is gone.
     /// </summary>
-    public IEnumerator UploadUnsubmittedVersionCoroutine(CustomBaseVersion unsubmittedVersion)
+    public IEnumerator UploadUnsubmittedVersionCoroutine(CustomBaseVersion unsubmittedVersion, bool replace = false)
     {
         yield return session.Publish(
             unsubmittedVersion,
+            replace: replace,
             onPublished: () =>
             {
                 if (ReferenceEquals(unsubmittedVersion, builtPendingVersion) ||

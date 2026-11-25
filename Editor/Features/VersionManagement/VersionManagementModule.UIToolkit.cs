@@ -72,6 +72,7 @@ public partial class VersionManagementModule
             return ActionType.INSTALL;
         }
         
+        if (VersionRevisions.IsCorrectedBuildOf(editor.selectedVersionForAction, editor.customBaseTarget)) return ActionType.UPDATE;
         var compare = editor.CompareVersions(editor.selectedVersionForAction.version, appliedVersion?.version ?? "0.0.0");
         if (compare > 0) return ActionType.UPDATE;
         if (compare < 0) return ActionType.DOWNGRADE;
@@ -150,7 +151,9 @@ public partial class VersionManagementModule
         return action switch
         {
             ActionType.INSTALL => $"{downloadPrefix}Apply {assetName}",
-            ActionType.UPDATE => $"{downloadPrefix}Update {assetName} to v{selectedVersion.version}",
+            ActionType.UPDATE => VersionRevisions.IsCorrectedBuildOf(selectedVersion, editor.customBaseTarget)
+                ? $"{downloadPrefix}Update {assetName} to the corrected v{selectedVersion.version}"
+                : $"{downloadPrefix}Update {assetName} to v{selectedVersion.version}",
             ActionType.DOWNGRADE => $"{downloadPrefix}Downgrade {assetName} to v{selectedVersion.version}",
             _ => $"Installed (v{editor.customBaseTarget.appliedCustomBaseVersion?.version})"
         };

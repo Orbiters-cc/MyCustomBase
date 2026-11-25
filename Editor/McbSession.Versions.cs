@@ -453,11 +453,13 @@ public sealed partial class McbSession
 
     /// <summary>
     /// Publishes a built version (the creator form's Publish, the version list's Upload, MCP), then lets the other avatars
-    /// showing the same asset read their lists again.
+    /// showing the same asset read their lists again. With <paramref name="replace"/>, the build takes the place of the
+    /// published version with its number, which must be the asset's latest (VersionPublisher).
     /// </summary>
-    public System.Collections.IEnumerator Publish(CustomBaseVersion version, Action onPublished = null, bool interactive = true, string assetName = null)
+    public System.Collections.IEnumerator Publish(CustomBaseVersion version, Action onPublished = null, bool interactive = true, string assetName = null,
+        bool replace = false)
     {
-        yield return VersionPublisher.PublishCoroutine(this, networkService, fileManagerService, version, onPublished, interactive, assetName);
+        yield return VersionPublisher.PublishCoroutine(this, networkService, fileManagerService, version, onPublished, interactive, assetName, replace);
         RefreshSiblingVersionLists(version != null ? version.assetId : 0);
     }
 

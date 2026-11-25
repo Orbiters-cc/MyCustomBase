@@ -219,11 +219,6 @@ public class MCBEditor : UnityEditor.Editor
         connectivityHost = new VisualElement();
         uiToolkitRoot.Add(connectivityHost);
 
-        // Says once that MCB's diagnostics are sent (DiagnosticsNotice); empty once answered.
-        diagnosticsHost = new VisualElement();
-        diagnosticsHost.AddToClassList("mcb-diagnostics-host");
-        uiToolkitRoot.Add(diagnosticsHost);
-
         galleryHost = new VisualElement();
         uiToolkitRoot.Add(galleryHost);
 
@@ -247,6 +242,11 @@ public class MCBEditor : UnityEditor.Editor
         commentsHost = new VisualElement();
         commentsHost.AddToClassList("mcb-comments-host");
         uiToolkitRoot.Add(commentsHost);
+
+        // Says once, at the bottom of the page, that MCB's diagnostics are sent (DiagnosticsNotice); empty once answered.
+        diagnosticsHost = new VisualElement();
+        diagnosticsHost.AddToClassList("mcb-diagnostics-host");
+        uiToolkitRoot.Add(diagnosticsHost);
 
         bottomBarImGuiContainer = new IMGUIContainer(DrawToolkitBottomBarImGui);
         bottomBarImGuiContainer.AddToClassList("mcb-imgui-statusbar");
@@ -344,13 +344,13 @@ public class MCBEditor : UnityEditor.Editor
         headerHost?.BringToFront();
         dependencyHost?.BringToFront();
         connectivityHost?.BringToFront();
-        diagnosticsHost?.BringToFront();
         galleryHost?.BringToFront();
         statusHost?.BringToFront();
         versionHost?.BringToFront();
         avatarOptionsHost?.BringToFront();
         adjustMaterialHost?.BringToFront();
         commentsHost?.BringToFront();
+        diagnosticsHost?.BringToFront();
         bottomBarImGuiContainer?.BringToFront();
     }
 

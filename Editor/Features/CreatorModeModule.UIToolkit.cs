@@ -1483,6 +1483,15 @@ public partial class CreatorModeModule
 
             string newVersionString = $"{newVersionMajor}.{newVersionMinor}.{newVersionPatch}";
             string parentInfo = selectedParentVersionObject != null ? $"Parent: {selectedParentVersionObject.version}\n" : "";
+            if (ReplacedBy(builtPendingVersion) != null)
+            {
+                if (VersionPublisher.ConfirmReplacement(builtPendingVersion))
+                {
+                    EditorCoroutineUtility.StartCoroutineOwnerless(PublishBuiltVersionCoroutine());
+                    RefreshEditorUi();
+                }
+                return;
+            }
             if (EditorUtility.DisplayDialog("Confirm Publish", $"This will upload the built version to the server and create a Mixer Git release checkpoint commit.\n\nVersion: {newVersionString} ({newVersionScope})\n{parentInfo}This action is irreversible.", "Publish", "Cancel"))
             {
                 EditorCoroutineUtility.StartCoroutineOwnerless(PublishBuiltVersionCoroutine());
@@ -1549,7 +1558,12 @@ public partial class CreatorModeModule
             publishButton.style.display = hasPendingBuild ? DisplayStyle.Flex : DisplayStyle.None;
             publishButton.SetEnabled(!session.isSubmitting && hasPendingBuild);
             publishButton.EnableInClassList("mcb-button--primary", hasPendingBuild);
-            publishButton.text = session.isSubmitting ? "Working..." : "Publish";
+            // A build with the number of the asset's latest published version can only replace it.
+            var replaced = hasPendingBuild ? ReplacedBy(builtPendingVersion) : null;
+            publishButton.text = session.isSubmitting ? "Working..." : replaced != null ? "Replace " + replaced.version : "Publish";
+            publishButton.tooltip = replaced != null
+                ? "Publish this build in place of the published version " + replaced.version + ". Members who installed it are offered the corrected build."
+                : "Upload the built version to the server and create a Mixer Git release checkpoint.";
         }
     }
 

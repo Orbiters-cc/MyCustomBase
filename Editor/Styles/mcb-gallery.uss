@@ -399,11 +399,135 @@
 }
 
 
-/* The one-time card saying MCB's diagnostics are sent (DiagnosticsNotice), under the account row. */
+/* The one-time note saying MCB's diagnostics are sent (DiagnosticsNotice), at the bottom of the page above the tabs. */
 .mcb-diagnostics-host {
-    margin: 14px 24px 0 24px;
+    margin: 4px 24px 18px 24px;
+    flex-shrink: 0;
 }
 
 .mcb-diagnostics-notice {
-    margin-bottom: 0;
+    flex-direction: row;
+    align-items: flex-start;
+    background-color: rgba(255, 255, 255, 0.035);
+    border-radius: 10px;
+    padding: 12px 12px 12px 12px;
+    opacity: 1;
+    translate: 0 0;
+    transition-property: opacity, translate;
+    transition-duration: 0.2s, 0.2s;
+    transition-timing-function: ease-out, ease-out;
+}
+
+.mcb-diagnostics-notice--leaving {
+    opacity: 0;
+    translate: 0 6px;
+}
+
+.mcb-diagnostics-notice__icon {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    border-radius: 8px;
+    background-color: rgba(0, 218, 109, 0.10);
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+}
+
+.mcb-diagnostics-notice__shield {
+    width: 14px;
+    height: 16px;
+}
+
+.mcb-diagnostics-notice__body {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.mcb-diagnostics-notice__title {
+    color: #e8e8e8;
+    font-size: 12px;
+    -unity-font-style: bold;
+    margin: 0 0 3px 0;
+    padding: 0;
+}
+
+.mcb-diagnostics-notice__text {
+    color: #9c9c9c;
+    font-size: 11px;
+    white-space: normal;
+    margin: 0;
+    padding: 0;
+}
+
+.mcb-diagnostics-notice__links {
+    flex-direction: row;
+    align-items: center;
+    margin-top: 6px;
+}
+
+.mcb-diagnostics-notice__link {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    font-size: 11px;
+    color: #c4c4c4;
+    -unity-text-align: middle-left;
+    transition-property: color;
+    transition-duration: 0.12s;
+}
+
+.mcb-diagnostics-notice__link:hover {
+    color: #ffffff;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.mcb-diagnostics-notice__link:active {
+    color: #00da6d;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.mcb-diagnostics-notice__dot {
+    color: #6a6a6a;
+    font-size: 11px;
+    margin: 0 7px;
+    padding: 0;
+}
+
+.mcb-diagnostics-notice__details {
+    color: #8c8c8c;
+    font-size: 11px;
+    white-space: normal;
+    margin: 8px 0 0 0;
+    padding: 8px 0 0 0;
+    border-top-width: 1px;
+    border-top-color: rgba(255, 255, 255, 0.06);
+}
+
+.mcb-diagnostics-notice__confirm {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-width: 0;
+    border-radius: 7px;
+    color: #f0f0f0;
+    font-size: 11px;
+    -unity-font-style: bold;
+    height: 26px;
+    min-height: 26px;
+    padding: 0 14px;
+    margin: 2px 0 0 12px;
+    flex-shrink: 0;
+    transition-property: background-color, scale;
+    transition-duration: 0.12s, 0.1s;
+}
+
+.mcb-diagnostics-notice__confirm:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.mcb-diagnostics-notice__confirm:active {
+    background-color: rgba(0, 218, 109, 0.32);
+    scale: 0.97 0.97;
 }

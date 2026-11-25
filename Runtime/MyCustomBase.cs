@@ -100,6 +100,8 @@ public class MyCustomBase : MonoBehaviour
     [HideInInspector] public string appliedCustomBaseDefaultAviVersion = "";
     [HideInInspector] public string appliedCustomBaseSourceVersionKey = "";
     [HideInInspector] public string appliedCustomBaseDeliveryMode = "";
+    // The revision of the applied version's files when they were installed (0: installed before revisions, counts as 1).
+    [HideInInspector] public int appliedCustomBaseRevision = 0;
 
     [Tooltip("Stores the current values of the custom blendshape sliders.")]
     [HideInInspector] public List<float> blendShapeValues = new List<float>();

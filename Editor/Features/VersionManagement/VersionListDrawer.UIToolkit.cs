@@ -166,14 +166,16 @@ public partial class VersionListDrawer
 
         var recommended = editor.recommendedVersion;
         var applied = editor.customBaseTarget.appliedCustomBaseVersion;
-        if (recommended == null || applied == null || editor.CompareVersions(recommended.version, applied.version) <= 0)
+        bool corrected = VersionRevisions.IsCorrectedBuildOf(recommended, editor.customBaseTarget);
+        if (recommended == null || applied == null || (!corrected && editor.CompareVersions(recommended.version, applied.version) <= 0))
         {
             return;
         }
 
         var panel = new VisualElement();
         panel.AddToClassList("mcb-version-update");
-        var title = CreateLabel($"New version released: v{recommended.version}!", 13, FontStyle.Bold, new Color(0.35f, 1f, 0.25f));
+        var title = CreateLabel(corrected ? $"Corrected build of v{recommended.version} released" : $"New version released: v{recommended.version}!",
+            13, FontStyle.Bold, new Color(0.35f, 1f, 0.25f));
         title.AddToClassList("mcb-version-update__title");
         panel.Add(title);
 
@@ -417,6 +419,11 @@ public partial class VersionListDrawer
         {
             chips.Add(CreateChip("Installed", AccentGreen));
         }
+        else if (VersionRevisions.IsCorrectedBuildOf(ver, editor.customBaseTarget))
+        {
+            // The avatar has this version's earlier build: its creator replaced the files since.
+            chips.Add(CreateChip("Corrected build", AccentGreen));
+        }
         chips.Add(CreateChip(ver.isImported ? "Imported" : ver.scope.ToString(), ver.isImported ? new Color(0.45f, 0.85f, 1f) : GetColorForScope(ver.scope)));
         titleRow.Add(chips);
         main.Add(titleRow);
@@ -600,11 +607,14 @@ public partial class VersionListDrawer
 
         if (ver.isUnsubmitted)
         {
-            actionsRow.Add(CreateIconButton("CloudConnect", "Upload version", () =>
+            // A build with the number of the asset's latest published version can only replace it.
+            bool replace = VersionPublisher.ReplaceableBy(ver, editor.Session.ServerVersionsOf(editor.GetSelectedAsset())) != null;
+            actionsRow.Add(CreateIconButton("CloudConnect", replace ? "Replace published version " + ver.version : "Upload version", () =>
             {
-                if (EditorUtility.DisplayDialog("Confirm Upload", $"Upload version {ver.version} to the server?\n\nThis action is irreversible.", "Upload", "Cancel"))
+                if (replace ? VersionPublisher.ConfirmReplacement(ver)
+                    : EditorUtility.DisplayDialog("Confirm Upload", $"Upload version {ver.version} to the server?\n\nThis action is irreversible.", "Upload", "Cancel"))
                 {
-                    EditorCoroutineUtility.StartCoroutineOwnerless(editor.Session.Publish(ver));
+                    EditorCoroutineUtility.StartCoroutineOwnerless(editor.Session.Publish(ver, replace: replace));
                     RefreshVersionUi();
                 }
             }));
